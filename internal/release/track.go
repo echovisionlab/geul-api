@@ -10,23 +10,14 @@ import (
 	"reflect"
 	"slices"
 
-	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -36,200 +27,434 @@ var ErrTrackUploadSessionsChanged = errors.New("track upload sessions changed du
 
 const MaxTrackUploadCleanupPasses = 3
 
-// TrackService implements the TrackService RPC service
-type TrackService struct {
-	managev1connect.UnimplementedTrackServiceHandler
-	db           *gorm.DB
-	transcodes   TrackTranscodes
-	waveformJobs WaveformJobs
-	spiceDB      *auth.SpiceDBClient
-	fileService  TrackFileManager
-	members      MemberSummaryLoader
-	artists      ArtistSummaryLoader
-	auditWriter  domainaudit.Appender
+// ListTracksQuery names the Release whose Tracks are listed.
+type ListTracksQuery struct {
+	ReleaseID string
 }
 
-func NewAuditedTrackService(db *gorm.DB, transcodes TrackTranscodes, waveformJobs WaveformJobs, spiceDB *auth.SpiceDBClient, fileService TrackFileManager, members MemberSummaryLoader, artists ArtistSummaryLoader, auditWriter domainaudit.Appender) *TrackService {
-	if auditWriter == nil {
-		panic("TrackService: audit writer is required")
-	}
-	s := NewTrackService(db, transcodes, waveformJobs, spiceDB, fileService, members, artists)
-	s.auditWriter = auditWriter
-	return s
+// CreateTrackCommand appends a Track to a Release.
+type CreateTrackCommand struct {
+	ReleaseID       string
+	Title           string
+	DurationSeconds *int32
+	Lyrics          *string
 }
 
-// NewTrackService creates a new TrackService
-func NewTrackService(db *gorm.DB, transcodes TrackTranscodes, waveformJobs WaveformJobs, spiceDB *auth.SpiceDBClient, fileService TrackFileManager, members MemberSummaryLoader, artists ArtistSummaryLoader) *TrackService {
-	if db == nil {
-		panic("db is required")
-	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
-	}
-	if fileService == nil {
-		panic("fileService is required")
-	}
-	if transcodes == nil {
-		panic("transcodes is required")
-	}
-	if waveformJobs == nil {
-		panic("waveformJobs is required")
-	}
-	if members == nil {
-		panic("members is required")
-	}
-	if artists == nil {
-		panic("artists is required")
-	}
-	return &TrackService{db: db, transcodes: transcodes, waveformJobs: waveformJobs, spiceDB: spiceDB, fileService: fileService, members: members, artists: artists}
+// UpdateTrackCommand updates Track settings. Nil fields are left alone, an
+// empty Title keeps the title, and the Clear flags win over supplied values.
+type UpdateTrackCommand struct {
+	ID                 string
+	TrackNumber        *int32
+	Title              *string
+	DurationSeconds    *int32
+	ProcessingStatus   *string
+	Lyrics             *string
+	ClearDuration      bool
+	ClearAudioOriginal bool
+	ClearLyrics        bool
 }
 
-func (s *TrackService) cleanupTrackUploadSessions(ctx context.Context, trackID string) error {
-	if trackID == "" {
-		return nil
-	}
-	return s.fileService.CleanupTrackUploadSessions(ctx, trackID, "Track deleted")
+// DeleteTrackCommand deletes a Track.
+type DeleteTrackCommand struct {
+	ID string
 }
 
-func (s *TrackService) deleteTrackWhenNoUploadSessions(
-	ctx context.Context,
-	trackID string,
-) error {
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		if err := lockTrackForUploadMutation(tx, trackID); err != nil {
-			return err
-		}
-		var track model.Track
-		if err := tx.First(&track, "id = ?", trackID).Error; err != nil {
-			return err
-		}
-		if err := s.fileService.RequireNoTrackUploadSessionsWithDB(ctx, tx, trackID); err != nil {
-			return err
-		}
-		result := tx.Where("id = ?", trackID).Delete(&model.Track{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
-		deletePolicy, err := policyv1.Track.DeletePolicy(track.ID)
+// SetTrackCreditsCommand applies the desired credits against the observed
+// ones.
+type SetTrackCreditsCommand struct {
+	TrackID  string
+	Credits  []*CreditInput
+	Observed *Snapshot[*CreditInput]
+}
+
+// ReorderTracksCommand orders every Track of one Release.
+type ReorderTracksCommand struct {
+	TrackIDs []string
+}
+
+// TrackCreditView is a Track credit with its Artist's name and slug and its
+// Member's summary.
+type TrackCreditView struct {
+	CreditRow
+	ArtistName *string
+	ArtistSlug *string
+	Member     *memberref.Summary
+}
+
+// TrackWithCredits is a Track with its credits in order.
+type TrackWithCredits struct {
+	Track   Track
+	Credits []TrackCreditView
+}
+
+// ListTracksByRelease lists all tracks for a release with credits for a Site Admin.
+func (s *Service) ListTracksByRelease(ctx context.Context, query ListTracksQuery) ([]TrackWithCredits, error) {
+	if query.ReleaseID == "" {
+		return nil, domainerr.Required("release_id")
+	}
+	if err := requireReleaseAction(ctx, s.spiceDB, query.ReleaseID, releaseActionView); err != nil {
+		return nil, err
+	}
+	return s.releaseTracksWithCredits(ctx, query.ReleaseID)
+}
+
+func (s *Service) releaseTracksWithCredits(ctx context.Context, releaseID string) ([]TrackWithCredits, error) {
+	var tracks []Track
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		tracks, err = store.Tracks(ctx, releaseID)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	result := make([]TrackWithCredits, len(tracks))
+	for i := range tracks {
+		credits, err := s.getCreditsForTrack(ctx, tracks[i].ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		touchPolicy, err := policyv1.Track.TouchPolicy(track.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{deletePolicy},
-			[]policyv1.RelationshipMutation{touchPolicy},
-		); err != nil {
-			return err
-		}
-		if err := s.appendReleaseTrackAudit(ctx, tx, track.ReleaseID, track.ID, sharedtelemetry.AuditItemOperationDeleted); err != nil {
-			return err
-		}
-		return nil
-	})
-	return err
+		result[i] = TrackWithCredits{Track: tracks[i], Credits: credits}
+	}
+	return result, nil
 }
 
-// toProto converts a model.Track to protobuf Track
-func (s *TrackService) toProto(t *model.Track) *managev1.Track {
-	proto := &managev1.Track{
-		Id:          t.ID,
-		ReleaseId:   t.ReleaseID,
-		TrackNumber: int32(t.TrackNumber),
-		Title:       t.Title,
-		CreatedAt:   timestamppb.New(t.CreatedAt),
+// CreateTrack appends a track to a release (Release managers).
+func (s *Service) CreateTrack(ctx context.Context, command CreateTrackCommand) (Track, error) {
+	if command.ReleaseID == "" {
+		return Track{}, domainerr.Required("release_id")
 	}
-
-	if t.DurationSeconds != nil {
-		v := int32(*t.DurationSeconds)
-		proto.DurationSeconds = &v
+	if command.Title == "" {
+		return Track{}, domainerr.Required("title")
 	}
-	if t.AudioOriginalFileID != nil {
-		proto.AudioOriginalFileId = t.AudioOriginalFileID
-	}
-	if t.ProcessingStatus != nil {
-		proto.ProcessingStatus = t.ProcessingStatus
-	}
-	if t.Lyrics != nil {
-		proto.Lyrics = t.Lyrics
-	}
-
-	// Convert metadata to protobuf Struct
-	if t.Metadata != nil {
-		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
-			proto.Metadata = metadata
-		} else {
+	track, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Track, Store]{
+		// The Release lock also serializes concurrent track numbering.
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := store.LockRelease(ctx, command.ReleaseID, UpdateLock)
+			return releaseMissingAs(err, notFound("release not found"))
+		},
+		Access: s.releaseAccess(command.ReleaseID, releaseActionManage),
+		Change: func(ctx context.Context, store Store) (Track, error) {
+			trackNumber, err := store.NextTrackNumber(ctx, command.ReleaseID)
 			if err != nil {
-				slog.ErrorContext(context.Background(), "Operation failed", "domain", "release", "operation", "toProto", failurecause.Attr(err), "track_id", t.ID)
+				return Track{}, err
+			}
+			track := Track{
+				ReleaseID:   command.ReleaseID,
+				TrackNumber: trackNumber,
+				Title:       command.Title,
+				Metadata:    map[string]any{},
+				Lyrics:      command.Lyrics,
+			}
+			if command.DurationSeconds != nil {
+				duration := int(*command.DurationSeconds)
+				track.DurationSeconds = &duration
+			}
+			if err := store.InsertTrack(ctx, &track); err != nil {
+				return Track{}, err
+			}
+			return track, nil
+		},
+		Audit: func(track Track) mutation.Audit {
+			return releaseTrackAudit(track.ReleaseID, track.ID, sharedtelemetry.AuditItemOperationCreated)
+		},
+		Relationships: func(track Track) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			touchPolicy, err := policyv1.Track.TouchPolicy(track.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			deletePolicy, err := policyv1.Track.DeletePolicy(track.ID)
+			return []policyv1.RelationshipMutation{touchPolicy}, []policyv1.RelationshipMutation{deletePolicy}, err
+		},
+	})
+	if err != nil {
+		return Track{}, err
+	}
+	return track, nil
+}
+
+// trackUpdate is a Track before and after an update.
+type trackUpdate struct {
+	before, after Track
+}
+
+func (u trackUpdate) changed() bool {
+	return !reflect.DeepEqual(u.before, u.after)
+}
+
+// UpdateTrack updates an existing track (Track editors).
+func (s *Service) UpdateTrack(ctx context.Context, command UpdateTrackCommand) (Track, error) {
+	if command.ID == "" {
+		return Track{}, domainerr.Required("id")
+	}
+	var locked Track
+	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[trackUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			if err := store.LockTrackDownloadSegments(ctx, command.ID); err != nil {
+				return err
+			}
+			return lockTrackRow(ctx, store, command.ID, &locked)
+		},
+		Access: s.trackAccess(command.ID, trackActionEdit),
+		Change: func(ctx context.Context, store Store) (trackUpdate, error) {
+			// A concurrent update is serialized by the lock; apply the request to its current row.
+			update := trackUpdate{before: locked, after: command.apply(locked)}
+			if !update.changed() {
+				return update, nil
+			}
+			if err := saveTrackUpdate(ctx, store, &update); err != nil {
+				return trackUpdate{}, err
+			}
+			return update, nil
+		},
+		Audit: trackUpdateAudit,
+	})
+	if err != nil {
+		return Track{}, err
+	}
+	return update.after, nil
+}
+
+func (command UpdateTrackCommand) apply(track Track) Track {
+	if command.TrackNumber != nil {
+		track.TrackNumber = int(*command.TrackNumber)
+	}
+	if command.Title != nil && *command.Title != "" {
+		track.Title = *command.Title
+	}
+	if command.DurationSeconds != nil {
+		duration := int(*command.DurationSeconds)
+		track.DurationSeconds = &duration
+	}
+	if command.ClearDuration {
+		track.DurationSeconds = nil
+	}
+	if command.ClearAudioOriginal {
+		track.AudioOriginalFileID = nil
+	}
+	if command.ProcessingStatus != nil {
+		track.ProcessingStatus = command.ProcessingStatus
+	}
+	if command.Lyrics != nil {
+		track.Lyrics = command.Lyrics
+	}
+	if command.ClearLyrics {
+		track.Lyrics = nil
+	}
+	return track
+}
+
+// saveTrackUpdate stores the updated row. Another original audio file is
+// a different download, so its audience starts disabled again.
+func saveTrackUpdate(ctx context.Context, store Store, update *trackUpdate) error {
+	if err := store.SaveTrack(ctx, update.after); err != nil {
+		return err
+	}
+	if sameOptionalString(update.before.AudioOriginalFileID, update.after.AudioOriginalFileID) {
+		return nil
+	}
+	if err := store.DisableTrackDownload(ctx, update.after.ID); err != nil {
+		return err
+	}
+	update.after.DownloadAudience = DownloadAudienceDisabled
+	return nil
+}
+
+// trackUpdateAudit records a metadata change and a removed original audio
+// file separately.
+func trackUpdateAudit(update trackUpdate) mutation.Audit {
+	if !update.changed() {
+		return mutation.Unchanged()
+	}
+	var records []mutation.Audit
+	metadataBefore, metadataAfter := update.before, update.after
+	metadataBefore.AudioOriginalFileID, metadataAfter.AudioOriginalFileID = nil, nil
+	if !reflect.DeepEqual(metadataBefore, metadataAfter) {
+		records = append(records, releaseTrackAudit(update.after.ReleaseID, update.after.ID, sharedtelemetry.AuditItemOperationUpdated))
+	}
+	if removed := update.before.AudioOriginalFileID; removed != nil && update.after.AudioOriginalFileID == nil {
+		records = append(records, mutation.RequestAudit(sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewReleaseTrackAudioAuditRecord(m, update.after.ReleaseID, update.after.ID, *removed, sharedtelemetry.AuditCollectionOperationRemoved)
+		}))
+	}
+	return mutation.Audits(records...)
+}
+
+// DeleteTrack deletes a track (Track editors with delete permission).
+func (s *Service) DeleteTrack(ctx context.Context, command DeleteTrackCommand) error {
+	if command.ID == "" {
+		return domainerr.Required("id")
+	}
+	// Upload cleanup aborts uploads outside any transaction, so the caller's
+	// authority is decided under the Track lock before it runs.
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return lockTrackRow(ctx, store, command.ID, nil)
+		},
+		Access: s.trackAccess(command.ID, trackActionDelete),
+		Change: func(context.Context, Store) (struct{}, error) { return struct{}{}, nil },
+		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	}); err != nil {
+		return err
+	}
+	deleted, err := s.deleteTrackAfterUploadCleanup(ctx, command.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.waveformJobs.CancelDeletedTracks(ctx, []string{deleted.ID}); err != nil {
+		slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted track", "trackId", deleted.ID, failurecause.Attr(err))
+	}
+	s.transcodes.CancelDeletedTrackFiles(ctx, deleted.ID, deleted.AudioOriginalFileID)
+	return nil
+}
+
+// deleteTrackAfterUploadCleanup cleans up the Track's audio uploads and
+// deletes it, cleaning up again when an upload started in between.
+func (s *Service) deleteTrackAfterUploadCleanup(ctx context.Context, trackID string) (Track, error) {
+	var uploadsChanged error
+	for range MaxTrackUploadCleanupPasses {
+		if err := s.trackFiles.CleanupTrackUploadSessions(ctx, trackID, "Track deleted"); err != nil {
+			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
+				return Track{}, domainerr.Precondition("track audio upload is finalizing; retry its completion before deleting the track").WithCause(err)
+			}
+			return Track{}, fmt.Errorf("cleanup track audio uploads: %w", err)
+		}
+		deleted, err := s.deleteTrackWhenNoUploadSessions(ctx, trackID)
+		if errors.Is(err, ErrTrackUploadSessionsChanged) {
+			uploadsChanged = err
+			continue
+		}
+		return deleted, missingAs(err, ErrTrackNotFound, trackNotFound())
+	}
+	return Track{}, domainerr.Precondition("track audio uploads changed during deletion; retry the request").WithCause(uploadsChanged)
+}
+
+func (s *Service) deleteTrackWhenNoUploadSessions(ctx context.Context, trackID string) (Track, error) {
+	var track Track
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[Track, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			if err := store.LockTrackID(ctx, trackID); err != nil {
+				return err
+			}
+			var err error
+			track, err = store.FindTrack(ctx, trackID)
+			return err
+		},
+		Access: s.trackAccess(trackID, trackActionDelete),
+		Change: func(ctx context.Context, store Store) (Track, error) {
+			if err := store.RequireNoTrackUploadSessions(ctx, trackID); err != nil {
+				return Track{}, err
+			}
+			if err := store.DeleteTrack(ctx, trackID); err != nil {
+				return Track{}, err
+			}
+			return track, nil
+		},
+		Audit: func(track Track) mutation.Audit {
+			return releaseTrackAudit(track.ReleaseID, track.ID, sharedtelemetry.AuditItemOperationDeleted)
+		},
+		Relationships: func(track Track) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			deletePolicy, err := policyv1.Track.DeletePolicy(track.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			touchPolicy, err := policyv1.Track.TouchPolicy(track.ID)
+			return []policyv1.RelationshipMutation{deletePolicy}, []policyv1.RelationshipMutation{touchPolicy}, err
+		},
+	})
+}
+
+// ReorderTracks orders every track of a release (Release managers).
+func (s *Service) ReorderTracks(ctx context.Context, command ReorderTracksCommand) ([]TrackWithCredits, error) {
+	releaseID, err := s.trackOrderRelease(ctx, command.TrackIDs)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock:   lockReleaseRow(releaseID, nil),
+		Access: s.releaseAccess(releaseID, releaseActionManage),
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			return reorderReleaseTracks(ctx, store, releaseID, command.TrackIDs)
+		},
+		Audit: func(changed bool) mutation.Audit {
+			if !changed {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewReleaseTrackOrderAuditRecord(m, releaseID, command.TrackIDs)
+			})
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return s.releaseTracksWithCredits(ctx, releaseID)
+}
+
+// trackOrderRelease checks that trackIDs are every Track of one Release, in
+// some order, and returns that Release.
+func (s *Service) trackOrderRelease(ctx context.Context, trackIDs []string) (string, error) {
+	if len(trackIDs) == 0 {
+		return "", domainerr.Required("track_ids")
+	}
+	var releaseID string
+	err := s.units.Read(ctx, func(store Store) error {
+		firstTrack, err := store.FindTrack(ctx, trackIDs[0])
+		if err != nil {
+			return missingAs(err, ErrTrackNotFound, trackNotFound())
+		}
+		// Validate all track IDs are valid UUIDs to prevent injection
+		for _, trackID := range trackIDs {
+			if _, err := uuid.Parse(trackID); err != nil {
+				return domainerr.InvalidField("track_id", fmt.Sprintf("invalid: %s", trackID))
 			}
 		}
-	}
-
-	return proto
+		trackCount, err := store.CountTracksOf(ctx, firstTrack.ReleaseID, trackIDs)
+		if err != nil {
+			return err
+		}
+		if int(trackCount) != len(trackIDs) {
+			return domainerr.InvalidField("track_ids", "all must belong to the same release")
+		}
+		// A partial reorder would leave the omitted Tracks' numbers ambiguous.
+		totalTracksInRelease, err := store.CountReleaseTracks(ctx, firstTrack.ReleaseID)
+		if err != nil {
+			return err
+		}
+		if int(totalTracksInRelease) != len(trackIDs) {
+			return domainerr.InvalidField("track_ids", "all tracks in the release must be included for reordering")
+		}
+		releaseID = firstTrack.ReleaseID
+		return nil
+	})
+	return releaseID, err
 }
 
-// creditToProto converts a model.TrackCreditWithInfo to protobuf TrackCredit
-func (s *TrackService) creditToProto(c *model.TrackCreditWithInfo, summaries map[string]*commonv1.MemberSummary) *managev1.TrackCredit {
-	proto := &managev1.TrackCredit{
-		Id:         c.ID,
-		CreditType: c.CreditType,
-		SortOrder:  int32(c.SortOrder),
+// reorderReleaseTracks renumbers the Tracks in two phases, negative and then
+// positive, so the unique track number never collides midway.
+func reorderReleaseTracks(ctx context.Context, store Store, releaseID string, trackIDs []string) (bool, error) {
+	currentIDs, err := store.TrackOrder(ctx, releaseID)
+	if err != nil {
+		return false, err
 	}
+	if slices.Equal(currentIDs, trackIDs) {
+		return false, nil
+	}
+	return true, store.RenumberTracks(ctx, releaseID, trackIDs)
+}
 
-	if c.ArtistID != nil {
-		proto.ArtistId = c.ArtistID
-	}
-	if c.ArtistName != nil {
-		proto.ArtistName = c.ArtistName
-	}
-	if c.ArtistSlug != nil {
-		proto.ArtistSlug = c.ArtistSlug
-	}
-	if c.MemberID != nil {
-		proto.MemberId = c.MemberID
-		proto.Member = summaries[*c.MemberID]
-	}
-	if c.CreditedName != nil {
-		proto.CreditedName = c.CreditedName
-	}
-	if c.CreditRole != nil {
-		proto.CreditRole = c.CreditRole
-	}
-
-	return proto
+func releaseTrackAudit(releaseID, itemID string, op sharedtelemetry.AuditItemOperation) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewReleaseTrackAuditRecord(m, releaseID, itemID, op)
+	})
 }
 
 // getCreditsForTrack retrieves credits with joined info for a track
-func (s *TrackService) getCreditsForTrack(ctx context.Context, trackID string) ([]*managev1.TrackCredit, error) {
-	var credits []model.TrackCreditWithInfo
-
-	query := `
-		SELECT
-			tc.id,
-			CASE
-				WHEN tc.artist_id IS NOT NULL THEN 'artist'
-				WHEN tc.member_id IS NOT NULL THEN 'member'
-				ELSE 'text'
-			END as credit_type,
-			tc.artist_id,
-			tc.member_id,
-			tc.credited_name,
-			tc.credit_role,
-			tc.sort_order
-		FROM track_credit tc
-		WHERE tc.track_id = ?
-		ORDER BY tc.sort_order ASC, tc.created_at ASC
-	`
-
-	if err := s.db.WithContext(ctx).Raw(query, trackID).Scan(&credits).Error; err != nil {
+func (s *Service) getCreditsForTrack(ctx context.Context, trackID string) ([]TrackCreditView, error) {
+	var credits []CreditRow
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		credits, err = store.TrackCreditRows(ctx, trackID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 
@@ -247,585 +472,34 @@ func (s *TrackService) getCreditsForTrack(ctx context.Context, trackID string) (
 	if err != nil {
 		return nil, err
 	}
-	artists, err := s.artists.LoadArtistSummaries(ctx, artistIDs)
+	artists, err := s.readArtistSummaries(ctx, artistIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*managev1.TrackCredit, len(credits))
+	result := make([]TrackCreditView, len(credits))
 	for i := range credits {
+		result[i] = TrackCreditView{CreditRow: credits[i]}
 		if credits[i].ArtistID != nil {
 			if summary, ok := artists[*credits[i].ArtistID]; ok {
-				credits[i].ArtistName = &summary.Title
-				credits[i].ArtistSlug = &summary.Slug
+				result[i].ArtistName = &summary.Title
+				result[i].ArtistSlug = &summary.Slug
 			}
 		}
-		result[i] = s.creditToProto(&credits[i], summaries)
+		if credits[i].MemberID != nil {
+			result[i].Member = summaries[*credits[i].MemberID]
+		}
 	}
-
 	return result, nil
 }
 
-// ListTracksByRelease lists all tracks for a release with credits for a Site Admin.
-func (s *TrackService) ListTracksByRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.ListTracksByReleaseRequest],
-) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ListTracksByRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.ReleaseId == "" {
-		return nil, errs.Required("release_id")
-	}
-	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.ReleaseId, releaseActionView); err != nil {
-		return nil, err
-	}
-
-	var tracks []model.Track
-	if err := s.db.WithContext(ctx).
-		Where("release_id = ?", req.Msg.ReleaseId).
-		Order("track_number ASC").
-		Find(&tracks).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	result := make([]*managev1.TrackWithCredits, len(tracks))
-	for i := range tracks {
-		credits, err := s.getCreditsForTrack(ctx, tracks[i].ID)
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
-		result[i] = &managev1.TrackWithCredits{
-			Track:   s.toProtoForViewer(ctx, &tracks[i]),
-			Credits: credits,
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListTracksByReleaseResponse{
-		Tracks: result,
-	}), nil
-}
-
-// CreateTrack creates a new track (Site Admin only).
-func (s *TrackService) CreateTrack(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateTrackRequest],
-) (_ *connect.Response[managev1.Track], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "CreateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.ReleaseId == "" {
-		return nil, errs.Required("release_id")
-	}
-	if req.Msg.Title == "" {
-		return nil, errs.Required("title")
-	}
-
-	// Verify release exists first (before permission check to maintain consistent error ordering)
-	var releaseCount int64
-	if err := s.db.WithContext(ctx).Table("release").Where("id = ?", req.Msg.ReleaseId).Count(&releaseCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if releaseCount == 0 {
-		return nil, errs.NotFoundMsg("release not found")
-	}
-
-	var track model.Track
-
-	// Use transaction with row-level lock to prevent race condition
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		// Lock the release row to serialize concurrent track insertions.
-		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
-			return err
-		}
-		// Get max track_number (release is locked, so safe from race conditions)
-		var maxTrackNumber int
-		if err := tx.Raw(`
-			SELECT COALESCE(MAX(track_number), 0) FROM track
-			WHERE release_id = $1`, req.Msg.ReleaseId).Scan(&maxTrackNumber).Error; err != nil {
-			return err
-		}
-
-		track = model.Track{
-			ReleaseID:   req.Msg.ReleaseId,
-			TrackNumber: maxTrackNumber + 1,
-			Title:       req.Msg.Title,
-			Metadata:    make(model.TrackMetadata),
-		}
-
-		if req.Msg.DurationSeconds != nil {
-			v := int(*req.Msg.DurationSeconds)
-			track.DurationSeconds = &v
-		}
-		if req.Msg.Lyrics != nil {
-			track.Lyrics = req.Msg.Lyrics
-		}
-		if err := tx.Clauses(clause.Returning{}).Create(&track).Error; err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.Track.TouchPolicy(track.ID)
-		if err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.Track.DeletePolicy(track.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{touchPolicy},
-			[]policyv1.RelationshipMutation{deletePolicy},
-		); err != nil {
-			return err
-		}
-		if err := s.appendReleaseTrackAudit(ctx, tx, track.ReleaseID, track.ID, sharedtelemetry.AuditItemOperationCreated); err != nil {
-			return err
-		}
-		return nil
+// readArtistSummaries reads the Artist summaries in their own read
+// snapshot.
+func (s *Service) readArtistSummaries(ctx context.Context, artistIDs []string) (map[string]ArtistSummary, error) {
+	var summaries map[string]ArtistSummary
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		summaries, err = store.ArtistSummaries(ctx, artistIDs)
+		return err
 	})
-
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(s.toProto(&track)), nil
-}
-
-// UpdateTrack updates an existing track (Site Admin only).
-func (s *TrackService) UpdateTrack(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateTrackRequest],
-) (_ *connect.Response[managev1.Track], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
-	}
-
-	var track model.Track
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("track not found")
-		}
-		return nil, errs.Internal(err)
-	}
-
-	// Update fields if provided
-	next := track
-	if req.Msg.TrackNumber != nil {
-		next.TrackNumber = int(*req.Msg.TrackNumber)
-	}
-	if req.Msg.Title != nil && *req.Msg.Title != "" {
-		next.Title = *req.Msg.Title
-	}
-	if req.Msg.DurationSeconds != nil {
-		v := int(*req.Msg.DurationSeconds)
-		next.DurationSeconds = &v
-	}
-	if req.Msg.ClearDuration {
-		next.DurationSeconds = nil
-	}
-	if req.Msg.ClearAudioOriginal {
-		next.AudioOriginalFileID = nil
-	}
-	if req.Msg.ProcessingStatus != nil {
-		next.ProcessingStatus = req.Msg.ProcessingStatus
-	}
-	if req.Msg.Lyrics != nil {
-		next.Lyrics = req.Msg.Lyrics
-	}
-	if req.Msg.ClearLyrics {
-		next.Lyrics = nil
-	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockTrackDownloadAudienceSegments(ctx, tx, track.ID); err != nil {
-			return err
-		}
-		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
-			return err
-		}
-		if err := requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionEdit); err != nil {
-			return err
-		}
-		// A concurrent update is serialized by the lock; apply the request to its current row.
-		next = locked
-		if req.Msg.TrackNumber != nil {
-			next.TrackNumber = int(*req.Msg.TrackNumber)
-		}
-		if req.Msg.Title != nil && *req.Msg.Title != "" {
-			next.Title = *req.Msg.Title
-		}
-		if req.Msg.DurationSeconds != nil {
-			v := int(*req.Msg.DurationSeconds)
-			next.DurationSeconds = &v
-		}
-		if req.Msg.ClearDuration {
-			next.DurationSeconds = nil
-		}
-		if req.Msg.ClearAudioOriginal {
-			next.AudioOriginalFileID = nil
-		}
-		if req.Msg.ProcessingStatus != nil {
-			next.ProcessingStatus = req.Msg.ProcessingStatus
-		}
-		if req.Msg.Lyrics != nil {
-			next.Lyrics = req.Msg.Lyrics
-		}
-		if req.Msg.ClearLyrics {
-			next.Lyrics = nil
-		}
-		if reflect.DeepEqual(locked, next) {
-			track = locked
-			return nil
-		}
-		oldFileID := locked.AudioOriginalFileID
-		if err := tx.Save(&next).Error; err != nil {
-			return err
-		}
-		if !sameOptionalString(oldFileID, next.AudioOriginalFileID) {
-			if err := tx.Model(&model.Track{}).Where("id = ?", next.ID).
-				Update("download_audience", "disabled").Error; err != nil {
-				return err
-			}
-			if err := tx.Where("track_id = ?", next.ID).
-				Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
-				return err
-			}
-			next.DownloadAudience = "disabled"
-		}
-		track = next
-		metadataBefore, metadataAfter := locked, next
-		metadataBefore.AudioOriginalFileID, metadataAfter.AudioOriginalFileID = nil, nil
-		if !reflect.DeepEqual(metadataBefore, metadataAfter) {
-			if err := s.appendReleaseTrackAudit(ctx, tx, next.ReleaseID, next.ID, sharedtelemetry.AuditItemOperationUpdated); err != nil {
-				return err
-			}
-		}
-		if oldFileID != nil && next.AudioOriginalFileID == nil {
-			return s.appendReleaseTrackAudioAudit(ctx, tx, next.ReleaseID, next.ID, *oldFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-		}
-		return nil
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(s.toProto(&track)), nil
-}
-
-// DeleteTrack deletes a track (Site Admin only).
-func (s *TrackService) DeleteTrack(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteTrackRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
-	}
-
-	// First fetch the track to get the release_id for permission check
-	var track model.Track
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("track not found")
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
-			return err
-		}
-		return requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionDelete)
-	}); err != nil {
-		return nil, err
-	}
-	deleted := false
-	for range MaxTrackUploadCleanupPasses {
-		if err := s.cleanupTrackUploadSessions(ctx, track.ID); err != nil {
-			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
-				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the track")
-			}
-			return nil, errs.Internal(fmt.Errorf("cleanup track audio uploads: %w", err))
-		}
-		err := s.deleteTrackWhenNoUploadSessions(ctx, track.ID)
-		if err != nil {
-			if errors.Is(err, ErrTrackUploadSessionsChanged) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
-				continue
-			}
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errs.NotFoundMsg("track not found")
-			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
-			}
-			return nil, errs.Internal(err)
-		}
-		deleted = true
-		break
-	}
-	if !deleted {
-		return nil, errs.FailedPrecondition("track audio uploads changed during deletion; retry the request")
-	}
-	if err := s.waveformJobs.CancelTracks(
-		ctx,
-		[]string{track.ID},
-		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
-	); err != nil {
-		slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted track", "trackId", track.ID, failurecause.Attr(err))
-	}
-	s.transcodes.CancelFiles(
-		ctx,
-		track.ID,
-		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
-		track.AudioOriginalFileID,
-	)
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
-}
-
-// SetTrackCredits replaces all credits for a track (Site Admin only).
-func (s *TrackService) SetTrackCredits(
-	ctx context.Context,
-	req *connect.Request[managev1.SetTrackCreditsRequest],
-) (_ *connect.Response[managev1.TrackWithCredits], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetTrackCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.TrackId == "" {
-		return nil, errs.Required("track_id")
-	}
-
-	// Verify track exists
-	var track model.Track
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackId).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("track not found")
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.validateTrackCreditArtists(ctx, req.Msg.Credits); err != nil {
-		return nil, err
-	}
-	err := s.replaceTrackCredits(ctx, req.Msg.TrackId, req.Msg.Credits, req.Msg.Observed)
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	// Fetch updated credits
-	credits, err := s.getCreditsForTrack(ctx, req.Msg.TrackId)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&managev1.TrackWithCredits{
-		Track:   s.toProto(&track),
-		Credits: credits,
-	}), nil
-}
-
-// ReorderTracks reorders tracks by updating their track_number (Site Admin only).
-func (s *TrackService) ReorderTracks(
-	ctx context.Context,
-	req *connect.Request[managev1.ReorderTracksRequest],
-) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if len(req.Msg.TrackIds) == 0 {
-		return nil, errs.Required("track_ids")
-	}
-
-	// Get release_id from first track
-	var firstTrack model.Track
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackIds[0]).First(&firstTrack).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("track not found")
-		}
-		return nil, errs.Internal(err)
-	}
-
-	// Validate all track IDs are valid UUIDs to prevent injection
-	for _, trackID := range req.Msg.TrackIds {
-		if _, err := uuid.Parse(trackID); err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(err))
-			return nil, errs.InvalidArgument("track_id", fmt.Sprintf("invalid: %s", trackID))
-		}
-	}
-
-	// Verify all track IDs belong to the same release
-	var trackCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Track{}).
-		Where("id IN ? AND release_id = ?", req.Msg.TrackIds, firstTrack.ReleaseID).
-		Count(&trackCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if int(trackCount) != len(req.Msg.TrackIds) {
-		return nil, errs.InvalidArgument("track_ids", "all must belong to the same release")
-	}
-
-	// Verify ALL tracks in the release are included (no partial reorder)
-	var totalTracksInRelease int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Track{}).
-		Where("release_id = ?", firstTrack.ReleaseID).
-		Count(&totalTracksInRelease).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if int(totalTracksInRelease) != len(req.Msg.TrackIds) {
-		return nil, errs.InvalidArgument("track_ids", "all tracks in the release must be included for reordering")
-	}
-
-	// Two-phase update to avoid unique constraint violations:
-	// 1. Set all to negative values
-	// 2. Flip to positive values
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, firstTrack.ReleaseID); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, firstTrack.ReleaseID, releaseActionManage); err != nil {
-			return err
-		}
-		var currentIDs []string
-		if err := tx.Model(&model.Track{}).Where("release_id = ?", firstTrack.ReleaseID).Order("track_number ASC").Pluck("id", &currentIDs).Error; err != nil {
-			return err
-		}
-		if slices.Equal(currentIDs, req.Msg.TrackIds) {
-			return nil
-		}
-		// Phase 1: Set to negative values using parameterized query
-		// We iterate through track IDs and update each one with its new position
-		for i, trackID := range req.Msg.TrackIds {
-			newOrder := -(i + 1) // Negative to avoid constraint violations
-			if err := tx.Exec("UPDATE track SET track_number = ? WHERE id = ? AND release_id = ?",
-				newOrder, trackID, firstTrack.ReleaseID).Error; err != nil {
-				return err
-			}
-		}
-
-		// Phase 2: Flip negative to positive for this release only
-		if err := tx.Exec("UPDATE track SET track_number = -track_number WHERE track_number < 0 AND release_id = ?",
-			firstTrack.ReleaseID).Error; err != nil {
-			return err
-		}
-
-		return s.appendReleaseTrackOrderAudit(ctx, tx, firstTrack.ReleaseID, req.Msg.TrackIds)
-	})
-
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	// Fetch updated tracks
-	var tracks []model.Track
-	if err := s.db.WithContext(ctx).
-		Where("release_id = ?", firstTrack.ReleaseID).
-		Order("track_number ASC").
-		Find(&tracks).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	result := make([]*managev1.TrackWithCredits, len(tracks))
-	for i := range tracks {
-		credits, err := s.getCreditsForTrack(ctx, tracks[i].ID)
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
-		result[i] = &managev1.TrackWithCredits{
-			Track:   s.toProto(&tracks[i]),
-			Credits: credits,
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListTracksByReleaseResponse{
-		Tracks: result,
-	}), nil
-}
-
-// toProtoForViewer converts a model.Track to protobuf Track.
-func (s *TrackService) toProtoForViewer(ctx context.Context, t *model.Track) *managev1.Track {
-	proto := &managev1.Track{
-		Id:          t.ID,
-		ReleaseId:   t.ReleaseID,
-		TrackNumber: int32(t.TrackNumber),
-		Title:       t.Title,
-		CreatedAt:   timestamppb.New(t.CreatedAt),
-	}
-
-	if t.DurationSeconds != nil {
-		v := int32(*t.DurationSeconds)
-		proto.DurationSeconds = &v
-	}
-
-	if t.AudioOriginalFileID != nil {
-		proto.AudioOriginalFileId = t.AudioOriginalFileID
-	}
-
-	if t.ProcessingStatus != nil {
-		proto.ProcessingStatus = t.ProcessingStatus
-	}
-	if t.Lyrics != nil {
-		proto.Lyrics = t.Lyrics
-	}
-
-	// Convert metadata to protobuf Struct
-	if t.Metadata != nil {
-		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
-			proto.Metadata = metadata
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
-			}
-		}
-	}
-
-	return proto
+	return summaries, err
 }

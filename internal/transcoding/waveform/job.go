@@ -45,11 +45,11 @@ func (p *Processor) generate(
 	event *apiv1.WaveformGenerateEvent,
 	startedAt time.Time,
 ) (*apiv1.WaveformCompleteEvent, [][]float64, error) {
-	workDir, err := p.createWorkDir(event, startedAt)
+	workDir, err := p.createWorkDir(ctx, event, startedAt)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer p.cleanupWorkDir(event.GetEventId())
+	defer p.cleanupWorkDir(ctx, event.GetEventId())
 	sourcePath, err := p.downloadSource(ctx, event, workDir, startedAt)
 	if err != nil {
 		return nil, nil, err

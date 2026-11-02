@@ -4,12 +4,16 @@ import (
 	"context"
 	"log/slog"
 
-	"connectrpc.com/connect"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
+	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"gorm.io/gorm"
 
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
@@ -24,15 +28,15 @@ func NewAssets(cdnDomain string) *Assets {
 }
 
 func (a *Assets) LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a *Assets) BindFeaturedImage(
 	ctx context.Context,
 	tx *gorm.DB,
 	fileID, formID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		fileID,
 		"form",
@@ -43,7 +47,7 @@ func (a *Assets) BindFeaturedImage(
 }
 
 func (a *Assets) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID string) error {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).ReleasePublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).ReleasePublicAssetBindings(
 		ctx,
 		"form",
 		formID,
@@ -51,24 +55,20 @@ func (a *Assets) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID s
 	)
 }
 
-func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *commonv1.AssetRef {
+func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *mediaasset.Reference {
 	var row struct {
 		FileID *string `gorm:"column:featured_image_file_id"`
 	}
 	if err := db.WithContext(ctx).Table("form").Select("featured_image_file_id").
 		Where("id = ?", formID).Scan(&row).Error; err != nil || row.FileID == nil {
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Form featured image lookup failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID)
 		}
 		return nil
 	}
-	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, db, a.cdnDomain, *row.FileID, "image")
+	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, *row.FileID, "image")
 	if err != nil {
-		level := slog.LevelError
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
+		slog.Log(ctx, errs.OperationLogLevel(err), "Form featured image asset resolution failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID, "file_id", *row.FileID)
 		return nil
 	}
 	return asset
@@ -79,7 +79,7 @@ func (*Assets) LocalizedOGDisposition(
 	db *gorm.DB,
 	formID, locale string,
 ) (formdomain.LocalizedOGDisposition, error) {
-	disposition, err := og.ResolveExactLocalizedGeneration(ctx, db, "form", formID, locale)
+	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(ctx, db, "form", formID, locale)
 	if err != nil {
 		return formdomain.LocalizedOGUnavailable, err
 	}
@@ -97,9 +97,11 @@ func (a *Assets) ResolvedOG(
 	ctx context.Context,
 	db *gorm.DB,
 	sourceID, localizedID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	return formogadapter.ReadyAsset(ctx, db, a.cdnDomain, localizedID, sourceID)
 }
 
-var _ formdomain.Assets = (*Assets)(nil)
-var _ formdomain.PublicAssets = (*Assets)(nil)
+var (
+	_ formpostgres.Assets       = (*Assets)(nil)
+	_ formpublicpostgres.Assets = (*Assets)(nil)
+)

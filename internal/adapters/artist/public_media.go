@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // PublicMedia owns the concrete DB/CDN projection used by public Artist
@@ -39,7 +40,7 @@ func (p *PublicMedia) LoadArtistImages(
 func (p *PublicMedia) ResolveReadyAssetRefs(
 	ctx context.Context,
 	candidates []*string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	ids := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate != nil && strings.TrimSpace(*candidate) != "" {
@@ -53,7 +54,7 @@ func (p *PublicMedia) ResolveArtistOGAsset(
 	ctx context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	for _, candidate := range []*string{localizedAssetID, sourceAssetID} {
 		if candidate == nil || strings.TrimSpace(*candidate) == "" {
 			continue
@@ -80,21 +81,21 @@ func (p *PublicMedia) IsReadyAsset(ctx context.Context, assetID string) (bool, e
 	return true, nil
 }
 
-func (p *PublicMedia) readyAssetRefByID(ctx context.Context, assetID string) (*commonv1.AssetRef, error) {
+func (p *PublicMedia) readyAssetRefByID(ctx context.Context, assetID string) (*mediaasset.Reference, error) {
 	var asset model.PublicAsset
 	if err := p.db.WithContext(ctx).
 		Where("id = ? AND status = ?", assetID, model.PublicAssetStatusReady).
 		Take(&asset).Error; err != nil {
 		return nil, err
 	}
-	return mediaasset.NewLifecycle(p.db, p.runtime.cdnDomain).AssetRef(asset)
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(p.db), p.runtime.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset))
 }
 
 func (p *PublicMedia) LoadReleaseArtworkAssets(
 	ctx context.Context,
 	releaseIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	result := make(map[string]*commonv1.AssetRef, len(releaseIDs))
+) (map[string]*mediaasset.Reference, error) {
+	result := make(map[string]*mediaasset.Reference, len(releaseIDs))
 	if len(releaseIDs) == 0 {
 		return result, nil
 	}
@@ -134,7 +135,7 @@ func (p *PublicMedia) LoadReleaseArtworkAssets(
 func (p *PublicMedia) LoadWorkImageAssets(
 	ctx context.Context,
 	workFileIDs map[string]*string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	fileIDs := make([]string, 0, len(workFileIDs))
 	for _, fileID := range workFileIDs {
 		if fileID != nil {
@@ -145,7 +146,7 @@ func (p *PublicMedia) LoadWorkImageAssets(
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*commonv1.AssetRef, len(workFileIDs))
+	result := make(map[string]*mediaasset.Reference, len(workFileIDs))
 	for workID, fileID := range workFileIDs {
 		if fileID != nil {
 			result[workID] = assets[*fileID]
@@ -158,9 +159,9 @@ func (p *PublicMedia) LoadReadySourceFileAssets(
 	ctx context.Context,
 	kind string,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	return mediaasset.LoadReadyPublicAssetRefsForSourceFiles(
-		ctx, p.db, p.runtime.cdnDomain, kind, fileIDs,
+		ctx, mediaassetpostgres.NewUnits(p.db), p.runtime.cdnDomain, kind, fileIDs,
 	)
 }
 

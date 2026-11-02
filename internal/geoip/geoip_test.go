@@ -90,3 +90,28 @@ func seedGeoIPNetwork(t *testing.T, db *gorm.DB, network string, geonameID int, 
 		location,
 	).Error)
 }
+
+func TestUnknownRoutableIPIsCachedUntilItsEntryExpires(t *testing.T) {
+	t.Parallel()
+	db := newGeoIPIntegrationDB(t)
+	lookup := geoip.NewLookup(db)
+	require.Nil(t, lookup.LookupIP(t.Context(), "8.8.8.8"))
+	seedGeoIPLocation(t, db, 5375480, "US", "United States", "Mountain View", "America/Los_Angeles")
+	seedGeoIPNetwork(t, db, "8.8.8.0/24", 5375480, "")
+	require.Nil(t, lookup.LookupIP(t.Context(), "8.8.8.8"), "a successful miss retains its negative cache entry")
+	require.NotNil(t, geoip.NewLookup(db).LookupIP(t.Context(), "8.8.8.8"), "a fresh lookup observes the newly stored network")
+}
+
+func TestLookupSQLFailureDoesNotBecomeANegativeCacheEntry(t *testing.T) {
+	t.Parallel()
+	db := newGeoIPIntegrationDB(t)
+	lookup := geoip.NewLookup(db)
+	require.NoError(t, db.Exec("ALTER TABLE geoip_network RENAME COLUMN network TO unavailable_network").Error)
+	require.Nil(t, lookup.LookupIP(t.Context(), "8.8.8.8"))
+	require.NoError(t, db.Exec("ALTER TABLE geoip_network RENAME COLUMN unavailable_network TO network").Error)
+	seedGeoIPLocation(t, db, 5375480, "US", "United States", "Mountain View", "America/Los_Angeles")
+	seedGeoIPNetwork(t, db, "8.8.8.0/24", 5375480, "")
+	found := lookup.LookupIP(t.Context(), "8.8.8.8")
+	require.NotNil(t, found)
+	require.Equal(t, "US", found.CountryCode)
+}

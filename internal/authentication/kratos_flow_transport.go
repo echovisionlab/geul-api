@@ -96,7 +96,7 @@ func copyBufferedKratosResponse(
 	}
 	w.WriteHeader(response.StatusCode)
 	if _, err := w.Write(body); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "write_authentication_response", "status_code", response.StatusCode, failurecause.Attr(err))
+		slog.WarnContext(ctx, "Authentication response write failed", "operation", "write_authentication_response", "status_code", response.StatusCode, failurecause.Attr(err))
 	}
 }
 

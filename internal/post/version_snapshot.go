@@ -2,16 +2,13 @@ package post
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -64,9 +61,6 @@ func unmarshalPostVersionContentSnapshot(
 		return postVersionContentSnapshot{}, nil, fmt.Errorf("decode Post Version content snapshot: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "decode_version_snapshot", "outcome", "failed", failurecause.Attr(err))
-		}
 		return postVersionContentSnapshot{}, nil, fmt.Errorf("post Version content snapshot must contain one object")
 	}
 	if envelope.SchemaVersion != postVersionContentSnapshotSchemaVersion {
@@ -109,12 +103,4 @@ func validatePostVersionLocalizedDocument(
 		return fmt.Errorf("post Version typed document overlay does not match source locale")
 	}
 	return contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), SourceLocale: sourceLocale, Base: document.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{document.GetLocaleOverlay()}}, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT)
-}
-
-func cloneNullableString(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }

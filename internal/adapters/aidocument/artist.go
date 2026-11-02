@@ -31,7 +31,7 @@ type artistDocumentAPI interface {
 // NewArtistRegistration binds the already-composed Artist service. The
 // adapter receives no DB/SpiceDB callback bag and owns only compact DCDP
 // projection and compilation.
-func NewArtistRegistration(service *artistdomain.InternalArtistService) (DomainRegistration, error) {
+func NewArtistRegistration(service *artistdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("artist AI document service is required")
 	}
@@ -79,72 +79,37 @@ func (p *artistPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Artist")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state artistdomain.AIDocumentState) (artistdomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return artistdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return artistdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[artistdomain.AIDocumentState, artistdomain.AIDocumentMutation, artistdomain.AIDocumentMutationResult]{
+		Domain:       "Artist",
+		ValidateOnly: mode == artistdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(artistdomain.AIDocumentState) (artistdomain.AIDocumentMutation, error)) (artistdomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state artistdomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state artistdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (artistdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := artistContributorID(state.ViewerMemberID)
 			if err != nil {
-				return artistdomain.AIDocumentMutation{}, err
+				return artistdomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return artistdomain.AIDocumentMutation{}, err
+				return artistdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return artistdomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == artistdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *artistdomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == artistdomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult artistdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.Revision),
+				Changed:          domainResult.Changed,
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
-				CurrentTargetRevision: artistTargetAIDocumentRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == artistdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Revision), Changed: domainResult.Changed,
-		TargetRevision: artistTargetAIDocumentRevision(domainResult.TargetRevision),
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: artistOperationHandles(operation, run.command.Locale),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+	})
 }
 
 func (p *artistPort) document(identity core.DocumentIdentity, locale core.Locale, state artistdomain.AIDocumentState) (core.Document, error) {
@@ -157,7 +122,7 @@ func (p *artistPort) document(identity core.DocumentIdentity, locale core.Locale
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision),
-		TargetRevision: artistTargetAIDocumentRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.codec.Catalog(), Nodes: nodes,
 	}, nil
@@ -167,7 +132,7 @@ func (p *artistPort) compile(state artistdomain.AIDocumentState, document core.D
 	mutation := artistdomain.AIDocumentMutation{
 		ArtistID: state.ArtistID, Locale: string(document.Locale),
 		ExpectedRevision: string(document.DocumentRevision), ExpectedSource: state.SourceLocale,
-		ExpectedTargetRevision: artistDomainTargetRevision(document.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(document.TargetRevision),
 		ExpectedPresence:       state.LocaleExists, ContributorMemberID: contributor,
 	}
 	if len(operations) == 1 && operations[0].Kind == core.OperationCreateTranslation {
@@ -180,7 +145,7 @@ func (p *artistPort) compile(state artistdomain.AIDocumentState, document core.D
 	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil && (document.Role() == core.LocaleRoleNonSource || operation.UnsetField.Target.Field == richTextContentField) {
-			return artistdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(artistOperationHandles(operation, document.Locale), "/"), Message: "Artist locale values use explicit empty instead of unset"}}, nil
+			return artistdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "artist"), Message: "Artist locale values use explicit empty instead of unset"}}, nil
 		}
 	}
 	batch, issues, err := p.codec.Compile(state.DocumentID, state.Document, document.Role(), document.DocumentRevision, contributor, operations)
@@ -209,25 +174,6 @@ func artistContributorID(value string) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("artist contributor Member must be a canonical UUID")
 	}
 	return contributor, nil
-}
-
-func artistTargetAIDocumentRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func artistDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
-}
-func artistOperationHandles(operation core.Operation, locale core.Locale) []string {
-	return compactOperationHandles(operation, locale, "artist")
 }
 
 var _ core.DomainPort = (*artistPort)(nil)

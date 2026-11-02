@@ -3,25 +3,22 @@ package og
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
+
+const defaultOgGenerationDeadline = 30 * time.Minute
+
+// Reload rereads the canonical requests of a run after every target lock.
+type Reload func(context.Context, Store) ([]Request, error)
 
 type preparedBulkOgRequest struct {
 	request       Request
@@ -33,64 +30,120 @@ type preparedBulkOgRequest struct {
 	originalIndex int
 }
 
-// Keep each SQL statement comfortably below PostgreSQL's bind-parameter and
-// expression-depth limits while retaining one transaction for the whole run.
-const ogBulkWriteBatchSize = 250
-
-// RequestBulkReloadedWithDB locks every target before reloading the canonical
-// entity snapshots. This closes the window where a concurrent content/config
-// mutation could otherwise leave an older snapshot as the latest generation.
-func (p *Planner) RequestBulkReloadedWithDB(
+// RequestBulk plans one run for requests in store's transaction. It locks
+// every target before reloading the canonical entity snapshots, which closes
+// the window where a concurrent content or config mutation could otherwise
+// leave an older snapshot as the latest generation.
+func RequestBulk(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	now time.Time,
 	triggerKind string,
 	reason string,
 	requests []Request,
-	reload ReloadRequests,
+	reload Reload,
 ) (*Plan, error) {
 	if reload == nil {
-		return nil, errs.InvalidArgument("reload", "canonical OG request reloader is required")
-	}
-	if tx == nil {
-		return nil, errs.InvalidArgument("transaction", "database transaction is required")
+		return nil, domainerr.InvalidField("reload", "canonical OG request reloader is required")
 	}
 	triggerKind = strings.TrimSpace(triggerKind)
 	reason = strings.TrimSpace(reason)
 	if triggerKind == "" {
-		return nil, errs.Required("trigger_kind")
+		return nil, domainerr.Required("trigger_kind")
 	}
 	if reason == "" {
-		return nil, errs.Required("reason")
+		return nil, domainerr.Required("reason")
 	}
 	if len(requests) == 0 {
-		return nil, errs.InvalidArgument("targets", "at least one OG target is required")
+		return nil, domainerr.InvalidField("targets", "at least one OG target is required")
 	}
 	plan := &Plan{RunID: uuid.NewString(), GenerationIDs: make([]string, len(requests))}
-	if err := p.requestBulkWithDB(ctx, tx, plan, triggerKind, reason, requests, p.now().UTC(), reload); err != nil {
+	if err := requestBulk(ctx, store, plan, triggerKind, reason, requests, now.UTC(), reload); err != nil {
 		return nil, err
 	}
 	return plan, nil
 }
 
-func (p *Planner) requestBulkWithDB(
+// RequestCurrent plans automatic work for the selected targets of one entity
+// after its owning mutation, in that mutation's transaction.
+func RequestCurrent(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	now time.Time,
+	entityType, entityID string,
+	selection Selection,
+	reason string,
+) (*Plan, error) {
+	requests, err := ResolveRequests(ctx, store, entityType, entityID, selection)
+	if err != nil {
+		return nil, err
+	}
+	return RequestBulk(ctx, store, now, "automatic", reason, requests, func(ctx context.Context, store Store) ([]Request, error) {
+		return ResolveRequests(ctx, store, entityType, entityID, selection)
+	})
+}
+
+// ResolveRequests routes one generation request to the entity's own source.
+func ResolveRequests(ctx context.Context, store Store, entityType, entityID string, selection Selection) ([]Request, error) {
+	policy, ok := PolicyForEntityName(entityType)
+	if !ok {
+		return nil, domainerr.InvalidEntityType(entityType)
+	}
+	if !SupportsNewGeneration(policy) {
+		return nil, domainerr.Precondition(
+			"release OG generation is disabled; the artwork public asset is used directly",
+		)
+	}
+	requests, err := store.ResolveRequests(ctx, policy.Name, entityID, selection)
+	if errors.Is(err, ErrEntityNotFound) {
+		return nil, domainerr.ResourceNotFound(policy.Name, strings.TrimSpace(entityID))
+	}
+	return requests, err
+}
+
+// CollectRequests combines every source's current requests for global work.
+func CollectRequests(ctx context.Context, store Store) ([]Request, error) {
+	requests, err := store.CollectRequests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeRequests(requests), nil
+}
+
+func dedupeRequests(requests []Request) []Request {
+	result := make([]Request, 0, len(requests))
+	seen := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		key := strings.TrimSpace(request.EntityType) + "\x00" +
+			strings.TrimSpace(request.EntityID) + "\x00" + stringValue(request.Locale)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, request)
+	}
+	return result
+}
+
+func requestBulk(
+	ctx context.Context,
+	store Store,
 	plan *Plan,
 	triggerKind string,
 	reason string,
 	requests []Request,
 	now time.Time,
-	reload ReloadRequests,
+	reload Reload,
 ) error {
 	prepared, err := prepareBulkOgRequests(requests)
 	if err != nil {
 		return err
 	}
-	targets, err := lockBulkOgTargets(tx, prepared, now)
+	targets, err := lockBulkOgTargets(ctx, store, prepared, now)
 	if err != nil {
 		return err
 	}
-	prepared, err = reloadCanonicalBulkOgRequests(ctx, tx, prepared, reload)
+	prepared, err = reloadCanonicalBulkOgRequests(ctx, store, prepared, reload)
 	if err != nil {
 		return err
 	}
@@ -98,121 +151,124 @@ func (p *Planner) requestBulkWithDB(
 	// The run-wide config snapshot is deliberately read after target locks. If
 	// a settings transaction is waiting on one of these targets, its newer run
 	// will follow this one; if it committed first, this read observes it.
-	configJSON, revision, err := p.config.Snapshot(ctx, tx, p.cdnDomain)
+	configJSON, revision, err := store.RenderConfigSnapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("snapshot OG render config: %w", err)
 	}
-	run := model.OgGenerationRun{
+	if err := store.InsertRun(ctx, Run{
 		ID: plan.RunID, TriggerKind: triggerKind, Reason: reason,
 		RenderConfigSnapshot: configJSON, ConfigRevision: revision,
-		Status: model.OgGenerationRunStatusQueued, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := tx.Create(&run).Error; err != nil {
+		Status: RunQueued, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
 		return err
 	}
 
-	featuredAssets, err := loadBulkOgFeaturedAssets(ctx, tx, p.cdnDomain, prepared)
+	generations, err := buildBulkOgGenerations(ctx, store, plan, prepared, targets, now)
 	if err != nil {
 		return err
 	}
-
-	assets := make([]model.PublicAsset, len(prepared))
-	generations := make([]model.OgGeneration, len(prepared))
-	for i, item := range prepared {
-		assetID := uuid.NewString()
-		objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
-		if err != nil {
-			return err
-		}
-		assets[i] = model.PublicAsset{
-			ID: assetID, Kind: "og", ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp",
-			Disposition: "inline", Status: model.PublicAssetStatusAllocated, CreatedAt: now, UpdatedAt: now,
-		}
-		target := targets[item.targetKey]
-		resolvedTitle, err := sitevariable.ResolvePublicText(ctx, tx, item.request.Title)
-		if err != nil {
-			return err
-		}
-		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
-			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
-			Locale:        item.locale,
-			FeaturedImage: featuredAssets[stringValue(item.request.FeaturedImageFileID)],
-			Output:        ogOutputSnapshot{AssetID: assetID, ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp"},
-		})
-		if err != nil {
-			return err
-		}
-		generations[i] = model.OgGeneration{
-			ID: assetID, RunID: run.ID, TargetID: target.ID,
-			Status: model.OgGenerationStatusQueued, EntitySnapshot: snapshotJSON,
-			DeadlineAt: now.Add(defaultOgGenerationDeadline),
-			CreatedAt:  now, UpdatedAt: now,
-		}
-		plan.GenerationIDs[item.originalIndex] = assetID
-	}
-	if err := tx.CreateInBatches(&assets, ogBulkWriteBatchSize).Error; err != nil {
-		return err
-	}
-	if err := tx.CreateInBatches(&generations, ogBulkWriteBatchSize).Error; err != nil {
+	if err := store.InsertGenerations(ctx, generations); err != nil {
 		return err
 	}
 
 	for i, item := range prepared {
 		target := targets[item.targetKey]
 		if target.LatestGenerationID != nil && *target.LatestGenerationID != generations[i].ID {
-			if err := supersedeActiveOgGeneration(
-				tx,
-				target.ID,
-				*target.LatestGenerationID,
-				generations[i].ID,
-				now,
-			); err != nil {
+			if err := supersedeActiveOgGeneration(ctx, store, target.ID, *target.LatestGenerationID, generations[i].ID, now); err != nil {
 				return err
 			}
 		}
 	}
-	if err := updateBulkOgTargetPointers(tx, prepared, targets, generations, now); err != nil {
+	pointers := make([]TargetPointer, len(prepared))
+	for i, item := range prepared {
+		pointers[i] = TargetPointer{TargetID: targets[item.targetKey].ID, GenerationID: generations[i].ID}
+	}
+	updated, err := store.PointTargets(ctx, pointers, now)
+	if err != nil {
 		return err
 	}
-	if err := p.releasePending(ctx, tx, prepared); err != nil {
-		return err
+	if updated != int64(len(pointers)) {
+		return domainerr.Precondition("one or more OG target pointers changed during bulk enqueue")
+	}
+	// A pending render must not keep serving the previous raster because it
+	// can contain an obsolete title, logo, featured image, or legal notice.
+	// Clearing the projection and its exact binding makes public metadata use
+	// the entity fallback (then Site OG) until the latest generation completes.
+	for _, item := range prepared {
+		if err := store.ReleasePendingProjection(ctx, item.target()); err != nil {
+			return err
+		}
 	}
 
 	for i, generation := range generations {
 		target := targets[prepared[i].targetKey]
 		target.LatestGenerationID = &generation.ID
-		notifyOgLifecycle(tx, &generation, &target, model.OgGenerationStatusQueued, nil, nil, now)
+		store.NotifyLifecycle(ctx, LifecycleEvent{
+			Generation: generation.Generation, Target: target, Status: StatusQueued, OccurredAt: now,
+		})
 	}
-	if tx.Dialector.Name() == "postgres" {
-		executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-		if !ok {
-			return fmt.Errorf("OG generation transaction does not expose a PGMQ executor")
-		}
-		for _, generation := range generations {
-			if err := mq.EnqueueProtobuf(
-				ctx,
-				executor,
-				eventpkg.QueueOgGenerate,
-				generation.ID,
-				&managev1.OgGenerationJob{GenerationId: generation.ID},
-			); err != nil {
-				return fmt.Errorf("enqueue OG generation %s: %w", generation.ID, err)
-			}
+	for _, generation := range generations {
+		if err := store.EnqueueGeneration(ctx, generation.ID); err != nil {
+			return fmt.Errorf("enqueue OG generation %s: %w", generation.ID, err)
 		}
 	}
 	return nil
 }
 
+func buildBulkOgGenerations(
+	ctx context.Context,
+	store Store,
+	plan *Plan,
+	prepared []preparedBulkOgRequest,
+	targets map[string]GenerationTarget,
+	now time.Time,
+) ([]NewGeneration, error) {
+	featuredAssets, err := loadBulkOgFeaturedAssets(ctx, store, prepared)
+	if err != nil {
+		return nil, err
+	}
+	generations := make([]NewGeneration, len(prepared))
+	for i, item := range prepared {
+		assetID := uuid.NewString()
+		objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
+		if err != nil {
+			return nil, err
+		}
+		resolvedTitle, err := store.ResolvePublicText(ctx, item.request.Title)
+		if err != nil {
+			return nil, err
+		}
+		output := Output{AssetID: assetID, ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp"}
+		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
+			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
+			Locale:        item.locale,
+			FeaturedImage: featuredAssets[stringValue(optionalString(item.request.FeaturedImageFileID))],
+			Output:        ogOutputSnapshot(output),
+		})
+		if err != nil {
+			return nil, err
+		}
+		generations[i] = NewGeneration{
+			Generation: Generation{
+				ID: assetID, RunID: plan.RunID, TargetID: targets[item.targetKey].ID,
+				Status: StatusQueued, EntitySnapshot: snapshotJSON,
+				DeadlineAt: now.Add(defaultOgGenerationDeadline),
+				CreatedAt:  now, UpdatedAt: now,
+			},
+			Output: output,
+		}
+		plan.GenerationIDs[item.originalIndex] = assetID
+	}
+	return generations, nil
+}
+
 func reloadCanonicalBulkOgRequests(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	prepared []preparedBulkOgRequest,
-	reload ReloadRequests,
+	reload Reload,
 ) ([]preparedBulkOgRequest, error) {
-	if reload == nil {
-		return prepared, nil
-	}
-	reloadedRequests, err := reload(ctx, tx)
+	reloadedRequests, err := reload(ctx, store)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +277,7 @@ func reloadCanonicalBulkOgRequests(
 		return nil, err
 	}
 	if len(reloaded) != len(prepared) {
-		return nil, errs.FailedPrecondition("OG target set changed while taking its canonical snapshot")
+		return nil, domainerr.Precondition("OG target set changed while taking its canonical snapshot")
 	}
 
 	reloadedByTarget := make(map[string]preparedBulkOgRequest, len(reloaded))
@@ -232,29 +288,12 @@ func reloadCanonicalBulkOgRequests(
 	for i, original := range prepared {
 		item, exists := reloadedByTarget[original.targetKey]
 		if !exists {
-			return nil, errs.FailedPrecondition("OG target set changed while taking its canonical snapshot")
+			return nil, domainerr.Precondition("OG target set changed while taking its canonical snapshot")
 		}
 		item.originalIndex = original.originalIndex
 		canonical[i] = item
 	}
 	return canonical, nil
-}
-
-// A pending render must not keep serving the previous raster because it can
-// contain an obsolete title, logo, featured image, or legal notice. Clearing
-// the projection and its exact binding makes public metadata use the entity
-// fallback (then Site OG) until the latest generation completes.
-func (p *Planner) releasePending(ctx context.Context, tx *gorm.DB, prepared []preparedBulkOgRequest) error {
-	for _, item := range prepared {
-		projection, err := projectionFor(p.projections, item.target())
-		if err != nil {
-			return err
-		}
-		if err := projection.ReleasePending(ctx, tx, item.target(), p.cdnDomain); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func prepareBulkOgRequests(requests []Request) ([]preparedBulkOgRequest, error) {
@@ -263,11 +302,11 @@ func prepareBulkOgRequests(requests []Request) ([]preparedBulkOgRequest, error) 
 	for index, request := range requests {
 		entityType := strings.TrimSpace(request.EntityType)
 		if entityType == "" {
-			return nil, errs.Required("entity_type")
+			return nil, domainerr.Required("entity_type")
 		}
 		entityID := strings.TrimSpace(request.EntityID)
 		if entityID == "" {
-			return nil, errs.Required("entity_id")
+			return nil, domainerr.Required("entity_id")
 		}
 		rawLocale := optionalString(request.Locale)
 		canonicalLocale, err := (Target{Locale: rawLocale}).CanonicalLocale()
@@ -280,20 +319,20 @@ func prepareBulkOgRequests(requests []Request) ([]preparedBulkOgRequest, error) 
 		}
 		targetKind := strings.TrimSpace(request.Kind)
 		switch targetKind {
-		case "entity":
+		case KindEntity:
 			if locale != nil {
-				return nil, errs.InvalidArgument("locale", "entity OG targets do not accept a locale")
+				return nil, domainerr.InvalidField("locale", "entity OG targets do not accept a locale")
 			}
-		case "locale":
+		case KindLocale:
 			if locale == nil {
-				return nil, errs.Required("locale")
+				return nil, domainerr.Required("locale")
 			}
 		default:
-			return nil, errs.InvalidArgument("kind", "must be entity or locale")
+			return nil, domainerr.InvalidField("kind", "must be entity or locale")
 		}
 		key := bulkOgTargetKey(entityType, entityID, locale)
 		if _, exists := seen[key]; exists {
-			return nil, errs.InvalidArgument("targets", "duplicate OG target "+key)
+			return nil, domainerr.InvalidField("targets", "duplicate OG target "+key)
 		}
 		seen[key] = struct{}{}
 		prepared = append(prepared, preparedBulkOgRequest{
@@ -306,8 +345,7 @@ func prepareBulkOgRequests(requests []Request) ([]preparedBulkOgRequest, error) 
 
 func loadBulkOgFeaturedAssets(
 	ctx context.Context,
-	tx *gorm.DB,
-	cdnDomain string,
+	store Store,
 	prepared []preparedBulkOgRequest,
 ) (map[string]*ogAssetRefSnapshot, error) {
 	fileIDs := make([]string, 0)
@@ -324,85 +362,40 @@ func loadBulkOgFeaturedAssets(
 	if len(fileIDs) == 0 {
 		return result, nil
 	}
-	var assets []model.PublicAsset
-	if err := tx.WithContext(ctx).
-		Where("source_file_id IN ? AND status = ?", fileIDs, model.PublicAssetStatusReady).
-		Order("source_file_id, created_at DESC").Find(&assets).Error; err != nil {
+	refs, err := store.ReadyAssetsForFiles(ctx, fileIDs)
+	if err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, cdnDomain)
-	for _, asset := range assets {
-		fileID := stringValue(asset.SourceFileID)
-		if _, exists := result[fileID]; exists {
-			continue
-		}
-		ref, err := lifecycle.AssetRef(asset)
-		if err != nil {
-			return nil, err
+	for _, fileID := range fileIDs {
+		ref, ok := refs[fileID]
+		if !ok {
+			return nil, domainerr.ResourceNotFound("public_asset_for_source_file", fileID)
 		}
 		result[fileID] = snapshotAssetRef(ref)
-	}
-	for _, fileID := range fileIDs {
-		if result[fileID] == nil {
-			return nil, errs.NotFound("public_asset_for_source_file", fileID)
-		}
 	}
 	return result, nil
 }
 
 func lockBulkOgTargets(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	prepared []preparedBulkOgRequest,
 	now time.Time,
-) (map[string]model.OgGenerationTarget, error) {
+) (map[string]GenerationTarget, error) {
 	ordered := append([]preparedBulkOgRequest(nil), prepared...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].targetKey < ordered[j].targetKey })
-	proposals := make([]model.OgGenerationTarget, len(ordered))
+	proposals := make([]GenerationTarget, len(ordered))
 	for i, item := range ordered {
-		proposals[i] = model.OgGenerationTarget{
+		proposals[i] = GenerationTarget{
 			ID: uuid.NewString(), EntityType: item.entityType, EntityID: item.entityID,
 			TargetKind: item.targetKind, Locale: item.locale, CreatedAt: now, UpdatedAt: now,
 		}
 	}
-	conflict := clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "entity_type"},
-			{Name: "entity_id"},
-			{Name: "locale"},
-		},
-		DoNothing: true,
-	}
-	if tx.Dialector.Name() == "postgres" {
-		conflict.Columns = nil
-		conflict.OnConstraint = "uq_og_generation_target_identity"
-	}
-	if err := tx.Clauses(conflict).CreateInBatches(&proposals, ogBulkWriteBatchSize).Error; err != nil {
+	rows, err := store.LockTargets(ctx, proposals)
+	if err != nil {
 		return nil, err
 	}
-	var rows []model.OgGenerationTarget
-	for start := 0; start < len(ordered); start += ogBulkWriteBatchSize {
-		end := min(start+ogBulkWriteBatchSize, len(ordered))
-		batch := ordered[start:end]
-		where := make([]string, 0, len(batch))
-		args := make(structured.Values, 0, len(batch)*3)
-		for _, item := range batch {
-			if item.locale == nil {
-				where = append(where, "(entity_type = ? AND entity_id = ? AND locale IS NULL)")
-				args = append(args, item.entityType, item.entityID)
-			} else {
-				where = append(where, "(entity_type = ? AND entity_id = ? AND locale = ?)")
-				args = append(args, item.entityType, item.entityID, *item.locale)
-			}
-		}
-		var batchRows []model.OgGenerationTarget
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(strings.Join(where, " OR "), args...).
-			Order("entity_type, entity_id, COALESCE(locale, '')").Find(&batchRows).Error; err != nil {
-			return nil, err
-		}
-		rows = append(rows, batchRows...)
-	}
-	result := make(map[string]model.OgGenerationTarget, len(rows))
+	result := make(map[string]GenerationTarget, len(rows))
 	for _, row := range rows {
 		result[bulkOgTargetKey(row.EntityType, row.EntityID, row.Locale)] = row
 	}
@@ -415,37 +408,32 @@ func lockBulkOgTargets(
 	return result, nil
 }
 
-func updateBulkOgTargetPointers(
-	tx *gorm.DB,
-	prepared []preparedBulkOgRequest,
-	targets map[string]model.OgGenerationTarget,
-	generations []model.OgGeneration,
+// supersedeActiveOgGeneration retires the target's previous active
+// generation in favor of the one just planned.
+func supersedeActiveOgGeneration(
+	ctx context.Context,
+	store Store,
+	targetID string,
+	generationID string,
+	replacementID string,
 	now time.Time,
 ) error {
-	for start := 0; start < len(prepared); start += ogBulkWriteBatchSize {
-		end := min(start+ogBulkWriteBatchSize, len(prepared))
-		var caseSQL strings.Builder
-		caseSQL.WriteString("CASE id")
-		args := make(structured.Values, 0, (end-start)*2)
-		ids := make([]string, 0, end-start)
-		for index := start; index < end; index++ {
-			target := targets[prepared[index].targetKey]
-			caseSQL.WriteString(" WHEN ? THEN ?")
-			args = append(args, target.ID, generations[index].ID)
-			ids = append(ids, target.ID)
-		}
-		caseSQL.WriteString(" ELSE latest_generation_id END")
-		result := tx.Model(&model.OgGenerationTarget{}).Where("id IN ?", ids).Updates(structured.Fields{
-			"latest_generation_id": gorm.Expr(caseSQL.String(), args...), "updated_at": now,
-		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != int64(len(ids)) {
-			return errs.FailedPrecondition("one or more OG target pointers changed during bulk enqueue")
-		}
+	superseded, err := store.SupersedeReplacedGeneration(ctx, targetID, generationID, replacementID, now)
+	if err != nil || !superseded {
+		return err
 	}
-	return nil
+	generation, err := store.Generation(ctx, generationID)
+	if err != nil {
+		return err
+	}
+	target, err := store.Target(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	store.NotifyLifecycle(ctx, LifecycleEvent{
+		Generation: generation, Target: target, Status: StatusSuperseded, ReplacementID: &replacementID, OccurredAt: now,
+	})
+	return refreshOgRunStatus(ctx, store, generation.RunID, now)
 }
 
 func bulkOgTargetKey(entityType string, entityID string, locale *string) string {

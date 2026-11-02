@@ -3,12 +3,12 @@ package domainaudit
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -50,26 +50,31 @@ func TestAuditFailuresKeepCauseAndAction(t *testing.T) {
 					}
 					return sharedtelemetry.NewPostVersionCreatedAuditRecord(metadata, "post-1", "version-1", []string{"1b6bcad2-c90d-49e9-bec7-f9a4ba6b2894"})
 				})
-			if err != failure {
+			if !errors.Is(err, failure) {
 				t.Fatalf("error = %v, want original failure", err)
 			}
-			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-			var entry map[string]any
-			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &entry); err != nil {
-				t.Fatal(err)
+			// The caller's failure record logs the cause; the append does not.
+			if strings.Contains(output.String(), "audit store unavailable") {
+				t.Fatalf("audit append logged the failure it returned: %s", output.String())
 			}
-			cause, ok := entry["failure_cause"].(string)
-			if !ok || entry["action"] != string(sharedtelemetry.AuditPostUpdated) {
-				t.Fatalf("missing cause or action: %v", entry)
+			recorded := failurecause.Of(err)
+			action := ""
+			for _, attr := range recorded.Attrs {
+				if attr.Key == "action" {
+					action = attr.Value.String()
+				}
+			}
+			if action != string(sharedtelemetry.AuditPostUpdated) {
+				t.Fatalf("missing action: %v", recorded.Attrs)
 			}
 			for _, want := range []string{"audit store unavailable", `column "action" <record> {constraint detail}`} {
-				if !strings.Contains(cause, want) {
-					t.Fatalf("cause missing %q: %s", want, cause)
+				if !strings.Contains(recorded.Cause, want) {
+					t.Fatalf("cause missing %q: %s", want, recorded.Cause)
 				}
 			}
 			for _, private := range []string{"reader@example.test", "private-password"} {
-				if strings.Contains(output.String(), private) {
-					t.Fatalf("log contains private value %q", private)
+				if strings.Contains(recorded.Cause, private) {
+					t.Fatalf("cause contains private value %q", private)
 				}
 			}
 		})

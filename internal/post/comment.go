@@ -5,21 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"slices"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 const (
@@ -31,64 +31,147 @@ const (
 	maxReplyLimit       = 50
 )
 
+// Comment messages clients branch on.
+const (
+	msgCommentsDisabled         = "comments are disabled for this post"
+	msgCannotCommentUnpublished = "cannot comment on unpublished post"
+	msgCannotUpdateDeleted      = "cannot update deleted comment"
+)
+
+// deletedCommentContent replaces the content of a deleted comment.
+const deletedCommentContent = "[This comment has been deleted]"
+
+// CommentDeps are the collaborators of the comment use cases. Every field
+// is required; NewCommentService rejects a missing one.
+type CommentDeps struct {
+	Units   mutation.UnitOfWork[Store] // postpostgres.NewUnits
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence // identitystate.PostgresFence{}
+	Members MemberSummaryLoader
+	Audit   domainaudit.Appender
+}
+
+// CommentService holds the use cases of Post comments.
 type CommentService struct {
-	db      *gorm.DB
-	spiceDB *auth.SpiceDBClient
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	members   MemberSummaryLoader
+	mutations *mutation.StoreRunner[Store]
+}
+
+// NewCommentService validates deps and returns the comment use cases.
+func NewCommentService(deps CommentDeps) (*CommentService, error) {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": deps.Units == nil, "SpiceDB": deps.SpiceDB == nil, "Fence": deps.Fence == nil,
+		"Members": deps.Members == nil, "Audit": deps.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return nil, errors.New("comment dependencies are required: " + strings.Join(missing, ", "))
+	}
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &CommentService{units: deps.Units, spiceDB: deps.SpiceDB, members: deps.Members, mutations: mutations}, nil
+}
+
+// commentReader reads comments in a snapshot that already authorized their
+// Post.
+type commentReader struct {
+	store   CommentReads
 	members MemberSummaryLoader
 }
 
-func NewCommentService(db *gorm.DB, spiceDB *auth.SpiceDBClient, members MemberSummaryLoader) *CommentService {
-	if db == nil || members == nil {
-		panic("comment service dependencies are required")
-	}
-	return &CommentService{
-		db:      db,
-		spiceDB: spiceDB,
-		members: members,
-	}
+// ListCommentsQuery reads a page of a Post's top-level comments with their
+// first replies.
+type ListCommentsQuery struct {
+	PostID     string
+	Limit      int32
+	Cursor     *string
+	ReplyLimit int32
+}
+
+// LoadMoreRepliesQuery reads a page of a comment's direct replies.
+type LoadMoreRepliesQuery struct {
+	CommentID string
+	Limit     int32
+	Cursor    *string
+}
+
+// CreateCommentCommand comments on a published Post, under ParentID when
+// set.
+type CreateCommentCommand struct {
+	PostID   string
+	ParentID *string
+	Content  string
+}
+
+type UpdateCommentCommand struct{ ID, Content string }
+type DeleteCommentCommand struct{ ID string }
+
+// CommentNode is a comment with its author and the first page of its
+// replies.
+type CommentNode struct {
+	Comment
+	Author          *memberref.Summary
+	Replies         []*CommentNode
+	HasMoreReplies  bool
+	TotalReplyCount int32
+}
+
+// CommentPage is one page of comments.
+type CommentPage struct {
+	Comments   []*CommentNode
+	NextCursor *string
+	HasMore    bool
+	TotalCount int32
+}
+
+// AuthoredComment is a comment with its author.
+type AuthoredComment struct {
+	Comment
+	Author *memberref.Summary
 }
 
 // ListCommentsByPost returns comments for a post with Reddit-style pagination
-func (s *CommentService) ListCommentsByPost(
-	ctx context.Context,
-	req *connect.Request[managev1.ListCommentsByPostRequest],
-) (_ *connect.Response[managev1.ListCommentsByPostResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListCommentsByPost", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+func (s *CommentService) ListCommentsByPost(ctx context.Context, query ListCommentsQuery) (_ CommentPage, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", query.PostID))
 
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return CommentPage{}, domainerr.AuthenticationRequired()
 	}
 
-	if req.Msg.PostId == "" {
-		return nil, errs.Required("post_id")
+	if query.PostID == "" {
+		return CommentPage{}, domainerr.Required("post_id")
 	}
 
-	var response *connect.Response[managev1.ListCommentsByPostResponse]
-	err := s.withReadablePost(ctx, req.Msg.PostId, func(reader *CommentService) error {
+	var page CommentPage
+	err := s.withReadablePost(ctx, query.PostID, func(store Store) error {
 		var err error
-		response, err = reader.ReadCommentsByPost(ctx, req)
+		page, err = ReadComments(ctx, store, s.members, query)
 		return err
 	})
-	return response, err
+	return page, err
 }
 
-// ReadCommentsByPost reads within the caller's authorized Post snapshot.
-// The caller must hold the Post root lock and check visibility and comments_enabled.
-func (s *CommentService) ReadCommentsByPost(
-	ctx context.Context,
-	req *connect.Request[managev1.ListCommentsByPostRequest],
-) (*connect.Response[managev1.ListCommentsByPostResponse], error) {
+// ReadComments reads within the caller's authorized Post snapshot, which
+// store is bound to. The caller must hold the Post root lock and check
+// visibility and comments_enabled.
+func ReadComments(ctx context.Context, store CommentReads, members MemberSummaryLoader, query ListCommentsQuery) (CommentPage, error) {
+	return commentReader{store: store, members: members}.readComments(ctx, query)
+}
 
+func (s commentReader) readComments(ctx context.Context, request ListCommentsQuery) (CommentPage, error) {
 	// Normalize pagination params
-	limit := int(req.Msg.Limit)
+	limit := int(request.Limit)
 	if limit <= 0 {
 		limit = defaultCommentLimit
 	}
@@ -96,7 +179,7 @@ func (s *CommentService) ReadCommentsByPost(
 		limit = maxCommentLimit
 	}
 
-	replyLimit := int(req.Msg.ReplyLimit)
+	replyLimit := int(request.ReplyLimit)
 	if replyLimit <= 0 {
 		replyLimit = defaultReplyLimit
 	}
@@ -105,31 +188,20 @@ func (s *CommentService) ReadCommentsByPost(
 	}
 
 	// Count total top-level comments
-	var totalCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Comment{}).
-		Where("post_id = ? AND parent_id IS NULL", req.Msg.PostId).
-		Count(&totalCount).Error; err != nil {
-		return nil, errs.Internal(err)
+	totalCount, err := s.store.CountComments(ctx, request.PostID, nil)
+	if err != nil {
+		return CommentPage{}, err
 	}
 
-	// Build query for top-level comments
-	query := s.db.WithContext(ctx).
-		Table("comment c").
-		Select(`c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-				c.created_at, c.updated_at`).
-		Where("c.post_id = ? AND c.parent_id IS NULL", req.Msg.PostId).
-		Order("c.created_at ASC, c.id ASC")
-
-	query, err := s.applyCommentCursor(ctx, query, req.Msg.PostId, req.Msg.Cursor)
+	after, err := s.commentCursor(ctx, request.PostID, request.Cursor)
 	if err != nil {
-		return nil, err
+		return CommentPage{}, err
 	}
 
 	// Fetch limit + 1 to know if there are more
-	var topLevelComments []model.CommentWithAuthor
-	if err := query.Limit(limit + 1).Find(&topLevelComments).Error; err != nil {
-		return nil, errs.Internal(err)
+	topLevelComments, err := s.store.ListComments(ctx, request.PostID, nil, after, limit+1)
+	if err != nil {
+		return CommentPage{}, err
 	}
 
 	// Determine if there are more comments
@@ -152,127 +224,85 @@ func (s *CommentService) ReadCommentsByPost(
 	}
 
 	// Fetch all replies for these top-level comments (we need all to build tree)
-	var allReplies []model.CommentWithAuthor
+	var allReplies []Comment
 	if len(topLevelIDs) > 0 {
-		// Use recursive CTE to get all descendants
-		err := s.db.WithContext(ctx).Raw(`
-			WITH RECURSIVE comment_tree AS (
-				SELECT id, parent_id, 1 as depth
-				FROM comment
-				WHERE post_id = ? AND parent_id IN (?)
-
-				UNION ALL
-
-				SELECT c.id, c.parent_id, ct.depth + 1
-				FROM comment c
-				INNER JOIN comment_tree ct ON c.parent_id = ct.id
-				WHERE c.post_id = ? AND ct.depth < ?
-			)
-			SELECT c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-				   c.created_at, c.updated_at
-			FROM comment c
-			WHERE c.id IN (SELECT id FROM comment_tree)
-			ORDER BY c.created_at ASC, c.id ASC
-		`, req.Msg.PostId, topLevelIDs, req.Msg.PostId, maxCommentDepth).Scan(&allReplies).Error
-		if err != nil {
-			return nil, errs.Internal(err)
+		if allReplies, err = s.store.CommentDescendants(ctx, request.PostID, topLevelIDs, maxCommentDepth); err != nil {
+			return CommentPage{}, err
 		}
 	}
 
 	summaries, err := s.commentMemberSummaries(ctx, topLevelComments, allReplies)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return CommentPage{}, err
 	}
-	tree := s.buildCommentTreeWithPagination(topLevelComments, allReplies, replyLimit, summaries)
+	tree := buildCommentTreeWithPagination(topLevelComments, allReplies, replyLimit, summaries)
 
-	return connect.NewResponse(&managev1.ListCommentsByPostResponse{
+	return CommentPage{
 		Comments:   tree,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
 		TotalCount: int32(totalCount),
-	}), nil
+	}, nil
 }
 
-func (s *CommentService) applyCommentCursor(
-	ctx context.Context,
-	query *gorm.DB,
-	postID string,
-	cursor *string,
-) (*gorm.DB, error) {
+// commentCursor is where a top-level page continues; a cursor that names
+// no top-level comment of the Post starts from the beginning.
+func (s commentReader) commentCursor(ctx context.Context, postID string, cursor *string) (*CommentCursorAt, error) {
 	if cursor == nil || *cursor == "" {
-		return query, nil
+		return nil, nil
 	}
-
-	var cursorComment model.Comment
-	err := s.db.WithContext(ctx).
-		Select("created_at").
-		Where("id = ? AND post_id = ? AND parent_id IS NULL", *cursor, postID).
-		First(&cursorComment).Error
-	if err == gorm.ErrRecordNotFound {
-		return query, nil
+	createdAt, found, err := s.store.CommentCursor(ctx, postID, nil, *cursor)
+	if err != nil || !found {
+		return nil, err
 	}
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return query.Where(
-		"c.created_at > ? OR (c.created_at = ? AND c.id > ?)",
-		cursorComment.CreatedAt,
-		cursorComment.CreatedAt,
-		*cursor,
-	), nil
+	return &CommentCursorAt{ID: *cursor, CreatedAt: createdAt}, nil
 }
 
 // LoadMoreReplies returns more replies for a specific comment
-func (s *CommentService) LoadMoreReplies(
-	ctx context.Context,
-	req *connect.Request[managev1.LoadMoreRepliesRequest],
-) (_ *connect.Response[managev1.LoadMoreRepliesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadMoreReplies", "outcome", "failed", "comment_id", req.Msg.GetCommentId(), failurecause.Attr(returnErr))
-	}()
+func (s *CommentService) LoadMoreReplies(ctx context.Context, request LoadMoreRepliesQuery) (_ CommentPage, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", request.CommentID))
 
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return CommentPage{}, domainerr.AuthenticationRequired()
 	}
 
-	if req.Msg.CommentId == "" {
-		return nil, errs.Required("comment_id")
+	if request.CommentID == "" {
+		return CommentPage{}, domainerr.Required("comment_id")
 	}
 
 	// Find the parent comment and verify it exists
-	var parentComment model.Comment
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.CommentId).First(&parentComment).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("comment not found")
+	var parentComment Comment
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		parentComment, err = store.FindComment(ctx, request.CommentID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrCommentNotFound) {
+			return CommentPage{}, domainerr.New(domainerr.NotFound, "", "comment not found")
 		}
-		return nil, errs.Internal(err)
+		return CommentPage{}, err
 	}
 
-	var response *connect.Response[managev1.LoadMoreRepliesResponse]
-	err := s.withReadablePost(ctx, parentComment.PostID, func(reader *CommentService) error {
+	var page CommentPage
+	err := s.withReadablePost(ctx, parentComment.PostID, func(store Store) error {
 		var err error
-		response, err = reader.ReadCommentReplies(ctx, req, parentComment)
+		page, err = ReadCommentReplies(ctx, store, s.members, request, parentComment)
 		return err
 	})
-	return response, err
+	return page, err
 }
 
-// ReadCommentReplies reads replies within the caller's authorized Post snapshot.
-func (s *CommentService) ReadCommentReplies(
-	ctx context.Context,
-	req *connect.Request[managev1.LoadMoreRepliesRequest],
-	parentComment model.Comment,
-) (*connect.Response[managev1.LoadMoreRepliesResponse], error) {
+// ReadCommentReplies reads replies within the caller's authorized Post
+// snapshot, which store is bound to.
+func ReadCommentReplies(ctx context.Context, store CommentReads, members MemberSummaryLoader, query LoadMoreRepliesQuery, parentComment Comment) (CommentPage, error) {
+	return commentReader{store: store, members: members}.readCommentReplies(ctx, query, parentComment)
+}
 
+func (s commentReader) readCommentReplies(ctx context.Context, request LoadMoreRepliesQuery, parentComment Comment) (CommentPage, error) {
 	// Normalize limit
-	limit := int(req.Msg.Limit)
+	limit := int(request.Limit)
 	if limit <= 0 {
 		limit = 10
 	}
@@ -281,40 +311,26 @@ func (s *CommentService) ReadCommentReplies(
 	}
 
 	// Count total direct replies
-	var totalCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Comment{}).
-		Where("post_id = ? AND parent_id = ?", parentComment.PostID, req.Msg.CommentId).
-		Count(&totalCount).Error; err != nil {
-		return nil, errs.Internal(err)
+	totalCount, err := s.store.CountComments(ctx, parentComment.PostID, &request.CommentID)
+	if err != nil {
+		return CommentPage{}, err
 	}
 
-	// Build query for direct replies
-	query := s.db.WithContext(ctx).
-		Table("comment c").
-		Select(`c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-				c.created_at, c.updated_at`).
-		Where("c.post_id = ? AND c.parent_id = ?", parentComment.PostID, req.Msg.CommentId).
-		Order("c.created_at ASC, c.id ASC")
-
 	// Apply cursor if provided
-	if req.Msg.Cursor != nil && *req.Msg.Cursor != "" {
-		var cursorComment model.Comment
-		if err := s.db.WithContext(ctx).
-			Select("created_at").
-			Where("id = ? AND post_id = ? AND parent_id = ?", *req.Msg.Cursor, parentComment.PostID, req.Msg.CommentId).
-			First(&cursorComment).Error; err == nil {
-			query = query.Where("c.created_at > ? OR (c.created_at = ? AND c.id > ?)",
-				cursorComment.CreatedAt, cursorComment.CreatedAt, *req.Msg.Cursor)
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
+	var after *CommentCursorAt
+	if request.Cursor != nil && *request.Cursor != "" {
+		createdAt, found, err := s.store.CommentCursor(ctx, parentComment.PostID, &request.CommentID, *request.Cursor)
+		if err != nil {
+			slog.ErrorContext(ctx, "Reply cursor lookup failed; listing replies from the start", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", request.CommentID, "cursor_id", *request.Cursor)
+		} else if found {
+			after = &CommentCursorAt{ID: *request.Cursor, CreatedAt: createdAt}
 		}
 	}
 
 	// Fetch limit + 1 to know if there are more
-	var replies []model.CommentWithAuthor
-	if err := query.Limit(limit + 1).Find(&replies).Error; err != nil {
-		return nil, errs.Internal(err)
+	replies, err := s.store.ListComments(ctx, parentComment.PostID, &request.CommentID, after, limit+1)
+	if err != nil {
+		return CommentPage{}, err
 	}
 
 	hasMore := len(replies) > limit
@@ -334,426 +350,343 @@ func (s *CommentService) ReadCommentReplies(
 		replyIDs[i] = r.ID
 	}
 
-	var nestedReplies []model.CommentWithAuthor
+	var nestedReplies []Comment
 	if len(replyIDs) > 0 {
 		// Get all descendants
-		if err := s.db.WithContext(ctx).Raw(`
-			WITH RECURSIVE comment_tree AS (
-				SELECT id, parent_id, 1 as depth
-				FROM comment
-				WHERE post_id = ? AND parent_id IN (?)
-
-				UNION ALL
-
-				SELECT c.id, c.parent_id, ct.depth + 1
-				FROM comment c
-				INNER JOIN comment_tree ct ON c.parent_id = ct.id
-				WHERE c.post_id = ? AND ct.depth < ?
-			)
-			SELECT c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-				   c.created_at, c.updated_at
-			FROM comment c
-			WHERE c.id IN (SELECT id FROM comment_tree)
-			ORDER BY c.created_at ASC, c.id ASC
-		`, parentComment.PostID, replyIDs, parentComment.PostID, maxCommentDepth).Scan(&nestedReplies).Error; err != nil {
-			return nil, errs.Internal(err)
+		if nestedReplies, err = s.store.CommentDescendants(ctx, parentComment.PostID, replyIDs, maxCommentDepth); err != nil {
+			return CommentPage{}, err
 		}
 	}
 
 	summaries, err := s.commentMemberSummaries(ctx, replies, nestedReplies)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return CommentPage{}, err
 	}
-	tree := s.buildCommentTreeWithPagination(replies, nestedReplies, defaultReplyLimit, summaries)
+	tree := buildCommentTreeWithPagination(replies, nestedReplies, defaultReplyLimit, summaries)
 
-	return connect.NewResponse(&managev1.LoadMoreRepliesResponse{
-		Replies:    tree,
+	return CommentPage{
+		Comments:   tree,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
 		TotalCount: int32(totalCount),
-	}), nil
+	}, nil
+}
+
+// commentMutation runs change, which a comment's author or a Post manager
+// may make, and audits operation on the changed comment as a change of its
+// Post's comments by the request's member; the comment is read back for the
+// response.
+func (s *CommentService) commentMutation(ctx context.Context, access mutation.Access, operation sharedtelemetry.AuditItemOperation, change func(context.Context, Store) (Comment, error)) (Comment, error) {
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[Comment, Store]{
+		Access: access,
+		Change: change,
+		Audit: func(comment Comment) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPostCommentAuditRecord(metadata, comment.PostID, comment.ID, operation)
+			})
+		},
+	})
 }
 
 // CreateComment creates a new comment
-func (s *CommentService) CreateComment(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateCommentRequest],
-) (_ *connect.Response[managev1.CreateCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreateComment", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+func (s *CommentService) CreateComment(ctx context.Context, command CreateCommentCommand) (AuthoredComment, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {
-		return nil, errs.AuthenticationRequired()
+		return AuthoredComment{}, domainerr.AuthenticationRequired()
 	}
-	if err := validateCreateCommentRequest(req.Msg); err != nil {
-		return nil, err
+	if err := validateCreateCommentCommand(command); err != nil {
+		return AuthoredComment{}, err
 	}
-	var comment model.Comment
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		created, err := s.createCommentWithDB(ctx, tx, user, req.Msg)
-		comment = created
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	result, err := s.loadCommentWithAuthor(ctx, comment.ID)
+	access := mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		if err := lockCommentablePost(ctx, store, command.PostID); err != nil {
+			return err
+		}
+		return requireActiveCommentPrincipal(lockActive, user)
+	})
+	created, err := s.commentMutation(ctx, access, sharedtelemetry.AuditItemOperationCreated, func(ctx context.Context, store Store) (Comment, error) {
+		return createComment(ctx, store, user, command)
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return AuthoredComment{}, err
 	}
-	summaries, err := s.commentMemberSummaries(ctx, []model.CommentWithAuthor{result}, nil)
+	result, err := readComment(ctx, s.units, created.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return AuthoredComment{}, err
 	}
-	return connect.NewResponse(&managev1.CreateCommentResponse{
-		Comment: s.toProtoCommentWithAuthor(&result, summaries),
-	}), nil
+	return s.authored(ctx, result)
 }
 
-func validateCreateCommentRequest(request *managev1.CreateCommentRequest) error {
-	if request.PostId == "" {
-		return errs.Required("post_id")
+// readComment reads a comment back in a snapshot of its own.
+func readComment(ctx context.Context, units mutation.UnitOfWork[Store], commentID string) (Comment, error) {
+	var comment Comment
+	err := units.Read(ctx, func(store Store) error {
+		var err error
+		comment, err = store.FindComment(ctx, commentID)
+		return err
+	})
+	return comment, err
+}
+
+func (s *CommentService) authored(ctx context.Context, comment Comment) (AuthoredComment, error) {
+	summaries, err := commentReader{members: s.members}.commentMemberSummaries(ctx, []Comment{comment}, nil)
+	if err != nil {
+		return AuthoredComment{}, err
 	}
-	if request.Content == "" {
-		return errs.Required("content")
+	authored := AuthoredComment{Comment: comment}
+	if comment.MemberID != nil {
+		authored.Author = summaries[*comment.MemberID]
 	}
-	if len(request.Content) > maxContentLen {
-		return errs.InvalidArgument("content", fmt.Sprintf("exceeds maximum length of %d characters", maxContentLen))
+	return authored, nil
+}
+
+func validateCreateCommentCommand(command CreateCommentCommand) error {
+	if command.PostID == "" {
+		return domainerr.Required("post_id")
+	}
+	if command.Content == "" {
+		return domainerr.Required("content")
+	}
+	if len(command.Content) > maxContentLen {
+		return domainerr.InvalidField("content", fmt.Sprintf("exceeds maximum length of %d characters", maxContentLen))
 	}
 	return nil
 }
 
-func (s *CommentService) createCommentWithDB(
+func createComment(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	user *auth.UserInfo,
-	request *managev1.CreateCommentRequest,
-) (model.Comment, error) {
-	if err := lockCommentablePost(ctx, tx, request.PostId); err != nil {
-		return model.Comment{}, err
-	}
-	if err := requireActiveCommentPrincipal(ctx, tx, user); err != nil {
-		return model.Comment{}, err
-	}
-	parentID, err := s.resolveCommentParentWithDB(ctx, tx, request.PostId, request.ParentId)
+	command CreateCommentCommand,
+) (Comment, error) {
+	parentID, err := resolveCommentParent(ctx, store, command.PostID, command.ParentID)
 	if err != nil {
-		return model.Comment{}, err
+		return Comment{}, err
 	}
 	memberID := user.MemberID.String()
-	comment := model.Comment{
-		PostID: request.PostId, MemberID: &memberID, ParentID: parentID, Content: request.Content,
+	comment := Comment{
+		PostID: command.PostID, MemberID: &memberID, ParentID: parentID, Content: command.Content,
 	}
-	if err := tx.Create(&comment).Error; err != nil {
-		return model.Comment{}, errs.Internal(err)
+	if err := store.InsertComment(ctx, &comment); err != nil {
+		return Comment{}, err
 	}
 	return comment, nil
 }
 
-func lockCommentablePost(ctx context.Context, tx *gorm.DB, postID string) error {
-	var post model.Post
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id, status, comments_enabled").Where("id = ?", postID).First(&post).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFoundMsg("post not found")
+func lockCommentablePost(ctx context.Context, store Store, postID string) error {
+	commented, err := store.LockCommentPost(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return domainerr.New(domainerr.NotFound, "", "post not found")
 		}
-		return errs.Internal(err)
+		return err
 	}
-	if !post.CommentsEnabled {
-		return errs.FailedPrecondition(errs.MsgCommentsDisabled)
+	if !commented.CommentsEnabled {
+		return domainerr.Precondition(msgCommentsDisabled)
 	}
-	if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
-		return errs.FailedPrecondition(errs.MsgCannotCommentUnpublished)
+	if commented.Status != StatusPublished {
+		return domainerr.Precondition(msgCannotCommentUnpublished)
 	}
 	return nil
 }
 
-func requireActiveCommentPrincipal(ctx context.Context, tx *gorm.DB, user *auth.UserInfo) error {
-	active, err := identitystate.LockActivePrincipal(ctx, tx, user)
+func requireActiveCommentPrincipal(lockActive func(*auth.UserInfo) (bool, error), user *auth.UserInfo) error {
+	active, err := lockActive(user)
 	if err != nil {
-		return errs.Internal(fmt.Errorf("lock comment author: %w", err))
+		return fmt.Errorf("lock comment author: %w", err)
 	}
 	if !active {
-		return errs.PermissionDenied("comment authority was revoked")
+		return domainerr.Denied("comment authority was revoked")
 	}
 	return nil
 }
 
-func (s *CommentService) resolveCommentParentWithDB(
+func resolveCommentParent(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	postID string,
 	requestedParentID *string,
 ) (*string, error) {
 	if requestedParentID == nil || *requestedParentID == "" {
 		return nil, nil
 	}
-	var parent model.Comment
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND post_id = ?", *requestedParentID, postID).First(&parent).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("parent comment not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	depth, err := s.getCommentDepthTx(tx, ctx, parent.ID, postID)
+	parent, err := store.LockPostComment(ctx, postID, *requestedParentID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		if errors.Is(err, ErrCommentNotFound) {
+			return nil, domainerr.New(domainerr.NotFound, "", "parent comment not found")
+		}
+		return nil, err
+	}
+	depth, err := store.CommentDepth(ctx, postID, parent.ID, maxCommentDepth)
+	if err != nil {
+		return nil, err
 	}
 	if depth >= maxCommentDepth {
-		return nil, errs.MaxCommentDepth(maxCommentDepth)
+		return nil, domainerr.Precondition(fmt.Sprintf("maximum comment depth of %d reached", maxCommentDepth))
 	}
 	return &parent.ID, nil
 }
 
-func (s *CommentService) loadCommentWithAuthor(ctx context.Context, commentID string) (model.CommentWithAuthor, error) {
-	var comment model.CommentWithAuthor
-	err := s.db.WithContext(ctx).Table("comment c").
-		Select(`c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-			c.created_at, c.updated_at`).
-		Where("c.id = ?", commentID).First(&comment).Error
+// UpdateComment updates a comment's content
+func (s *CommentService) UpdateComment(ctx context.Context, command UpdateCommentCommand) (_ AuthoredComment, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", command.ID))
+
+	user := auth.GetUser(ctx)
+	if user == nil || user.MemberID.String() == "" {
+		return AuthoredComment{}, domainerr.AuthenticationRequired()
+	}
+	memberID := user.MemberID.String()
+	if command.ID == "" {
+		return AuthoredComment{}, domainerr.Required("id")
+	}
+	if command.Content == "" {
+		return AuthoredComment{}, domainerr.Required("content")
+	}
+	if len(command.Content) > maxContentLen {
+		return AuthoredComment{}, domainerr.InvalidField("content", fmt.Sprintf("exceeds maximum length of %d characters", maxContentLen))
+	}
+	var result Comment
+	_, err := s.commentMutation(ctx, mutation.Fenced(func(_ context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return requireActiveCommentPrincipal(lockActive, user)
+	}), sharedtelemetry.AuditItemOperationUpdated, func(ctx context.Context, store Store) (Comment, error) {
+		comment, err := lockComment(ctx, store, command.ID)
+		if err != nil {
+			return comment, err
+		}
+		if comment.IsDeleted {
+			return comment, domainerr.Precondition(msgCannotUpdateDeleted)
+		}
+		if comment.MemberID == nil || *comment.MemberID != memberID {
+			return comment, domainerr.Denied("permission denied")
+		}
+		if err := store.UpdateCommentContent(ctx, comment, command.Content); err != nil {
+			return comment, err
+		}
+		result, err = store.FindComment(ctx, comment.ID)
+		return comment, err
+	})
+	if err != nil {
+		return AuthoredComment{}, err
+	}
+	return s.authored(ctx, result)
+}
+
+func lockComment(ctx context.Context, store Store, commentID string) (Comment, error) {
+	comment, err := store.LockComment(ctx, commentID)
+	if errors.Is(err, ErrCommentNotFound) {
+		return comment, domainerr.New(domainerr.NotFound, "", "comment not found")
+	}
 	return comment, err
 }
 
-// UpdateComment updates a comment's content
-func (s *CommentService) UpdateComment(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateCommentRequest],
-) (_ *connect.Response[managev1.UpdateCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdateComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
-
-	// Get authenticated user
-	user := auth.GetUser(ctx)
-	if user == nil || user.MemberID.String() == "" {
-		return nil, errs.AuthenticationRequired()
-	}
-	memberID := user.MemberID.String()
-
-	// Validate input
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
-	}
-	if req.Msg.Content == "" {
-		return nil, errs.Required("content")
-	}
-	if len(req.Msg.Content) > maxContentLen {
-		return nil, errs.InvalidArgument("content", fmt.Sprintf("exceeds maximum length of %d characters", maxContentLen))
-	}
-
-	var result model.CommentWithAuthor
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		active, err := identitystate.LockActivePrincipal(ctx, tx, user)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("lock comment author: %w", err))
-		}
-		if !active {
-			return errs.PermissionDenied("comment authority was revoked")
-		}
-		var comment model.Comment
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", req.Msg.Id).
-			First(&comment).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFoundMsg("comment not found")
-			}
-			return errs.Internal(err)
-		}
-		if comment.IsDeleted {
-			return errs.FailedPrecondition(errs.MsgCannotUpdateDeleted)
-		}
-		isAuthor := comment.MemberID != nil && *comment.MemberID == memberID
-		if !isAuthor {
-			return errs.PermissionDenied("permission denied")
-		}
-		if err := tx.Model(&comment).Update("content", req.Msg.Content).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := tx.WithContext(ctx).
-			Table("comment c").
-			Select(`c.id, c.post_id, c.member_id, c.parent_id, c.content, c.is_deleted,
-				c.created_at, c.updated_at`).
-			Where("c.id = ?", comment.ID).
-			First(&result).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	summaries, err := s.commentMemberSummaries(ctx, []model.CommentWithAuthor{result}, nil)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.UpdateCommentResponse{
-		Comment: s.toProtoCommentWithAuthor(&result, summaries),
-	}), nil
-}
-
 // DeleteComment soft-deletes a comment
-func (s *CommentService) DeleteComment(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteCommentRequest],
-) (_ *connect.Response[managev1.DeleteCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeleteComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+func (s *CommentService) DeleteComment(ctx context.Context, command DeleteCommentCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", command.ID))
 
-	// Get authenticated user
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {
-		return nil, errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	memberID := user.MemberID.String()
-
-	// Validate input
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
+	if command.ID == "" {
+		return domainerr.Required("id")
 	}
-	var target struct {
-		PostID string `gorm:"column:post_id"`
-	}
-	if err := s.db.WithContext(ctx).Table("comment").Select("post_id").Where("id = ?", req.Msg.Id).Take(&target).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("comment not found")
+	var postID string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		postID, err = store.CommentPostID(ctx, command.ID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrCommentNotFound) {
+			return domainerr.New(domainerr.NotFound, "", "comment not found")
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		postStatus, err := lockPostParticipantRoot(ctx, tx, target.PostID)
+	var comment Comment
+	// The author deletes their own comment; anyone else needs to manage the
+	// Post, checked as RequireFreshCan checks it once the principal is
+	// locked.
+	access := mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		postStatus, err := lockPostParticipantRoot(ctx, store, postID)
 		if err != nil {
 			return err
 		}
-		active, err := identitystate.LockActivePrincipal(ctx, tx, user)
+		active, err := lockActive(user)
 		if err != nil {
-			return errs.Internal(fmt.Errorf("lock comment deletion principal: %w", err))
+			return fmt.Errorf("lock comment deletion principal: %w", err)
 		}
 		if !active {
-			return errs.PermissionDenied("comment authority was revoked")
+			return domainerr.Denied("comment authority was revoked")
 		}
-		var comment model.Comment
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", req.Msg.Id).
-			First(&comment).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFoundMsg("comment not found")
-			}
-			return errs.Internal(err)
-		}
-		isAuthor := comment.MemberID != nil && *comment.MemberID == memberID
-		if !isAuthor {
-			if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, comment.PostID, postStatus, policyv1.Post.Manage); err != nil {
-				return err
-			}
-		}
-		if err := tx.Model(&comment).Updates(structured.Fields{
-			"is_deleted": true,
-			"content":    "[This comment has been deleted]",
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.DeleteCommentResponse{
-		Success: true,
-	}), nil
-}
-
-func (s *CommentService) withReadablePost(ctx context.Context, postID string, read func(*CommentService) error) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var post model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("post not found")
-			}
-			return errs.Internal(err)
-		}
-		if err := s.requireCommentPostView(ctx, post); err != nil {
+		if comment, err = lockComment(ctx, store, command.ID); err != nil {
 			return err
 		}
-		return read(NewCommentService(tx, s.spiceDB, s.members))
+		if comment.MemberID != nil && *comment.MemberID == memberID {
+			return nil
+		}
+		_, err = requireLockedPostActionForStatus(func(can policyv1.Can) error {
+			return authz.RequireCan(ctx, s.spiceDB, can)
+		}, comment.PostID, postStatus, policyv1.Post.Manage)
+		return err
 	})
+	_, err := s.commentMutation(ctx, access, sharedtelemetry.AuditItemOperationDeleted, func(ctx context.Context, store Store) (Comment, error) {
+		return comment, store.SoftDeleteComment(ctx, comment, deletedCommentContent)
+	})
+	return err
 }
 
-func (s *CommentService) requireCommentPostView(ctx context.Context, post model.Post) error {
-	if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
-		post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-		if s.spiceDB == nil {
-			return errs.DependencyUnavailable("SpiceDB")
+// withReadablePost runs read in one transaction after locking the Post and
+// checking the caller may read its comments.
+func (s *CommentService) withReadablePost(ctx context.Context, postID string, read func(Store) error) error {
+	access := mutation.Checked(func(ctx context.Context, store Store) error {
+		commented, err := store.ShareLockCommentPost(ctx, postID)
+		if err != nil {
+			if errors.Is(err, ErrPostNotFound) {
+				return domainerr.New(domainerr.NotFound, "", "post not found")
+			}
+			return err
 		}
-		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, post.Status); err != nil {
+		return requireCommentPostView(ctx, s.spiceDB, commented)
+	})
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Access: access,
+		Change: func(_ context.Context, store Store) (struct{}, error) { return struct{}{}, read(store) },
+		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	})
+	return err
+}
+
+func requireCommentPostView(ctx context.Context, checker authz.AuthorizationDecisionChecker, commented CommentPost) error {
+	if commented.Status != StatusPublished &&
+		commented.Status != StatusArchived {
+		if _, err := requirePostViewForStatus(ctx, checker, commented.ID, commented.Status); err != nil {
 			return err
 		}
 	}
-	if !post.CommentsEnabled {
-		return errs.FailedPrecondition(errs.MsgCommentsDisabled)
+	if !commented.CommentsEnabled {
+		return domainerr.Precondition(msgCommentsDisabled)
 	}
 	return nil
 }
 
-// Helper to get comment depth using recursive CTE within a transaction
-func (s *CommentService) getCommentDepthTx(tx *gorm.DB, ctx context.Context, commentID string, postID string) (int, error) {
-	var depth int
-	query := `
-		WITH RECURSIVE comment_tree AS (
-			SELECT id, parent_id, 1 as depth
-			FROM comment
-			WHERE id = ? AND post_id = ?
-
-			UNION ALL
-
-			SELECT c.id, c.parent_id, ct.depth + 1
-			FROM comment c
-			INNER JOIN comment_tree ct ON c.id = ct.parent_id
-			WHERE c.post_id = ? AND ct.depth < ?
-		)
-		SELECT COALESCE(MAX(depth), 0) FROM comment_tree
-	`
-	if err := tx.WithContext(ctx).Raw(query, commentID, postID, postID, maxCommentDepth).Scan(&depth).Error; err != nil {
-		return 0, err
-	}
-	return depth, nil
-}
-
 // Helper to build tree structure with reply pagination (Reddit-style)
-func (s *CommentService) buildCommentTreeWithPagination(
-	topLevel []model.CommentWithAuthor,
-	allReplies []model.CommentWithAuthor,
+func buildCommentTreeWithPagination(
+	topLevel []Comment,
+	allReplies []Comment,
 	replyLimit int,
-	summaries map[string]*commonv1.MemberSummary,
-) []*managev1.CommentNode {
+	summaries map[string]*memberref.Summary,
+) []*CommentNode {
 	// Create map for all comments
-	nodeMap := make(map[string]*managev1.CommentNode)
+	nodeMap := make(map[string]*CommentNode)
 	replyCountMap := make(map[string]int) // Direct reply count per parent
 
 	// First pass: create nodes for top-level comments
 	for i := range topLevel {
-		nodeMap[topLevel[i].ID] = s.toProtoCommentNode(&topLevel[i], summaries)
+		nodeMap[topLevel[i].ID] = commentNode(topLevel[i], summaries)
 	}
 
 	// Second pass: create nodes for all replies and count direct children
 	for i := range allReplies {
-		nodeMap[allReplies[i].ID] = s.toProtoCommentNode(&allReplies[i], summaries)
+		nodeMap[allReplies[i].ID] = commentNode(allReplies[i], summaries)
 		if allReplies[i].ParentID != nil && *allReplies[i].ParentID != "" {
 			replyCountMap[*allReplies[i].ParentID]++
 		}
@@ -791,7 +724,7 @@ func (s *CommentService) buildCommentTreeWithPagination(
 	}
 
 	// Build result slice (only top-level comments)
-	result := make([]*managev1.CommentNode, len(topLevel))
+	result := make([]*CommentNode, len(topLevel))
 	for i := range topLevel {
 		result[i] = nodeMap[topLevel[i].ID]
 	}
@@ -799,53 +732,18 @@ func (s *CommentService) buildCommentTreeWithPagination(
 	return result
 }
 
-// Helper to convert model to proto CommentNode
-func (s *CommentService) toProtoCommentNode(c *model.CommentWithAuthor, summaries map[string]*commonv1.MemberSummary) *managev1.CommentNode {
-	node := &managev1.CommentNode{
-		Id:        c.ID,
-		PostId:    c.PostID,
-		Content:   c.Content,
-		IsDeleted: c.IsDeleted,
-		CreatedAt: timestamppb.New(c.CreatedAt),
-		UpdatedAt: timestamppb.New(c.UpdatedAt),
-		Replies:   []*managev1.CommentNode{},
-	}
-
-	if c.MemberID != nil {
-		node.MemberId = c.MemberID
-		node.Author = summaries[*c.MemberID]
-	}
-	if c.ParentID != nil {
-		node.ParentId = c.ParentID
+func commentNode(comment Comment, summaries map[string]*memberref.Summary) *CommentNode {
+	node := &CommentNode{Comment: comment, Replies: []*CommentNode{}}
+	if comment.MemberID != nil {
+		node.Author = summaries[*comment.MemberID]
 	}
 	return node
 }
 
-// Helper to convert model to proto CommentWithAuthor
-func (s *CommentService) toProtoCommentWithAuthor(c *model.CommentWithAuthor, summaries map[string]*commonv1.MemberSummary) *managev1.CommentWithAuthor {
-	comment := &managev1.CommentWithAuthor{
-		Id:        c.ID,
-		PostId:    c.PostID,
-		Content:   c.Content,
-		IsDeleted: c.IsDeleted,
-		CreatedAt: timestamppb.New(c.CreatedAt),
-		UpdatedAt: timestamppb.New(c.UpdatedAt),
-	}
-
-	if c.MemberID != nil {
-		comment.MemberId = c.MemberID
-		comment.Author = summaries[*c.MemberID]
-	}
-	if c.ParentID != nil {
-		comment.ParentId = c.ParentID
-	}
-	return comment
-}
-
-func (s *CommentService) commentMemberSummaries(
+func (s commentReader) commentMemberSummaries(
 	ctx context.Context,
-	groups ...[]model.CommentWithAuthor,
-) (map[string]*commonv1.MemberSummary, error) {
+	groups ...[]Comment,
+) (map[string]*memberref.Summary, error) {
 	seen := map[string]struct{}{}
 	memberIDs := make([]string, 0)
 	for _, comments := range groups {

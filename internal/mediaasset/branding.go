@@ -4,10 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 // Branding asset kinds: display logos accept PNG or SVG, email logos PNG only.
@@ -25,19 +23,27 @@ func (s *Lifecycle) ReadyBrandingAssetRef(
 	ctx context.Context,
 	sourceFileID string,
 	brandingKind string,
-) (*commonv1.AssetRef, string, error) {
-	ref, err := s.ReadyAssetRefForSourceFile(ctx, sourceFileID, brandingKind)
-	if err == nil || connect.CodeOf(err) != connect.CodeNotFound ||
+) (*Reference, string, error) {
+	return readyBrandingAssetRef(ctx, s.ReadyAssetRefForSourceFile, sourceFileID, brandingKind)
+}
+
+func (s *ReferenceReader) ReadyBrandingAssetRef(ctx context.Context, sourceFileID, brandingKind string) (*Reference, string, error) {
+	return readyBrandingAssetRef(ctx, s.ReadyAssetRefForSourceFile, sourceFileID, brandingKind)
+}
+
+func readyBrandingAssetRef(ctx context.Context, resolve func(context.Context, string, string) (*Reference, error), sourceFileID, brandingKind string) (*Reference, string, error) {
+	ref, err := resolve(ctx, sourceFileID, brandingKind)
+	if err == nil || !mutation.IsNotFound(err) ||
 		(brandingKind != BrandingKindLogo && brandingKind != BrandingKindEmailImage) {
 		return ref, brandingKind, err
 	}
-	ref, err = s.ReadyAssetRefForSourceFile(ctx, sourceFileID, "image")
+	ref, err = resolve(ctx, sourceFileID, "image")
 	if err != nil {
 		return nil, brandingKind, err
 	}
-	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(ref.GetMimeType(), ";")[0]))
+	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(ref.MimeType, ";")[0]))
 	if mimeType != "image/png" && (brandingKind != BrandingKindLogo || mimeType != "image/svg+xml") {
-		return nil, brandingKind, errs.InvalidArgument("file_id", "branding requires PNG or SVG; email branding requires PNG")
+		return nil, brandingKind, domainerr.InvalidField("file_id", "branding requires PNG or SVG; email branding requires PNG")
 	}
 	return ref, "image", nil
 }

@@ -6,13 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestReferenceDiscoveryToolDescriptors(t *testing.T) {
@@ -48,8 +56,8 @@ func TestReferenceSearchBuildsExactCategoryRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if categories.request.Msg.Pagination.Limit != 12 || len(categories.request.Msg.Filters) != 1 || categories.request.Msg.Filters[0].Field != "search" || categories.request.Msg.Filters[0].Value != "Sound" {
-		t.Fatalf("category request = %#v", categories.request.Msg)
+	if categories.query.Limit != 12 || len(categories.query.Filters) != 1 || categories.query.Filters[0].Field != "search" || categories.query.Filters[0].Value != "Sound" {
+		t.Fatalf("category query = %#v", categories.query)
 	}
 	items := result.StructuredContent["items"].([]any)
 	if len(items) != 1 || items[0].(map[string]any)["id"] != "11111111-1111-4111-8111-111111111111" {
@@ -123,80 +131,95 @@ func newRecordingReferenceDiscoveryTools(t *testing.T) *ReferenceDiscoveryTools 
 }
 
 type recordingCategoryReferences struct {
-	managev1connect.UnimplementedCategoryServiceHandler
-	request *connect.Request[managev1.ListCategoriesRequest]
+	query *referencecatalog.ReferenceListQuery
 }
 
-func (r *recordingCategoryReferences) ListCategories(_ context.Context, request *connect.Request[managev1.ListCategoriesRequest]) (*connect.Response[managev1.ListCategoriesResponse], error) {
-	r.request = request
-	slug := "sound"
-	return connect.NewResponse(&managev1.ListCategoriesResponse{Categories: []*managev1.Category{{Id: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: &slug}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: request.Msg.Pagination.Limit}}), nil
+func (r *recordingCategoryReferences) ListCategories(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error) {
+	r.query = &query
+	return referencecatalog.Page[referencecatalog.Reference]{
+		Items:      []referencecatalog.Reference{{ID: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: "sound"}},
+		Pagination: referencecatalog.Pagination{Total: 1, Limit: query.Limit},
+	}, nil
 }
 
-type recordingTagReferences struct {
-	managev1connect.UnimplementedTagServiceHandler
+type recordingTagReferences struct{}
+
+func (recordingTagReferences) ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error) {
+	return referencecatalog.Page[referencecatalog.Reference]{}, errors.New("unexpected tag search")
 }
+
 type recordingClientReferences struct {
-	managev1connect.UnimplementedClientServiceHandler
-	request *connect.Request[managev1.SearchClientsRequest]
-	count   int
+	query *referencecatalog.SearchClientsQuery
+	count int
 }
 
-func (r *recordingClientReferences) SearchClients(_ context.Context, request *connect.Request[managev1.SearchClientsRequest]) (*connect.Response[managev1.SearchClientsResponse], error) {
-	r.request = request
-	items := make([]*managev1.Client, r.count)
+func (r *recordingClientReferences) SearchClients(_ context.Context, query referencecatalog.SearchClientsQuery) ([]referencecatalog.ClientView, error) {
+	r.query = &query
+	items := make([]referencecatalog.ClientView, r.count)
 	for index := range items {
-		items[index] = &managev1.Client{Id: managementWorkID, Name: "Client"}
+		items[index] = referencecatalog.ClientView{Client: referencecatalog.Client{ID: managementWorkID, Name: "Client"}}
 	}
-	return connect.NewResponse(&managev1.SearchClientsResponse{Clients: items}), nil
+	return items, nil
 }
 
 type recordingMapPlaceReferences struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
-	request *connect.Request[managev1.SearchMapPlacesRequest]
-	count   int
+	query *referencecatalog.SearchMapPlacesQuery
+	count int
 }
 
-func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, request *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error) {
-	r.request = request
-	items := make([]*managev1.MapPlaceBasic, r.count)
+func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, query referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error) {
+	r.query = &query
+	items := make([]referencecatalog.MapPlace, r.count)
 	for index := range items {
-		items[index] = &managev1.MapPlaceBasic{Id: managementWorkID, Name: "Place"}
+		items[index] = referencecatalog.MapPlace{ID: managementWorkID, Name: "Place"}
 	}
-	return connect.NewResponse(&managev1.SearchMapPlacesResponse{Places: items}), nil
+	return items, nil
 }
 
 type recordingMemberReferences struct {
-	managev1connect.UnimplementedMemberServiceHandler
-	request *connect.Request[managev1.SearchMembersRequest]
-	count   int
+	query memberdomain.SearchMembersQuery
+	count int
 }
 
-func (r *recordingMemberReferences) SearchMembers(_ context.Context, request *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error) {
-	r.request = request
-	items := make([]*commonv1.MemberSummary, r.count)
+func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]memberref.Summary, error) {
+	r.query = query
+	items := make([]memberref.Summary, r.count)
 	for index := range items {
-		items[index] = &commonv1.MemberSummary{Id: managementWorkID, Nickname: "Member"}
+		items[index] = memberref.Summary{ID: managementWorkID, Nickname: "Member"}
 	}
-	return connect.NewResponse(&managev1.SearchMembersResponse{Members: items}), nil
+	return items, nil
 }
 
-type recordingArtistReferences struct {
-	managev1connect.UnimplementedArtistServiceHandler
+type recordingArtistReferences struct{}
+
+func (*recordingArtistReferences) ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error) {
+	return artist.ArtistPage{}, nil
 }
 
 type recordingFileReferences struct {
-	managev1connect.UnimplementedFileServiceHandler
 	request *connect.Request[managev1.ListFileManagerItemsRequest]
 }
 
-func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, request *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
-	r.request = request
-	now := timestamppb.Now()
-	return connect.NewResponse(&managev1.ListFileManagerItemsResponse{Items: []*managev1.FileManagerItem{
-		{Item: &managev1.FileManagerItem_File{File: &managev1.FileManagerFile{Id: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: now}}},
-		{Item: &managev1.FileManagerItem_Folder{Folder: &managev1.FileFolder{Id: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: now}}},
-	}, Total: 2}), nil
+// ListFileManagerItems records the query as the request a Connect client
+// would have sent, so the assertions read the native field names.
+func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, query filemedia.ListFileManagerItemsQuery) (filemedia.FileManagerItemPage, error) {
+	optional := func(value string) *string {
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	r.request = connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+		FolderId: optional(query.FolderID), Query: optional(query.Query), MimeTypePrefix: optional(query.MimeTypePrefix),
+		UploadedByMemberId: optional(query.UploadedByMemberID), SortField: managev1.FileManagerSortField(query.SortField), SortOrder: commonv1.SortOrder(query.SortOrder),
+
+		PageSize: query.PageSize, PageToken: optional(query.PageToken),
+	})
+	now := time.Now()
+	return filemedia.FileManagerItemPage{Items: []*filemedia.LibraryItem{
+		{Type: filemedia.LibraryItemFile, File: &filemedia.LibraryFile{ID: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: &now}},
+		{Type: filemedia.LibraryItemFolder, Folder: &filemedia.FolderView{ID: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: &now}},
+	}, Total: 2}, nil
 }
 
 func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {
@@ -228,11 +251,11 @@ func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {
 				requestLimit := int32(0)
 				switch referenceType {
 				case "client":
-					requestLimit = clients.request.Msg.Limit
+					requestLimit = clients.query.Limit
 				case "map_place":
-					requestLimit = places.request.Msg.Limit
+					requestLimit = places.query.Limit
 				case "member":
-					requestLimit = members.request.Msg.Limit
+					requestLimit = members.query.Limit
 				}
 				if requestLimit != int32(test.wantRequest) {
 					t.Fatalf("service limit=%d want=%d", requestLimit, test.wantRequest)

@@ -1,27 +1,23 @@
 package emailauthoring
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"log/slog"
 	"maps"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -90,37 +86,14 @@ type emailLayoutAIDocumentCompilerError struct{ cause error }
 func (e *emailLayoutAIDocumentCompilerError) Error() string { return e.cause.Error() }
 func (e *emailLayoutAIDocumentCompilerError) Unwrap() error { return e.cause }
 
-type EmailLayoutAIDocumentRevisionConflictKind string
-
-const (
-	EmailLayoutAIDocumentDocumentRevisionConflict EmailLayoutAIDocumentRevisionConflictKind = "document_revision"
-	EmailLayoutAIDocumentTargetRevisionConflict   EmailLayoutAIDocumentRevisionConflictKind = "target_revision"
-)
-
-type EmailLayoutAIDocumentRevisionConflictError struct {
-	Kind                    EmailLayoutAIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *EmailLayoutAIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf(
-		"Email Layout AI document revision conflict: current document revision is %q",
-		e.CurrentDocumentRevision,
-	)
-}
-
 // EmailLayoutAIDocumentService owns authorization, active-delivery lifecycle,
 // locking, opaque CAS, locale CRUD, and source/target persistence. The adapter
 // only converts this typed state to DCDP.
-type EmailLayoutAIDocumentService struct{ layouts *EmailLayoutService }
+type EmailLayoutAIDocumentService struct{ internal *InternalService }
 
-func NewEmailLayoutAIDocumentService(layouts *EmailLayoutService) (*EmailLayoutAIDocumentService, error) {
-	if layouts == nil || layouts.db == nil || layouts.spiceDB == nil ||
-		layouts.references == nil || layouts.contentBlocks == nil || layouts.auditWriter == nil {
-		return nil, errors.New("email layout AI document dependencies are required")
-	}
-	return &EmailLayoutAIDocumentService{layouts: layouts}, nil
+// LayoutAIDocuments returns the Email Layout AI document use cases.
+func (s *InternalService) LayoutAIDocuments() *EmailLayoutAIDocumentService {
+	return &EmailLayoutAIDocumentService{internal: s}
 }
 
 func (s *EmailLayoutAIDocumentService) Load(
@@ -128,7 +101,7 @@ func (s *EmailLayoutAIDocumentService) Load(
 	layoutID string,
 	locale string,
 ) (EmailLayoutAIDocumentState, error) {
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
@@ -136,35 +109,45 @@ func (s *EmailLayoutAIDocumentService) Load(
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
-
 	var state EmailLayoutAIDocumentState
-	err = s.layouts.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, "SHARE"); err != nil {
-			return err
-		}
-		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.layouts.references, layoutID); err != nil {
-			return err
-		}
-		memberID, err := requireEmailLayoutAIDocumentAuthority(ctx, s.layouts.spiceDB, layoutID)
+	err = s.internal.units.ReadLocked(ctx, func(store Store) error {
+		memberID, err := s.authorize(ctx, store, layoutID, emailcontent.ShareLock)
 		if err != nil {
 			return err
 		}
-		state, err = s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, "SHARE")
+		state, err = loadEmailLayoutAIDocumentState(ctx, store, layoutID, locale, memberID, emailcontent.ShareLock)
 		return err
 	})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "email_layout"), slog.String("entity_id", layoutID), slog.String("locale", locale))
+}
+
+// authorize locks the layout root with lock, rejects a layout an active
+// delivery still renders and authorizes the request's Member to edit it.
+func (s *EmailLayoutAIDocumentService) authorize(ctx context.Context, store Store, layoutID string, lock emailcontent.RowLock) (uuid.UUID, error) {
+	if err := lockEmailLayoutAIDocumentRoot(ctx, store, layoutID, lock); err != nil {
+		return uuid.Nil, err
 	}
-	return state, err
+	if err := store.RequireLayoutMutable(ctx, layoutID); err != nil {
+		return uuid.Nil, err
+	}
+	can, canErr := emailLayoutEditCan(layoutID)
+	return emailcontent.RequireEditor(ctx, s.internal.spiceDB, can, canErr, "email_layout_id", "email layout")
 }
 
 var errRollbackEmailLayoutAIDocumentValidation = errors.New("rollback Email Layout AI document validation")
 
+// layoutAIDocumentApply is one applied layout AI document mutation and the
+// record it names.
+type layoutAIDocumentApply struct {
+	mutation EmailLayoutAIDocumentMutation
+	result   EmailLayoutAIDocumentMutationResult
+	record   mutation.Audit
+}
+
 // ExecuteAIDocumentMutation is Email Layout's exact DCDP mutation boundary.
 // It locks the root and active-delivery lifecycle, performs one Edit decision,
 // locks current source/locale/contributor facts, and only then invokes the
-// compiler. Validate rolls back the identical persistence and Audit path.
+// compiler. Validate rolls back the identical persistence path.
 func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	layoutID string,
@@ -172,18 +155,13 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 	mode EmailLayoutAIDocumentExecutionMode,
 	compiler EmailLayoutAIDocumentMutationCompiler,
 ) (EmailLayoutAIDocumentMutationResult, error) {
-	if s == nil || s.layouts == nil || s.layouts.db == nil ||
-		s.layouts.spiceDB == nil || s.layouts.references == nil ||
-		s.layouts.contentBlocks == nil || s.layouts.auditWriter == nil {
-		return EmailLayoutAIDocumentMutationResult{}, errs.DependencyUnavailable("Email Layout AI document")
-	}
 	if compiler == nil {
-		return EmailLayoutAIDocumentMutationResult{}, errs.DependencyUnavailable("Email Layout AI document compiler")
+		return EmailLayoutAIDocumentMutationResult{}, domainerr.DependencyUnavailable("Email Layout AI document compiler")
 	}
 	if mode != EmailLayoutAIDocumentExecutionValidate && mode != EmailLayoutAIDocumentExecutionApply {
-		return EmailLayoutAIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
+		return EmailLayoutAIDocumentMutationResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutAIDocumentMutationResult{}, err
 	}
@@ -191,225 +169,187 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 	if err != nil {
 		return EmailLayoutAIDocumentMutationResult{}, err
 	}
-
-	var output EmailLayoutAIDocumentMutationResult
-	err = s.layouts.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, "UPDATE"); err != nil {
-			return err
-		}
-		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.layouts.references, layoutID); err != nil {
-			return err
-		}
-		memberID, err := requireEmailLayoutAIDocumentAuthority(ctx, s.layouts.spiceDB, layoutID)
-		if err != nil {
-			return err
-		}
-		if err := lockEmailAIDocumentContributor(ctx, tx, memberID); err != nil {
-			return err
-		}
-		current, err := s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, "UPDATE")
-		if err != nil {
-			return err
-		}
-		mutation, err := compiler(cloneEmailLayoutAIDocumentState(current))
-		if err != nil {
-			return &emailLayoutAIDocumentCompilerError{cause: err}
-		}
-		mutation, err = validateEmailLayoutAIDocumentMutation(mutation)
-		if err != nil {
-			return err
-		}
-		if err := validateCompiledEmailLayoutAIDocumentMutation(current, mutation); err != nil {
-			return err
-		}
-		output, err = s.applyAIDocumentMutationInTransaction(ctx, tx, current, mutation)
-		if err != nil {
-			return err
-		}
-		if mode == EmailLayoutAIDocumentExecutionValidate {
-			return errRollbackEmailLayoutAIDocumentValidation
-		}
-		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_LAYOUT, mutation.LayoutID, mutation.Locale, output.DocumentRevision, output.TargetRevision, output.Changed, mutation.DeleteTranslation, mutation.ContributorMemberID.String())
+	var memberID uuid.UUID
+	var applied layoutAIDocumentApply
+	_, err = mutation.Run(ctx, s.internal.mutations, mutation.StoreSpec[layoutAIDocumentApply, Store]{
+		Access: mutation.Locked(func(ctx context.Context, store Store, _ mutation.Require) error {
+			var err error
+			if memberID, err = s.authorize(ctx, store, layoutID, emailcontent.UpdateLock); err != nil {
+				return err
+			}
+			return lockAIDocumentContributor(ctx, store, memberID)
+		}),
+		Change: func(ctx context.Context, store Store) (layoutAIDocumentApply, error) {
+			var err error
+			applied, err = compileAndApplyLayoutAIDocument(ctx, store, layoutID, locale, memberID, compiler)
+			if err == nil && mode == EmailLayoutAIDocumentExecutionValidate {
+				err = errRollbackEmailLayoutAIDocumentValidation
+			}
+			return applied, err
+		},
+		Audit: func(applied layoutAIDocumentApply) mutation.Audit { return applied.record },
+		Outbox: func(ctx context.Context, store Store, applied layoutAIDocumentApply) error {
+			m := applied.mutation
+			return store.PublishContentUpdate(ctx, emailcontent.ContentUpdate{
+				Entity: "email_layout", ID: m.LayoutID, Locale: m.Locale,
+				DocumentRevision: applied.result.DocumentRevision, TargetRevision: applied.result.TargetRevision,
+				Changed: applied.result.Changed, Deleted: m.DeleteTranslation, ContributorMemberID: m.ContributorMemberID.String(),
+			})
+		},
 	})
 	if errors.Is(err, errRollbackEmailLayoutAIDocumentValidation) {
-		return output, nil
+		return applied.result, nil
 	}
 	if err != nil {
 		var compilerErr *emailLayoutAIDocumentCompilerError
 		if errors.As(err, &compilerErr) {
-			slog.WarnContext(ctx, "AI document compilation rejected", "domain", "emailauthoring", "event", "emailauthoring.document_rejected", "outcome", "blocked", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
-			return EmailLayoutAIDocumentMutationResult{}, compilerErr.cause
+			err = compilerErr.cause
 		}
-		level := slog.LevelWarn
-		var conflict *EmailLayoutAIDocumentRevisionConflictError
-		var stale *contentblock.StaleRevisionError
-		var target *translation.TargetRevisionConflict
-		if !errors.As(err, &conflict) && !errors.As(err, &stale) && !errors.As(err, &target) && !errors.Is(err, contentblock.ErrStaleRevision) {
-			switch connect.CodeOf(err) {
-			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
-		}
-		slog.Log(ctx, level, "AI document mutation failed", "domain", "emailauthoring", "event", "emailauthoring.document_mutation_failed", "outcome", "failed", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
-		return EmailLayoutAIDocumentMutationResult{}, err
+		return EmailLayoutAIDocumentMutationResult{}, failurecause.WithAttrs(err, slog.String("entity_type", "email_layout"), slog.String("entity_id", layoutID), slog.String("locale", locale))
 	}
-	return output, nil
+	return applied.result, nil
 }
 
-func (s *EmailLayoutAIDocumentService) applyAIDocumentMutationInTransaction(
+// compileAndApplyLayoutAIDocument loads the locked state, invokes the
+// compiler with it and applies the validated mutation.
+func compileAndApplyLayoutAIDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	layoutID string,
+	locale string,
+	memberID uuid.UUID,
+	compiler EmailLayoutAIDocumentMutationCompiler,
+) (layoutAIDocumentApply, error) {
+	current, err := loadEmailLayoutAIDocumentState(ctx, store, layoutID, locale, memberID, emailcontent.UpdateLock)
+	if err != nil {
+		return layoutAIDocumentApply{}, err
+	}
+	compiled, err := compiler(cloneEmailLayoutAIDocumentState(current))
+	if err != nil {
+		return layoutAIDocumentApply{}, &emailLayoutAIDocumentCompilerError{cause: err}
+	}
+	compiled, err = validateEmailLayoutAIDocumentMutation(compiled)
+	if err != nil {
+		return layoutAIDocumentApply{}, err
+	}
+	if err := validateCompiledEmailLayoutAIDocumentMutation(current, compiled); err != nil {
+		return layoutAIDocumentApply{}, err
+	}
+	return applyLayoutAIDocument(ctx, store, current, compiled)
+}
+
+// applyLayoutAIDocument writes the mutation: a created or deleted
+// translation, or replaced source or target values. A change records the
+// locale content audit.
+func applyLayoutAIDocument(
+	ctx context.Context,
+	store Store,
 	current EmailLayoutAIDocumentState,
-	mutation EmailLayoutAIDocumentMutation,
-) (EmailLayoutAIDocumentMutationResult, error) {
+	m EmailLayoutAIDocumentMutation,
+) (layoutAIDocumentApply, error) {
 	now := dbtime.Now()
 	changed := false
+	var err error
 	switch {
-	case mutation.CreateTranslation:
-		if err := emailutil.SeedLayoutTranslationEntryFromSource(
-			ctx, tx, mutation.LayoutID, mutation.Locale, current.SourceLocale, now,
-		); err != nil {
-			return EmailLayoutAIDocumentMutationResult{}, err
-		}
-		changed = true
-	case mutation.DeleteTranslation:
-		result := tx.WithContext(ctx).Exec(
-			"DELETE FROM email_layout_translation WHERE entity_id = ? AND locale = ?",
-			mutation.LayoutID, mutation.Locale,
-		)
-		if result.Error != nil {
-			return EmailLayoutAIDocumentMutationResult{}, errs.Internal(result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return EmailLayoutAIDocumentMutationResult{}, emailLayoutAIDocumentConflict(
-				EmailLayoutAIDocumentTargetRevisionConflict,
-				current,
-			)
-		}
-		changed = true
-	case mutation.ReplaceValues:
-		currentValues := emailLayoutLocaleValues(current)
-		changed = !maps.Equal(currentValues, mutation.Values)
+	case m.CreateTranslation:
+		changed, err = true, store.SeedLayoutTranslation(ctx, m.LayoutID, m.Locale, current.SourceLocale, now)
+	case m.DeleteTranslation:
+		changed, err = true, deleteEmailLayoutAIDocumentTranslation(ctx, store, current, m)
+	case m.ReplaceValues:
+		changed = !maps.Equal(emailLayoutLocaleValues(current), m.Values)
 		if changed {
-			if mutation.Locale == current.SourceLocale {
-				contentHTML, contentText, err := emailutil.ApplyLayoutSourceValues(current.sourceHTML, mutation.Values)
-				if err != nil {
-					return EmailLayoutAIDocumentMutationResult{}, errs.InvalidArgument("content", err.Error())
-				}
-				expectedRevision, err := uuid.Parse(current.DocumentRevision)
-				if err != nil || expectedRevision == uuid.Nil {
-					if err != nil {
-						slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "emailauthoring", "event", "emailauthoring.document_invalid", "outcome", "failed", "operation", "parse_document_revision", failurecause.Attr(err))
-					}
-					return EmailLayoutAIDocumentMutationResult{}, errs.InternalMsg("Email Layout Content Document revision is invalid")
-				}
-				if _, err := s.layouts.contentBlocks.AdvanceRevision(
-					ctx, tx,
-					contentblock.AdvanceInput{DocumentID: current.documentID, ExpectedRevision: expectedRevision},
-					emailLayoutContentFence(s.layouts.references, mutation.LayoutID),
-					func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-						if err := emailutil.SaveLayoutSourceLocaleDocument(
-							ctx, tx, mutation.LayoutID, current.SourceLocale,
-							emailutil.LayoutTranslationDocument{ContentHTML: contentHTML, ContentText: contentText}, now,
-						); err != nil {
-							return contentblock.MetadataEffect{}, err
-						}
-						return contentblock.MetadataEffect{
-							Changed: true, AffectsTranslationSource: true,
-							ChangedLocales: []string{current.SourceLocale},
-						}, nil
-					},
-				); err != nil {
-					return EmailLayoutAIDocumentMutationResult{}, err
-				}
-			} else {
-				contentHTML, contentText, err := emailutil.ApplyLayoutLocaleValues(current.sourceHTML, mutation.Values)
-				if err != nil {
-					return EmailLayoutAIDocumentMutationResult{}, errs.InvalidArgument("content", err.Error())
-				}
-				updatedAt := translation.NextTargetUpdatedAt(now, dereferenceLayoutTime(current.localeUpdatedAt))
-				if err := emailutil.UpsertLayoutTranslationEntry(
-					ctx, tx, mutation.LayoutID, mutation.Locale,
-					translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
-				); err != nil {
-					return EmailLayoutAIDocumentMutationResult{}, err
-				}
-			}
-		}
-	case mutation.Noop:
-	}
-
-	if changed {
-		if err := appendEmailLayoutLocaleContentAudit(
-			ctx, tx, s.layouts.auditWriter, mutation.ContributorMemberID.String(),
-			mutation.LayoutID, mutation.Locale,
-			emailAuthoringLocaleContentOperation(
-				mutation.Locale == current.SourceLocale,
-				mutation.CreateTranslation, mutation.DeleteTranslation, mutation.ExpectedPresence,
-			),
-		); err != nil {
-			return EmailLayoutAIDocumentMutationResult{}, err
+			err = replaceLayoutAIDocumentValues(ctx, store, current, m, now)
 		}
 	}
-	next, err := s.loadStateAfterAuthorization(
-		ctx, tx, mutation.LayoutID, mutation.Locale, mutation.ContributorMemberID, "UPDATE",
-	)
 	if err != nil {
-		return EmailLayoutAIDocumentMutationResult{}, err
+		return layoutAIDocumentApply{}, err
 	}
-	return EmailLayoutAIDocumentMutationResult{
-		DocumentRevision: next.DocumentRevision,
-		TargetRevision:   cloneEmailLayoutAIDocumentString(next.TargetRevision),
-		Changed:          changed,
-	}, nil
+	next, err := loadEmailLayoutAIDocumentState(ctx, store, m.LayoutID, m.Locale, m.ContributorMemberID, emailcontent.UpdateLock)
+	if err != nil {
+		return layoutAIDocumentApply{}, err
+	}
+	applied := layoutAIDocumentApply{
+		mutation: m, record: mutation.Unchanged(),
+		result: EmailLayoutAIDocumentMutationResult{
+			DocumentRevision: next.DocumentRevision, TargetRevision: cloneEmailLayoutAIDocumentString(next.TargetRevision), Changed: changed,
+		},
+	}
+	if changed {
+		applied.record = emailLayoutLocaleContentChange(
+			m.ContributorMemberID.String(), m.LayoutID, m.Locale,
+			emailcontent.LocaleContentOperation(m.Locale == current.SourceLocale, m.CreateTranslation, m.DeleteTranslation, m.ExpectedPresence),
+		)
+	}
+	return applied, nil
 }
 
-func lockEmailLayoutAIDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	layoutID string,
-	lock string,
-) error {
-	var root emailLayoutBaseRow
-	query := tx.WithContext(ctx).Table("email_layout").Where("id = ?", layoutID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
+func deleteEmailLayoutAIDocumentTranslation(ctx context.Context, store Store, current EmailLayoutAIDocumentState, m EmailLayoutAIDocumentMutation) error {
+	deleted, err := store.DeleteLayoutTranslation(ctx, m.LayoutID, m.Locale)
+	if err != nil {
+		return err
 	}
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("email layout", layoutID)
-		}
-		return errs.Internal(err)
+	if !deleted {
+		return emailLayoutAIDocumentConflict(aidocument.ConflictTargetRevision, current)
 	}
 	return nil
 }
 
-func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
+// replaceLayoutAIDocumentValues stores the mutation's values as the source
+// locale's next document revision or as the target locale's row.
+func replaceLayoutAIDocumentValues(ctx context.Context, store Store, current EmailLayoutAIDocumentState, m EmailLayoutAIDocumentMutation, now time.Time) error {
+	if m.Locale != current.SourceLocale {
+		_, err := saveEmailLayoutTarget(ctx, store, m.LayoutID, m.Locale, current.sourceHTML, m.Values, now, dereferenceLayoutTime(current.localeUpdatedAt))
+		return err
+	}
+	contentHTML, contentText, err := emailutil.ApplyLayoutSourceValues(current.sourceHTML, m.Values)
+	if err != nil {
+		return domainerr.InvalidField("content", err.Error())
+	}
+	expectedRevision, err := uuid.Parse(current.DocumentRevision)
+	if err != nil || expectedRevision == uuid.Nil {
+		return fmt.Errorf("Email Layout Content Document revision %q is invalid", current.DocumentRevision)
+	}
+	authority := LayoutAuthority{LayoutID: m.LayoutID, SourceLocale: current.SourceLocale, DocumentID: current.documentID}
+	_, err = saveEmailLayoutSource(
+		ctx, store, m.LayoutID, authority, expectedRevision,
+		&emailutil.LayoutTranslationDocument{ContentHTML: contentHTML, ContentText: contentText}, now,
+	)
+	return err
+}
+
+func lockEmailLayoutAIDocumentRoot(ctx context.Context, store Store, layoutID string, lock emailcontent.RowLock) error {
+	if err := store.LockLayoutRoot(ctx, layoutID, lock); err != nil {
+		if errors.Is(err, ErrLayoutNotFound) {
+			return domainerr.ResourceNotFound("email layout", layoutID)
+		}
+		return err
+	}
+	return nil
+}
+
+func loadEmailLayoutAIDocumentState(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	layoutID string,
 	locale string,
 	memberID uuid.UUID,
-	lock string,
+	lock emailcontent.RowLock,
 ) (EmailLayoutAIDocumentState, error) {
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, lock)
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, store, layoutID, lock)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
-	source, err := emailutil.LoadCanonicalLayoutTranslationDocument(
-		ctx, tx, layoutID, authority.SourceLocale,
-	)
+	source, err := store.CanonicalLayoutSource(ctx, layoutID, authority.SourceLocale)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return EmailLayoutAIDocumentState{}, errs.FailedPrecondition("Email Layout source unit markers require backfill before editing")
+		return EmailLayoutAIDocumentState{}, domainerr.Precondition("Email Layout source unit markers require backfill before editing").WithCause(failurecause.ServerFault(err))
 	}
 
-	localeEntry, err := emailutil.LoadLayoutTranslationEntry(ctx, tx, layoutID, locale)
+	localeEntry, err := store.LayoutTranslationEntry(ctx, layoutID, locale)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
@@ -426,13 +366,12 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 		} else if localeEntry.ContentHTML != nil {
 			values, err = emailutil.ExtractLayoutStoredLocaleValues(*localeEntry.ContentHTML)
 			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-				return EmailLayoutAIDocumentState{}, errs.FailedPrecondition("Email Layout target unit markers require backfill before editing")
+				return EmailLayoutAIDocumentState{}, domainerr.Precondition("Email Layout target unit markers require backfill before editing").WithCause(failurecause.ServerFault(err))
 			}
 		}
 	}
 	if locale == authority.SourceLocale && !localeExists {
-		return EmailLayoutAIDocumentState{}, errs.FailedPrecondition("Email Layout source locale row is missing")
+		return EmailLayoutAIDocumentState{}, domainerr.Precondition("Email Layout source locale row is missing")
 	}
 
 	state := EmailLayoutAIDocumentState{
@@ -454,10 +393,7 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 		state.Units = append(state.Units, unit)
 	}
 	state.TargetRevision, err = deriveEmailLayoutAIDocumentTargetRevision(state)
-	if err != nil {
-		return EmailLayoutAIDocumentState{}, errs.Internal(err)
-	}
-	return state, nil
+	return state, err
 }
 
 func validateCompiledEmailLayoutAIDocumentMutation(
@@ -466,23 +402,17 @@ func validateCompiledEmailLayoutAIDocumentMutation(
 ) error {
 	if mutation.LayoutID != state.LayoutID || mutation.Locale != state.Locale ||
 		mutation.ContributorMemberID.String() != state.ViewerMemberID {
-		return errs.InvalidArgument(
+		return domainerr.InvalidField(
 			"mutation",
 			"compiled Email Layout identity, locale, and contributor must match the locked state",
 		)
 	}
 	if mutation.ExpectedDocumentRevision != state.DocumentRevision || mutation.ExpectedSource != state.SourceLocale {
-		return emailLayoutAIDocumentConflict(
-			EmailLayoutAIDocumentDocumentRevisionConflict,
-			state,
-		)
+		return emailLayoutAIDocumentConflict(aidocument.ConflictDocumentRevision, state)
 	}
 	if mutation.ExpectedPresence != state.LocaleExists ||
 		!emailLayoutAIDocumentStringEqual(mutation.ExpectedTargetRevision, state.TargetRevision) {
-		return emailLayoutAIDocumentConflict(
-			EmailLayoutAIDocumentTargetRevisionConflict,
-			state,
-		)
+		return emailLayoutAIDocumentConflict(aidocument.ConflictTargetRevision, state)
 	}
 	return nil
 }
@@ -490,7 +420,7 @@ func validateCompiledEmailLayoutAIDocumentMutation(
 func validateEmailLayoutAIDocumentMutation(
 	input EmailLayoutAIDocumentMutation,
 ) (EmailLayoutAIDocumentMutation, error) {
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", input.LayoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", input.LayoutID)
 	if err != nil {
 		return input, err
 	}
@@ -505,7 +435,7 @@ func validateEmailLayoutAIDocumentMutation(
 	}
 	input.ExpectedDocumentRevision = strings.TrimSpace(input.ExpectedDocumentRevision)
 	if input.Locale == "" || input.ExpectedSource == "" || input.ExpectedDocumentRevision == "" {
-		return input, errs.InvalidArgument(
+		return input, domainerr.InvalidField(
 			"document_revision",
 			"locale, source locale, and document revision are required",
 		)
@@ -513,7 +443,7 @@ func validateEmailLayoutAIDocumentMutation(
 	if input.ExpectedTargetRevision != nil {
 		revision := strings.TrimSpace(*input.ExpectedTargetRevision)
 		if revision == "" {
-			return input, errs.InvalidArgument("target_revision", "must not be empty")
+			return input, domainerr.InvalidField("target_revision", "must not be empty")
 		}
 		input.ExpectedTargetRevision = &revision
 	}
@@ -524,13 +454,13 @@ func validateEmailLayoutAIDocumentMutation(
 		}
 	}
 	if modes != 1 {
-		return input, errs.InvalidArgument("operation", "exactly one Email Layout AI document mutation mode is required")
+		return input, domainerr.InvalidField("operation", "exactly one Email Layout AI document mutation mode is required")
 	}
 	if input.CreateTranslation && (input.Locale == input.ExpectedSource || input.ExpectedPresence) {
-		return input, errs.InvalidArgument("locale", "only a missing non-source Email Layout translation can be created")
+		return input, domainerr.InvalidField("locale", "only a missing non-source Email Layout translation can be created")
 	}
 	if input.DeleteTranslation && (input.Locale == input.ExpectedSource || !input.ExpectedPresence) {
-		return input, errs.InvalidArgument("locale", "only an existing non-source Email Layout translation can be deleted")
+		return input, domainerr.InvalidField("locale", "only an existing non-source Email Layout translation can be deleted")
 	}
 	input.Values = maps.Clone(input.Values)
 	return input, nil
@@ -551,12 +481,14 @@ func deriveEmailLayoutAIDocumentTargetRevision(state EmailLayoutAIDocumentState)
 }
 
 func emailLayoutAIDocumentConflict(
-	kind EmailLayoutAIDocumentRevisionConflictKind,
+	kind aidocument.ConflictCode,
 	state EmailLayoutAIDocumentState,
-) *EmailLayoutAIDocumentRevisionConflictError {
-	return &EmailLayoutAIDocumentRevisionConflictError{
-		Kind: kind, CurrentDocumentRevision: state.DocumentRevision,
-		CurrentTargetRevision: cloneEmailLayoutAIDocumentString(state.TargetRevision),
+) *aidocument.RevisionConflict {
+	return &aidocument.RevisionConflict{
+		Kind:                    kind,
+		CurrentDocumentRevision: state.DocumentRevision,
+		CurrentTargetRevision:   cloneEmailLayoutAIDocumentString(state.TargetRevision),
+		Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", state.DocumentRevision),
 	}
 }
 
@@ -601,45 +533,6 @@ func cloneEmailLayoutAIDocumentState(state EmailLayoutAIDocumentState) EmailLayo
 		cloned.localeUpdatedAt = &value
 	}
 	return cloned
-}
-
-func requireEmailLayoutAIDocumentAuthority(
-	ctx context.Context,
-	checker *auth.SpiceDBClient,
-	layoutID string,
-) (uuid.UUID, error) {
-	principal := auth.GetUser(ctx)
-	if principal == nil || !principal.Authenticated {
-		return uuid.Nil, errs.AuthenticationRequired()
-	}
-	if principal.Banned {
-		return uuid.Nil, errs.AccountBanned()
-	}
-	if !principal.Onboarded {
-		return uuid.Nil, errs.NoPermission("edit", "email layout")
-	}
-	memberID, err := uuid.Parse(principal.MemberID.String())
-	if err != nil || memberID == uuid.Nil || memberID.String() != principal.MemberID.String() {
-		return uuid.Nil, errs.AuthenticationRequired()
-	}
-	can, err := emailLayoutEditCan(layoutID)
-	if err != nil {
-		return uuid.Nil, errs.InvalidArgument("email_layout_id", "must be a canonical UUID")
-	}
-	decision, err := auth.AuthorizationDecision(ctx, can)
-	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return uuid.Nil, errs.AuthenticationRequired()
-	}
-	allowed, err := checker.Can(ctx, decision)
-	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
-		return uuid.Nil, errs.DependencyUnavailable("SpiceDB")
-	}
-	if !allowed {
-		return uuid.Nil, errs.NoPermission("edit", "email layout")
-	}
-	return memberID, nil
 }
 
 func dereferenceLayoutTime(value *time.Time) time.Time {

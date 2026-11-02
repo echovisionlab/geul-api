@@ -9,22 +9,22 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release authorization admin")
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Release authorization admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withAuditedRequestContext(t, releaseIntegrationAdminCtx(adminID))
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(adminID))
 	require.NoError(t, err)
@@ -33,18 +33,7 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	releasesBeforeFailure, err := spiceDB.LookupResources(ctx, policyv1.Release.LookupManage(), actor)
 	require.NoError(t, err)
 
-	failing := releasepkg.NewAuditedReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(&recordingArtistFileDeleter{}),
-		releaseadapter.NewAssets(""),
-		releaseadapter.NewOG(""),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopAsyncPublisher{},
-		releaseFailingAuditAppender{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	failing := releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, releaseFailingAuditAppender{}))
 	_, err = failing.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "authorization rollback",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -55,29 +44,9 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	require.NoError(t, err)
 	require.ElementsMatch(t, releasesBeforeFailure, releasesAfterFailure, "known DB rollback must compensate the policy touch")
 
-	writer := apitelemetry.NewDurableWriter(db)
-	releases := releasepkg.NewAuditedReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(&recordingArtistFileDeleter{}),
-		releaseadapter.NewAssets(""),
-		releaseadapter.NewOG(""),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopAsyncPublisher{},
-		writer,
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
-	tracks := releasepkg.NewAuditedTrackService(
-		db,
-		releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		spiceDB,
-		releaseadapter.NewTrackFiles(&recordingTrackFileDeleter{}),
-		releaseadapter.NewMemberSummaries(db, ""),
-		releaseadapter.NewArtistSummaries(db),
-		writer,
-	)
+	service := newReleaseIntegrationUseCases(t, db, spiceDB, apitelemetry.NewDurableWriter(db))
+	releases := releasepkg.NewConnectHandler(service)
+	tracks := releasepkg.NewTrackConnectHandler(service)
 
 	release, err := releases.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Authorization lifecycle",

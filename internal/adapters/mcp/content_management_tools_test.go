@@ -8,12 +8,24 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
+
+	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -117,26 +129,38 @@ func TestWorkCreateRejectsInvalidDateRangeBeforeOwner(t *testing.T) {
 }
 
 func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T) {
-	layout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW, HideTableOfContents: true}
 	slug, summary, zone := "source-slug", "source-summary", "Asia/Seoul"
 	mapPlaceID := managementPageID
-	stamp := timestamppb.New(time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC))
+	moment := time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC)
+	stamp := timestamppb.New(moment)
 	seriesOrder := int32(4)
-	posts := &recordingPostManagement{getResponse: &managev1.Post{
-		Id: managementPostID, Title: "Source Post", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: managev1.PostStatus_POST_STATUS_SCHEDULED,
-		Revision: "actual-source-post-revision", ConfigurationRevision: managementPostConfigurationRevision, CommentsEnabled: false, MapPlaceId: &mapPlaceID,
-		DocumentLayout: layout, Categories: []*managev1.Category{{Id: managementWorkID}}, Tags: []*managev1.Tag{{Id: managementPageID}}, Series: &managev1.Series{Id: managementWorkID}, SeriesOrder: &seriesOrder,
-		AllowedActions: []managev1.PostAction{managev1.PostAction_POST_ACTION_EDIT, managev1.PostAction_POST_ACTION_CANCEL_SCHEDULE}, ScheduledAt: stamp, ScheduledTimeZone: &zone, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
-		Document: &contentv1.RichTextDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
-	}}
-	pages := &recordingPageManagement{getResponse: &managev1.Page{
-		Id: managementPageID, Title: "Source Page", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: managev1.PageStatus_PAGE_STATUS_PUBLISHED,
-		Revision: "actual-source-page-revision", ShowTitle: false, DocumentLayout: layout, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
-		Document: &contentv1.PageDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
-		AccessPolicy: &commonv1.PageAccessPolicy{
-			Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
-			AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_AUTHOR}, UserTagIds: []string{managementWorkID}, NewsletterSubscriber: true,
+	posts := &recordingPostManagement{getResponse: postdomain.View{
+		Post: postdomain.Post{
+			ID: managementPostID, Title: "Source Post", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: postdomain.StatusScheduled,
+			ContentRevision: "actual-source-post-revision", ConfigurationRevision: managementPostConfigurationRevision, CommentsEnabled: false, MapPlaceID: &mapPlaceID,
+			DocumentLayout: postdomain.DocumentLayout{ContentHeight: postdomain.ContentHeightViewport, PageChrome: postdomain.PlacementPinned, Footer: postdomain.PlacementFlow, HideTableOfContents: true},
+			Categories:     []postdomain.Category{{ID: managementWorkID}}, Tags: []postdomain.Tag{{ID: managementPageID}}, Series: &postdomain.Series{ID: managementWorkID}, SeriesOrder: &seriesOrder,
+			ScheduledAt: &moment, ScheduledTimeZone: &zone, PublishedAt: &moment, CreatedAt: moment, UpdatedAt: moment,
 		},
+		Actions:  []postdomain.Action{postdomain.ActionEdit, postdomain.ActionCancelSchedule},
+		Document: &contentv1.RichTextDocument{}, FeaturedImage: &fileref.Delivery{FileID: managementWorkID},
+	}}
+	published := stamp.AsTime()
+	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, Slug: &slug, SourceLocale: "ko", Status: pagedomain.StatusPublished, ShowTitle: false,
+			DocumentLayout: pagedomain.DocumentLayout{
+				ContentHeight: pagedomain.ContentHeightViewport, PageChrome: pagedomain.PlacementPinned,
+				Footer: pagedomain.PlacementFlow, HideTableOfContents: true,
+			},
+			AccessPolicy: encodedPageAccessPolicy(t, &commonv1.PageAccessPolicy{
+				Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
+				AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_AUTHOR}, UserTagIds: []string{managementWorkID}, NewsletterSubscriber: true,
+			}),
+			PublishedAt: &published, CreatedAt: published, UpdatedAt: published,
+		}, Title: "Source Page", Summary: &summary},
+		Revision: "actual-source-page-revision", Document: &contentv1.PageDocument{},
+		FeaturedImage: &fileref.Delivery{FileID: managementWorkID},
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, pages)
 	if err != nil {
@@ -197,7 +221,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 			}
 		})
 	}
-	if posts.get.Msg.Id != managementPostID || pages.get.Msg.Id != managementPageID {
+	if posts.get.ID != managementPostID || pages.get.ID != managementPageID {
 		t.Fatalf("getters changed exact target: %+v %+v", posts.get, pages.get)
 	}
 }
@@ -234,10 +258,10 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.create.Header().Get("Accept-Language") != "ko" || !posts.create.Msg.CommentsEnabled {
+	if posts.create.AcceptLanguage != "ko" || !posts.create.CommentsEnabled {
 		t.Fatalf("Post create = %#v", posts.create)
 	}
-	assertEmptyManagementDocument(t, posts.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, "ko")
+	assertEmptyManagementDocument(t, posts.create.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, "ko")
 	if postResult.StructuredContent["document_id"] != managementPostID || postResult.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("Post result = %#v", postResult.StructuredContent)
 	}
@@ -246,13 +270,13 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.create.Header().Get("Accept-Language") != "en" || works.create.Msg.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO || works.create.Msg.Metadata.GetFields()["key"].GetStringValue() != "value" {
-		t.Fatalf("Work create = %#v", works.create.Msg)
+	if works.create.AcceptLanguage != "en" || works.create.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO.String() || works.create.Metadata["key"] != "value" {
+		t.Fatalf("Work create = %#v", works.create)
 	}
-	if works.create.Msg.UntilYear == nil || *works.create.Msg.UntilYear != 2026 || works.create.Msg.UntilMonth == nil || *works.create.Msg.UntilMonth != 8 {
-		t.Fatalf("Work create range = %#v", works.create.Msg)
+	if works.create.UntilYear == nil || *works.create.UntilYear != 2026 || works.create.UntilMonth == nil || *works.create.UntilMonth != 8 {
+		t.Fatalf("Work create range = %#v", works.create)
 	}
-	assertEmptyManagementDocument(t, works.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
+	assertEmptyManagementDocument(t, works.create.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
 	if workResult.StructuredContent["document_id"] != managementWorkID {
 		t.Fatalf("Work result = %#v", workResult.StructuredContent)
 	}
@@ -261,8 +285,8 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pages.create.Header().Get("Accept-Language") != "ja" || pages.create.Msg.ShowTitle == nil || *pages.create.Msg.ShowTitle {
-		t.Fatalf("Page create = %#v", pages.create.Msg)
+	if pages.create.AcceptLanguage != "ja" || pages.create.ShowTitle == nil || *pages.create.ShowTitle {
+		t.Fatalf("Page create = %#v", pages.create)
 	}
 	if pageResult.StructuredContent["document_id"] != managementPageID {
 		t.Fatalf("Page result = %#v", pageResult.StructuredContent)
@@ -281,11 +305,11 @@ func TestPostSettingsUpdatePassesExactRevisionAndAcknowledgesPersistedRevision(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != managementPostConfigurationRevision {
+	if posts.updateCalls != 1 || posts.update == nil || posts.update.ExpectedConfigurationRevision != managementPostConfigurationRevision {
 		t.Fatalf("UpdatePost request = %#v (calls %d)", posts.update, posts.updateCalls)
 	}
-	if posts.update.Msg.Slug == nil || *posts.update.Msg.Slug != "updated-slug" {
-		t.Fatalf("UpdatePost settings = %#v", posts.update.Msg)
+	if posts.update.Slug == nil || *posts.update.Slug != "updated-slug" {
+		t.Fatalf("UpdatePost settings = %#v", posts.update)
 	}
 	if result.StructuredContent["configuration_revision"] != managementPostConfigurationRevisionNext {
 		t.Fatalf("Post settings result = %#v", result.StructuredContent)
@@ -294,9 +318,9 @@ func TestPostSettingsUpdatePassesExactRevisionAndAcknowledgesPersistedRevision(t
 
 func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testing.T) {
 	storedSlug, storedPlace := "stored-slug", managementWorkID
-	storedLayout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW}
-	posts := &recordingPostManagement{updateResponse: &managev1.UpdatePostResponse{
-		Id: managementPostID, Changed: false, Slug: &storedSlug, CommentsEnabled: false, MapPlaceId: &storedPlace, DocumentLayout: storedLayout, ConfigurationRevision: managementPostConfigurationRevision,
+	posts := &recordingPostManagement{updateResponse: &postdomain.SettingsUpdate{
+		ID: managementPostID, Changed: false, Slug: &storedSlug, CommentsEnabled: false, MapPlaceID: &storedPlace,
+		DocumentLayout: postdomain.DocumentLayout{ContentHeight: postdomain.ContentHeightContent, PageChrome: postdomain.PlacementFlow, Footer: postdomain.PlacementFlow}, ConfigurationRevision: managementPostConfigurationRevision,
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
 	if err != nil {
@@ -306,8 +330,8 @@ func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := posts.update.Msg
-	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT || request.DocumentLayout.PageChrome != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || request.DocumentLayout.Footer != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || !request.DocumentLayout.HideTableOfContents {
+	request := posts.update
+	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != postdomain.ContentHeightViewport || request.DocumentLayout.PageChrome != postdomain.PlacementPinned || request.DocumentLayout.Footer != postdomain.PlacementPinned || !request.DocumentLayout.HideTableOfContents {
 		t.Fatalf("layout request=%+v", request)
 	}
 	if result.StructuredContent["changed"] != false || result.StructuredContent["comments_enabled"] != false || result.StructuredContent["slug"] != storedSlug || result.StructuredContent["map_place_id"] != storedPlace || result.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
@@ -371,7 +395,7 @@ func TestPostSettingsLayoutRejectsInvalidOrPartialNativeEnumsBeforeMutation(t *t
 
 func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 	for _, changed := range []bool{true, false} {
-		pages := &recordingPageManagement{updateResponse: &managev1.UpdatePageResponse{Id: managementPageID, Changed: changed, ShowTitle: false}}
+		pages := &recordingPageManagement{updateResponse: pagedomain.UpdateResult{Page: pagedomain.Page{ID: managementPageID, ShowTitle: false}, Changed: changed}}
 		tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 		if err != nil {
 			t.Fatal(err)
@@ -380,14 +404,19 @@ func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pages.update.Msg.ShowTitle == nil || !*pages.update.Msg.ShowTitle || result.StructuredContent["show_title"] != false || result.StructuredContent["changed"] != changed {
+		if pages.update.ShowTitle == nil || !*pages.update.ShowTitle || result.StructuredContent["show_title"] != false || result.StructuredContent["changed"] != changed {
 			t.Fatalf("request/owning response=%+v %+v", pages.update, result.StructuredContent)
 		}
 	}
 }
 
 func TestPageSettingsReadReportsPublicWhenPolicyIsAbsent(t *testing.T) {
-	pages := &recordingPageManagement{getResponse: &managev1.Page{Id: managementPageID, Title: "Page", SourceLocale: "en", Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "r"}}
+	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, SourceLocale: "en", Status: pagedomain.StatusDraft, DocumentLayout: pagedomain.DefaultDocumentLayout(),
+		}, Title: "Page"},
+		Revision: "r",
+	}}
 	tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +440,9 @@ func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
 		{"conditions all", `{"mode":"conditions","match":"all","allowed_roles":["admin","author"],"newsletter_subscriber":true}`, &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL, AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN, policyv1.AuthorizationRole_AUTHOR}, NewsletterSubscriber: true}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			pages := &recordingPageManagement{updateResponse: &managev1.UpdatePageResponse{Id: managementPageID, Changed: true, AccessPolicy: test.want}}
+			pages := &recordingPageManagement{updateResponse: pagedomain.UpdateResult{
+				Page: pagedomain.Page{ID: managementPageID, AccessPolicy: encodedPageAccessPolicy(t, test.want)}, Changed: true,
+			}}
 			tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 			if err != nil {
 				t.Fatal(err)
@@ -420,10 +451,14 @@ func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !proto.Equal(pages.update.Msg.AccessPolicy, test.want) || pages.update.Msg.Slug != nil || pages.update.Msg.ShowTitle != nil {
-				t.Fatalf("request = %+v", pages.update.Msg)
+			if pages.update.AccessPolicy == nil || !proto.Equal(pageaccess.Message(*pages.update.AccessPolicy), test.want) || pages.update.Slug != nil || pages.update.ShowTitle != nil {
+				t.Fatalf("request = %+v", pages.update)
 			}
-			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(test.want)) {
+			stored, err := pageaccess.Decode(pages.updateResponse.Page.AccessPolicy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(pageaccess.Message(stored))) {
 				t.Fatalf("access_policy = %#v", result.StructuredContent["access_policy"])
 			}
 		})
@@ -498,7 +533,7 @@ func TestPostSettingsUpdateForwardsMissingMalformedAndStaleRevisionsSafely(t *te
 			if result.Content != nil || !errors.As(err, &executionErr) || executionErr.Message != test.apiMessage {
 				t.Fatalf("Post settings error result = %#v, error = %v", result, err)
 			}
-			if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != test.wantRevision {
+			if posts.updateCalls != 1 || posts.update == nil || posts.update.ExpectedConfigurationRevision != test.wantRevision {
 				t.Fatalf("UpdatePost request = %#v (calls %d), want revision %q", posts.update, posts.updateCalls, test.wantRevision)
 			}
 		})
@@ -515,8 +550,8 @@ func TestPostScheduleUsesExactTimestampAndLifecycleResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.schedule.Msg.ScheduledAt.AsTime().UTC() != time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC) || posts.schedule.Msg.ScheduledTimeZone != "Asia/Seoul" {
-		t.Fatalf("schedule request = %#v", posts.schedule.Msg)
+	if posts.schedule.ScheduledAt.UTC() != time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC) || posts.schedule.TimeZone != "Asia/Seoul" {
+		t.Fatalf("schedule request = %#v", posts.schedule)
 	}
 	if result.StructuredContent["status"] != "scheduled" {
 		t.Fatalf("schedule result = %#v", result.StructuredContent)
@@ -539,102 +574,137 @@ const (
 )
 
 type recordingPostManagement struct {
-	managev1connect.UnimplementedPostServiceHandler
-	create         *connect.Request[managev1.CreatePostRequest]
-	update         *connect.Request[managev1.UpdatePostRequest]
-	schedule       *connect.Request[managev1.SchedulePostRequest]
+	PostManagementApplication
+	create         *postdomain.CreatePostCommand
+	update         *postdomain.UpdatePostCommand
+	schedule       *postdomain.SchedulePostCommand
 	updateErr      error
 	updateCalls    int
-	get            *connect.Request[managev1.GetPostRequest]
-	getResponse    *managev1.Post
+	get            *postdomain.GetPostQuery
+	getResponse    postdomain.View
 	getErr         error
-	updateResponse *managev1.UpdatePostResponse
+	updateResponse *postdomain.SettingsUpdate
 }
 
-func (r *recordingPostManagement) GetPost(_ context.Context, req *connect.Request[managev1.GetPostRequest]) (*connect.Response[managev1.Post], error) {
-	r.get = req
+func (r *recordingPostManagement) GetPost(_ context.Context, query postdomain.GetPostQuery) (postdomain.View, error) {
+	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return postdomain.View{}, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingPostManagement) CreatePost(_ context.Context, req *connect.Request[managev1.CreatePostRequest]) (*connect.Response[managev1.Post], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Post{Id: managementPostID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision}), nil
+func (r *recordingPostManagement) CreatePost(_ context.Context, command postdomain.CreatePostCommand) (postdomain.View, error) {
+	r.create = &command
+	return postdomain.View{Post: postdomain.Post{
+		ID: managementPostID, Title: command.Title, SourceLocale: command.SourceLocale, Status: postdomain.StatusDraft,
+		ContentRevision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision,
+		DocumentLayout: postdomain.DefaultDocumentLayout(),
+	}}, nil
 }
-func (r *recordingPostManagement) UpdatePost(_ context.Context, req *connect.Request[managev1.UpdatePostRequest]) (*connect.Response[managev1.UpdatePostResponse], error) {
+func (r *recordingPostManagement) UpdatePost(_ context.Context, command postdomain.UpdatePostCommand) (postdomain.SettingsUpdate, error) {
 	r.updateCalls++
-	r.update = req
+	r.update = &command
 	if r.updateErr != nil {
-		return nil, r.updateErr
+		return postdomain.SettingsUpdate{}, r.updateErr
 	}
 	if r.updateResponse != nil {
-		return connect.NewResponse(r.updateResponse), nil
+		return *r.updateResponse, nil
 	}
-	return connect.NewResponse(&managev1.UpdatePostResponse{
-		Id: req.Msg.Id, Changed: true, Slug: req.Msg.Slug,
+	return postdomain.SettingsUpdate{
+		ID: command.ID, Changed: true, Slug: command.Slug,
 		ConfigurationRevision: managementPostConfigurationRevisionNext,
-	}), nil
+		DocumentLayout:        postdomain.DefaultDocumentLayout(),
+	}, nil
 }
-func (r *recordingPostManagement) SchedulePost(_ context.Context, req *connect.Request[managev1.SchedulePostRequest]) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
-	r.schedule = req
-	return connect.NewResponse(&managev1.PostLifecycleMutationResponse{Id: req.Msg.Id, Changed: true, Status: managev1.PostStatus_POST_STATUS_SCHEDULED, ScheduledAt: req.Msg.ScheduledAt, ScheduledTimeZone: &req.Msg.ScheduledTimeZone, UpdatedAt: timestamppb.Now()}), nil
+func (r *recordingPostManagement) SchedulePost(_ context.Context, command postdomain.SchedulePostCommand) (postdomain.Lifecycle, error) {
+	r.schedule = &command
+	scheduledAt := command.ScheduledAt.UTC()
+	return postdomain.Lifecycle{ID: command.ID, Status: postdomain.StatusScheduled, ScheduledAt: &scheduledAt, ScheduledTimeZone: &command.TimeZone, UpdatedAt: time.Now()}, nil
 }
 
 type recordingWorkManagement struct {
-	managev1connect.UnimplementedWorkServiceHandler
-	create      *connect.Request[managev1.CreateWorkRequest]
-	get         *connect.Request[managev1.GetWorkRequest]
-	getResponse *managev1.Work
+	WorkManagementApplication
+	create      *work.CreateWorkCommand
+	get         *work.GetWorkQuery
+	getResponse work.View
 	getErr      error
-	update      *connect.Request[managev1.UpdateWorkRequest]
+	update      *work.UpdateWorkCommand
 }
 
-func (r *recordingWorkManagement) GetWork(_ context.Context, req *connect.Request[managev1.GetWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.get = req
+func (r *recordingWorkManagement) GetWork(_ context.Context, query work.GetWorkQuery) (work.View, error) {
+	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return work.View{}, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingWorkManagement) UpdateWork(_ context.Context, req *connect.Request[managev1.UpdateWorkRequest]) (*connect.Response[managev1.UpdateWorkResponse], error) {
-	r.update = req
-	return connect.NewResponse(&managev1.UpdateWorkResponse{Id: req.Msg.Id, Changed: true, UpdatedAt: timestamppb.Now()}), nil
+func (r *recordingWorkManagement) UpdateWork(_ context.Context, command work.UpdateWorkCommand) (work.Update, error) {
+	r.update = &command
+	return work.Update{Work: work.Work{ID: command.ID, UpdatedAt: time.Now()}, Changed: true}, nil
 }
 
-func (r *recordingWorkManagement) CreateWork(_ context.Context, req *connect.Request[managev1.CreateWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Work{Id: managementWorkID, Title: req.Msg.Title, Type: req.Msg.Type, SourceLocale: req.Msg.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}), nil
+func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.CreateWorkCommand) (work.View, error) {
+	r.create = &command
+	return work.View{
+		Work:  work.Work{ID: managementWorkID, Type: command.Type, SourceLocale: command.SourceLocale, Status: work.StatusDraft},
+		Title: command.Title, Revision: "work-revision",
+	}, nil
 }
 
 type recordingPageManagement struct {
-	managev1connect.UnimplementedPageServiceHandler
-	create         *connect.Request[managev1.CreatePageRequest]
-	get            *connect.Request[managev1.GetPageRequest]
-	getResponse    *managev1.Page
+	create         *pagedomain.CreatePageCommand
+	get            *pagedomain.GetPageQuery
+	getResponse    pagedomain.Detail
 	getErr         error
-	update         *connect.Request[managev1.UpdatePageRequest]
-	updateResponse *managev1.UpdatePageResponse
+	update         *pagedomain.UpdatePageCommand
+	updateResponse pagedomain.UpdateResult
 }
 
-func (r *recordingPageManagement) GetPage(_ context.Context, req *connect.Request[managev1.GetPageRequest]) (*connect.Response[managev1.Page], error) {
-	r.get = req
+func (r *recordingPageManagement) GetPage(_ context.Context, query pagedomain.GetPageQuery) (pagedomain.Detail, error) {
+	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return pagedomain.Detail{}, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingPageManagement) UpdatePage(_ context.Context, req *connect.Request[managev1.UpdatePageRequest]) (*connect.Response[managev1.UpdatePageResponse], error) {
-	r.update = req
-	return connect.NewResponse(r.updateResponse), nil
+func (r *recordingPageManagement) UpdatePage(_ context.Context, command pagedomain.UpdatePageCommand) (pagedomain.UpdateResult, error) {
+	r.update = &command
+	return r.updateResponse, nil
 }
 
-func (r *recordingPageManagement) CreatePage(_ context.Context, req *connect.Request[managev1.CreatePageRequest]) (*connect.Response[managev1.Page], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Page{Id: managementPageID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "page-revision"}), nil
+func (r *recordingPageManagement) CreatePage(_ context.Context, command pagedomain.CreatePageCommand) (pagedomain.Detail, error) {
+	r.create = &command
+	return pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, SourceLocale: command.SourceLocale, Status: pagedomain.StatusDraft, DocumentLayout: pagedomain.DefaultDocumentLayout(),
+		}, Title: command.Title},
+		Revision: "page-revision",
+	}, nil
+}
+
+func (*recordingPageManagement) PublishPage(context.Context, pagedomain.PublishPageCommand) (pagedomain.LifecycleResult, error) {
+	return pagedomain.LifecycleResult{}, errors.New("publish page is not part of this test")
+}
+
+func (*recordingPageManagement) UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (pagedomain.LifecycleResult, error) {
+	return pagedomain.LifecycleResult{}, errors.New("unpublish page is not part of this test")
+}
+
+// encodedPageAccessPolicy is the stored form of policy.
+func encodedPageAccessPolicy(t *testing.T, policy *commonv1.PageAccessPolicy) json.RawMessage {
+	t.Helper()
+	encoded, err := pageaccess.Encode(pageaccess.FromMessage(policy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func (*recordingPageManagement) DeletePage(context.Context, pagedomain.DeletePageCommand) error {
+	return errors.New("delete page is not part of this test")
 }
 
 func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
@@ -642,10 +712,12 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	works := &recordingWorkManagement{getResponse: &managev1.Work{
-		Id: managementWorkID, Type: managev1.WorkType_WORK_TYPE_PORTFOLIO,
-		Metadata: metadata, Clients: []*managev1.WorkClient{{Id: managementPostID}},
-		Year: 2026, Month: 10, IsPresent: true, Revision: "content-revision",
+	works := &recordingWorkManagement{getResponse: work.View{
+		Work: work.Work{
+			ID: managementWorkID, Type: managev1.WorkType_WORK_TYPE_PORTFOLIO.String(),
+			Metadata: metadata.AsMap(), Year: 2026, Month: 10, IsPresent: true,
+		},
+		Clients: []work.Client{{ID: managementPostID}}, Revision: "content-revision",
 	}}
 	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
 	if err != nil {
@@ -655,7 +727,7 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.get.Msg.Id != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
+	if works.get.ID != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
 		t.Fatalf("settings read = %#v", read.StructuredContent)
 	}
 	encoded, err := json.Marshal(map[string]any{
@@ -669,11 +741,11 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := works.update.Msg
-	if request.Metadata == nil || len(request.Metadata.Fields) != 0 || request.Clients == nil || len(request.Clients.ClientIds) != 0 {
+	request := works.update
+	if request.Metadata == nil || len(request.Metadata) != 0 || request.Clients == nil || len(*request.Clients) != 0 {
 		t.Fatalf("empty desired values lost presence: %#v", request)
 	}
-	if !reflect.DeepEqual(request.ObservedMetadata.AsMap(), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(request.ObservedClients.ClientIds, []string{managementPostID}) {
+	if !reflect.DeepEqual(map[string]any(request.ObservedMetadata), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(*request.ObservedClients, []string{managementPostID}) {
 		t.Fatalf("observed baseline changed: %#v", request)
 	}
 }

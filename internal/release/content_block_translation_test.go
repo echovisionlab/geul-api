@@ -3,7 +3,6 @@ package release
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -26,7 +25,7 @@ func TestBuildTranslationCandidateLeavesPostRequestBlocksMissing(t *testing.T) {
 			}},
 		},
 	}
-	job := &model.TranslationJob{EntityType: releaseContentEntity, EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "ko"}
+	job := TranslationJob{EntityType: releaseContentEntity, EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "ko"}
 	plan, err := BuildTranslationExtractionPlan(job, source)
 	require.NoError(t, err)
 	requestedUnits := make([]translation.Unit, 0, 1)
@@ -61,7 +60,7 @@ func TestReleaseTranslationExtractionRejectsAllEmptyStableUnits(t *testing.T) {
 		},
 	}
 	_, err := BuildTranslationExtractionPlan(
-		&model.TranslationJob{EntityType: releaseContentEntity, EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "ko"},
+		TranslationJob{EntityType: releaseContentEntity, EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "ko"},
 		source,
 	)
 	require.ErrorIs(t, err, translation.ErrNoTranslatableUnits)

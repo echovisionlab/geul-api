@@ -69,13 +69,13 @@ func (l *Lookup) cleanupLoop() {
 	}
 }
 
-func (l *Lookup) getCached(ip string) *Info {
+func (l *Lookup) getCached(ip string) (*Info, bool) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	if entry, ok := l.cache[ip]; ok && time.Now().Before(entry.expiresAt) {
-		return entry.info
+		return entry.info, true
 	}
-	return nil
+	return nil, false
 }
 
 func (l *Lookup) setCache(ip string, info *Info) {
@@ -119,12 +119,15 @@ func (l *Lookup) LookupIP(ctx context.Context, ipStr string) *Info {
 	}
 
 	// Check cache
-	if cached := l.getCached(ipStr); cached != nil {
+	if cached, found := l.getCached(ipStr); found {
 		return cached
 	}
 
 	// Query database
-	info := l.queryDB(ctx, ipStr)
+	info, err := l.queryDB(ctx, ipStr)
+	if err != nil {
+		return nil
+	}
 
 	// Cache result (even nil to avoid repeated lookups for unknown IPs)
 	l.setCache(ipStr, info)
@@ -132,7 +135,7 @@ func (l *Lookup) LookupIP(ctx context.Context, ipStr string) *Info {
 	return info
 }
 
-func (l *Lookup) queryDB(ctx context.Context, ip string) *Info {
+func (l *Lookup) queryDB(ctx context.Context, ip string) (*Info, error) {
 	var result struct {
 		CountryCode string          `gorm:"column:country_iso_code"`
 		CountryName string          `gorm:"column:country_name"`
@@ -164,8 +167,11 @@ func (l *Lookup) queryDB(ctx context.Context, ip string) *Info {
 		cause := failurecause.Message(err)
 		slog.ErrorContext(ctx, "GeoIP lookup failed", "domain", "geoip", "event", "geoip.lookup_failed", "outcome", "failed", "failure_cause", cause)
 	}
-	if err != nil || result.CountryCode == "" {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if result.CountryCode == "" {
+		return nil, nil
 	}
 
 	return &Info{
@@ -177,5 +183,5 @@ func (l *Lookup) queryDB(ctx context.Context, ip string) *Info {
 		IsProxy:     result.IsProxy,
 		IsSatellite: result.IsSatellite,
 		TimeZone:    result.TimeZone,
-	}
+	}, nil
 }

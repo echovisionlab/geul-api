@@ -21,8 +21,8 @@ func TestCampaignMutationMapsTheSharedEmailProfileCommand(t *testing.T) {
 		ExpectedSource: "en", ExpectedPresence: false, ContributorMemberID: contributor,
 		CreateTranslation: true,
 	}
-	mapped := campaignMutation(input)
-	if mapped.CampaignID != input.Reference || mapped.Locale != input.Locale ||
+	mapped := emailContentMutation(input)
+	if mapped.Reference != input.Reference || mapped.Locale != input.Locale ||
 		mapped.ContributorMember != contributor || !mapped.CreateTranslation {
 		t.Fatalf("Campaign mutation mapping = %+v", mapped)
 	}

@@ -8,20 +8,36 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"github.com/stretchr/testify/require"
+
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -30,34 +46,17 @@ import (
 type fileService struct{}
 
 func (fileService) DeleteFileByID(context.Context, string) error { return nil }
-func (fileService) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error) {
+func (fileService) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*fileref.Delivery, error) {
 	return nil, nil
 }
-func (fileService) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+func (fileService) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }
 
 type asyncPublisher struct{}
 
-func (asyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
-	return nil
-}
-func (asyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error { return nil }
 func (asyncPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
 	return nil
-}
-
-type shareLinks struct{}
-
-func (shareLinks) ValidateShareLinkForEntity(
-	context.Context,
-	*gorm.DB,
-	string,
-	string,
-	managev1.ShareLinkEntityType,
-	string,
-) (*model.ShareLink, error) {
-	return nil, nil
 }
 
 type mediaLoader struct{}
@@ -66,7 +65,7 @@ func (mediaLoader) LoadContentBlockMediaReferences(
 	context.Context,
 	*gorm.DB,
 	uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 
@@ -76,8 +75,8 @@ type MediaHydrator struct{}
 
 func (MediaHydrator) HydrateAuthorizedPostBlockMediaWithDB(
 	_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 
@@ -99,10 +98,88 @@ func (renderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string,
 }
 
 // NewPostOGRefresher composes the Post OG adapters for integration tests.
-func NewPostOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, renderConfig{}, postadapter.NewProjection())
-	resolver := og.NewResolver(postadapter.NewRequests())
-	return og.NewRefresher(planner, resolver)
+func NewPostOGRefresher(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig{}, postadapter.NewProjection())
+	resolver := ogpostgres.NewResolver(postadapter.NewRequests())
+	return ogpostgres.NewRefresher(planner, resolver)
+}
+
+// Posts is a Post service with its Connect adapters, so a test reaches the
+// RPCs and the use cases only other adapters call (AI documents).
+type Posts struct {
+	*postdomain.ConnectHandler
+	Service *postdomain.Service
+}
+
+// Deps are the collaborators of a Post integration service. NewService
+// fills the ones a test leaves unset with integration-only stubs and the
+// durable audit writer.
+type Deps struct {
+	DB             *gorm.DB
+	CDNDomain      string
+	SpiceDB        *auth.SpiceDBClient
+	Files          postdomain.FileService
+	Signals        contentsignal.Publisher
+	MediaLoader    postpostgres.ContentBlockMediaLoader
+	Media          postpostgres.ContentBlockMediaHydrator
+	VersionRestore postpostgres.VersionRestoreSupport
+	ContentBlocks  *contentblock.Store
+	Audit          domainaudit.Appender
+}
+
+// NewUnits returns the Post unit of work over deps.DB with the runtimes
+// deps names, filling the unset ones.
+func NewUnits(t *testing.T, deps Deps) mutation.UnitOfWork[postdomain.Store] {
+	t.Helper()
+	deps = withDefaults(t, deps)
+	units, err := postpostgres.NewUnits(deps.DB, postpostgres.Ports{
+		ContentBlocks: deps.ContentBlocks, Signals: deps.Signals, OG: NewPostOGRefresher(deps.DB, deps.CDNDomain),
+		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
+		MediaLoader:      deps.MediaLoader, Media: deps.Media, VersionRestore: deps.VersionRestore, CDNDomain: deps.CDNDomain,
+	})
+	require.NoError(t, err)
+	return units
+}
+
+func withDefaults(t *testing.T, deps Deps) Deps {
+	t.Helper()
+	if deps.SpiceDB == nil {
+		deps.SpiceDB = orytest.PostIntegrationSpiceDB(t)
+	}
+	if deps.Files == nil {
+		deps.Files = fileService{}
+	}
+	if deps.Signals == nil {
+		deps.Signals = asyncPublisher{}
+	}
+	if deps.MediaLoader == nil {
+		deps.MediaLoader = mediaLoader{}
+	}
+	if deps.Media == nil {
+		deps.Media = MediaHydrator{}
+	}
+	if deps.VersionRestore == nil {
+		deps.VersionRestore = versionRestore{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = contenttest.NewPostContentBlockStore(t)
+	}
+	if deps.Audit == nil {
+		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
+	}
+	return deps
+}
+
+// NewService composes the Post use cases over deps.
+func NewService(t *testing.T, deps Deps) *postdomain.Service {
+	t.Helper()
+	deps = withDefaults(t, deps)
+	service, err := postdomain.NewService(postdomain.Deps{
+		Units: NewUnits(t, deps), SpiceDB: deps.SpiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit,
+		Files: deps.Files, Members: postadapter.NewMemberSummaries(deps.DB, deps.CDNDomain),
+	})
+	require.NoError(t, err)
+	return service
 }
 
 // NewPostDomainService composes a Post service with integration-only stubs.
@@ -111,12 +188,9 @@ func NewPostDomainService(
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	identities auth.IdentityManager,
 	store *contentblock.Store,
-) *postdomain.PostService {
-	return NewPostDomainServiceWithFileService(
-		t, db, cdnDomain, spiceDB, identities, store, fileService{},
-	)
+) Posts {
+	return NewPostDomainServiceWithFileService(t, db, cdnDomain, spiceDB, store, fileService{})
 }
 
 // NewPostDomainServiceWithFileService composes a Post service while allowing
@@ -126,61 +200,45 @@ func NewPostDomainServiceWithFileService(
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	identities auth.IdentityManager,
 	store *contentblock.Store,
 	files postdomain.FileService,
-) *postdomain.PostService {
+) Posts {
 	t.Helper()
-	if store == nil {
-		store = testutil.NewPostContentBlockStore(t)
-	}
-	return postdomain.NewPostService(
-		db,
-		cdnDomain,
-		NewPostOGRefresher(db, cdnDomain),
-		spiceDB,
-		identities,
-		files,
-		asyncPublisher{},
-		shareLinks{},
-		mediaLoader{},
-		postadapter.NewMemberSummaries(db, cdnDomain),
-		versionRestore{},
-		postdomain.WithPostContentBlockStore(store),
-		postdomain.WithPostContentBlockMediaHydrator(MediaHydrator{}),
-	)
+	service := NewService(t, Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store, Files: files})
+	return Posts{ConnectHandler: postdomain.NewConnectHandler(service), Service: service}
 }
 
-// NewInternalPostDomainService composes the collaboration-facing Post service.
+// NewInternalPostDomainService composes the collaboration-facing Post RPCs.
 func NewInternalPostDomainService(
 	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
 	store *contentblock.Store,
-) *postdomain.InternalPostService {
+) *postdomain.InternalConnectHandler {
 	t.Helper()
-	if store == nil {
-		store = testutil.NewPostContentBlockStore(t)
-	}
-	return postdomain.NewInternalPostService(
-		db,
-		spiceDB,
-		asyncPublisher{},
-		cdnDomain,
-		NewPostOGRefresher(db, cdnDomain),
-		mediaLoader{},
-		postdomain.WithInternalPostDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		postdomain.WithInternalPostContentBlockStore(store),
-		postdomain.WithInternalPostContentBlockMediaHydrator(MediaHydrator{}),
-	)
+	return postdomain.NewInternalConnectHandler(NewService(t, Deps{
+		DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store,
+	}))
 }
 
-// NewPostCommentService composes the Post comment member-summary adapter.
+// NewPostCommentService composes the Post comment RPCs with the member-summary
+// adapter. A nil spiceDB uses the integration stack's client.
 func NewPostCommentService(
+	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-) *postdomain.CommentService {
-	return postdomain.NewCommentService(db, spiceDB, postadapter.NewMemberSummaries(db, cdnDomain))
+) *postdomain.CommentConnectHandler {
+	t.Helper()
+	if spiceDB == nil {
+		spiceDB = orytest.PostIntegrationSpiceDB(t)
+	}
+	comments, err := postdomain.NewCommentService(postdomain.CommentDeps{
+		Units: NewUnits(t, Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB}), SpiceDB: spiceDB,
+		Fence: identitystate.PostgresFence{}, Members: postadapter.NewMemberSummaries(db, cdnDomain),
+		Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return postdomain.NewCommentConnectHandler(comments)
 }

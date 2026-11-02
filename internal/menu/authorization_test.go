@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -108,18 +106,18 @@ func TestMenuAIDocumentSelectsOneExactActionPerCommand(t *testing.T) {
 
 func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	t.Parallel()
-	currentItems := []model.MenuItem{{ID: "home", Label: "Home", LinkType: "custom"}}
+	currentItems := []Item{{ID: "home", Label: "Home", LinkType: LinkCustom}}
 	currentJSON, err := json.Marshal(currentItems)
 	require.NoError(t, err)
-	current := model.Menu{ID: "menu-action-test", Items: currentJSON}
-	request := &managev1.UpdateMenuRequest{Items: &managev1.MenuItemsUpdate{}}
+	current := Root{ID: "menu-action-test", ItemsJSON: currentJSON}
 
-	labelOnly, err := json.Marshal([]model.MenuItem{{ID: "home", Label: "Start", LinkType: "custom"}})
+	labelOnly, err := json.Marshal([]Item{{ID: "home", Label: "Start", LinkType: "custom"}})
 	require.NoError(t, err)
 	labelAction := menuUpdateAction(
+		t.Context(),
 		current,
-		request,
-		menuUpdate{fields: map[string]any{"items": json.RawMessage(labelOnly)}},
+		true,
+		menuUpdate{items: labelOnly},
 	)
 	labelCan, err := labelAction(current.ID)
 	require.NoError(t, err)
@@ -128,15 +126,16 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	require.Equal(t, expectedEdit.Action().Name(), labelCan.Action().Name())
 	require.Equal(t, expectedEdit.Action().Permission(), labelCan.Action().Permission())
 
-	structural, err := json.Marshal([]model.MenuItem{
+	structural, err := json.Marshal([]Item{
 		{ID: "home", Label: "Home", LinkType: "custom"},
 		{ID: "about", Label: "About", LinkType: "custom"},
 	})
 	require.NoError(t, err)
 	structuralAction := menuUpdateAction(
+		t.Context(),
 		current,
-		request,
-		menuUpdate{fields: map[string]any{"items": json.RawMessage(structural)}},
+		true,
+		menuUpdate{items: structural},
 	)
 	structuralCan, err := structuralAction(current.ID)
 	require.NoError(t, err)

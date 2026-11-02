@@ -4,11 +4,9 @@ package routeregistry
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"gorm.io/gorm"
 )
 
@@ -87,7 +85,6 @@ func IsPageRouteOccupiedByResource(ctx context.Context, db *gorm.DB, slug string
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "routeregistry", "operation", "check_route_occupancy", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.Internal(err)
 	}
 	return count > 0, nil
@@ -102,7 +99,6 @@ func isPageSlugOccupiedByResource(ctx context.Context, db *gorm.DB, namespace, s
 		Table("page").
 		Where("slug = ?", strings.TrimSuffix(namespace, "/")+"/"+slug).
 		Count(&count).Error; err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "routeregistry", "operation", "check_route_occupancy", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.Internal(err)
 	}
 	return count > 0, nil

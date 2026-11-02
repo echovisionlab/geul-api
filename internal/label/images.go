@@ -2,22 +2,54 @@ package label
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
+
+// LogoVariant names a Label logo slot.
+type LogoVariant uint8
+
+const (
+	// LogoVariantUnsupported is a variant the Label has no slot for.
+	LogoVariantUnsupported LogoVariant = iota
+	LogoVariantLight
+	LogoVariantDark
+)
+
+// labelLogoSlot is the variant and audit slot of a logo.
+type labelLogoSlot struct {
+	variant LogoVariant
+	audit   sharedtelemetry.AuditAssetSlot
+}
+
+func (slot labelLogoSlot) fileID(label *Label) *string {
+	if slot.variant == LogoVariantDark {
+		return label.LogoDarkFileID
+	}
+	return label.LogoLightFileID
+}
+
+func labelLogoSlotFor(variant LogoVariant) (labelLogoSlot, error) {
+	switch variant {
+	case LogoVariantLight:
+		return labelLogoSlot{variant: variant, audit: sharedtelemetry.AuditAssetSlotLight}, nil
+	case LogoVariantDark:
+		return labelLogoSlot{variant: variant, audit: sharedtelemetry.AuditAssetSlotDark}, nil
+	default:
+		return labelLogoSlot{}, domainerr.InvalidField("variant", "unsupported theme asset variant")
+	}
+}
 
 func effectiveLabelLogoFileID(lightFileID *string, darkFileID *string) *string {
 	if light := normalizedOptionalString(lightFileID); light != nil {
@@ -26,254 +58,192 @@ func effectiveLabelLogoFileID(lightFileID *string, darkFileID *string) *string {
 	return normalizedOptionalString(darkFileID)
 }
 
-func sameNormalizedOptionalString(left *string, right *string) bool {
-	left = normalizedOptionalString(left)
-	right = normalizedOptionalString(right)
+func normalizedOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
+}
+
+func sameOptionalString(left, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
 	return *left == *right
 }
 
-func refreshLabelOgForEffectiveLogoChangeWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	runtime Runtime,
-	labelID string,
-	previousEffectiveLogoFileID *string,
-	reason string,
-) (*string, error) {
-	var row struct {
-		FileID *string `gorm:"column:file_id"`
-	}
-	if err := tx.WithContext(ctx).
-		Raw(`SELECT COALESCE(logo_light_file_id, logo_dark_file_id) AS file_id FROM label WHERE id = ? LIMIT 1`, labelID).
-		Scan(&row).Error; err != nil {
+func sameNormalizedOptionalString(left *string, right *string) bool {
+	return sameOptionalString(normalizedOptionalString(left), normalizedOptionalString(right))
+}
+
+// refreshLabelOgForEffectiveLogoChange regenerates the OG image when the
+// effective logo changed: a Label left without a logo loses its OG image,
+// otherwise a new generation run starts.
+func refreshLabelOgForEffectiveLogoChange(ctx context.Context, store Store, labelID string, previousEffectiveLogoFileID *string, reason string) (*string, error) {
+	current, err := store.EffectiveLogoFileID(ctx, labelID)
+	if err != nil {
 		return nil, err
 	}
-	currentEffectiveLogoFileID := normalizedOptionalString(row.FileID)
+	currentEffectiveLogoFileID := normalizedOptionalString(current)
 	if sameNormalizedOptionalString(previousEffectiveLogoFileID, currentEffectiveLogoFileID) {
 		return nil, nil
 	}
 	if currentEffectiveLogoFileID == nil {
-		if err := tx.WithContext(ctx).Table("label").
-			Where("id = ?", labelID).Update("og_asset_id", nil).Error; err != nil {
+		if err := store.ClearOgAsset(ctx, labelID); err != nil {
 			return nil, err
 		}
-		if err := runtime.CancelAndReleaseOGWithDB(ctx, tx, labelID); err != nil {
+		if err := store.CancelOG(ctx, labelID); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
-	runID, err := runtime.RequestCurrentWithDB(ctx, tx, labelID, reason)
+	runID, err := store.RequestOG(ctx, labelID, reason)
 	if err != nil || strings.TrimSpace(runID) == "" {
 		return nil, err
 	}
 	return &runID, nil
 }
 
-func labelLogoColumnForVariant(variant managev1.ThemeAssetVariant) (string, error) {
-	switch variant {
-	case managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_UNSPECIFIED,
-		managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT:
-		return "logo_light_file_id", nil
-	case managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK:
-		return "logo_dark_file_id", nil
-	default:
-		return "", errs.InvalidArgument("variant", "unsupported theme asset variant")
-	}
+// SetLabelImageCommand selects FileID for a Label logo slot.
+type SetLabelImageCommand struct {
+	LabelID string
+	FileID  string
+	Variant LogoVariant
+}
+
+// LogoUpdate is the Label's ready logos after a logo change and the OG
+// generation run it started.
+type LogoUpdate struct {
+	Light             *mediaasset.Reference
+	Dark              *mediaasset.Reference
+	OgGenerationRunID *string
+}
+
+// logoChange is a committed logo slot change. signalID is the Label ID its
+// content.updated signal names.
+type logoChange struct {
+	changed  bool
+	ogRunID  *string
+	fileID   string
+	signalID string
 }
 
 // SetLabelImage selects the file referenced by a label logo slot.
-func (s *LabelService) SetLabelImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetLabelImageRequest],
-) (_ *connect.Response[managev1.SetLabelImageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) SetLabelImage(ctx context.Context, command SetLabelImageCommand) (_ LogoUpdate, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
 
-	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
+	slot, err := labelLogoSlotFor(command.Variant)
 	if err != nil {
-		return nil, err
+		return LogoUpdate{}, err
 	}
-
-	var label model.Label
-	var ogRunID *string
-
-	// Use transaction to ensure atomicity
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Get the label to update.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
-			return err
-		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
-			return err
-		}
-		previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
-		currentSlotFileID := label.LogoLightFileID
-		if logoColumn == "logo_dark_file_id" {
-			currentSlotFileID = label.LogoDarkFileID
-		}
-		if sameOptionalString(currentSlotFileID, &req.Msg.FileId) {
-			return nil
-		}
-		if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
-		}
-
-		// 2. Update label logo
-		result := tx.Model(&label).Updates(structured.Fields{
-			logoColumn:   req.Msg.FileId,
-			"updated_at": time.Now(),
+	var label Label
+	change, err := s.changeLabelLogo(ctx, command.LabelID, &label, slot, sharedtelemetry.AuditCollectionOperationAdded,
+		func(ctx context.Context, store Store) (logoChange, error) {
+			previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
+			if sameOptionalString(slot.fileID(&label), &command.FileID) {
+				return logoChange{}, nil
+			}
+			if err := store.LockAttachableFiles(ctx, []string{command.FileID}); err != nil {
+				return logoChange{}, err
+			}
+			fileID := command.FileID
+			if err := store.SetLabelLogo(ctx, command.LabelID, slot.variant, &fileID, time.Now()); err != nil {
+				return logoChange{}, err
+			}
+			if err := store.BindLogo(ctx, command.FileID, command.LabelID, slot.variant); err != nil {
+				return logoChange{}, err
+			}
+			ogRunID, err := refreshLabelOgForEffectiveLogoChange(ctx, store, command.LabelID, previousEffectiveLogoFileID, "label_logo_updated")
+			return logoChange{changed: true, ogRunID: ogRunID, fileID: command.FileID, signalID: label.ID}, err
 		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-
-		bindingKey := "logo_light"
-		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo_dark"
-		}
-		_, err = s.runtime.BindReadyAssetForSourceFile(
-			ctx, tx, req.Msg.FileId, "label", req.Msg.LabelId, bindingKey, "logo",
-		)
-		if err != nil {
-			return err
-		}
-		ogRunID, err = refreshLabelOgForEffectiveLogoChangeWithDB(
-			ctx, tx, s.runtime, req.Msg.LabelId,
-			previousEffectiveLogoFileID, "label_logo_updated",
-		)
-		if err != nil {
-			return err
-		}
-		if err := s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationAdded, req.Msg.FileId); err != nil {
-			return err
-		}
-		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(label.ID))
-	})
-
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("label", req.Msg.LabelId)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+		return LogoUpdate{}, err
 	}
-
-	imageAssets := s.getLabelImageAssets(ctx, label.ID)
-
-	if err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
-		return nil, err
+	logos := s.getLabelImageAssets(ctx, label.ID)
+	if _, err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
+		return LogoUpdate{}, err
 	}
-	return connect.NewResponse(&managev1.SetLabelImageResponse{
-		ImageLightAsset:   imageAssets.Light,
-		ImageDarkAsset:    imageAssets.Dark,
-		OgGenerationRunId: ogRunID,
-	}), nil
+	return LogoUpdate{Light: logos.Light, Dark: logos.Dark, OgGenerationRunID: change.ogRunID}, nil
 }
 
-// DeleteLabelImage clears a label logo slot without deleting its file.
-func (s *LabelService) DeleteLabelImage(
+// DeleteLabelImageCommand clears a Label logo slot without deleting its file.
+type DeleteLabelImageCommand struct {
+	LabelID string
+	Variant LogoVariant
+}
+
+// DeleteLabelImage clears a label logo slot and returns the OG generation
+// run the change started.
+func (s *Service) DeleteLabelImage(ctx context.Context, command DeleteLabelImageCommand) (_ *string, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
+
+	slot, err := labelLogoSlotFor(command.Variant)
+	if err != nil {
+		return nil, err
+	}
+	var label Label
+	change, err := s.changeLabelLogo(ctx, command.LabelID, &label, slot, sharedtelemetry.AuditCollectionOperationRemoved,
+		func(ctx context.Context, store Store) (logoChange, error) {
+			previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
+			oldFileID := slot.fileID(&label)
+			if oldFileID == nil {
+				return logoChange{}, nil
+			}
+			if err := store.SetLabelLogo(ctx, command.LabelID, slot.variant, nil, time.Now()); err != nil {
+				return logoChange{}, err
+			}
+			if err := store.ReleaseLogoBinding(ctx, command.LabelID, slot.variant); err != nil {
+				return logoChange{}, err
+			}
+			ogRunID, err := refreshLabelOgForEffectiveLogoChange(ctx, store, command.LabelID, previousEffectiveLogoFileID, "label_logo_removed")
+			return logoChange{changed: true, ogRunID: ogRunID, fileID: *oldFileID, signalID: command.LabelID}, err
+		})
+	if err != nil {
+		return nil, err
+	}
+	return change.ogRunID, nil
+}
+
+// changeLabelLogo locks the Label row into label before the fresh Manage
+// check and runs change; a changed slot is audited and signals a media
+// update.
+func (s *Service) changeLabelLogo(
 	ctx context.Context,
-	req *connect.Request[managev1.DeleteLabelImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
-
-	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
-	if err != nil {
-		return nil, err
-	}
-
-	var ogRunID *string
-
-	// Use transaction to ensure atomicity
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Get the label to update.
-		var label model.Label
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
+	labelID string,
+	label *Label,
+	slot labelLogoSlot,
+	operation sharedtelemetry.AuditCollectionOperation,
+	change func(context.Context, Store) (logoChange, error),
+) (logoChange, error) {
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[logoChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			*label, err = store.LockLabel(ctx, labelID)
 			return err
-		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
-			return err
-		}
-		previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
-		oldFileID := label.LogoLightFileID
-		if logoColumn == "logo_dark_file_id" {
-			oldFileID = label.LogoDarkFileID
-		}
-		if oldFileID == nil {
-			return nil
-		}
-
-		// 2. Clear the selected logo slot.
-		if err := tx.Model(&label).Updates(structured.Fields{
-			logoColumn:   nil,
-			"updated_at": time.Now(),
-		}).Error; err != nil {
-			return err
-		}
-
-		bindingKey := "logo_light"
-		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo_dark"
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(
-			ctx, tx, "label", req.Msg.LabelId, bindingKey,
-		); err != nil {
-			return err
-		}
-		ogRunID, err = refreshLabelOgForEffectiveLogoChangeWithDB(
-			ctx, tx, s.runtime, req.Msg.LabelId,
-			previousEffectiveLogoFileID, "label_logo_removed",
-		)
-		if err != nil {
-			return err
-		}
-		if err := s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationRemoved, *oldFileID); err != nil {
-			return err
-		}
-		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(req.Msg.LabelId))
+		},
+		Access: labelEntity.LockedAccess(s.spiceDB, labelID, policyv1.Label.Manage),
+		Change: change,
+		Audit: func(change logoChange) mutation.Audit {
+			if !change.changed {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditLabelUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewLabelLogoAuditRecord(m, label.ID, slot.audit, operation, change.fileID)
+			})
+		},
+		Outbox: func(ctx context.Context, store Store, change logoChange) error {
+			if !change.changed {
+				return nil
+			}
+			return store.PublishContentUpdate(ctx, ContentUpdate{LabelID: change.signalID, Kind: MediaUpdate})
+		},
 	})
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("label", req.Msg.LabelId)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+	if errors.Is(err, ErrLabelNotFound) {
+		return logoChange{}, domainerr.ResourceNotFound("label", labelID)
 	}
-
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{
-		Success: true, OgGenerationRunId: ogRunID,
-	}), nil
+	return result, err
 }
-
-func labelAuditLogoSlot(column string) sharedtelemetry.AuditAssetSlot {
-	if column == "logo_dark_file_id" {
-		return sharedtelemetry.AuditAssetSlotDark
-	}
-	return sharedtelemetry.AuditAssetSlotLight
-}
-
-// ==================== Owner and Manager Assignment ====================

@@ -5,19 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -72,7 +66,7 @@ type compiledMenuAIDocument struct {
 	deleteTranslation   bool
 }
 
-func (s *MenuService) compileAIDocument(
+func (s *Service) compileAIDocument(
 	snapshot AIDocumentSnapshot,
 	operations []AIDocumentOperation,
 ) (compiledMenuAIDocument, []AIDocumentIssue) {
@@ -80,177 +74,261 @@ func (s *MenuService) compileAIDocument(
 	result := compiledMenuAIDocument{snapshot: working}
 	graph, err := newMenuAIDocumentGraph(working.ID, working.Items)
 	if err != nil {
-		slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-		return result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID, Message: err.Error()}}
+		return result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: menuHandle(working.ID, ""), Message: err.Error()}}
 	}
-	isSource := working.Locale == working.SourceLocale
-	bootstrapTarget := !isSource && !working.LocaleExists && menuAIDocumentCreatesTarget(operations)
+	compiler := &menuCompiler{
+		working:        working,
+		graph:          graph,
+		result:         result,
+		isSource:       working.Locale == working.SourceLocale,
+		operationCount: len(operations),
+	}
+	bootstrapTarget := !compiler.isSource && !working.LocaleExists && menuAIDocumentCreatesTarget(operations)
 	if bootstrapTarget {
-		working.Labels = seedMenuTargetLabels(working)
+		compiler.working.Labels = seedMenuTargetLabels(compiler.working)
 	}
 	for index, operation := range operations {
-		issue := func(handle, message string) []AIDocumentIssue {
-			return []AIDocumentIssue{{Operation: index, Code: AIDocumentIssueInvalidOperation, Handle: handle, Message: message}}
-		}
-		targetIssue := func(handle, message string) []AIDocumentIssue {
-			return []AIDocumentIssue{{Operation: index, Code: AIDocumentIssueTargetForbidden, Handle: handle, Message: message}}
-		}
-		switch operation.Kind {
-		case AIDocumentSetName:
-			if !isSource {
-				return result, targetIssue("menu:"+working.ID, "only the source locale may change the Menu name")
-			}
-			if operation.Value.Kind != AIDocumentText {
-				return result, issue("menu:"+working.ID+"/name", "Menu name requires text")
-			}
-			if working.Name != operation.Value.Text {
-				working.Name = operation.Value.Text
-				result.changed, result.sourceChanged = true, true
-			}
-		case AIDocumentNoop:
-			// The Menu catalog has one item kind. A shared kind replacement
-			// normalized to the same menu_item kind is intentionally a no-op.
-		case AIDocumentSetItemField, AIDocumentUnsetItemField:
-			item, ok := graph.items[operation.ItemID]
-			if !ok {
-				return result, issue("item:"+operation.ItemID, "Menu item does not exist")
-			}
-			if operation.Field == "label" {
-				if operation.Kind == AIDocumentSetItemField && operation.Value.Kind != AIDocumentText {
-					return result, issue("item:"+operation.ItemID+"/label", "Menu item label requires text")
-				}
-				if operation.Kind == AIDocumentSetItemField && len(operation.Value.Text) > menuItemLabelMaxLength {
-					return result, issue(
-						"item:"+operation.ItemID+"/label",
-						fmt.Sprintf("Menu item label must be at most %d characters", menuItemLabelMaxLength),
-					)
-				}
-				if !itemOwnsLocaleLabel(item, working.Locale) {
-					return result, targetIssue("item:"+operation.ItemID+"/label", "fixed-locale Menu item labels may be edited only in their fixed locale")
-				}
-				if isSource && !working.SourceValuesStored {
-					return result, issue("translation:"+working.Locale, "Menu source locale values are not initialized")
-				}
-				current, exists := working.Labels[operation.ItemID]
-				if operation.Kind == AIDocumentUnsetItemField {
-					if exists {
-						delete(working.Labels, operation.ItemID)
-						result.changed = true
-						if isSource {
-							result.sourceValuesChanged = true
-						} else {
-							result.targetChanged = true
-						}
-					}
-				} else if !exists || current != operation.Value.Text {
-					working.Labels[operation.ItemID] = operation.Value.Text
-					result.changed = true
-					if isSource {
-						result.sourceValuesChanged = true
-					} else {
-						result.targetChanged = true
-					}
-				}
-				continue
-			}
-			if !isSource {
-				return result, targetIssue("item:"+operation.ItemID+"/"+operation.Field, "non-source locales may change only translated labels")
-			}
-			changed, fieldErr := applyMenuAIDocumentSourceField(item, operation)
-			if fieldErr != nil {
-				slog.Warn("Menu field compilation failed", "domain", "menu", "operation", "compile_ai_document_field", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(fieldErr))
-				return result, issue("item:"+operation.ItemID+"/"+operation.Field, fieldErr.Error())
-			}
-			if changed {
-				result.changed, result.sourceChanged = true, true
-			}
-		case AIDocumentInsertItem:
-			if !isSource {
-				return result, targetIssue("item:"+operation.ItemID, "only the source locale may insert Menu items")
-			}
-			if err := graph.insert(operation.ItemID, operation.ParentID, operation.AfterID); err != nil {
-				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-				return result, issue("item:"+operation.ItemID, err.Error())
-			}
-			result.changed, result.sourceChanged = true, true
-		case AIDocumentDeleteItem:
-			if !isSource {
-				return result, targetIssue("item:"+operation.ItemID, "only the source locale may delete Menu items")
-			}
-			if err := graph.delete(operation.ItemID); err != nil {
-				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-				return result, issue("item:"+operation.ItemID, err.Error())
-			}
-			result.changed, result.sourceChanged = true, true
-		case AIDocumentMoveItem:
-			if !isSource {
-				return result, targetIssue("item:"+operation.ItemID, "only the source locale may move Menu items")
-			}
-			changed, err := graph.move(operation.ItemID, operation.ParentID, operation.AfterID)
-			if err != nil {
-				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-				return result, issue("item:"+operation.ItemID, err.Error())
-			}
-			if changed {
-				result.changed, result.sourceChanged = true, true
-			}
-		case AIDocumentCreateTranslation:
-			if isSource || working.LocaleExists || len(operations) != 1 {
-				return result, issue("translation:"+working.Locale, "translation create requires one absent non-source locale")
-			}
-			working.LocaleExists = true
-			result.changed, result.targetChanged = true, true
-		case AIDocumentDeleteTranslation:
-			if isSource || !working.LocaleExists || len(operations) != 1 {
-				return result, issue("translation:"+working.Locale, "translation delete requires one existing non-source locale")
-			}
-			working.LocaleExists = false
-			working.Labels = map[string]string{}
-			result.changed, result.targetChanged, result.deleteTranslation = true, true, true
-		default:
-			return result, issue("menu:"+working.ID, "unsupported Menu AI document operation")
+		if issue := compiler.apply(operation); issue != nil {
+			issue.Operation = index
+			return compiler.result, []AIDocumentIssue{*issue}
 		}
 	}
-	if bootstrapTarget && !working.LocaleExists {
-		working.LocaleExists = true
-		result.changed, result.targetChanged = true, true
+	if bootstrapTarget && !compiler.working.LocaleExists {
+		compiler.working.LocaleExists = true
+		compiler.result.changed, compiler.result.targetChanged = true, true
 	}
 
-	working.Items, err = graph.build()
+	compiler.working.Items, err = graph.build()
 	if err != nil {
-		slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-		return result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID, Message: err.Error()}}
+		return compiler.result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: menuHandle(working.ID, ""), Message: err.Error()}}
 	}
-	result.snapshot = working
-	if result.sourceChanged {
-		validationOperation := lastMenuAIDocumentMutationIndex(operations)
-		if err := s.validateMenuName(working.Name); err != nil {
-			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/name", Message: err.Error()}}
-		}
-		if err := validateAIDocumentItemConfiguration(working.Items); err != nil {
-			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/items", Message: err.Error()}}
-		}
-		validationItems := aiDocumentItemsToModel(working.Items)
-		fillMissingMenuLabelsForStructuralValidation(validationItems)
-		if err := s.validateMenuItems(s.modelItemsToProto(validationItems), 0); err != nil {
-			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/items", Message: err.Error()}}
-		}
+	compiler.result.snapshot = compiler.working
+	issue := s.validateCompiledSource(compiler.result)
+	if issue == nil {
+		issue = validateCompiledLabels(compiler.result)
 	}
-	if result.sourceValuesChanged || result.targetChanged {
-		if err := validateAIDocumentLocaleLabels(working.Labels); err != nil {
-			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
-			return result, []AIDocumentIssue{{
-				Operation: lastMenuAIDocumentMutationIndex(operations),
-				Code:      AIDocumentIssueInvalidOperation,
-				Handle:    "menu:" + working.ID + "/labels",
-				Message:   err.Error(),
-			}}
-		}
+	if issue != nil {
+		issue.Operation = lastMenuAIDocumentMutationIndex(operations)
+		return compiler.result, []AIDocumentIssue{*issue}
 	}
-	return result, nil
+	return compiler.result, nil
+}
+
+// menuCompiler applies AI document operations to a working copy of one Menu
+// snapshot and records in result which parts of the aggregate changed.
+type menuCompiler struct {
+	working        AIDocumentSnapshot
+	graph          *menuAIDocumentGraph
+	result         compiledMenuAIDocument
+	isSource       bool
+	operationCount int
+}
+
+func menuHandle(menuID, field string) string {
+	if field == "" {
+		return "menu:" + menuID
+	}
+	return "menu:" + menuID + "/" + field
+}
+
+func itemHandle(itemID, field string) string {
+	if field == "" {
+		return "item:" + itemID
+	}
+	return "item:" + itemID + "/" + field
+}
+
+func translationHandle(locale string) string {
+	return "translation:" + locale
+}
+
+// invalidOperation and forbiddenTarget build the issue for the operation
+// being applied; compileAIDocument fills in its index.
+func invalidOperation(handle, message string) *AIDocumentIssue {
+	return &AIDocumentIssue{Code: AIDocumentIssueInvalidOperation, Handle: handle, Message: message}
+}
+
+func forbiddenTarget(handle, message string) *AIDocumentIssue {
+	return &AIDocumentIssue{Code: AIDocumentIssueTargetForbidden, Handle: handle, Message: message}
+}
+
+func (c *menuCompiler) apply(operation AIDocumentOperation) *AIDocumentIssue {
+	switch operation.Kind {
+	case AIDocumentSetName:
+		return c.applySetName(operation)
+	case AIDocumentNoop:
+		// The Menu catalog has one item kind. A shared kind replacement
+		// normalized to the same menu_item kind is intentionally a no-op.
+		return nil
+	case AIDocumentSetItemField, AIDocumentUnsetItemField:
+		item, ok := c.graph.items[operation.ItemID]
+		if !ok {
+			return invalidOperation(itemHandle(operation.ItemID, ""), "Menu item does not exist")
+		}
+		if operation.Field == "label" {
+			return c.applyItemLabel(item, operation)
+		}
+		return c.applyItemSourceField(item, operation)
+	case AIDocumentInsertItem, AIDocumentDeleteItem, AIDocumentMoveItem:
+		return c.applyStructural(operation)
+	case AIDocumentCreateTranslation, AIDocumentDeleteTranslation:
+		return c.applyTranslationLifecycle(operation)
+	default:
+		return invalidOperation(menuHandle(c.working.ID, ""), "unsupported Menu AI document operation")
+	}
+}
+
+func (c *menuCompiler) markSourceChanged() {
+	c.result.changed, c.result.sourceChanged = true, true
+}
+
+// markLabelsChanged records a label change in the locale being edited: the
+// source locale's own values row or the target translation.
+func (c *menuCompiler) markLabelsChanged() {
+	c.result.changed = true
+	if c.isSource {
+		c.result.sourceValuesChanged = true
+	} else {
+		c.result.targetChanged = true
+	}
+}
+
+func (c *menuCompiler) applySetName(operation AIDocumentOperation) *AIDocumentIssue {
+	if !c.isSource {
+		return forbiddenTarget(menuHandle(c.working.ID, ""), "only the source locale may change the Menu name")
+	}
+	if operation.Value.Kind != AIDocumentText {
+		return invalidOperation(menuHandle(c.working.ID, "name"), "Menu name requires text")
+	}
+	if c.working.Name != operation.Value.Text {
+		c.working.Name = operation.Value.Text
+		c.markSourceChanged()
+	}
+	return nil
+}
+
+func (c *menuCompiler) applyItemLabel(item *AIDocumentItem, operation AIDocumentOperation) *AIDocumentIssue {
+	handle := itemHandle(operation.ItemID, "label")
+	set := operation.Kind == AIDocumentSetItemField
+	if set && operation.Value.Kind != AIDocumentText {
+		return invalidOperation(handle, "Menu item label requires text")
+	}
+	if set && len(operation.Value.Text) > menuItemLabelMaxLength {
+		return invalidOperation(handle, fmt.Sprintf("Menu item label must be at most %d characters", menuItemLabelMaxLength))
+	}
+	if !itemOwnsLocaleLabel(item, c.working.Locale) {
+		return forbiddenTarget(handle, "fixed-locale Menu item labels may be edited only in their fixed locale")
+	}
+	if c.isSource && !c.working.SourceValuesStored {
+		return invalidOperation(translationHandle(c.working.Locale), "Menu source locale values are not initialized")
+	}
+	current, exists := c.working.Labels[operation.ItemID]
+	switch {
+	case !set:
+		if exists {
+			delete(c.working.Labels, operation.ItemID)
+			c.markLabelsChanged()
+		}
+	case !exists || current != operation.Value.Text:
+		c.working.Labels[operation.ItemID] = operation.Value.Text
+		c.markLabelsChanged()
+	}
+	return nil
+}
+
+func (c *menuCompiler) applyItemSourceField(item *AIDocumentItem, operation AIDocumentOperation) *AIDocumentIssue {
+	handle := itemHandle(operation.ItemID, operation.Field)
+	if !c.isSource {
+		return forbiddenTarget(handle, "non-source locales may change only translated labels")
+	}
+	changed, err := applyMenuAIDocumentSourceField(item, operation)
+	if err != nil {
+		return invalidOperation(handle, err.Error())
+	}
+	if changed {
+		c.markSourceChanged()
+	}
+	return nil
+}
+
+func (c *menuCompiler) applyStructural(operation AIDocumentOperation) *AIDocumentIssue {
+	handle := itemHandle(operation.ItemID, "")
+	changed := true
+	var err error
+	switch operation.Kind {
+	case AIDocumentInsertItem:
+		if !c.isSource {
+			return forbiddenTarget(handle, "only the source locale may insert Menu items")
+		}
+		err = c.graph.insert(operation.ItemID, operation.ParentID, operation.AfterID)
+	case AIDocumentDeleteItem:
+		if !c.isSource {
+			return forbiddenTarget(handle, "only the source locale may delete Menu items")
+		}
+		err = c.graph.delete(operation.ItemID)
+	default:
+		if !c.isSource {
+			return forbiddenTarget(handle, "only the source locale may move Menu items")
+		}
+		changed, err = c.graph.move(operation.ItemID, operation.ParentID, operation.AfterID)
+	}
+	if err != nil {
+		return invalidOperation(handle, err.Error())
+	}
+	if changed {
+		c.markSourceChanged()
+	}
+	return nil
+}
+
+// applyTranslationLifecycle creates or deletes the edited target locale. Each
+// must be the only operation in its command.
+func (c *menuCompiler) applyTranslationLifecycle(operation AIDocumentOperation) *AIDocumentIssue {
+	handle := translationHandle(c.working.Locale)
+	if operation.Kind == AIDocumentCreateTranslation {
+		if c.isSource || c.working.LocaleExists || c.operationCount != 1 {
+			return invalidOperation(handle, "translation create requires one absent non-source locale")
+		}
+		c.working.LocaleExists = true
+		c.result.changed, c.result.targetChanged = true, true
+		return nil
+	}
+	if c.isSource || !c.working.LocaleExists || c.operationCount != 1 {
+		return invalidOperation(handle, "translation delete requires one existing non-source locale")
+	}
+	c.working.LocaleExists = false
+	c.working.Labels = map[string]string{}
+	c.result.changed, c.result.targetChanged, c.result.deleteTranslation = true, true, true
+	return nil
+}
+
+// validateCompiledSource checks the whole compiled source aggregate, which no
+// single operation can, when the source changed.
+func (s *Service) validateCompiledSource(result compiledMenuAIDocument) *AIDocumentIssue {
+	if !result.sourceChanged {
+		return nil
+	}
+	working := result.snapshot
+	if err := validateMenuName(working.Name); err != nil {
+		return invalidOperation(menuHandle(working.ID, "name"), err.Error())
+	}
+	if err := validateAIDocumentItemConfiguration(working.Items); err != nil {
+		return invalidOperation(menuHandle(working.ID, "items"), err.Error())
+	}
+	if err := validateMenuItems(structuralValidationItems(working.Items), 0); err != nil {
+		return invalidOperation(menuHandle(working.ID, "items"), err.Error())
+	}
+	return nil
+}
+
+func validateCompiledLabels(result compiledMenuAIDocument) *AIDocumentIssue {
+	if !result.sourceValuesChanged && !result.targetChanged {
+		return nil
+	}
+	if err := validateAIDocumentLocaleLabels(result.snapshot.Labels); err != nil {
+		return invalidOperation(menuHandle(result.snapshot.ID, "labels"), err.Error())
+	}
+	return nil
 }
 
 func menuAIDocumentCreatesTarget(operations []AIDocumentOperation) bool {
@@ -279,7 +357,16 @@ func seedMenuTargetLabels(snapshot AIDocumentSnapshot) map[string]string {
 	return labels
 }
 
-func fillMissingMenuLabelsForStructuralValidation(items []model.MenuItem) {
+// structuralValidationItems is the requested form of an AI document or
+// collaboration tree for validateMenuItems. Its labels live in the locale
+// values, so a missing one is filled for the check.
+func structuralValidationItems(items []AIDocumentItem) []Item {
+	validationItems := requestedItems(aiDocumentItemsToModel(items))
+	fillMissingMenuLabelsForStructuralValidation(validationItems)
+	return validationItems
+}
+
+func fillMissingMenuLabelsForStructuralValidation(items []Item) {
 	for i := range items {
 		if strings.TrimSpace(items[i].Label) == "" {
 			items[i].Label = "_"
@@ -306,127 +393,88 @@ func lastMenuAIDocumentMutationIndex(operations []AIDocumentOperation) int {
 	return -1
 }
 
-func (s *MenuService) persistAIDocumentSource(
+func persistAIDocumentSource(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	previous AIDocumentSnapshot,
 	next AIDocumentSnapshot,
 	now time.Time,
 ) error {
-	fields := structured.Fields{}
+	change := menuUpdate{now: translation.NextTargetUpdatedAt(now, previous.rootUpdatedAt)}
 	if previous.Name != next.Name {
 		name := next.Name
-		if err := ensureUpdatedMenuNameAvailable(tx, previous.ID, &name); err != nil {
+		if err := ensureUpdatedMenuNameAvailable(ctx, store, previous.ID, &name); err != nil {
 			return err
 		}
-		fields["name"] = next.Name
+		change.name = &name
 	}
 	itemsChanged := !equalAIDocumentItems(previous.Items, next.Items)
 	if itemsChanged {
 		itemsJSON, err := json.Marshal(aiDocumentItemsToModel(next.Items))
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
-		fields["items"] = itemsJSON
+		change.items = itemsJSON
 	}
-	if len(fields) == 0 {
+	if change.name == nil && change.items == nil {
 		return nil
 	}
-	fields["updated_at"] = translation.NextTargetUpdatedAt(now, previous.rootUpdatedAt)
-	var changedName *string
-	if previous.Name != next.Name {
-		changedName = &next.Name
-	}
-	if err := updateMenuRow(tx.WithContext(ctx), previous.ID, changedName, fields); err != nil {
+	if err := updateMenuRow(ctx, store, previous.ID, change.name, change); err != nil {
 		return err
 	}
 	if itemsChanged {
-		if err := ReconcileTranslationRowsWithSourceItems(
-			ctx, tx, previous.ID, aiDocumentItemsToModel(next.Items), now,
-		); err != nil {
-			return err
-		}
+		return reconcileTranslationRowsWithSourceItems(ctx, store, previous.ID, aiDocumentItemsToModel(next.Items), now)
 	}
 	return nil
 }
 
 func persistMenuAIDocumentSourceValues(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	previous AIDocumentSnapshot,
 	next AIDocumentSnapshot,
 	now time.Time,
 ) error {
 	if !previous.SourceValuesStored || previous.Locale != previous.SourceLocale {
-		return errs.FailedPrecondition("Menu source locale values are not initialized")
+		return domainerr.Precondition("Menu source locale values are not initialized")
 	}
-	body, err := EncodeTranslationLabelValues(next.Labels)
-	if err != nil {
-		return errs.Internal(err)
+	err := store.UpdateLocale(ctx, LocaleValues{
+		MenuID: previous.ID, Locale: previous.Locale, Labels: cloneMenuLabels(next.Labels),
+		UpdatedAt: translation.NextTargetUpdatedAt(now, previous.LocaleUpdatedAt),
+	})
+	if errors.Is(err, ErrLocaleNotFound) {
+		return domainerr.Precondition("Menu source locale values are not initialized")
 	}
-	result := tx.WithContext(ctx).Exec(
-		`UPDATE menu_translation
-		 SET items_json = ?, updated_at = ?
-		 WHERE entity_id = ? AND locale = ?`,
-		string(body), translation.NextTargetUpdatedAt(now, previous.LocaleUpdatedAt), previous.ID, previous.Locale,
-	)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Menu source locale values are not initialized")
-	}
-	return nil
+	return err
 }
 
+// persistMenuAIDocumentTarget deletes the target locale row, or writes the
+// labels next owns there. previous is the snapshot locked in the same
+// transaction, so its LocaleUpdatedAt is the row's current timestamp.
 func persistMenuAIDocumentTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	previous AIDocumentSnapshot,
 	next AIDocumentSnapshot,
 	deleteTranslation bool,
 	now time.Time,
 ) error {
 	if deleteTranslation {
-		result := tx.WithContext(ctx).Exec(
-			"DELETE FROM menu_translation WHERE entity_id = ? AND locale = ?",
-			previous.ID, previous.Locale,
-		)
-		if result.Error != nil {
-			return errs.Internal(result.Error)
+		err := store.DeleteLocale(ctx, previous.ID, previous.Locale)
+		if errors.Is(err, ErrLocaleNotFound) {
+			return domainerr.Precondition("Menu translation no longer exists")
 		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("Menu translation no longer exists")
-		}
-		return nil
-	}
-	labels := canonicalMenuAIDocumentLabels(next.Items, previous.Locale, next.Labels)
-	body, err := EncodeTranslationLabelValues(labels)
-	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	nextUpdatedAt := now.UTC().Truncate(time.Microsecond)
 	if previous.LocaleExists {
-		var row struct {
-			UpdatedAt time.Time `gorm:"column:updated_at"`
-		}
-		if err := tx.WithContext(ctx).Table("menu_translation").Select("updated_at").
-			Where("entity_id = ? AND locale = ?", previous.ID, previous.Locale).Take(&row).Error; err != nil {
-			return errs.Internal(err)
-		}
-		nextUpdatedAt = translation.NextTargetUpdatedAt(nextUpdatedAt, row.UpdatedAt)
+		nextUpdatedAt = translation.NextTargetUpdatedAt(nextUpdatedAt, previous.LocaleUpdatedAt)
 	}
-	result := tx.WithContext(ctx).Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT (entity_id, locale) DO UPDATE SET
-		 items_json = EXCLUDED.items_json, updated_at = EXCLUDED.updated_at`,
-		previous.ID, previous.Locale, string(body), nextUpdatedAt, nextUpdatedAt,
-	)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
-	}
-	return nil
+	return store.UpsertLocale(ctx, LocaleValues{
+		MenuID: previous.ID, Locale: previous.Locale,
+		Labels:    canonicalMenuAIDocumentLabels(next.Items, previous.Locale, next.Labels),
+		UpdatedAt: nextUpdatedAt,
+	})
 }
 
 func canonicalMenuAIDocumentLabels(
@@ -451,169 +499,143 @@ func canonicalMenuAIDocumentLabels(
 	return canonical
 }
 
-func appendMenuAIDocumentAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	auditWriter domainaudit.Appender,
-	previous AIDocumentSnapshot,
-	compiled compiledMenuAIDocument,
-) error {
-	if compiled.targetChanged {
-		operation := sharedtelemetry.AuditItemOperationUpdated
-		switch {
-		case !previous.LocaleExists && compiled.snapshot.LocaleExists:
-			operation = sharedtelemetry.AuditItemOperationCreated
-		case previous.LocaleExists && !compiled.snapshot.LocaleExists:
-			operation = sharedtelemetry.AuditItemOperationDeleted
-		}
-		return domainaudit.AppendOptionalRequest(
-			ctx, tx, auditWriter, sharedtelemetry.AuditMenuUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuLocaleContentAuditRecord(
-					metadata, previous.ID, previous.Locale, operation,
-				)
-			},
-		)
-	}
+// menuAIDocumentAudit names the record of a changed AI document: the
+// target locale's lifecycle, or the changed source fields.
+func menuAIDocumentAudit(previous AIDocumentSnapshot, compiled compiledMenuAIDocument) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditMenuUpdated, menuDocumentAuditRecord(previous, compiled, true))
+}
 
-	fields := make([]string, 0, 2)
-	if previous.Name != compiled.snapshot.Name {
-		fields = append(fields, "name")
+// menuDocumentAuditRecord builds the record of a changed Menu document.
+// A collaboration save records a target locale update without its
+// lifecycle (trackLifecycle false), as rooms never create or delete one.
+func menuDocumentAuditRecord(previous AIDocumentSnapshot, compiled compiledMenuAIDocument, trackLifecycle bool) domainaudit.Builder {
+	return func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if compiled.targetChanged {
+			operation := sharedtelemetry.AuditItemOperationUpdated
+			switch {
+			case !trackLifecycle:
+			case !previous.LocaleExists && compiled.snapshot.LocaleExists:
+				operation = sharedtelemetry.AuditItemOperationCreated
+			case previous.LocaleExists && !compiled.snapshot.LocaleExists:
+				operation = sharedtelemetry.AuditItemOperationDeleted
+			}
+			return sharedtelemetry.NewMenuLocaleContentAuditRecord(metadata, previous.ID, previous.Locale, operation)
+		}
+		fields := make([]string, 0, 2)
+		if previous.Name != compiled.snapshot.Name {
+			fields = append(fields, "name")
+		}
+		if !equalAIDocumentItems(previous.Items, compiled.snapshot.Items) || compiled.sourceValuesChanged {
+			fields = append(fields, "items")
+		}
+		sort.Strings(fields)
+		return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, previous.ID, fields)
 	}
-	if !equalAIDocumentItems(previous.Items, compiled.snapshot.Items) || compiled.sourceValuesChanged {
-		fields = append(fields, "items")
-	}
-	sort.Strings(fields)
-	return domainaudit.AppendOptionalRequest(
-		ctx, tx, auditWriter, sharedtelemetry.AuditMenuUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, previous.ID, fields)
-		},
-	)
 }
 
 func loadMenuAIDocumentSnapshot(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	menuID string,
 	locale string,
 	lock bool,
 ) (AIDocumentSnapshot, error) {
 	menuID, locale = strings.TrimSpace(menuID), strings.TrimSpace(locale)
 	if menuID == "" || locale == "" {
-		return AIDocumentSnapshot{}, errs.InvalidArgument("document", "Menu ID and locale are required")
+		return AIDocumentSnapshot{}, domainerr.InvalidField("document", "Menu ID and locale are required")
 	}
-	query := db.WithContext(ctx)
+	read := store.Menu
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		read = store.LockMenu
 	}
-	var root model.Menu
-	if err := query.First(&root, "id = ?", menuID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return AIDocumentSnapshot{}, errs.NotFound("menu", menuID)
+	root, err := read(ctx, menuID)
+	if err != nil {
+		if errors.Is(err, ErrMenuNotFound) {
+			return AIDocumentSnapshot{}, domainerr.ResourceNotFound("menu", menuID)
 		}
-		return AIDocumentSnapshot{}, errs.Internal(err)
+		return AIDocumentSnapshot{}, err
 	}
-	return loadMenuAIDocumentSnapshotFromRoot(ctx, db, root, locale, lock)
+	return loadMenuAIDocumentSnapshotFromRoot(ctx, store, root, locale, lock)
 }
 
 func loadMenuAIDocumentSnapshotFromRoot(
 	ctx context.Context,
-	db *gorm.DB,
-	root model.Menu,
+	store Store,
+	root Root,
 	locale string,
 	lock bool,
 ) (AIDocumentSnapshot, error) {
 	menuID, locale := strings.TrimSpace(root.ID), strings.TrimSpace(locale)
 	if menuID == "" || locale == "" {
-		return AIDocumentSnapshot{}, errs.InvalidArgument("document", "Menu ID and locale are required")
+		return AIDocumentSnapshot{}, domainerr.InvalidField("document", "Menu ID and locale are required")
 	}
 
-	document, err := loadMenuContentDocumentStateFromRoot(ctx, db, root, lock)
+	document, err := loadMenuContentDocumentState(ctx, store, root, lock)
 	if err != nil {
 		return AIDocumentSnapshot{}, err
 	}
 
-	items, err := modelItemsToAIDocument(root.Items)
+	items, err := modelItemsToAIDocument(root.ItemsJSON)
 	if err != nil {
-		return AIDocumentSnapshot{}, errs.Internal(err)
+		return AIDocumentSnapshot{}, err
 	}
 	snapshot := AIDocumentSnapshot{
 		ID: root.ID, Name: root.Name, SourceLocale: document.SourceLocale, Locale: locale,
 		DocumentRevision: document.Revision.String(), contentDocumentID: document.ID,
 		rootUpdatedAt: root.UpdatedAt, Items: items, Labels: map[string]string{},
 	}
-	sourceRow, sourceExists, err := loadMenuAIDocumentLocaleRow(
-		ctx, db, menuID, document.SourceLocale, lock,
-	)
+	source, sourceExists, err := loadMenuAIDocumentLocaleRow(ctx, store, menuID, document.SourceLocale, lock)
 	if err != nil {
 		return AIDocumentSnapshot{}, err
 	}
 	if !sourceExists {
-		return AIDocumentSnapshot{}, errs.FailedPrecondition("Menu source locale values are not initialized")
+		return AIDocumentSnapshot{}, domainerr.Precondition("Menu source locale values are not initialized")
 	}
-	snapshot.sourceLabels = cloneMenuLabels(sourceRow.Labels)
+	snapshot.sourceLabels = cloneMenuLabels(source.Labels)
 	if locale == document.SourceLocale {
 		snapshot.LocaleExists = true
 		snapshot.SourceValuesStored = true
-		snapshot.LocaleUpdatedAt = sourceRow.UpdatedAt
-		snapshot.Labels = cloneMenuLabels(sourceRow.Labels)
-	} else {
-		targetRow, targetExists, err := loadMenuAIDocumentLocaleRow(ctx, db, menuID, locale, lock)
-		if err != nil {
-			return AIDocumentSnapshot{}, err
-		}
-		if targetExists {
-			snapshot.LocaleExists = true
-			snapshot.LocaleUpdatedAt = targetRow.UpdatedAt
-			snapshot.Labels = cloneMenuLabels(targetRow.Labels)
-		}
+		snapshot.LocaleUpdatedAt = source.UpdatedAt
+		snapshot.Labels = cloneMenuLabels(source.Labels)
+		return snapshot, nil
 	}
-	if locale != document.SourceLocale && snapshot.LocaleExists {
-		targetRevision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
-			LocaleExists: true, DocumentRevision: snapshot.DocumentRevision,
-			LocaleUpdatedAt: &snapshot.LocaleUpdatedAt,
-		})
-		if err != nil {
-			return AIDocumentSnapshot{}, errs.Internal(err)
-		}
-		snapshot.TargetRevision = &targetRevision
+	target, targetExists, err := loadMenuAIDocumentLocaleRow(ctx, store, menuID, locale, lock)
+	if err != nil || !targetExists {
+		return snapshot, err
 	}
+	snapshot.LocaleExists = true
+	snapshot.LocaleUpdatedAt = target.UpdatedAt
+	snapshot.Labels = cloneMenuLabels(target.Labels)
+	targetRevision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
+		LocaleExists: true, DocumentRevision: snapshot.DocumentRevision,
+		LocaleUpdatedAt: &snapshot.LocaleUpdatedAt,
+	})
+	if err != nil {
+		return AIDocumentSnapshot{}, err
+	}
+	snapshot.TargetRevision = &targetRevision
 	return snapshot, nil
-}
-
-type menuAIDocumentLocaleRow struct {
-	Labels    map[string]string
-	UpdatedAt time.Time
 }
 
 func loadMenuAIDocumentLocaleRow(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	menuID string,
 	locale string,
 	lock bool,
-) (menuAIDocumentLocaleRow, bool, error) {
-	query := db.WithContext(ctx).Table("menu_translation").
-		Select("items_json, updated_at").Where("entity_id = ? AND locale = ?", menuID, locale)
+) (LocaleValues, bool, error) {
+	read := store.Locale
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		read = store.LockLocale
 	}
-	var stored struct {
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
+	values, err := read(ctx, menuID, locale)
+	if errors.Is(err, ErrLocaleNotFound) {
+		return LocaleValues{}, false, nil
 	}
-	if err := query.Take(&stored).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return menuAIDocumentLocaleRow{}, false, nil
-		}
-		return menuAIDocumentLocaleRow{}, false, errs.Internal(err)
-	}
-	labels, err := DecodeTranslationLabelValues(stored.ItemsJSON)
 	if err != nil {
-		return menuAIDocumentLocaleRow{}, false, errs.Internal(err)
+		return LocaleValues{}, false, err
 	}
-	return menuAIDocumentLocaleRow{Labels: labels, UpdatedAt: stored.UpdatedAt}, true, nil
+	return values, true, nil
 }
 
 func cloneMenuLabels(labels map[string]string) map[string]string {
@@ -823,8 +845,7 @@ func applyMenuAIDocumentSourceField(item *AIDocumentItem, operation AIDocumentOp
 }
 
 func itemOwnsLocaleLabel(item *AIDocumentItem, locale string) bool {
-	modelItem := aiDocumentItemToModel(*item)
-	return ShouldTranslateItemLabel(&modelItem, locale)
+	return ShouldTranslateItemLabel(item.LocalizationMode, item.FixedLocale, locale)
 }
 
 // OwnsLabel reports whether this item's requested-locale label is editable.
@@ -838,11 +859,11 @@ func validateAIDocumentItemConfiguration(items []AIDocumentItem) error {
 	for _, item := range items {
 		if item.LocalizationMode != nil {
 			switch strings.TrimSpace(*item.LocalizationMode) {
-			case model.MenuItemLocalizationModeTranslated:
+			case LocalizationTranslated:
 				if item.FixedLocale != nil && strings.TrimSpace(*item.FixedLocale) != "" {
 					return fmt.Errorf("menu item %q translated mode cannot carry fixed_locale", item.ID)
 				}
-			case model.MenuItemLocalizationModeFixedLocale:
+			case LocalizationFixedLocale:
 				if NormalizeItemFixedLocale(item.FixedLocale) == nil {
 					return fmt.Errorf("menu item %q fixed_locale mode requires a supported locale", item.ID)
 				}
@@ -867,7 +888,7 @@ func validateAIDocumentItemConfiguration(items []AIDocumentItem) error {
 }
 
 func modelItemsToAIDocument(body []byte) ([]AIDocumentItem, error) {
-	var items []model.MenuItem
+	var items []Item
 	if len(body) != 0 {
 		if err := json.Unmarshal(body, &items); err != nil {
 			return nil, err
@@ -876,19 +897,19 @@ func modelItemsToAIDocument(body []byte) ([]AIDocumentItem, error) {
 	return modelMenuItemsToAIDocument(items), nil
 }
 
-func modelMenuItemsToAIDocument(items []model.MenuItem) []AIDocumentItem {
+func modelMenuItemsToAIDocument(items []Item) []AIDocumentItem {
 	result := make([]AIDocumentItem, len(items))
 	for index := range items {
 		item := items[index]
 		result[index] = AIDocumentItem{
-			ID: item.ID, Label: item.Label, LinkType: item.LinkType,
+			ID: item.ID, Label: item.Label, LinkType: string(item.LinkType),
 			URL: cloneStringPointer(item.URL), TargetID: cloneStringPointer(item.TargetID),
 			TargetSlug: cloneStringPointer(item.TargetSlug), OpenInNewTab: cloneBoolPointer(item.OpenInNewTab),
 			LocalizationMode: cloneStringPointer(item.LocalizationMode), FixedLocale: cloneStringPointer(item.FixedLocale),
 			Children: modelMenuItemsToAIDocument(item.Children),
 		}
 		if item.Visibility != nil {
-			mode := item.Visibility.Mode
+			mode := string(item.Visibility.Mode)
 			result[index].VisibilityMode = &mode
 			result[index].VisibilityRoles = append([]string(nil), item.Visibility.Roles...)
 		}
@@ -896,28 +917,28 @@ func modelMenuItemsToAIDocument(items []model.MenuItem) []AIDocumentItem {
 	return result
 }
 
-func aiDocumentItemsToModel(items []AIDocumentItem) []model.MenuItem {
-	result := make([]model.MenuItem, len(items))
+func aiDocumentItemsToModel(items []AIDocumentItem) []Item {
+	result := make([]Item, len(items))
 	for index := range items {
 		result[index] = aiDocumentItemToModel(items[index])
 	}
 	return result
 }
 
-func aiDocumentItemToModel(item AIDocumentItem) model.MenuItem {
-	result := model.MenuItem{
-		ID: item.ID, Label: item.Label, LinkType: item.LinkType,
+func aiDocumentItemToModel(item AIDocumentItem) Item {
+	result := Item{
+		ID: item.ID, Label: item.Label, LinkType: LinkType(item.LinkType),
 		URL: cloneStringPointer(item.URL), TargetID: cloneStringPointer(item.TargetID),
 		TargetSlug: cloneStringPointer(item.TargetSlug), OpenInNewTab: cloneBoolPointer(item.OpenInNewTab),
 		LocalizationMode: cloneStringPointer(item.LocalizationMode), FixedLocale: cloneStringPointer(item.FixedLocale),
 		Children: aiDocumentItemsToModel(item.Children),
 	}
 	if item.VisibilityMode != nil || len(item.VisibilityRoles) != 0 {
-		mode := "all"
+		mode := VisibilityAll
 		if item.VisibilityMode != nil {
-			mode = *item.VisibilityMode
+			mode = VisibilityMode(*item.VisibilityMode)
 		}
-		result.Visibility = &model.MenuVisibility{Mode: mode, Roles: append([]string(nil), item.VisibilityRoles...)}
+		result.Visibility = &Visibility{Mode: mode, Roles: append([]string(nil), item.VisibilityRoles...)}
 	}
 	return result
 }

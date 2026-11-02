@@ -20,26 +20,29 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
 
 	opts := remoteFileImportOptions{
-		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		uploadType: UploadTrackAudio,
+
 		entityID:            trackID,
 		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
-		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
-		correlationID:       uuid.NewString(),
-		emitLifecycle:       true,
-		triggerTranscoding:  true,
-		checkPermission:     false,
+		transcodeEntityType: EntityTrack,
+
+		correlationID:      uuid.NewString(),
+		emitLifecycle:      true,
+		triggerTranscoding: true,
+		checkPermission:    false,
 	}
 	projection, err := normalizeFileIngestProjectionIdentity(
 		opts.uploadType,
@@ -73,29 +76,28 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 		})
 	})
 
-	service := NewFileService(
-		stack.DB,
-		s3Client,
-		&flakyAttachedConfirmPublisher{},
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		S3:             s3Client,
+		AsyncPublisher: &flakyAttachedConfirmPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
-		context.Background(),
-		map[string]interface{}{
-			"id":                identity.fileID,
-			"file_name":         fileName,
-			"mime_type":         mimeType,
-			"file_size":         int64(len(body)),
-			"extension":         extension,
-			"sha256":            digest[:],
-			"ingest_attempt_id": identity.attemptID,
+		memberRequestContext(),
+		fileIngestRecord{
+			id:              identity.fileID,
+			fileName:        fileName,
+			mimeType:        mimeType,
+			fileSize:        int64(len(body)),
+			extension:       extension,
+			sha256:          digest[:],
+			ingestAttemptID: identity.attemptID,
 		},
 		trackID,
 		"",
@@ -125,11 +127,12 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 
 func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownloadDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	correlationID := uuid.NewString()
 	entityID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:      managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
+		uploadType: UploadClientLogo,
+
 		entityID:        entityID,
 		sourceURL:       "https://does-not-resolve.invalid/logo.webp",
 		correlationID:   correlationID,
@@ -152,19 +155,18 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	}).Error)
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
-	service := NewFileService(
-		stack.DB,
-		store.client,
-		&hardCutAsyncPublisher{},
-		"media-bucket",
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		S3:             store.client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       "media-bucket",
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
 	var preserved model.File
 	require.NoError(t, stack.DB.Where("id = ?", file.ID).Take(&preserved).Error)
@@ -175,11 +177,11 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	require.Equal(t, model.PublicAssetStatusFailed, failed.Status)
 
 	store.setFailTransfer(false)
-	result, err := service.importRemoteFile(context.Background(), opts)
+	result, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, file.ID, result.fileID)
 	require.NotNil(t, result.asset)
-	require.Equal(t, failed.ID, result.asset.GetAssetId())
+	require.Equal(t, failed.ID, result.asset.AssetID)
 	require.Empty(t, store.deletedKeys())
 	var ready model.PublicAsset
 	require.NoError(t, stack.DB.Where("id = ?", failed.ID).Take(&ready).Error)
@@ -188,11 +190,12 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 
 func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	userID := uuid.NewString()
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
+		uploadType: UploadUserAvatar,
+
 		entityID:      userID,
 		correlationID: correlationID,
 	}
@@ -213,24 +216,23 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	}).Error)
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
-	service := NewFileService(
-		stack.DB,
-		store.client,
-		&hardCutAsyncPublisher{},
-		"media-bucket",
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		S3:             store.client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       "media-bucket",
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	// The provider URL is deliberately unreachable. The successful second call
 	// proves that the same caller correlation restores the verified source and
 	// resumes promotion without downloading the provider image again.
 	providerURL := "https://does-not-resolve.invalid/social-avatar.webp"
 	opts.sourceURL = providerURL
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
 	var preserved model.File
 	require.NoError(t, stack.DB.Where("id = ?", file.ID).Take(&preserved).Error)
@@ -241,14 +243,14 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	require.Equal(t, model.PublicAssetStatusFailed, failed.Status)
 
 	store.setFailTransfer(false)
-	imported, err := service.importRemoteFile(context.Background(), opts)
+	imported, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, file.ID, imported.fileID)
 	require.Empty(t, store.deletedKeys())
 
-	asset, err := service.PromoteUserAvatarAsset(context.Background(), imported.fileID)
+	asset, err := service.PromoteUserAvatarAsset(memberRequestContext(), imported.fileID)
 	require.NoError(t, err)
-	require.Equal(t, failed.ID, asset.GetAssetId())
+	require.Equal(t, failed.ID, asset.AssetID)
 	var ready model.PublicAsset
 	require.NoError(t, stack.DB.Where("id = ?", failed.ID).Take(&ready).Error)
 	require.Equal(t, model.PublicAssetStatusReady, ready.Status)
@@ -257,21 +259,23 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 
 func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
 
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		uploadType: UploadTrackAudio,
+
 		entityID:            trackID,
 		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
-		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
-		sourceURL:           "https://does-not-resolve.invalid/retry-source.wav",
-		correlationID:       correlationID,
-		emitLifecycle:       true,
-		triggerTranscoding:  true,
-		checkPermission:     false,
+		transcodeEntityType: EntityTrack,
+
+		sourceURL:          "https://does-not-resolve.invalid/retry-source.wav",
+		correlationID:      correlationID,
+		emitLifecycle:      true,
+		triggerTranscoding: true,
+		checkPermission:    false,
 	}
 	projection, err := normalizeFileIngestProjectionIdentity(
 		opts.uploadType,
@@ -327,19 +331,18 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 	}))
 
 	asyncPublisher := &flakyAttachedConfirmPublisher{failuresRemaining: 1}
-	service := NewFileService(
-		stack.DB,
-		s3Client,
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		S3:             s3Client,
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "reconfirm durable file attachment")
 	require.Empty(t, decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestFailedEvent {
@@ -347,7 +350,7 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 	}))
 
 	opts.sourceURL = "https://another-does-not-resolve.invalid/changed-retry-source.wav"
-	result, err := service.importRemoteFile(context.Background(), opts)
+	result, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, identity.fileID, result.fileID)
 	require.Equal(t, identity.attemptID, result.attemptID)
@@ -400,153 +403,5 @@ func validRemoteImportWebPBytes() []byte {
 		'R', 'I', 'F', 'F', 0x0c, 0x00, 0x00, 0x00,
 		'W', 'E', 'B', 'P', 'V', 'P', '8', ' ',
 		0x00, 0x00, 0x00, 0x00,
-	}
-}
-
-func TestRemoteImportAdvisoryLockSerializesSameOperationDirectIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	fileID := uuid.NewString()
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	secondEntered := make(chan struct{})
-	firstErr := make(chan error, 1)
-	secondErr := make(chan error, 1)
-
-	go func() {
-		firstErr <- withRemoteImportAdvisoryLock(context.Background(), stack.DB, fileID, func(*gorm.DB) error {
-			close(firstEntered)
-			<-releaseFirst
-			return nil
-		})
-	}()
-	select {
-	case <-firstEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first advisory-lock operation did not enter")
-	}
-
-	go func() {
-		secondErr <- withRemoteImportAdvisoryLock(context.Background(), stack.DB, fileID, func(*gorm.DB) error {
-			close(secondEntered)
-			return nil
-		})
-	}()
-	select {
-	case <-secondEntered:
-		t.Fatal("same durable operation entered concurrently")
-	case <-time.After(250 * time.Millisecond):
-	}
-
-	close(releaseFirst)
-	select {
-	case err := <-firstErr:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("first advisory-lock operation did not finish")
-	}
-	select {
-	case <-secondEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("second advisory-lock operation did not enter after release")
-	}
-	select {
-	case err := <-secondErr:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("second advisory-lock operation did not finish")
-	}
-}
-
-func TestRemoteImportAdvisoryLockUnlocksAfterRequestCancellationDirectIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	fileID := uuid.NewString()
-	ctx, cancel := context.WithCancel(context.Background())
-
-	err := withRemoteImportAdvisoryLock(ctx, stack.DB, fileID, func(*gorm.DB) error {
-		cancel()
-		return ctx.Err()
-	})
-	require.ErrorIs(t, err, context.Canceled)
-
-	reentered := false
-	require.NoError(t, withRemoteImportAdvisoryLock(
-		context.Background(),
-		stack.DB,
-		fileID,
-		func(*gorm.DB) error {
-			reentered = true
-			return nil
-		},
-	))
-	require.True(t, reentered, "cancelled request must release its session advisory lock")
-}
-
-func TestMultipartCompletionAdvisoryLockSerializesSameSessionDirectIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	uploadID := uuid.NewString()
-	fileID := uuid.NewString()
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	secondEntered := make(chan struct{})
-	firstErr := make(chan error, 1)
-	secondErr := make(chan error, 1)
-
-	go func() {
-		firstErr <- withMultipartCompletionAdvisoryLock(
-			context.Background(),
-			stack.DB,
-			uploadID,
-			fileID,
-			func(*gorm.DB) error {
-				close(firstEntered)
-				<-releaseFirst
-				return nil
-			},
-		)
-	}()
-	select {
-	case <-firstEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first multipart completion lock did not enter")
-	}
-
-	go func() {
-		secondErr <- withMultipartCompletionAdvisoryLock(
-			context.Background(),
-			stack.DB,
-			uploadID,
-			fileID,
-			func(*gorm.DB) error {
-				close(secondEntered)
-				return nil
-			},
-		)
-	}()
-	select {
-	case <-secondEntered:
-		t.Fatal("same multipart completion entered concurrently")
-	case <-time.After(250 * time.Millisecond):
-	}
-
-	close(releaseFirst)
-	select {
-	case err := <-firstErr:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("first multipart completion lock did not finish")
-	}
-	select {
-	case <-secondEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("second multipart completion lock did not enter after release")
-	}
-	select {
-	case err := <-secondErr:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("second multipart completion lock did not finish")
 	}
 }

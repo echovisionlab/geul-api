@@ -3,72 +3,38 @@ package filemedia
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
-type contentBlockFileReuseAuthorizer struct {
-	spiceDB *auth.SpiceDBClient
-}
-
-// NewContentBlockFileReuseAuthorizer returns the fail-closed File library
-// authority used by every Content Block domain Store.
-func NewContentBlockFileReuseAuthorizer(
-	spiceDB *auth.SpiceDBClient,
-) contentblock.FileReuseAuthorizer {
-	return &contentBlockFileReuseAuthorizer{spiceDB: spiceDB}
-}
-
-func (a *contentBlockFileReuseAuthorizer) AuthorizeFileReuse(
-	ctx context.Context,
-	tx *gorm.DB,
-	document contentblock.Document,
-	_ contentblock.FullBlock,
-	_ contentblock.FileReference,
-	file contentblock.File,
-) error {
+func AuthorizeContentBlockFileReuse(ctx context.Context, joined Joined, checker authz.AuthorizationDecisionChecker, documentID, fileID string) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if principal.Banned {
-		return errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 
-	var alreadyInDocument bool
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM content_block_attachment AS cbf
-			JOIN content_block AS cb ON cb.id = cbf.block_id
-			WHERE cbf.selector_kind = 'active' AND cbf.file_id = ? AND cb.document_id = ?
-		)`, file.ID, document.ID).Scan(&alreadyInDocument).Error; err != nil {
+	alreadyInDocument, err := joined.Store.FileAlreadyAttached(ctx, documentID, fileID)
+	if err != nil {
 		return fmt.Errorf("check document File reuse: %w", err)
 	}
 	if alreadyInDocument {
 		return nil
 	}
 
-	var uploader struct {
-		MemberID *string `gorm:"column:uploaded_by_member_id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("file").
-		Select("uploaded_by_member_id").
-		Where("id = ?", file.ID).
-		Scan(&uploader).Error; err != nil {
+	uploader, err := joined.Store.FileUploader(ctx, fileID)
+	if err != nil {
 		return fmt.Errorf("read File uploader: %w", err)
 	}
-	if uploader.MemberID != nil && *uploader.MemberID == principal.MemberID.String() {
+	if uploader != nil && *uploader == principal.MemberID.String() {
 		return nil
 	}
-	if a.spiceDB == nil {
+	if checker == nil {
 		return fmt.Errorf("SpiceDB File reuse authorization is not configured")
 	}
 	can, err := policyv1.File.List()
@@ -77,16 +43,14 @@ func (a *contentBlockFileReuseAuthorizer) AuthorizeFileReuse(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "AuthorizeFileReuse: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
-	allowed, err := a.spiceDB.Can(ctx, decision)
+	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "AuthorizeFileReuse: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission("access", "platform")
+		return domainerr.NoPermission("access", "platform")
 	}
 	return nil
 }

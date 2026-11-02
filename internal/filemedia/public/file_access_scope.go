@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/authz"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 )
 
@@ -23,7 +25,7 @@ func authenticatedAccountIdentity(ctx context.Context) bool {
 
 func hasDraftResourceView(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	action auth.ResourceAction,
 	resourceID string,
 ) (bool, error) {

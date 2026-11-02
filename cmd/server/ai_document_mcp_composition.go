@@ -15,7 +15,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 const mcpServerImplementationVersion = "19"
@@ -97,12 +96,11 @@ type aiDocumentMCPConfig struct {
 }
 
 type contentMCPApplications struct {
-	terms      mcpadapter.TermsPolicyManagementApplication
-	privacy    mcpadapter.PrivacyPolicyManagementApplication
-	categories mcpadapter.CategoryReferenceDiscovery
-	tags       mcpadapter.TagReferenceDiscovery
-	clients    mcpadapter.ClientReferenceDiscovery
-	mapPlaces  interface {
+	legalPolicies mcpadapter.LegalPolicyManagementApplication
+	categories    mcpadapter.CategoryReferenceDiscovery
+	tags          mcpadapter.TagReferenceDiscovery
+	clients       mcpadapter.ClientReferenceDiscovery
+	mapPlaces     interface {
 		mcpadapter.MapPlaceReferenceDiscovery
 		mcpadapter.MapPlaceManagementApplication
 	}
@@ -158,7 +156,7 @@ func newAIDocumentMCPComposition(
 	},
 	artists mcpadapter.ArtistDocumentDiscovery,
 	references contentMCPApplications,
-	translation managev1connect.TranslationServiceHandler,
+	translation mcpadapter.TranslationApplication,
 	files interface {
 		filemediaadapter.MCPFileRuntime
 		mcpadapter.FileBlockManagement
@@ -227,7 +225,7 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP content management tools: %w", err)
 	}
-	policyTools, err := mcpadapter.NewLegalPolicyTools(references.terms, references.privacy)
+	policyTools, err := mcpadapter.NewLegalPolicyTools(references.legalPolicies)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP legal policy tools: %w", err)
 	}

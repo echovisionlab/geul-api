@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/config"
@@ -55,7 +56,12 @@ func main() {
 		}
 		pageSize = value
 	}
-	result, err := account.NewAccountEmailService(db, auth.NewKratosClient(cfg.KratosAdminURL), accountadapter.MemberEmailProjection{}).
+	units, err := accountpostgres.NewEmailProjectionUnits(db, accountadapter.MemberEmailProjection{})
+	if err != nil {
+		slog.Error("Member email projection backfill failed", "failure_cause", failurecause.Message(err))
+		os.Exit(1)
+	}
+	result, err := account.NewAccountEmailService(auth.NewKratosClient(cfg.KratosAdminURL), units).
 		BackfillMemberEmailProjection(ctx, pageSize)
 	if err != nil {
 		slog.Error("Member email projection backfill failed", "failure_cause", failurecause.Message(err))

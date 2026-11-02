@@ -16,7 +16,6 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 const (
@@ -52,7 +51,7 @@ func NewPublicAssetCache(cdnURL, apiURL, zoneID, apiToken string, purgeEnabled b
 	}
 }
 
-func (c *PublicAssetCache) Prefix(asset model.PublicAsset) (string, error) {
+func (c *PublicAssetCache) Prefix(asset mediaassetdomain.Asset) (string, error) {
 	assetPath, err := mediaauth.AssetPath(asset.ID, asset.Kind, asset.Extension)
 	if err != nil {
 		return "", err

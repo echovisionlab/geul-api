@@ -2,168 +2,145 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *TranslationService) ListEntityTranslations(
-	ctx context.Context,
-	req *connect.Request[managev1.ListEntityTranslationsRequest],
-) (_ *connect.Response[managev1.ListEntityTranslationsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListEntityTranslations")
-		}
-	}()
-	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorizeTranslationRead(ctx, entityType, entityID); err != nil {
-		return nil, err
-	}
-
-	authority, err := loadTranslationDocumentAuthority(ctx, s.db, entityType, entityID)
-	if err != nil {
-		return nil, err
-	}
-
-	entries, err := s.listEntityTranslations(ctx, entityType, entityID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ListEntityTranslationsResponse{
-		Entries:      entries,
-		SourceLocale: authority.SourceLocale,
-	}), nil
+// ListEntityTranslationsQuery lists the stored locales of one entity.
+type ListEntityTranslationsQuery struct {
+	Target *Target
 }
 
-func (s *TranslationService) GetEntityTranslation(
-	ctx context.Context,
-	req *connect.Request[managev1.GetEntityTranslationRequest],
-) (_ *connect.Response[managev1.GetEntityTranslationResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetEntityTranslation")
-		}
-	}()
-	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorizeTranslationRead(ctx, entityType, entityID); err != nil {
-		return nil, err
-	}
-
-	entry, err := s.getEntityTranslation(ctx, entityType, entityID, strings.TrimSpace(req.Msg.Locale))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.GetEntityTranslationResponse{Entry: entry}), nil
+// EntityTranslations are the stored locale entries of one entity.
+type EntityTranslations struct {
+	SourceLocale string
+	Entries      []Entry
 }
 
-func (s *TranslationService) SetEntitySourceLocale(
-	ctx context.Context,
-	req *connect.Request[managev1.SetEntitySourceLocaleRequest],
-) (_ *connect.Response[managev1.SetEntitySourceLocaleResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "SetEntitySourceLocale")
+// ListEntityTranslations lists the stored locale entries of an entity.
+func (s *Service) ListEntityTranslations(ctx context.Context, query ListEntityTranslationsQuery) (EntityTranslations, error) {
+	entityType, entityID, err := parseTranslationTarget(query.Target)
+	if err != nil {
+		return EntityTranslations{}, err
+	}
+	if err := s.authorizeTranslationRead(ctx, entityType, entityID); err != nil {
+		return EntityTranslations{}, err
+	}
+	var translations EntityTranslations
+	err = s.units.Read(ctx, func(store Store) error {
+		authority, err := loadTranslationDocumentAuthority(ctx, store, entityType, entityID)
+		if err != nil {
+			return err
 		}
-	}()
-	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
+		entries, err := store.Entries(ctx, entityType, entityID)
+		if err != nil {
+			return err
+		}
+		translations = EntityTranslations{SourceLocale: authority.SourceLocale, Entries: entries}
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return EntityTranslations{}, err
 	}
-	if s.domains == nil {
-		return nil, errs.InternalMsg("translation domain registry is required")
+	if translations.Entries == nil {
+		translations.Entries = []Entry{}
 	}
-	sourceLocale := strings.TrimSpace(req.Msg.SourceLocale)
-	if err := validateRequestedSourceLocale(ctx, s.db, sourceLocale); err != nil {
-		return nil, err
-	}
-	expectedDocumentRevision, err := parseExpectedTranslationDocumentRevision(
-		entityType,
-		req.Msg.GetExpectedDocumentRevision(),
-	)
+	return translations, nil
+}
+
+// GetEntityTranslationQuery reads one stored locale of an entity.
+type GetEntityTranslationQuery struct {
+	Target *Target
+	Locale string
+}
+
+// GetEntityTranslation reads one stored locale entry of an entity.
+func (s *Service) GetEntityTranslation(ctx context.Context, query GetEntityTranslationQuery) (Entry, error) {
+	entityType, entityID, err := parseTranslationTarget(query.Target)
 	if err != nil {
-		return nil, err
+		return Entry{}, err
+	}
+	if err := s.authorizeTranslationRead(ctx, entityType, entityID); err != nil {
+		return Entry{}, err
+	}
+	locale := strings.TrimSpace(query.Locale)
+	var entry Entry
+	err = s.units.Read(ctx, func(store Store) error {
+		var err error
+		entry, err = store.Entry(ctx, entityType, entityID, locale)
+		return err
+	})
+	if errors.Is(err, ErrEntryNotFound) {
+		return Entry{}, domainerr.ResourceNotFound("translation_entry", entityID+":"+locale)
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	return entry, nil
+}
+
+// SetEntitySourceLocaleCommand makes SourceLocale the source of an entity's
+// Content Document, guarded by the document revision the caller read.
+type SetEntitySourceLocaleCommand struct {
+	Target                   *Target
+	SourceLocale             string
+	ExpectedDocumentRevision string
+}
+
+// SourceLocaleChange is the outcome of a source-locale switch.
+type SourceLocaleChange struct {
+	DocumentRevision string
+	Changed          bool
+	ChangedLocales   []string
+}
+
+// SetEntitySourceLocale switches an entity's source locale.
+func (s *Service) SetEntitySourceLocale(ctx context.Context, command SetEntitySourceLocaleCommand) (SourceLocaleChange, error) {
+	entityType, entityID, err := parseTranslationTarget(command.Target)
+	if err != nil {
+		return SourceLocaleChange{}, err
+	}
+	sourceLocale := strings.TrimSpace(command.SourceLocale)
+	if err := s.validateRequestedSourceLocale(ctx, sourceLocale); err != nil {
+		return SourceLocaleChange{}, err
+	}
+	expectedDocumentRevision, err := parseExpectedTranslationDocumentRevision(command.ExpectedDocumentRevision)
+	if err != nil {
+		return SourceLocaleChange{}, err
 	}
 	requestingMemberID, err := requireAuthenticatedTranslationRequester(ctx)
 	if err != nil {
-		return nil, err
+		return SourceLocaleChange{}, err
 	}
-	result, err := s.applySourceLocaleSwitch(
-		ctx,
-		entityType,
-		entityID,
-		sourceLocale,
-		expectedDocumentRevision,
-		requestingMemberID,
-	)
+	result, err := s.applySourceLocaleSwitch(ctx, entityType, entityID, sourceLocale, expectedDocumentRevision, requestingMemberID)
 	if err != nil {
-		return nil, err
+		return SourceLocaleChange{}, err
 	}
-	response := &managev1.SetEntitySourceLocaleResponse{
+	return SourceLocaleChange{
 		DocumentRevision: result.documentRevision,
 		Changed:          !result.unchanged,
-		SourceChanged:    !result.unchanged,
 		ChangedLocales:   result.changedLocales,
-	}
-	return connect.NewResponse(response), nil
+	}, nil
 }
 
-func (s *TranslationService) RegenerateEntityTranslations(
-	ctx context.Context,
-	req *connect.Request[managev1.RegenerateEntityTranslationsRequest],
-) (_ *connect.Response[managev1.RegenerateEntityTranslationsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "RegenerateEntityTranslations")
-		}
-	}()
+// RegenerateEntityTranslationsCommand queues machine translation of an
+// entity into Locales, or into every machine-translation target when empty.
+type RegenerateEntityTranslationsCommand struct {
+	Target  *Target
+	Locales []string
+}
+
+// RegenerateEntityTranslations queues a job per target locale and returns the
+// queued jobs, reusing an active job for the same request.
+func (s *Service) RegenerateEntityTranslations(ctx context.Context, command RegenerateEntityTranslationsCommand) ([]Job, error) {
 	action := "regenerate_locale"
-	if len(req.Msg.GetLocales()) == 0 {
+	if len(command.Locales) == 0 {
 		action = "regenerate_all"
 	}
 	outcome := "failed"
@@ -173,32 +150,35 @@ func (s *TranslationService) RegenerateEntityTranslations(
 		return nil, err
 	}
 
-	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
+	entityType, entityID, err := parseTranslationTarget(command.Target)
 	if err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
 	operationID := generateUUID()
 	result, err := s.createRegeneratedTranslationJobs(
-		ctx, entityType, entityID, req.Msg.GetLocales(), requestedBy, operationID, now,
+		ctx, entityType, entityID, command.Locales, requestedBy, operationID, now,
 	)
 	if err != nil {
-		return nil, errs.Wrap(err)
+		return nil, err
 	}
 	for index := range result.createdJobs {
 		s.metrics.recordQueuedJob(ctx, &result.createdJobs[index])
 	}
-	responseJobs := toProtoTranslationJobs(result.jobs)
 	outcome = "succeeded"
-	return connect.NewResponse(&managev1.RegenerateEntityTranslationsResponse{Jobs: responseJobs}), nil
+	jobs := result.jobs
+	if jobs == nil {
+		jobs = []Job{}
+	}
+	return jobs, nil
 }
 
 type regeneratedTranslationJobsResult struct {
-	jobs        []model.TranslationJob
-	createdJobs []model.TranslationJob
+	jobs        []Job
+	createdJobs []Job
 }
 
-func (s *TranslationService) createRegeneratedTranslationJobs(
+func (s *Service) createRegeneratedTranslationJobs(
 	ctx context.Context,
 	entityType string,
 	entityID string,
@@ -207,91 +187,100 @@ func (s *TranslationService) createRegeneratedTranslationJobs(
 	operationID string,
 	now time.Time,
 ) (regeneratedTranslationJobsResult, error) {
-	var result regeneratedTranslationJobsResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.validateTranslationRegenerationWithDB(ctx, tx, entityType, entityID); err != nil {
-			return err
-		}
-		if s.domains == nil {
-			return errs.InternalMsg("translation domain registry is required")
-		}
-		authority, err := loadTranslationDocumentAuthority(ctx, tx, entityType, entityID)
-		if err != nil {
-			return err
-		}
-		sourceDocument, err := s.domains.LoadSourceDocument(
-			ctx, tx, s.contentBlocks, entityType, entityID,
-		)
-		if err != nil {
-			return err
-		}
-		sourceDocument.SourceLocale = authority.SourceLocale
-		sourceDocument.ContentDocumentRevision = authority.DocumentRevision.String()
-		sourceLocale := strings.TrimSpace(sourceDocument.SourceLocale)
-		if sourceLocale == "" {
-			return errs.InternalMsg("translation source document locale is required")
-		}
-		targetLocales, err := s.resolveRequestedLocales(ctx, sourceLocale, requestedLocales)
-		if err != nil {
-			return err
-		}
-		if err := s.requireAvailableTranslationProvider(ctx); err != nil {
-			return err
-		}
-		for _, locale := range targetLocales {
-			job, created, err := createRegeneratedTranslationJobWithDB(
-				ctx, tx, entityType, entityID, sourceLocale, locale, requestedBy, operationID, now,
-				func(job *model.TranslationJob) (translation.RequestArtifact, error) {
-					return buildPersistedTranslationRequest(
-						ctx, tx, s.domains, job, sourceDocument,
-					)
-				},
-			)
-			if err != nil {
-				return err
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[regeneratedTranslationJobsResult, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return store.Domains().LockRoot(ctx, entityType, entityID)
+		},
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			return requireTranslationRegenerationAuthority(ctx, store, entityType, entityID)
+		}),
+		Change: func(ctx context.Context, store Store) (regeneratedTranslationJobsResult, error) {
+			return s.queueRegeneratedTranslationJobs(ctx, store, entityType, entityID, requestedLocales, requestedBy, operationID, now)
+		},
+		// Translation jobs are operational queue rows, not audited content.
+		Audit: func(regeneratedTranslationJobsResult) mutation.Audit { return mutation.Unchanged() },
+		Outbox: func(ctx context.Context, store Store, result regeneratedTranslationJobsResult) error {
+			for index := range result.createdJobs {
+				if err := store.EnqueueGenerate(ctx, result.createdJobs[index].ID); err != nil {
+					return err
+				}
 			}
-			result.jobs = append(result.jobs, job)
-			if !created {
-				continue
-			}
-			result.createdJobs = append(result.createdJobs, job)
-			if err := s.publisher.EnqueueTranslationGenerateWithDB(
-				ctx,
-				tx,
-				&managev1.TranslationGenerateEvent{JobId: job.ID},
-			); err != nil {
-				return err
-			}
-		}
-		return nil
+			return nil
+		},
 	})
-	return result, err
 }
 
-func (s *TranslationService) validateTranslationRegenerationWithDB(
+func (s *Service) queueRegeneratedTranslationJobs(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	entityType string,
+	entityID string,
+	requestedLocales []string,
+	requestedBy string,
+	operationID string,
+	now time.Time,
+) (regeneratedTranslationJobsResult, error) {
+	var result regeneratedTranslationJobsResult
+	authority, err := loadTranslationDocumentAuthority(ctx, store, entityType, entityID)
+	if err != nil {
+		return result, err
+	}
+	sourceDocument, err := store.Domains().LoadSourceDocument(ctx, entityType, entityID)
+	if err != nil {
+		return result, err
+	}
+	sourceDocument.SourceLocale = authority.SourceLocale
+	sourceDocument.ContentDocumentRevision = authority.DocumentRevision.String()
+	sourceLocale := strings.TrimSpace(sourceDocument.SourceLocale)
+	if sourceLocale == "" {
+		return result, errors.New("translation source document locale is required")
+	}
+	targetLocales, err := s.resolveRequestedLocales(ctx, store, sourceLocale, requestedLocales)
+	if err != nil {
+		return result, err
+	}
+	if err := requireAvailableTranslationProvider(ctx, store); err != nil {
+		return result, err
+	}
+	for _, locale := range targetLocales {
+		job, created, err := createRegeneratedTranslationJob(
+			ctx, store, entityType, entityID, sourceLocale, locale, requestedBy, operationID, now,
+			func(job *Job) (translation.RequestArtifact, error) {
+				return buildPersistedTranslationRequest(ctx, store, s.plans, job, sourceDocument)
+			},
+		)
+		if err != nil {
+			return result, err
+		}
+		result.jobs = append(result.jobs, job)
+		if created {
+			result.createdJobs = append(result.createdJobs, job)
+		}
+	}
+	return result, nil
+}
+
+// requireTranslationRegenerationAuthority decides, under the locked root,
+// whether the principal may queue or cancel machine translation of the entity.
+func requireTranslationRegenerationAuthority(
+	ctx context.Context,
+	store Store,
 	entityType string,
 	entityID string,
 ) error {
-	if s.domains == nil {
-		return errs.InternalMsg("translation domain registry is required")
-	}
-	if err := s.domains.LockRoot(ctx, tx, entityType, entityID); err != nil {
-		return err
-	}
-	if err := requireEditableTranslationDomain(ctx, tx, s.domains, entityType, entityID); err != nil {
+	domains := store.Domains()
+	if err := domains.RequireEditable(ctx, entityType, entityID); err != nil {
 		return err
 	}
 	if entityType == "privacy" || entityType == "terms" {
-		return s.domains.RequireLegalEditable(ctx, tx, s.spiceDB, entityType, entityID)
+		return domains.RequireLegalEditable(ctx, entityType, entityID)
 	}
-	return s.domains.RequireSourceLocaleEdit(ctx, tx, s.spiceDB, entityType, entityID)
+	return domains.RequireSourceLocaleEdit(ctx, entityType, entityID)
 }
 
-func createRegeneratedTranslationJobWithDB(
+func createRegeneratedTranslationJob(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	entityType string,
 	entityID string,
 	sourceLocale string,
@@ -299,75 +288,70 @@ func createRegeneratedTranslationJobWithDB(
 	requestedBy string,
 	operationID string,
 	now time.Time,
-	buildArtifact func(*model.TranslationJob) (translation.RequestArtifact, error),
-) (model.TranslationJob, bool, error) {
+	buildArtifact func(*Job) (translation.RequestArtifact, error),
+) (Job, bool, error) {
 	requestedBy = strings.TrimSpace(requestedBy)
-	job := model.TranslationJob{
+	job := Job{
 		ID: generateUUID(), EntityType: entityType, EntityID: entityID, TargetLocale: targetLocale,
 		SourceLocale: sourceLocale,
 		OperationID:  operationID,
-		Status:       translationJobStatusQueued, RequestedAt: now, CreatedAt: now, UpdatedAt: now,
+		Status:       JobQueued, RequestedAt: now, CreatedAt: now, UpdatedAt: now,
 		RequestedByMemberID: requestedBy,
 	}
-	if err := validateTranslationJobRequester(&job); err != nil {
-		return model.TranslationJob{}, false, errs.Internal(err)
+	if err := ValidateJobRequester(&job); err != nil {
+		return Job{}, false, err
 	}
 	if _, ok := translation.DefinitionForKind(entityType); !ok {
-		return model.TranslationJob{}, false, fmt.Errorf("unsupported translation entity type %q", entityType)
+		return Job{}, false, fmt.Errorf("unsupported translation entity type %q", entityType)
 	}
 	if buildArtifact == nil {
-		return model.TranslationJob{}, false, errs.InternalMsg("translation request artifact builder is required")
+		return Job{}, false, errors.New("translation request artifact builder is required")
 	}
 	artifact, err := buildArtifact(&job)
 	if err != nil {
-		return model.TranslationJob{}, false, err
+		return Job{}, false, err
 	}
 	if len(artifact.XLIFF) == 0 || len(artifact.Manifest) == 0 {
-		return model.TranslationJob{}, false, errs.InternalMsg("translation request artifact is incomplete")
+		return Job{}, false, errors.New("translation request artifact is incomplete")
 	}
 	if artifact.Digest != translation.RequestArtifactDigest(artifact.XLIFF, artifact.Manifest) {
-		return model.TranslationJob{}, false, errs.InternalMsg("translation request artifact digest is invalid")
+		return Job{}, false, errors.New("translation request artifact digest is invalid")
 	}
 	job.RequestXLIFF = artifact.XLIFF
 	job.RequestManifest = artifact.Manifest
 	job.RequestArtifactDigest = artifact.Digest
 	if err := validateTranslationJobRequestArtifact(&job); err != nil {
-		return model.TranslationJob{}, false, err
+		return Job{}, false, err
 	}
-	activeJobs, err := lockActiveTranslationRetryJobs(tx.WithContext(ctx), job)
+	key := ActiveJobKey{
+		EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
+		RequestArtifactDigest: job.RequestArtifactDigest,
+	}
+	activeJobs, err := store.LockActiveJobs(ctx, key)
 	if err != nil {
-		return model.TranslationJob{}, false, err
+		return Job{}, false, err
 	}
 	if len(activeJobs) > 0 {
-		if err := validateTranslationJobRequester(&activeJobs[len(activeJobs)-1]); err != nil {
-			return model.TranslationJob{}, false, errs.Internal(err)
+		if err := ValidateJobRequester(&activeJobs[len(activeJobs)-1]); err != nil {
+			return Job{}, false, err
 		}
 		return activeJobs[len(activeJobs)-1], false, nil
 	}
-	insertErr := tx.WithContext(ctx).Transaction(func(insertTx *gorm.DB) error {
-		return insertTx.Create(&job).Error
-	})
-	if insertErr == nil {
+	// A concurrent request may have queued the same job since the lock above;
+	// the active-job unique index then keeps its row and this one is dropped.
+	inserted, err := store.InsertJob(ctx, job)
+	if err != nil {
+		return Job{}, false, err
+	}
+	if inserted {
 		return job, true, nil
 	}
-	if !dberrors.IsUniqueViolation(insertErr) {
-		return model.TranslationJob{}, false, insertErr
-	}
-	activeJobs, err = lockActiveTranslationRetryJobs(tx.WithContext(ctx), job)
+	activeJobs, err = store.LockActiveJobs(ctx, key)
 	if err != nil {
-		return model.TranslationJob{}, false, err
+		return Job{}, false, err
 	}
 	if len(activeJobs) == 0 {
-		return model.TranslationJob{}, false, insertErr
+		return Job{}, false, errors.New("translation job insert conflicted without an active job")
 	}
 	return activeJobs[len(activeJobs)-1], false, nil
-}
-
-func toProtoTranslationJobs(jobs []model.TranslationJob) []*managev1.TranslationJob {
-	responseJobs := make([]*managev1.TranslationJob, 0, len(jobs))
-	for index := range jobs {
-		job := &jobs[index]
-		responseJobs = append(responseJobs, toProtoTranslationJob(*job))
-	}
-	return responseJobs
 }

@@ -2,129 +2,103 @@ package release
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"log/slog"
 
-	"connectrpc.com/connect"
+	"github.com/google/uuid"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 )
 
-func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releaseID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// AIDocumentStateQuery names the Release locale an AI document reads.
+type AIDocumentStateQuery struct {
+	ReleaseID string
+	Locale    string
+}
 
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentState{}, errs.Internal(errors.New("release AI document dependencies are not configured"))
-	}
-	id, err := uuidFromCanonicalString(releaseID)
+// LoadAIDocumentState reads the Release locale an AI document edits, for an
+// onboarded Member that can view the Release.
+func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentStateQuery) (AIDocumentState, error) {
+	id, err := uuidFromCanonicalString(query.ReleaseID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(err))
-		return AIDocumentState{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
+		return AIDocumentState{}, domainerr.InvalidField("release_id", "must be a canonical UUID")
 	}
-	locale, err = normalizeReleaseDocumentLocale(locale)
+	locale, err := normalizeReleaseDocumentLocale(query.Locale)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.Banned || principal.IdentityID == "" || principal.MemberID == "" {
-		return AIDocumentState{}, errs.AuthenticationRequired()
+		return AIDocumentState{}, authenticationRequired()
 	}
 	var state AIDocumentState
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadReleaseAIDocumentRoot(ctx, tx, id.String(), "KEY SHARE")
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadReleaseAIDocumentRoot(ctx, store, id.String(), KeyShareLock)
 		if err != nil {
 			return err
-		}
-		_, valid := releaseAIDocumentLifecycle(root.Status)
-		if !valid {
-			return errs.InternalMsg("Release has an unsupported lifecycle status")
 		}
 		if err := requireReleaseAction(ctx, s.spiceDB, id.String(), releaseActionView); err != nil {
 			return err
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return state, err
-}
-
-type releaseAIDocumentRoot struct {
-	ID           string     `gorm:"column:id"`
-	Status       string     `gorm:"column:status"`
-	SourceLocale string     `gorm:"column:source_locale"`
-	DocumentID   *uuid.UUID `gorm:"column:content_document_id"`
 }
 
 func loadReleaseAIDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	releaseID string,
-	lock string,
-) (releaseAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).
-		Table("release").
-		Select("id::text AS id", "status", "source_locale", "content_document_id").
-		Where("id = ?::uuid", releaseID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root releaseAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return releaseAIDocumentRoot{}, errs.NotFound("release", releaseID)
-		}
-		return releaseAIDocumentRoot{}, errs.Internal(err)
+	lock RowLock,
+) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, releaseID, lock)
+	if err != nil {
+		return DocumentRoot{}, releaseMissingAs(err, releaseNotFound(releaseID))
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return releaseAIDocumentRoot{}, errs.FailedPrecondition("Release content document is not initialized")
+		return DocumentRoot{}, domainerr.Precondition("Release content document is not initialized")
+	}
+	if !knownReleaseLifecycle(root.Status) {
+		return DocumentRoot{}, errors.New("Release has an unsupported lifecycle status")
 	}
 	return root, nil
 }
 
-func (s *InternalReleaseService) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root releaseAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
 	target, err := loadReleaseTargetLocaleState(
-		ctx, tx, s.contentBlocks, root.ID, *root.DocumentID, locale, false,
+		ctx, store, root.ID, *root.DocumentID, locale, false,
 	)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
 	if target.Snapshot.Document.Profile != releaseContentProfile {
-		return AIDocumentState{}, errs.InternalMsg("Release AI document requires the compact content profile")
+		return AIDocumentState{}, errors.New("Release AI document requires the compact content profile")
 	}
 	exists := target.TargetMetadata != nil
 	document, err := contentblock.SnapshotToLocalizedRichTextDocument(target.Snapshot, locale)
 	if err != nil {
 		return AIDocumentState{}, normalizeReleaseContentBlockError(err)
 	}
-	if !exists && releaseSnapshotContainsLocale(target.Snapshot, locale) {
-		return AIDocumentState{}, errs.InternalMsg("Release locale overlay exists without translation metadata")
+	if !exists && targetlocale.SnapshotHasLocale(target.Snapshot, locale) {
+		return AIDocumentState{}, errors.New("Release locale overlay exists without translation metadata")
 	}
-	creditIDs, err := loadReleaseCreditIDs(ctx, tx, root.ID)
+	creditIDs, err := store.CreditIDs(ctx, root.ID)
 	if err != nil {
-		return AIDocumentState{}, errs.Internal(err)
+		return AIDocumentState{}, err
 	}
 	state := AIDocumentState{
-		ReleaseID: root.ID, Status: root.Status, DocumentID: *root.DocumentID,
+		ReleaseID: root.ID, Status: string(root.Status), DocumentID: *root.DocumentID,
 		DocumentRevision: target.Snapshot.Document.Revision.String(), SourceLocale: target.SourceLocale,
 		Locale: locale, LocaleExists: exists, Document: document,
 		CreditIDs: creditIDs,
@@ -145,13 +119,8 @@ func (s *InternalReleaseService) loadAIDocumentStateAfterAuthorization(
 	return state, nil
 }
 
-func releaseAIDocumentLifecycle(status string) (published, valid bool) {
-	switch status {
-	case managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String():
-		return false, true
-	case managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String():
-		return true, true
-	default:
-		return false, false
-	}
+// knownReleaseLifecycle reports whether status is a lifecycle state an AI
+// document may read and edit; any other stored value is corrupt.
+func knownReleaseLifecycle(status Status) bool {
+	return status == StatusDraft || status == StatusPublished
 }

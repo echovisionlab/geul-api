@@ -8,10 +8,9 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -26,8 +25,8 @@ func parseTranscodeCompleteEvent(body []byte) (*managev1.TranscodeCompleteEvent,
 	return &event, nil
 }
 
-func logTranscodeComplete(event *managev1.TranscodeCompleteEvent) {
-	slog.Info("Processing transcode complete event",
+func logTranscodeComplete(ctx context.Context, event *managev1.TranscodeCompleteEvent) {
+	slog.InfoContext(ctx, "Processing transcode complete event",
 		"fileId", event.FileId,
 		"entityType", event.EntityType.String(),
 		"entityId", event.EntityId,
@@ -47,7 +46,7 @@ func (h *Handlers) skipUnavailableTranscodeSource(
 	if acceptsResults {
 		return false, nil
 	}
-	slog.Debug(
+	slog.DebugContext(ctx,
 		"Skipped transcode completion for deleted or pending-deletion source file",
 		"fileId",
 		event.FileId,
@@ -100,12 +99,16 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 	if err := validateTranscodeCompletionOutputs(event); err != nil {
 		return err
 	}
-	trackedJob, err := h.trackedTranscodeAllocationForCompletion(ctx, event)
+	var trackedJob *transcodestate.Job
+	err := h.read(ctx, func(store Store) (err error) {
+		trackedJob, err = trackedTranscodeAllocationForCompletion(ctx, store, event, false)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("load tracked transcode allocation: %w", err)
 	}
 	if trackedJob == nil {
-		logUntrackedTranscodeComplete(event)
+		logUntrackedTranscodeComplete(ctx, event)
 		return nil
 	}
 	if !transcodeJobAcceptsCompletion(trackedJob.Status) {
@@ -119,8 +122,8 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 	return h.publishSuccessfulTranscodeComplete(ctx, event, trackStateApplied)
 }
 
-func logUntrackedTranscodeComplete(event *managev1.TranscodeCompleteEvent) {
-	slog.Warn(
+func logUntrackedTranscodeComplete(ctx context.Context, event *managev1.TranscodeCompleteEvent) {
+	slog.WarnContext(ctx,
 		"Skipped untracked transcode completion",
 		"fileId",
 		event.FileId,
@@ -146,19 +149,19 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 	event *managev1.TranscodeCompleteEvent,
 ) (bool, bool, error) {
 	trackStateApplied := false
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, tx, event.FileId)
+	err := h.transaction(ctx, func(store Store) error {
+		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, store, event.FileId)
 		if err != nil {
 			return err
 		}
 		if !acceptsResults {
 			return errProcessingSourceUnavailable
 		}
-		if err := h.requireAcceptingTranscodeAllocation(ctx, tx, event); err != nil {
+		if err := requireAcceptingTranscodeAllocation(ctx, store, event); err != nil {
 			return err
 		}
 		if event.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-			trackStateApplied, err = h.finalizeTrackTranscodeStateWithDB(ctx, tx, event)
+			trackStateApplied, err = finalizeTrackTranscodeState(ctx, store, event)
 			if err != nil {
 				return err
 			}
@@ -166,21 +169,20 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 				return errTranscodeAllocationUnavailable
 			}
 		}
-		return completeTranscodeDerivatives(ctx, tx, event)
+		return completeTranscodeDerivatives(ctx, store, event)
 	})
 	if err == nil {
 		return trackStateApplied, true, nil
 	}
-	continueCompletion, handledErr := h.handleAllocatedTranscodeOutputError(ctx, event, err)
-	return false, continueCompletion, handledErr
+	return false, false, h.handleAllocatedTranscodeOutputError(ctx, event, err)
 }
 
-func (h *Handlers) requireAcceptingTranscodeAllocation(
+func requireAcceptingTranscodeAllocation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 ) error {
-	job, err := h.trackedTranscodeAllocationForCompletionDB(ctx, tx, event, true)
+	job, err := trackedTranscodeAllocationForCompletion(ctx, store, event, true)
 	if err != nil {
 		return err
 	}
@@ -192,15 +194,13 @@ func (h *Handlers) requireAcceptingTranscodeAllocation(
 
 func completeTranscodeDerivatives(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 ) error {
-	lifecycle := mediaasset.NewLifecycle(tx, "")
 	if event.EventType == managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_VIDEO {
 		if err := completeAssetDerivative(
 			ctx,
-			tx,
-			lifecycle,
+			store,
 			event.FileId,
 			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL,
 			"thumbnail",
@@ -212,8 +212,7 @@ func completeTranscodeDerivatives(
 	if event.EventType == managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_AUDIO {
 		if err := completeAssetDerivative(
 			ctx,
-			tx,
-			lifecycle,
+			store,
 			event.FileId,
 			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM,
 			"spectrogram",
@@ -224,8 +223,7 @@ func completeTranscodeDerivatives(
 	}
 	return completeGenerationDerivative(
 		ctx,
-		tx,
-		lifecycle,
+		store,
 		event.FileId,
 		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS,
 		event.Outputs.GetHls(),
@@ -236,20 +234,20 @@ func (h *Handlers) handleAllocatedTranscodeOutputError(
 	ctx context.Context,
 	event *managev1.TranscodeCompleteEvent,
 	err error,
-) (bool, error) {
+) error {
 	if errors.Is(err, errProcessingSourceUnavailable) {
 		if cleanupErr := h.finishDeletedFileTranscodeJob(ctx, event); cleanupErr != nil {
-			return false, fmt.Errorf("cleanup transcode jobs rejected by file deletion: %w", cleanupErr)
+			return fmt.Errorf("cleanup transcode jobs rejected by file deletion: %w", cleanupErr)
 		}
-		return false, nil
+		return nil
 	}
 	if errors.Is(err, errTranscodeAllocationUnavailable) {
 		if retireErr := h.retireStaleTranscodeOutputs(ctx, event); retireErr != nil {
-			return false, fmt.Errorf("retire outputs rejected by transcode allocation: %w", retireErr)
+			return fmt.Errorf("retire outputs rejected by transcode allocation: %w", retireErr)
 		}
-		return false, h.finishTranscodeJob(ctx, event)
+		return h.finishTranscodeJob(ctx, event)
 	}
-	return false, fmt.Errorf("complete allocated transcode outputs: %w", err)
+	return fmt.Errorf("complete allocated transcode outputs: %w", err)
 }
 
 func (h *Handlers) publishSuccessfulTranscodeComplete(

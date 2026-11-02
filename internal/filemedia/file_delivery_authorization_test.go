@@ -1,11 +1,11 @@
-//go:build integration
-
 package filemedia
 
 import (
 	"context"
 	"fmt"
 	"testing"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
 	"github.com/glebarez/sqlite"
@@ -14,8 +14,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -23,11 +23,13 @@ import (
 func TestAuthorizeManageFileDeliveriesRequiresIndependentFileUploader(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.User().ID())
-	other := stack.CreateUser(t, policyv1.Role.User().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
+	other := newUnitUser()
+	admin := newUnitUser()
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	for _, uploadType := range []managev1.UploadType{
 		managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
@@ -35,7 +37,7 @@ func TestAuthorizeManageFileDeliveriesRequiresIndependentFileUploader(t *testing
 		fileID := uuid.NewString()
 		seedFileDeliveryBinding(t, db, fileID, uploadType, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", manager.MemberID)
 		require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(manager), []string{fileID}))
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{fileID})))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{fileID})))
 		require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(admin), []string{fileID}))
 	}
 }
@@ -43,49 +45,53 @@ func TestAuthorizeManageFileDeliveriesRequiresIndependentFileUploader(t *testing
 func TestAuthorizeManageFileDeliveriesFailsClosedForMissingOrMixedBindings(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	owner := stack.CreateUser(t, policyv1.Role.User().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	owner := newUnitUser()
 	ownedFileID, missingFileID := uuid.NewString(), uuid.NewString()
 	seedFileDeliveryBinding(t, db, ownedFileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	ctx := fileDeliveryPrincipalContext(owner)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{missingFileID})))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{ownedFileID, missingFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{missingFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{ownedFileID, missingFileID})))
 }
 
 func TestAuthorizeManageFileDeliveriesSupportsOwnerAndAdminBoundaries(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	avatarOwner := stack.CreateUser(t, policyv1.Role.User().ID())
-	otherUser := stack.CreateUser(t, policyv1.Role.User().ID())
-	ordinaryUser := stack.CreateUser(t, policyv1.Role.User().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	avatarOwner := newUnitUser()
+	otherUser := newUnitUser()
+	ordinaryUser := newUnitUser()
+	admin := newUnitUser()
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
 	avatarFileID, mapFileID, mapEntityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	seedFileDeliveryBinding(t, db, avatarFileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, avatarOwner.MemberID)
 	require.NoError(t, db.Exec(`CREATE TABLE map_place (id TEXT PRIMARY KEY)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO map_place (id) VALUES (?)`, mapEntityID).Error)
 	seedFileDeliveryBinding(t, db, mapFileID, managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, mapEntityID)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(avatarOwner), []string{avatarFileID}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherUser), []string{avatarFileID})))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(ordinaryUser), []string{mapFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherUser), []string{avatarFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(ordinaryUser), []string{mapFileID})))
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(admin), []string{avatarFileID, mapFileID}))
 }
 
 func TestAuthorizeManageFileDeliveriesUsesAvatarTargetOwnerNotUploader(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	avatarOwner := stack.CreateUser(t, policyv1.Role.User().ID())
-	adminUploader := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	avatarOwner := newUnitUser()
+	adminUploader := newUnitUser()
 	fileID := uuid.NewString()
 	seedFileDeliveryBinding(
 		t, db, fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
 		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
 		avatarOwner.MemberID, adminUploader.MemberID,
 	)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	authorization, err := svc.authorizeManageFileDeliveriesWithWitness(fileDeliveryPrincipalContext(avatarOwner), []string{fileID})
 	require.NoError(t, err)
 	require.Equal(t, avatarOwner.MemberID, authorization.files[fileID].expectedAvatarOwner)
@@ -95,54 +101,64 @@ func TestAuthorizeManageFileDeliveriesUsesAvatarTargetOwnerNotUploader(t *testin
 func TestManageMediaDeliveryRejectsArbitraryAndMixedFileIDsBeforeSigning(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	owner := stack.CreateUser(t, policyv1.Role.User().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	owner := newUnitUser()
 	ownedFileID, arbitraryFileID := uuid.NewString(), uuid.NewString()
 	seedFileDeliveryBinding(t, db, ownedFileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	ctx := fileDeliveryPrincipalContext(owner)
-	_, err := svc.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: arbitraryFileID}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	_, err = svc.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: []string{ownedFileID, arbitraryFileID}}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	_, err := NewConnectHandler(svc).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: arbitraryFileID}))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
+	_, err = NewConnectHandler(svc).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: []string{ownedFileID, arbitraryFileID}}))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 }
 
 func TestAuthorizeManageFileDeliveriesRejectsUnauthenticatedAndBannedUsers(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	owner := stack.CreateUser(t, policyv1.Role.User().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	owner := newUnitUser()
 	fileID := uuid.NewString()
 	seedFileDeliveryBinding(t, db, fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
-	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(svc.authorizeManageFileDeliveries(context.Background(), []string{fileID})))
-	banned := auth.WithUser(context.Background(), &auth.UserInfo{IdentityID: auth.IdentityID(owner.IdentityID), MemberID: auth.MemberID(owner.MemberID), Authenticated: true, Banned: true})
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(banned, []string{fileID})))
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
+	require.Equal(t, connect.CodeUnauthenticated, errs.CodeOf(svc.authorizeManageFileDeliveries(context.Background(), []string{fileID})))
+	banned := auditedUserContext(context.Background(), &auth.UserInfo{IdentityID: auth.IdentityID(owner.IdentityID), MemberID: auth.MemberID(owner.MemberID), Authenticated: true, Banned: true})
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(banned, []string{fileID})))
 }
 
 func TestAuthorizeManageFileDeliveriesDeduplicatesEntityPermissionChecks(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.User().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
 	fileIDs := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
 	postID := seedCurrentPostFileDelivery(t, db, fileIDs)
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
-	seedFileDeliveryPostCollaboratorAuthority(t, stack.SpiceDBClient, postID, manager.IdentityID)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	checker.For(manager.IdentityID).Allow(policyv1.Post.View(postID))
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(manager), fileIDs))
+	list, err := policyv1.File.List()
+	require.NoError(t, err)
+	view, err := policyv1.Post.View(postID)
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{
+		authztest.Of(manager.IdentityID, list, nil),
+		authztest.Of(manager.IdentityID, view, nil),
+	}, checker.Checks(), "three Files of one Post check the Post once")
 }
 
 func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.User().ID())
-	otherAuthor := stack.CreateUser(t, policyv1.Role.User().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
+	otherAuthor := newUnitUser()
 	fileIDs := []string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()}
 	postID := seedCurrentPostFileDelivery(t, db, fileIDs)
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
-	seedFileDeliveryPostCollaboratorAuthority(t, stack.SpiceDBClient, postID, manager.IdentityID)
+	checker.For(manager.IdentityID).Allow(policyv1.Post.View(postID))
 
 	unrelatedFileID := uuid.NewString()
 	seedCurrentPostFileDelivery(t, db, []string{unrelatedFileID})
@@ -157,16 +173,16 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding
 		EntityType: &legacyPostEntityType, EntityID: postID,
 	}).Error)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	managerCtx := fileDeliveryPrincipalContext(manager)
 	require.NoError(t, svc.authorizeManageFileDeliveries(managerCtx, fileIDs))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(managerCtx, []string{unrelatedFileID}),
 	))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(managerCtx, []string{detachedFileID}),
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherAuthor), []string{fileIDs[0]}),
 	))
 }
@@ -174,60 +190,62 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding
 func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	author := newUnitUser()
+	admin := newUnitUser()
 	fileID := uuid.NewString()
 	postID := seedCurrentPostFileDelivery(t, db, []string{fileID})
 	require.NoError(t, db.Table("post").Where("id = ?", postID).
 		Update("status", managev1.PostStatus_POST_STATUS_ARCHIVED.String()).Error)
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
-	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, postID, author.IdentityID)
+	// An author of the archived Post may view it; only an administrator
+	// edits it.
+	checker.For(author.IdentityID).Allow(policyv1.File.List())
+	checker.For(author.IdentityID).Allow(policyv1.Post.ViewArchived(postID))
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
+	checker.For(admin.IdentityID).Allow(policyv1.Post.EditArchived(postID))
 
-	service := &FileService{
-		db: db, spiceDB: stack.SpiceDBClient,
-		postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient),
-	}
+	service := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB)})
 	authorCtx := fileDeliveryPrincipalContext(author)
 	adminCtx := fileDeliveryPrincipalContext(admin)
 
 	require.NoError(t, service.authorizeManageFileDeliveries(authorCtx, []string{fileID}))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		authorCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerView,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
-			db,
+			testFileStore(service, db),
 			fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 			filePolicyOwnerEdit,
 		),
 	))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		adminCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerEdit,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(service.checkEntityPermission(
-		authorCtx,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(service.checkEntityPermission(
+		authorCtx, UploadFeaturedImage,
+
 		"",
 		postID,
 		author.MemberID,
 	)))
 	require.NoError(t, service.checkEntityPermission(
-		adminCtx,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
+		adminCtx, UploadFeaturedImage,
+
 		"",
 		postID,
 		admin.MemberID,
 	))
 
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(requireFreshFileIngestAuthority(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(freshFileIngestAuthorityForTest(
 		authorCtx,
 		db,
 		service,
@@ -235,7 +253,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
 		postID,
 	)))
-	require.NoError(t, requireFreshFileIngestAuthority(
+	require.NoError(t, freshFileIngestAuthorityForTest(
 		adminCtx,
 		db,
 		service,
@@ -248,40 +266,42 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	author := newUnitUser()
+	admin := newUnitUser()
 	fileID := uuid.NewString()
 	eventID := seedCurrentContentFileDelivery(t, db, "program_event", []string{fileID}, false)
 	require.NoError(t, db.Table("program_event").Where("id = ?", eventID).
 		Update("status", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()).Error)
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "program_event", eventID)
 
-	service := &FileService{
-		db: db, spiceDB: stack.SpiceDBClient,
-		programEventAttachment: newIntegrationProgramEventAccess(db),
-	}
+	checker.For(author.IdentityID).Allow(policyv1.File.List())
+	checker.For(author.IdentityID).Allow(policyv1.ProgramEvent.ViewArchived(eventID))
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
+	checker.For(admin.IdentityID).Allow(policyv1.ProgramEvent.EditArchived(eventID))
+
+	service := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Events: newIntegrationProgramEventAccess(db)})
 	authorCtx := fileDeliveryPrincipalContext(author)
 	adminCtx := fileDeliveryPrincipalContext(admin)
 
 	require.NoError(t, service.authorizeManageFileDeliveries(authorCtx, []string{fileID}))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		authorCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerView,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
-			db,
+			testFileStore(service, db),
 			fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 			filePolicyOwnerEdit,
 		),
 	))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		adminCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerEdit,
 	))
@@ -290,10 +310,12 @@ func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t 
 func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBinding(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	other := stack.CreateUser(t, policyv1.Role.User().ID())
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	admin := newUnitUser()
+	other := newUnitUser()
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 
 	tests := []struct {
 		name           string
@@ -314,7 +336,6 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBind
 		t.Run(testCase.name, func(t *testing.T) {
 			fileID := uuid.NewString()
 			entityID := seedCurrentContentFileDelivery(t, db, testCase.table, []string{fileID}, testCase.featured)
-			seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, testCase.resourceType, entityID)
 
 			adminCtx := fileDeliveryPrincipalContext(admin)
 			require.NoError(t, svc.authorizeManageFileDeliveries(adminCtx, []string{fileID}))
@@ -331,7 +352,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBind
 				EntityType: &legacyEntityType, EntityID: entityID,
 			}).Error)
 			require.NoError(t, svc.authorizeManageFileDeliveries(adminCtx, []string{detachedFileID}))
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 				svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{detachedFileID}),
 			))
 		})
@@ -341,12 +362,12 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBind
 func TestAuthorizeManageFileDeliveriesGlobalAuthorIsIndependentOfCurrentContentOwners(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
 	fileID := uuid.NewString()
-	firstPostID := seedCurrentPostFileDelivery(t, db, []string{fileID})
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", firstPostID)
-	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, firstPostID, manager.IdentityID)
+	seedCurrentPostFileDelivery(t, db, []string{fileID})
+	checker.For(manager.IdentityID).Allow(policyv1.File.List())
 
 	secondPostID := uuid.NewString()
 	secondDocumentID := uuid.NewString()
@@ -359,43 +380,23 @@ func TestAuthorizeManageFileDeliveriesGlobalAuthorIsIndependentOfCurrentContentO
 		VALUES (?, 'shared-file', 'active', ?)
 	`, secondBlockID, fileID).Error)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(manager), []string{fileID}))
-}
-
-func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentCurrentSchemaIntegration(t *testing.T) {
-	t.Parallel()
-	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
-		BootstrapKratosStub: true,
-		ApplyAppSchemaSQL:   true,
-	})
-	postID, fileID := seedCurrentSchemaPostFileDelivery(t, pg.DB)
-
-	svc := &FileService{db: pg.DB}
-	usages, err := svc.currentManageFileDeliveryUsages(t.Context(), []string{fileID})
-	require.NoError(t, err)
-	require.Len(t, usages[fileID], 1)
-	require.Equal(t, "content_attachment", usages[fileID][0].kind)
-	require.Equal(t, "post", usages[fileID][0].resourceType)
-	require.Equal(t, postID, usages[fileID][0].resourceID)
-
-	var bindingCount int64
-	require.NoError(t, pg.DB.Table("file_ingest_binding").Where("file_id = ?", fileID).Count(&bindingCount).Error)
-	require.Zero(t, bindingCount)
 }
 
 func TestAuthorizeManageFileDeliveriesRejectsPendingDeleteFile(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	uploader := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	uploader := newUnitUser()
+	admin := newUnitUser()
 	fileID := uuid.NewString()
 	seedFileDeliveryBinding(t, db, fileID, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", uploader.MemberID)
 	require.NoError(t, db.Exec(`UPDATE file SET delete_requested_at = CURRENT_TIMESTAMP WHERE id = ?`, fileID).Error)
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
-	for _, principal := range []*testutil.OryUser{uploader, admin} {
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
+	for _, principal := range []*unitUser{uploader, admin} {
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 			svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(principal), []string{fileID}),
 		))
 	}
@@ -404,9 +405,12 @@ func TestAuthorizeManageFileDeliveriesRejectsPendingDeleteFile(t *testing.T) {
 func TestAuthorizeManageFileDeliveriesAllowsGlobalLibraryAuthorForTrackAudio(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	author := newUnitUser()
+	admin := newUnitUser()
+	checker.For(author.IdentityID).Allow(policyv1.File.List())
+	checker.For(admin.IdentityID).Allow(policyv1.File.List())
 	releaseID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO release (id) VALUES (?)`, releaseID).Error)
 	fileIDs := []string{uuid.NewString(), uuid.NewString()}
@@ -415,7 +419,7 @@ func TestAuthorizeManageFileDeliveriesAllowsGlobalLibraryAuthorForTrackAudio(t *
 		require.NoError(t, db.Exec(`INSERT INTO track (id, release_id) VALUES (?, ?)`, trackID, releaseID).Error)
 		seedFileDeliveryBinding(t, db, fileID, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, trackID)
 	}
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
+	svc := withNativeFileUnits(&Service{spiceDB: spiceDB}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB), Events: newIntegrationProgramEventAccess(db)})
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(author), fileIDs))
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(admin), fileIDs))
 }
@@ -524,48 +528,6 @@ func seedCurrentContentFileDelivery(t *testing.T, db *gorm.DB, table string, fil
 	return entityID
 }
 
-func seedFileDeliveryContentPolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceType string, resourceID string) {
-	t.Helper()
-	var policy policyv1.RelationshipMutation
-	var err error
-	switch resourceType {
-	case "post":
-		policy, err = policyv1.Post.TouchPolicy(resourceID)
-	case "page":
-		policy, err = policyv1.Page.TouchPolicy(resourceID)
-	case "work":
-		policy, err = policyv1.Work.TouchPolicy(resourceID)
-	case "program_event":
-		policy, err = policyv1.ProgramEvent.TouchPolicy(resourceID)
-	default:
-		require.FailNow(t, "unsupported FileDelivery content policy resource", resourceType)
-		return
-	}
-	require.NoError(t, err)
-	_, err = spiceDB.ApplyRelationships(t.Context(), policy)
-	require.NoError(t, err)
-}
-
-func seedCurrentSchemaPostFileDelivery(t *testing.T, db *gorm.DB) (string, string) {
-	t.Helper()
-	postID, documentID, blockID, fileID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile) VALUES (?, 'post')`, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO post (id, content_document_id) VALUES (?, ?)`, postID, documentID).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO file (id, file_name, extension, mime_type, file_size)
-		VALUES (?, 'post-attachment', 'mp4', 'video/mp4', 4096)
-	`, fileID).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO content_block (id, document_id, container_slot, position, kind)
-		VALUES (?, ?, 'content', 0, 'file')
-	`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id)
-		VALUES (?, 'primary', 'active', ?)
-	`, blockID, fileID).Error)
-	return postID, fileID
-}
-
-func fileDeliveryPrincipalContext(user *testutil.OryUser) context.Context {
-	return auth.WithUser(context.Background(), user.AuthUserInfo())
+func fileDeliveryPrincipalContext(user *unitUser) context.Context {
+	return auditedUserContext(context.Background(), user.AuthUserInfo())
 }

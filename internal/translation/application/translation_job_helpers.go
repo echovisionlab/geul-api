@@ -3,6 +3,7 @@ package application
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,45 +11,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventcontract "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
-func translationTargetDefinition(entityType string) (translation.Definition, error) {
-	definition, ok := translation.DefinitionForKind(entityType)
-	if !ok {
-		return translation.Definition{}, errs.InvalidArgument(
-			"target.entity_type",
-			fmt.Sprintf("unsupported translation entity type %q", entityType),
-		)
-	}
-	return definition, nil
-}
-
-func validateTranslationJobRequestArtifact(job *model.TranslationJob) error {
+// validateTranslationJobRequestArtifact keeps the event contract's rule
+// for a job's request artifact: it is named by a digest.
+func validateTranslationJobRequestArtifact(job *Job) error {
 	if job == nil {
 		return fmt.Errorf("translation job is required")
 	}
-	definition, ok := translation.DefinitionForKind(job.EntityType)
-	if !ok {
-		return eventcontract.ValidateTranslationJobRequestArtifact(&managev1.TranslationJob{
-			Target:                &managev1.TranslationTarget{EntityType: managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_UNSPECIFIED, EntityId: job.EntityID},
-			RequestArtifactDigest: job.RequestArtifactDigest,
-		})
+	if strings.TrimSpace(job.RequestArtifactDigest) == "" {
+		return errors.New("translation job request artifact digest is required")
 	}
-	return eventcontract.ValidateTranslationJobRequestArtifact(&managev1.TranslationJob{
-		Target: &managev1.TranslationTarget{
-			EntityType: definition.Proto,
-			EntityId:   job.EntityID,
-		},
-		RequestArtifactDigest: job.RequestArtifactDigest,
-	})
+	return nil
 }
 
-func validateTranslationJobRequester(job *model.TranslationJob) error {
+// ValidateJobRequester rejects a job whose requester is not a canonical
+// Member UUID.
+func ValidateJobRequester(job *Job) error {
 	if job == nil {
 		return fmt.Errorf("translation job is required")
 	}
@@ -62,7 +42,7 @@ func validateTranslationJobRequester(job *model.TranslationJob) error {
 }
 
 func buildTranslationProviderRequest(
-	job *model.TranslationJob,
+	job *Job,
 	plan *translation.ExtractionPlan,
 ) (translation.ProviderRequest, error) {
 	if job == nil {
@@ -96,7 +76,7 @@ func buildTranslationProviderRequest(
 	}, nil
 }
 
-func translationXLIFFFileID(job *model.TranslationJob) string {
+func translationXLIFFFileID(job *Job) string {
 	parts := []string{
 		job.EntityType,
 		job.EntityID,
@@ -108,7 +88,7 @@ func translationXLIFFFileID(job *model.TranslationJob) string {
 }
 
 func buildTranslationCandidateContent(
-	domains DomainRegistry,
+	plans DomainPlans,
 	plan *translation.ExtractionPlan,
 	source *translation.SourceDocument,
 	response *translation.ProviderResponse,
@@ -123,10 +103,10 @@ func buildTranslationCandidateContent(
 		return nil, fmt.Errorf("translation source document is required")
 	}
 
-	if domains == nil {
+	if plans == nil {
 		return nil, fmt.Errorf("translation domain registry is required")
 	}
-	return domains.BuildCandidate(plan, source, translation.FlattenResponse(*response))
+	return plans.BuildCandidate(plan, source, translation.FlattenResponse(*response))
 }
 
 // BuildGenericCandidate applies provider results for revision-backed domains
@@ -185,7 +165,7 @@ func applyTranslationCandidateHTML(
 	return applyHTMLTranslationCandidate(source, resultByUnit)
 }
 
-func translationJobStartedAt(job *model.TranslationJob, fallback time.Time) time.Time {
+func translationJobStartedAt(job *Job, fallback time.Time) time.Time {
 	if job == nil {
 		return time.Time{}
 	}

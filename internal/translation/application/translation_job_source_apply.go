@@ -8,22 +8,36 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 func (m *TranslationJobManager) applyAppliedTranslation(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	candidate *translation.Candidate,
 	now time.Time,
 ) error {
 	handoffPrepared := false
-	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return m.applyAppliedTranslationWithDB(ctx, tx, job, candidate, now, &handoffPrepared)
+	_, err := mutation.Run(ctx, m.mutations, mutation.StoreSpec[appliedTranslation, JobStore]{
+		// The root lock stabilizes only the existence boundary.
+		Lock: func(ctx context.Context, store JobStore) error {
+			return store.Domains().LockRoot(ctx, job.EntityType, job.EntityID)
+		},
+		Access: runningJobAccess(job.ID),
+		Change: func(ctx context.Context, store JobStore) (appliedTranslation, error) {
+			return applyAppliedTranslationInStore(ctx, store, job, candidate, now)
+		},
+		// The owning domain appends its locale-content record when it applies
+		// the candidate.
+		Audit: func(appliedTranslation) mutation.Audit { return mutation.Unchanged() },
+		Outbox: func(ctx context.Context, store JobStore, applied appliedTranslation) error {
+			if err := publishAppliedTranslationContentUpdated(ctx, store, job, applied.target, now); err != nil {
+				return err
+			}
+			handoffPrepared = applied.handoffPrepared
+			return nil
+		},
 	})
 	err = classifyTranslationOgHandoffTransactionError(err, handoffPrepared)
 	if outcome, record := translationOgHandoffMetricOutcome(err, handoffPrepared); record {
@@ -32,7 +46,7 @@ func (m *TranslationJobManager) applyAppliedTranslation(
 	if err != nil {
 		return err
 	}
-	job.Status = translationJobStatusApplied
+	job.Status = JobApplied
 	job.CompletedAt = &now
 	job.FailureReason = nil
 	job.UpdatedAt = now
@@ -59,83 +73,53 @@ func translationOgHandoffMetricOutcome(err error, handoffPrepared bool) (string,
 	return "", false
 }
 
-func (m *TranslationJobManager) applyAppliedTranslationWithDB(
+type appliedTranslation struct {
+	target          AppliedTranslationTarget
+	handoffPrepared bool
+}
+
+func applyAppliedTranslationInStore(
 	ctx context.Context,
-	tx *gorm.DB,
-	job *model.TranslationJob,
+	store JobStore,
+	job *Job,
 	candidate *translation.Candidate,
 	now time.Time,
-	handoffPrepared *bool,
-) error {
-	if err := m.lockTranslationJobApplyRoot(ctx, tx, job); err != nil {
-		return err
-	}
-	if err := lockRunningTranslationJob(ctx, tx, job.ID); err != nil {
-		return err
-	}
-	appliedTarget, err := m.persistAppliedTranslationCandidate(ctx, tx, job, candidate, now)
+) (appliedTranslation, error) {
+	appliedTarget, err := persistAppliedTranslationCandidate(ctx, store, job, candidate, now)
 	if err != nil {
-		return markTranslationTargetApplyFailure(err)
+		return appliedTranslation{}, markTranslationTargetApplyFailure(err)
 	}
 	prepared := false
 	if appliedTarget.Changed {
-		prepared, err = m.requestAppliedTranslationOg(ctx, tx, job)
+		prepared, err = requestAppliedTranslationOg(ctx, store, job)
 		if err != nil {
-			return err
+			return appliedTranslation{}, err
 		}
 	}
-	if err := completeAppliedTranslationJob(ctx, tx, job.ID); err != nil {
-		return err
+	if err := completeAppliedTranslationJob(ctx, store, job.ID); err != nil {
+		return appliedTranslation{}, err
 	}
-	if err := m.publishAppliedTranslationContentUpdated(
-		ctx,
-		tx,
-		job,
-		appliedTarget,
-		now,
-	); err != nil {
-		return err
-	}
-	*handoffPrepared = prepared
-	return nil
+	return appliedTranslation{target: appliedTarget, handoffPrepared: prepared}, nil
 }
 
-// lockTranslationJobApplyRoot stabilizes only the root existence boundary.
-// Requester identity, current relationships, and lifecycle are intentionally
-// not re-authorized after the request transaction accepted the job.
-func (m *TranslationJobManager) lockTranslationJobApplyRoot(ctx context.Context, tx *gorm.DB, job *model.TranslationJob) error {
-	if m.domains == nil {
-		return fmt.Errorf("translation domain registry is required")
+func lockRunningTranslationJob(ctx context.Context, store JobStore, jobID string) error {
+	status, err := store.LockJobStatus(ctx, jobID)
+	if errors.Is(err, ErrJobNotFound) {
+		return errTranslationJobNoLongerCurrent
 	}
-	return m.domains.LockRoot(ctx, tx, job.EntityType, job.EntityID)
-}
-
-func lockRunningTranslationJob(ctx context.Context, tx *gorm.DB, jobID string) error {
-	var current struct {
-		Status string `gorm:"column:status"`
+	if err != nil {
+		return err
 	}
-	result := tx.WithContext(ctx).
-		Model(&model.TranslationJob{}).
-		Select("status").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", jobID).
-		Take(&current)
-	if result.Error != nil {
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return errTranslationJobNoLongerCurrent
-		}
-		return result.Error
-	}
-	if result.RowsAffected == 0 || current.Status != translationJobStatusRunning {
+	if status != JobRunning {
 		return errTranslationJobNoLongerCurrent
 	}
 	return nil
 }
 
-func (m *TranslationJobManager) persistAppliedTranslationCandidate(
+func persistAppliedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	job *model.TranslationJob,
+	store JobStore,
+	job *Job,
 	candidate *translation.Candidate,
 	now time.Time,
 ) (AppliedTranslationTarget, error) {
@@ -144,37 +128,24 @@ func (m *TranslationJobManager) persistAppliedTranslationCandidate(
 		ContentJSON: candidate.ContentJSON, ContentHTML: candidate.ContentHTML, ContentText: candidate.ContentText,
 		Now: now,
 	}
-	if m.domains == nil {
-		return AppliedTranslationTarget{}, fmt.Errorf("translation domain registry is required")
-	}
-	return m.domains.ApplyCandidate(
-		ctx, tx, m.contentBlocks, job, candidate, entryInput,
-	)
+	return store.Domains().ApplyCandidate(ctx, *job, candidate, entryInput)
 }
 
-func (m *TranslationJobManager) requestAppliedTranslationOg(ctx context.Context, tx *gorm.DB, job *model.TranslationJob) (bool, error) {
+func requestAppliedTranslationOg(ctx context.Context, store JobStore, job *Job) (bool, error) {
 	reason := job.EntityType + "_machine_translation_applied"
-	if m.domains == nil {
-		return false, fmt.Errorf("translation domain registry is required")
-	}
-	prepared, err := m.domains.RequestLocaleOG(
-		ctx, tx, m.ogPlanner, m.ogRefresher,
-		job.EntityType, job.EntityID, job.TargetLocale, reason,
-	)
+	prepared, err := store.Domains().RequestLocaleOG(ctx, job.EntityType, job.EntityID, job.TargetLocale, reason)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", errTranslationOgHandoffFailed, err)
 	}
 	return prepared, nil
 }
 
-func completeAppliedTranslationJob(ctx context.Context, tx *gorm.DB, jobID string) error {
-	result := tx.WithContext(ctx).
-		Where("id = ? AND status = ?", jobID, translationJobStatusRunning).
-		Delete(&model.TranslationJob{})
-	if result.Error != nil {
-		return result.Error
+func completeAppliedTranslationJob(ctx context.Context, store JobStore, jobID string) error {
+	deleted, err := store.DeleteJob(ctx, jobID, JobRunning)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+	if deleted == 0 {
 		return errTranslationJobNoLongerCurrent
 	}
 	return nil
@@ -182,7 +153,7 @@ func completeAppliedTranslationJob(ctx context.Context, tx *gorm.DB, jobID strin
 
 func (m *TranslationJobManager) applyAppliedTranslationResult(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	candidate *translation.Candidate,
 	now time.Time,
 ) (bool, error) {
@@ -198,28 +169,27 @@ func (m *TranslationJobManager) applyAppliedTranslationResult(
 
 func (m *TranslationJobManager) publishLifecycle(
 	ctx context.Context,
-	job *model.TranslationJob,
-	status managev1.TranslationLifecycleStatus,
+	job *Job,
+	status LifecycleStatus,
 	failureReason *string,
 ) {
 	if job == nil {
 		return
 	}
-	definition, ok := translation.DefinitionForKind(job.EntityType)
-	if !ok {
-		slog.Warn("Skipped lifecycle for unsupported translation entity", "job_id", job.ID, "entity_type", job.EntityType)
+	if _, ok := translation.DefinitionForKind(job.EntityType); !ok {
+		slog.WarnContext(ctx, "Skipped lifecycle for unsupported translation entity", "job_id", job.ID, "entity_type", job.EntityType)
 		return
 	}
-	event := &managev1.TranslationLifecycleEvent{
-		JobId:        job.ID,
-		EntityType:   definition.Proto,
-		EntityId:     job.EntityID,
-		TargetLocale: job.TargetLocale,
-		Status:       status,
-		TimestampMs:  m.now().UTC().UnixMilli(),
+	event := LifecycleEvent{
+		JobID:         job.ID,
+		EntityType:    job.EntityType,
+		EntityID:      job.EntityID,
+		TargetLocale:  job.TargetLocale,
+		Status:        status,
+		FailureReason: failureReason,
+		Timestamp:     m.now().UTC(),
 	}
-	event.FailureReason = toProtoTranslationFailureReason(failureReason)
-	if err := m.publisher.PublishTranslationLifecycle(ctx, event); err != nil {
-		slog.ErrorContext(ctx, "Failed to publish translation lifecycle event", "domain", "translation", "event", "translation.lifecycle.publish_failed", "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "target_locale", job.TargetLocale, "status", status.String(), "failure_cause", failurecause.Message(err))
+	if err := m.lifecycle.PublishTranslationLifecycle(ctx, event); err != nil {
+		slog.ErrorContext(ctx, "Failed to publish translation lifecycle event", "domain", "translation", "event", "translation.lifecycle.publish_failed", "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "target_locale", job.TargetLocale, "status", string(status), "failure_cause", failurecause.Message(err))
 	}
 }

@@ -3,134 +3,146 @@ package form
 import (
 	"bytes"
 	"context"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/google/uuid"
-	"github.com/lib/pq"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
 type formUpdatePlan struct {
-	fields              structured.Fields
+	row                 formRowUpdate
 	normalizedSlug      *string
 	nextSourceTitle     *string
 	nextSourceSchema    []byte
 	needsOg             bool
 	refreshAllOgLocales bool
 	settingsAuditFields []string
-	lifecycleChanged    bool
-	previousStatus      model.FormStatus
-	nextStatus          model.FormStatus
+	previousStatus      Status
+	nextStatus          Status
 }
 
-func (s *FormService) UpdateForm(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateFormRequest],
-) (rpcResponse *connect.Response[managev1.Form], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "UpdateForm", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	var form model.Form
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&form, "id = ?", req.Msg.Id).Error; err != nil {
-			return err
-		}
-		if err := s.requireFreshFormAction(ctx, tx, form.ID, formActionEdit); err != nil {
-			return err
-		}
-		plan, err := s.prepareFormUpdate(ctx, tx, &form, req.Msg)
-		if err != nil {
-			return err
-		}
-		return s.applyFormUpdate(ctx, tx, &form, plan)
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("form", req.Msg.Id)
-		}
-		return nil, errs.Wrap(err)
-	}
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", req.Msg.Id).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoForm, err := s.toProtoForm(ctx, &form)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoForm), nil
+// UpdateFormCommand changes a Form's source title and schema and its
+// settings. A Clear field clears its setting; setting and clearing the same
+// one is rejected. Status is the requested stored status; a value the API
+// does not know is empty.
+type UpdateFormCommand struct {
+	ID                       string
+	Title                    *string
+	Slug                     *string
+	Schema                   []byte
+	IsPublic                 *bool
+	RequireAuth              *bool
+	AllowDuplicateSubmission *bool
+	Password                 *string
+	MaxSubmissions           *int32
+	OpensAt                  *time.Time
+	ClosesAt                 *time.Time
+	Status                   *Status
+	AllowedRoles             []string
+	ReplaceAllowedRoles      bool
+	ClearSlug                bool
+	ClearOpensAt             bool
+	ClearClosesAt            bool
+	ClearMaxSubmissions      bool
 }
 
-func (s *FormService) prepareFormUpdate(
+// UpdateForm applies command to a Form the caller may edit.
+func (s *Service) UpdateForm(ctx context.Context, command UpdateFormCommand) (View, error) {
+	var form Form
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[formUpdatePlan, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			form, err = store.LockForm(ctx, command.ID)
+			return formNotFound(err, domainerr.ResourceNotFound("form", command.ID))
+		},
+		Access: s.freshFormAction(command.ID, formActionEdit),
+		Change: func(ctx context.Context, store Store) (formUpdatePlan, error) {
+			plan, err := s.prepareFormUpdate(ctx, store, &form, command)
+			if err != nil {
+				return formUpdatePlan{}, err
+			}
+			return plan, applyFormUpdate(ctx, store, &form, &plan)
+		},
+		Audit: func(plan formUpdatePlan) mutation.Audit {
+			return mutation.Audits(
+				formSettingsAudit(form.ID, plan.settingsAuditFields),
+				formLifecycleAudit(form.ID, plan.previousStatus, plan.nextStatus),
+			)
+		},
+		Outbox: func(ctx context.Context, store Store, plan formUpdatePlan) error {
+			if !plan.needsOg {
+				return nil
+			}
+			_, err := store.RequestOG(ctx, form.ID, form.SourceLocale, plan.refreshAllOgLocales, "form_updated")
+			return err
+		},
+	}); err != nil {
+		return View{}, err
+	}
+	var updated Form
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		updated, err = store.FindForm(ctx, ByID, command.ID)
+		return err
+	}); err != nil {
+		return View{}, err
+	}
+	return s.view(ctx, updated)
+}
+
+func (s *Service) prepareFormUpdate(
 	ctx context.Context,
-	db *gorm.DB,
-	form *model.Form,
-	r *managev1.UpdateFormRequest,
+	store Store,
+	form *Form,
+	r UpdateFormCommand,
 ) (formUpdatePlan, error) {
 	if err := validateFormUpdateFieldConflicts(r); err != nil {
 		return formUpdatePlan{}, err
 	}
 	if r.Schema != nil {
 		if err := validateCanonicalFormSchema(r.Schema); err != nil {
-			return formUpdatePlan{}, errs.InvalidArgumentMsg(err.Error())
+			return formUpdatePlan{}, domainerr.New(domainerr.Invalid, "", err.Error())
 		}
 	}
-	normalizedSlug, err := s.normalizeFormUpdateSlug(ctx, db, form.ID, r)
+	normalizedSlug, err := normalizeFormUpdateSlug(ctx, store, form.ID, r)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
-	currentSourceState, err := LoadFormCanonicalSourceDocumentState(ctx, db, form.ID, form.SourceLocale)
+	currentSourceState, err := LoadFormCanonicalSourceDocumentState(ctx, store, form.ID, form.SourceLocale)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
 	plan := formUpdatePlan{
-		fields:         structured.Fields{"updated_at": time.Now()},
+		row:            formRowUpdate{next: *form, updatedAt: time.Now()},
 		normalizedSlug: normalizedSlug,
 	}
 	currentTitle := resolveFormTitle(currentSourceState.Title)
 	if r.Title != nil {
 		if strings.TrimSpace(*r.Title) == "" {
-			return formUpdatePlan{}, errs.Required("title")
+			return formUpdatePlan{}, domainerr.Required("title")
 		}
 		if currentTitle != *r.Title {
 			plan.nextSourceTitle = r.Title
 			plan.needsOg = true
 		}
 	}
-	nextForm := *form
-	applyFormSlugUpdate(plan.fields, &nextForm, r, normalizedSlug)
+	row := &plan.row
+	applyFormSlugUpdate(row, r, normalizedSlug)
 	if r.Schema != nil {
 		if !bytes.Equal(currentSourceState.ContentJSON, r.Schema) {
 			plan.nextSourceSchema = r.Schema
 		}
 	}
-	applyFormAccessUpdates(plan.fields, &nextForm, r)
-	passwordChanged, err := s.applyFormPasswordUpdate(plan.fields, form.AccessPassword, r.Password)
+	applyFormAccessUpdates(row, r)
+	passwordChanged, err := s.applyFormPasswordUpdate(row, r.Password)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
-	applyFormLimitAndScheduleUpdates(plan.fields, &nextForm, r)
-	if err := applyFormStatusUpdate(plan.fields, form, &nextForm, r, &plan); err != nil {
+	applyFormLimitAndScheduleUpdates(row, r)
+	if err := applyFormStatusUpdate(row, form, r, &plan); err != nil {
 		return formUpdatePlan{}, err
 	}
 	if r.ReplaceAllowedRoles || len(r.AllowedRoles) > 0 {
@@ -138,22 +150,33 @@ func (s *FormService) prepareFormUpdate(
 		if err != nil {
 			return formUpdatePlan{}, err
 		}
-		plan.fields["allowed_roles"] = pq.StringArray(allowedRoles)
-		nextForm.AllowedRoles = pq.StringArray(allowedRoles)
+		row.next.AllowedRoles = allowedRoles
+		row.set(SettingAllowedRoles)
 	}
-	if err := validateFormSettings(&nextForm); err != nil {
+	if err := validateFormSettings(&row.next); err != nil {
 		return formUpdatePlan{}, err
 	}
-	plan.settingsAuditFields = formSettingsAuditFields(form, &nextForm, passwordChanged)
-	if form.Status != nextForm.Status {
-		plan.lifecycleChanged = true
+	plan.settingsAuditFields = formSettingsAuditFields(form, &row.next, passwordChanged)
+	if form.Status != row.next.Status {
 		plan.previousStatus = form.Status
-		plan.nextStatus = nextForm.Status
+		plan.nextStatus = row.next.Status
 	}
 	return plan, nil
 }
 
-func validateFormUpdateFieldConflicts(r *managev1.UpdateFormRequest) error {
+// formRowUpdate is the Form row an update leads to and the settings the
+// request sets on it; only those settings and updated_at are written.
+type formRowUpdate struct {
+	next      Form
+	settings  []Setting
+	updatedAt time.Time
+}
+
+func (u *formRowUpdate) set(setting Setting) {
+	u.settings = append(u.settings, setting)
+}
+
+func validateFormUpdateFieldConflicts(r UpdateFormCommand) error {
 	for _, conflict := range []struct {
 		clear bool
 		set   bool
@@ -165,79 +188,74 @@ func validateFormUpdateFieldConflicts(r *managev1.UpdateFormRequest) error {
 		{clear: r.ClearMaxSubmissions, set: r.MaxSubmissions != nil, field: "max_submissions"},
 	} {
 		if conflict.clear && conflict.set {
-			return errs.InvalidArgument(conflict.field, "cannot set and clear "+conflict.field+" in the same request")
+			return domainerr.InvalidField(conflict.field, "cannot set and clear "+conflict.field+" in the same request")
 		}
 	}
 	return nil
 }
 
-func (s *FormService) normalizeFormUpdateSlug(
+func normalizeFormUpdateSlug(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	formID string,
-	r *managev1.UpdateFormRequest,
+	r UpdateFormCommand,
 ) (*string, error) {
 	if r.Slug == nil || strings.TrimSpace(*r.Slug) == "" {
 		return nil, nil
 	}
 	slug := strings.TrimSpace(*r.Slug)
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
-	if err := ensureSlugAvailable(ctx, db, slug, formID); err != nil {
-		return nil, err
-	}
-	if err := s.routes.EnsureAvailable(ctx, db, slug, formID); err != nil {
+	if err := ensureSlugAvailable(ctx, store, slug, formID); err != nil {
 		return nil, err
 	}
 	return &slug, nil
 }
 
-func applyFormSlugUpdate(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest, slug *string) {
+func applyFormSlugUpdate(row *formRowUpdate, r UpdateFormCommand, slug *string) {
 	switch {
 	case r.ClearSlug || r.Slug != nil && strings.TrimSpace(*r.Slug) == "":
-		fields["slug"] = nil
-		form.Slug = nil
+		row.next.Slug = nil
+		row.set(SettingSlug)
 	case slug != nil:
-		fields["slug"] = *slug
-		form.Slug = slug
+		row.next.Slug = slug
+		row.set(SettingSlug)
 	}
 }
 
-func applyFormAccessUpdates(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest) {
+func applyFormAccessUpdates(row *formRowUpdate, r UpdateFormCommand) {
 	if r.IsPublic != nil {
-		fields["is_public"] = *r.IsPublic
-		form.IsPublic = *r.IsPublic
+		row.next.IsPublic = *r.IsPublic
+		row.set(SettingIsPublic)
 	}
 	if r.RequireAuth != nil {
-		fields["require_auth"] = *r.RequireAuth
-		form.RequireAuth = r.RequireAuth
+		row.next.RequireAuth = r.RequireAuth
+		row.set(SettingRequireAuth)
 	}
 	if r.AllowDuplicateSubmission != nil {
-		fields["allow_duplicate_submission"] = *r.AllowDuplicateSubmission
-		form.AllowDuplicateSubmission = r.AllowDuplicateSubmission
+		row.next.AllowDuplicateSubmission = r.AllowDuplicateSubmission
+		row.set(SettingAllowDuplicateSubmission)
 	}
 }
 
-func (s *FormService) applyFormPasswordUpdate(
-	fields structured.Fields,
-	currentHash *string,
-	password *string,
-) (bool, error) {
+func (s *Service) applyFormPasswordUpdate(row *formRowUpdate, password *string) (bool, error) {
 	if password == nil {
 		return false, nil
 	}
+	currentHash := row.next.AccessPassword
 	if *password == "" {
 		if currentHash == nil {
 			return false, nil
 		}
-		fields["access_password"] = nil
+		row.next.AccessPassword = nil
+		row.set(SettingAccessPassword)
 		return true, nil
 	}
 	if currentHash != nil {
 		matches, err := s.password.Verify(*password, *currentHash)
 		if err != nil {
-			return false, errs.Internal(err)
+			return false, err
 		}
 		if matches {
 			return false, nil
@@ -245,148 +263,110 @@ func (s *FormService) applyFormPasswordUpdate(
 	}
 	hash, err := s.password.Hash(*password)
 	if err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
-	fields["access_password"] = hash
+	row.next.AccessPassword = &hash
+	row.set(SettingAccessPassword)
 	return true, nil
 }
 
-func applyFormLimitAndScheduleUpdates(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest) {
+func applyFormLimitAndScheduleUpdates(row *formRowUpdate, r UpdateFormCommand) {
 	switch {
 	case r.ClearMaxSubmissions:
-		fields["max_submissions"] = nil
-		form.MaxSubmissions = nil
+		row.next.MaxSubmissions = nil
+		row.set(SettingMaxSubmissions)
 	case r.MaxSubmissions != nil:
-		fields["max_submissions"] = *r.MaxSubmissions
-		form.MaxSubmissions = r.MaxSubmissions
+		row.next.MaxSubmissions = r.MaxSubmissions
+		row.set(SettingMaxSubmissions)
 	}
-	applyFormTimestampUpdate(
-		fields, "opens_at", r.ClearOpensAt, r.OpensAt,
-		func(value *time.Time) { form.OpensAt = value },
-	)
-	applyFormTimestampUpdate(
-		fields, "closes_at", r.ClearClosesAt, r.ClosesAt,
-		func(value *time.Time) { form.ClosesAt = value },
-	)
+	if update, ok := formTimestampUpdate(r.ClearOpensAt, r.OpensAt); ok {
+		row.next.OpensAt = update
+		row.set(SettingOpensAt)
+	}
+	if update, ok := formTimestampUpdate(r.ClearClosesAt, r.ClosesAt); ok {
+		row.next.ClosesAt = update
+		row.set(SettingClosesAt)
+	}
 }
 
-func applyFormTimestampUpdate(
-	fields structured.Fields,
-	column string,
-	clear bool,
-	value *timestamppb.Timestamp,
-	assign func(*time.Time),
-) {
+// formTimestampUpdate returns the requested value of an optional timestamp
+// and whether the request sets or clears it.
+func formTimestampUpdate(clear bool, value *time.Time) (*time.Time, bool) {
 	if clear {
-		fields[column] = nil
-		assign(nil)
-		return
+		return nil, true
 	}
-	if value != nil {
-		timestamp := value.AsTime()
-		fields[column] = timestamp
-		assign(&timestamp)
-	}
+	return value, value != nil
 }
 
 func applyFormStatusUpdate(
-	fields structured.Fields,
-	current *model.Form,
-	next *model.Form,
-	r *managev1.UpdateFormRequest,
+	row *formRowUpdate,
+	current *Form,
+	r UpdateFormCommand,
 	plan *formUpdatePlan,
 ) error {
 	if r.Status == nil {
 		return nil
 	}
-	if current.Status == model.FormStatus(r.Status.String()) {
+	status := *r.Status
+	switch status {
+	case current.Status:
 		return nil
+	case StatusDraft, StatusPublished:
+	default:
+		return domainerr.InvalidField("status", "must be draft or published")
 	}
-	if *r.Status != managev1.FormStatus_FORM_STATUS_DRAFT && *r.Status != managev1.FormStatus_FORM_STATUS_PUBLISHED {
-		return errs.InvalidArgument("status", "must be draft or published")
-	}
-	fields["status"] = r.Status.String()
-	next.Status = model.FormStatus(r.Status.String())
-	published := model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())
-	if current.Status != published && next.Status == published {
+	row.next.Status = status
+	row.set(SettingStatus)
+	if current.Status != StatusPublished && row.next.Status == StatusPublished {
 		plan.needsOg = true
 		plan.refreshAllOgLocales = true
 	}
 	return nil
 }
 
-func (s *FormService) applyFormUpdate(
+// applyFormUpdate writes plan's row update and source locale document. A
+// changed source title marks the plan for an OG request.
+func applyFormUpdate(
 	ctx context.Context,
-	tx *gorm.DB,
-	form *model.Form,
-	plan formUpdatePlan,
+	store Store,
+	form *Form,
+	plan *formUpdatePlan,
 ) error {
 	if plan.normalizedSlug != nil {
-		if err := s.routes.EnsureAvailableLocked(ctx, tx, *plan.normalizedSlug, form.ID); err != nil {
+		if err := store.LockRoute(ctx, *plan.normalizedSlug); err != nil {
 			return err
 		}
 	}
-	if err := tx.WithContext(ctx).Model(form).Updates(plan.fields).Error; err != nil {
+	if err := store.UpdateSettings(ctx, plan.row.next, plan.row.settings, plan.row.updatedAt); err != nil {
 		return err
 	}
-	sourceLocale := form.SourceLocale
-	if plan.nextSourceTitle != nil || plan.nextSourceSchema != nil {
-		documentID, err := uuid.Parse(form.ContentDocumentID)
-		if err != nil || documentID == uuid.Nil {
-			if err != nil {
-				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
-			}
-			return errs.FailedPrecondition("Form Content Document is not initialized")
-		}
-		var documentRevision uuid.UUID
-		if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&documentRevision).Error; err != nil {
-			return errs.Internal(err)
-		}
-		advance, err := s.contentBlocks.AdvanceRevision(
-			ctx,
-			tx,
-			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: documentRevision},
-			func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
-				return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
-			},
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				if err := saveFormSourceLocaleDocumentState(ctx, tx, form.ID, sourceLocale, TranslationDocumentSaveInput{
-					Title: plan.nextSourceTitle, ContentJSON: plan.nextSourceSchema, Now: time.Now().UTC(),
-				}); err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true, ChangedLocales: []string{sourceLocale}}, nil
-			},
-		)
-		if err != nil {
-			return err
-		}
-		if advance.Changed {
-			plan.needsOg = plan.needsOg || plan.nextSourceTitle != nil
-		}
-	}
-	if err := s.appendFormSettingsAudit(ctx, tx, form.ID, plan.settingsAuditFields); err != nil {
-		return err
-	}
-	if plan.lifecycleChanged {
-		if err := s.appendFormLifecycleAudit(
-			ctx,
-			tx,
-			form.ID,
-			formAuditState(plan.previousStatus),
-			formAuditState(plan.nextStatus),
-		); err != nil {
-			return err
-		}
-	}
-	if !plan.needsOg {
+	if plan.nextSourceTitle == nil && plan.nextSourceSchema == nil {
 		return nil
 	}
-	_, err := s.og.RequestAfterMutation(ctx, tx, form.ID, sourceLocale, plan.refreshAllOgLocales, "form_updated")
-	return err
+	documentID, err := formContentDocumentID(form.ContentDocumentID)
+	if err != nil {
+		return err
+	}
+	documentRevision, err := store.DocumentRevision(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	advance, err := advanceFormSourceLocale(ctx, store, form.ContentDocumentID, documentRevision, form.SourceLocale,
+		func(ctx context.Context, store Store) (bool, error) {
+			return true, saveFormSourceLocaleDocumentState(ctx, store, form.ID, form.SourceLocale, TranslationDocumentSaveInput{
+				Title: plan.nextSourceTitle, ContentJSON: plan.nextSourceSchema, Now: time.Now().UTC(),
+			})
+		})
+	if err != nil {
+		return err
+	}
+	if advance.Changed {
+		plan.needsOg = plan.needsOg || plan.nextSourceTitle != nil
+	}
+	return nil
 }
 
-func formSettingsAuditFields(current, next *model.Form, passwordChanged bool) []string {
+func formSettingsAuditFields(current, next *Form, passwordChanged bool) []string {
 	fields := make([]string, 0, 8)
 	if !sameOptionalString(current.Slug, next.Slug) {
 		fields = append(fields, "slug")
@@ -406,7 +386,7 @@ func formSettingsAuditFields(current, next *model.Form, passwordChanged bool) []
 	if !sameOptionalTime(current.OpensAt, next.OpensAt) || !sameOptionalTime(current.ClosesAt, next.ClosesAt) {
 		fields = append(fields, "access_period")
 	}
-	if !slices.Equal([]string(current.AllowedRoles), []string(next.AllowedRoles)) {
+	if !slices.Equal(current.AllowedRoles, next.AllowedRoles) {
 		fields = append(fields, "required_role")
 	}
 	if passwordChanged {
@@ -426,11 +406,4 @@ func sameOptionalInt32(a, b *int32) bool {
 }
 func sameOptionalTime(a, b *time.Time) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(*b))
-}
-
-func formAuditState(status model.FormStatus) sharedtelemetry.AuditState {
-	if status == model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String()) {
-		return sharedtelemetry.AuditStatePublished
-	}
-	return sharedtelemetry.AuditStateDraft
 }

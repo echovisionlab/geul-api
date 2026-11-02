@@ -8,8 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -27,9 +26,8 @@ func TestFileIngestEventEmitterPublishesTypedEvents(t *testing.T) {
 	fileKey := "media/" + fileID + ".mp3"
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_REMOTE_URL,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		asyncPublisher, IngestSourceRemoteURL, EntityUnspecified,
+
 		"",
 		correlationID,
 		fileID,
@@ -37,7 +35,7 @@ func TestFileIngestEventEmitterPublishesTypedEvents(t *testing.T) {
 	)
 	require.NotNil(t, emitter)
 
-	emitter.setTarget(&commonv1.MediaObjectTarget{FileId: fileID, ObjectKey: fileKey, Extension: "mp3", MimeType: "audio/mpeg"})
+	emitter.setTarget(&domain.ObjectTarget{FileID: fileID, ObjectKey: fileKey, Extension: "mp3", MimeType: "audio/mpeg"})
 	emitter.publishDownloadProgress(25)
 	completedBytes := int64(100)
 	emitter.publishFinalized(100, &completedBytes)
@@ -70,8 +68,8 @@ func TestFileIngestMediaKindFromUploadTypeIncludesEditorMesh(t *testing.T) {
 
 	require.Equal(
 		t,
-		managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_MESH,
-		fileIngestMediaKindFromUploadType(managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH),
+		IngestMediaEditorMesh,
+		fileIngestMediaKindFromUploadType(UploadEditorMesh),
 	)
 }
 
@@ -84,9 +82,8 @@ func TestFileIngestEventEmitterUsesUploadSessionSequenceAllocator(t *testing.T) 
 	uploadID := randomFileIngestUUID()
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+		asyncPublisher, IngestSourceDirectUpload, EntityTrack,
+
 		trackID,
 		"",
 		fileID,
@@ -95,10 +92,10 @@ func TestFileIngestEventEmitterUsesUploadSessionSequenceAllocator(t *testing.T) 
 	require.NotNil(t, emitter)
 
 	nextSequence := int64(40)
-	emitter.setTarget(&commonv1.MediaObjectTarget{
-		FileId: fileID, ObjectKey: "media/" + fileID + ".ogg", Extension: "ogg", MimeType: "audio/ogg",
+	emitter.setTarget(&domain.ObjectTarget{
+		FileID: fileID, ObjectKey: "media/" + fileID + ".ogg", Extension: "ogg", MimeType: "audio/ogg",
 	})
-	emitter.setUploadIdentity(model.UploadSession{
+	emitter.setUploadIdentity(domain.UploadSession{
 		UploadID:   uploadID,
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
 	})
@@ -132,9 +129,8 @@ func TestFileIngestEventEmitterSkipsDuplicateProgressWithinPublishInterval(t *te
 	fileID := randomFileIngestUUID()
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_REMOTE_URL,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		asyncPublisher, IngestSourceRemoteURL, EntityUnspecified,
+
 		"",
 		correlationID,
 		fileID,

@@ -3,11 +3,12 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // ProviderNotification is the provider-neutral callback input accepted by the

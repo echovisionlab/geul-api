@@ -8,13 +8,17 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -131,13 +135,11 @@ func (a resourceAuthorizer) check(
 ) (bool, error) {
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return false, errs.AuthenticationRequired()
+		return false, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := a.checker.CheckActorCan(ctx, actor, can)
 	if err != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	return allowed, nil
 }
@@ -149,7 +151,7 @@ func lifecycleReader(table, archivedStatus string) RootReader {
 		}
 		err := tx.WithContext(ctx).
 			Table(table).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("status").
 			Where("id = ?", resourceID).
 			Take(&row).Error
@@ -170,7 +172,7 @@ func rootExistenceReader(table string) RootReader {
 		}
 		err := tx.WithContext(ctx).
 			Table(table).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("id").
 			Where("id = ?", resourceID).
 			Take(&row).Error
@@ -192,8 +194,8 @@ type registrationSpec struct {
 }
 
 var registrationSpecs = []registrationSpec{
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST, collaborationCanSet{view: policyv1.Post.View, edit: policyv1.Post.Edit, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived}, "post", managev1.PostStatus_POST_STATUS_ARCHIVED.String()},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_WORK, collaborationCanSet{view: policyv1.Work.View, edit: policyv1.Work.Edit, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived}, "work", managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST, collaborationCanSet{view: policyv1.Post.View, edit: policyv1.Post.Edit, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived}, "post", string(model.PostStatusArchived)},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_WORK, collaborationCanSet{view: policyv1.Work.View, edit: policyv1.Work.Edit, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived}, "work", string(model.WorkStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, collaborationCanSet{view: policyv1.Release.View, edit: policyv1.Release.Edit}, "release", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_LABEL, collaborationCanSet{view: policyv1.Label.View, edit: policyv1.Label.Edit}, "label", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_ARTIST, collaborationCanSet{view: policyv1.Artist.View, edit: policyv1.Artist.Edit}, "artist", ""},
@@ -202,10 +204,10 @@ var registrationSpecs = []registrationSpec{
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_CAMPAIGN, collaborationCanSet{view: policyv1.Campaign.View, edit: policyv1.Campaign.Edit}, "campaign", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_TEMPLATE, collaborationCanSet{view: policyv1.EmailTemplate.View, edit: policyv1.EmailTemplate.Edit}, "email_template", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_LAYOUT, collaborationCanSet{view: policyv1.EmailLayout.View, edit: policyv1.EmailLayout.Edit}, "email_layout", ""},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY, collaborationCanSet{view: policyv1.TermsHistory.View, edit: policyv1.TermsHistory.Edit, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived}, "terms_history", managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String()},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY, collaborationCanSet{view: policyv1.PrivacyHistory.View, edit: policyv1.PrivacyHistory.Edit, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived}, "privacy_history", managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY, collaborationCanSet{view: policyv1.TermsHistory.View, edit: policyv1.TermsHistory.Edit, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived}, "terms_history", string(model.TermsStatusArchived)},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY, collaborationCanSet{view: policyv1.PrivacyHistory.View, edit: policyv1.PrivacyHistory.Edit, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived}, "privacy_history", string(model.PrivacyStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MAP_THEME, collaborationCanSet{view: policyv1.MapTheme.View, edit: policyv1.MapTheme.Edit}, "map_theme", ""},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT, collaborationCanSet{view: policyv1.ProgramEvent.View, edit: policyv1.ProgramEvent.Edit, viewArchived: policyv1.ProgramEvent.ViewArchived, editArchived: policyv1.ProgramEvent.EditArchived}, "program_event", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT, collaborationCanSet{view: policyv1.ProgramEvent.View, edit: policyv1.ProgramEvent.Edit, viewArchived: policyv1.ProgramEvent.ViewArchived, editArchived: policyv1.ProgramEvent.EditArchived}, "program_event", string(model.ProgramEventStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MENU, collaborationCanSet{view: policyv1.Menu.View, edit: policyv1.Menu.Edit, manage: policyv1.Menu.Manage}, "menu", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST_SERIES, collaborationCanSet{view: policyv1.PostSeries.View, edit: policyv1.PostSeries.Edit}, "series", ""},
 }
@@ -282,7 +284,7 @@ type memberLoader struct {
 func (l memberLoader) LoadActiveSummary(
 	ctx context.Context,
 	memberID string,
-) (*commonv1.MemberSummary, bool, error) {
+) (*memberref.Summary, bool, error) {
 	var row model.Member
 	result := l.db.WithContext(ctx).
 		Select("id", "nickname").
@@ -294,7 +296,7 @@ func (l memberLoader) LoadActiveSummary(
 	if result.Error != nil {
 		return nil, false, result.Error
 	}
-	summary := &commonv1.MemberSummary{Id: row.ID, Nickname: row.Nickname}
+	summary := &memberref.Summary{ID: row.ID, Nickname: row.Nickname}
 	type avatarRow struct{ model.PublicAsset }
 	var avatar avatarRow
 	assetResult := l.db.WithContext(ctx).Raw(`
@@ -310,11 +312,13 @@ func (l memberLoader) LoadActiveSummary(
 		return nil, false, assetResult.Error
 	}
 	if assetResult.Error == nil {
-		asset, err := mediaasset.NewLifecycle(l.db, l.cdnDomain).AssetRef(avatar.PublicAsset)
+		asset, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(l.db), l.cdnDomain).AssetRef(mediaassetpostgres.Asset(avatar.PublicAsset))
 		if err != nil {
 			return nil, false, err
 		}
-		summary.AvatarAsset = asset
+		if asset != nil {
+			summary.Avatar = &memberref.Asset{ID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MIMEType: asset.MimeType, FileSize: asset.FileSize, SHA256: append([]byte(nil), asset.SHA256...), Disposition: memberref.AssetDisposition(asset.Disposition), DownloadFilename: asset.DownloadFilename}
+		}
 	}
 	return summary, true, nil
 }
@@ -338,7 +342,7 @@ func (contributorResolver) ResolveActiveSubjects(
 			AND identity.external_id = CAST(member.id AS text)
 			AND identity.state = ?
 			AND LOWER(COALESCE(identity.metadata_admin ->> 'banned', 'false')) NOT IN ('true', '1')`, "active").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("CAST(member.id AS text) AS member_id, CAST(member.account_identity_id AS text) AS account_identity_id").
 		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = ? AND member.account_identity_id IS NOT NULL", memberIDs, true).
 		Find(&rows).Error; err != nil {

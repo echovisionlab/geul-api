@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestMailTemplateClassUsesEmailAuthoringClassifier(t *testing.T) {
@@ -35,19 +35,19 @@ func TestMailTemplateClassUsesEmailAuthoringClassifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := mailTemplateClass(tt.templateType); got != tt.want {
-				t.Fatalf("mailTemplateClass() = %q, want %q", got, tt.want)
+			if got := emaildeliveryadapter.TemplateClass(tt.templateType); got != tt.want {
+				t.Fatalf("TemplateClass() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestMailMetricsRecordMethodsTolerateNilCounters(t *testing.T) {
-	metrics := mailMetrics{}
+	metrics := emaildeliveryadapter.Metrics{}
 	ctx := context.Background()
 
-	metrics.recordSendAttempt(ctx, "campaign:announcement")
-	metrics.recordSendResult(ctx, "campaign:announcement", "success")
-	metrics.recordRecipientStatus(ctx, "campaign:announcement", campaign.CampaignDeliveryRecipientStatusSent)
-	metrics.RecordRunDuration(ctx, model.CampaignDeliveryRun{}, time.Now().UTC())
+	metrics.RecordSendAttempt(ctx, "campaign:announcement")
+	metrics.RecordSendResult(ctx, "campaign:announcement", "success")
+	metrics.RecordRecipientStatus(ctx, "campaign:announcement", campaign.CampaignDeliveryRecipientStatusSent)
+	metrics.RecordRunDuration(ctx, campaign.DeliveryRun{}, time.Now().UTC())
 }

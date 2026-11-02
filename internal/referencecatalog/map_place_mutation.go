@@ -6,231 +6,186 @@ import (
 	"reflect"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *MapPlaceService) CreateMapPlace(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateMapPlaceRequest],
-) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateMapPlace", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
+// CreateMapPlaceCommand creates a Map Place. ImageFileID binds a ready map
+// image when set.
+type CreateMapPlaceCommand struct {
+	Name              string
+	Address           string
+	Lat               float64
+	Lng               float64
+	AddressComponents *AddressComponents
+	ImageFileID       *string
+	GooglePlaceID     *string
+}
 
-	if req.Msg.Name == "" {
-		return nil, errs.Required("name")
-	}
-	if req.Msg.Address == "" {
-		return nil, errs.Required("address")
-	}
-	if req.Msg.Lat < -90 || req.Msg.Lat > 90 {
-		return nil, errs.InvalidArgument("lat", "must be between -90 and 90")
-	}
-	if req.Msg.Lng < -180 || req.Msg.Lng > 180 {
-		return nil, errs.InvalidArgument("lng", "must be between -180 and 180")
-	}
+// UpdateMapPlaceCommand changes the supplied fields of Map Place ID.
+// ClearImage removes the image and takes precedence over ImageFileID.
+type UpdateMapPlaceCommand struct {
+	ID                string
+	Name              *string
+	Address           *string
+	Lat               *float64
+	Lng               *float64
+	AddressComponents *AddressComponents
+	ImageFileID       *string
+	ClearImage        bool
+	GooglePlaceID     *string
+}
 
-	place := model.MapPlace{
-		Name:          req.Msg.Name,
-		Address:       req.Msg.Address,
-		Lat:           req.Msg.Lat,
-		Lng:           req.Msg.Lng,
-		GooglePlaceID: normalizeGooglePlaceID(req.Msg.GooglePlaceId),
-	}
+// DeleteMapPlaceCommand deletes Map Place ID when no content references it.
+type DeleteMapPlaceCommand struct {
+	ID string
+}
 
-	if req.Msg.AddressComponents != nil {
-		place.AddressComponents = &model.AddressComponents{
-			Street:     req.Msg.AddressComponents.Street,
-			City:       req.Msg.AddressComponents.City,
-			Region:     req.Msg.AddressComponents.Region,
-			Country:    req.Msg.AddressComponents.Country,
-			PostalCode: req.Msg.AddressComponents.PostalCode,
-		}
+// CreateMapPlace creates a new map place (author+)
+func (s *Service) CreateMapPlace(ctx context.Context, command CreateMapPlaceCommand) (MapPlaceView, error) {
+	if command.Name == "" {
+		return MapPlaceView{}, domainerr.Required("name")
 	}
-
-	if req.Msg.ImageFileId != nil && *req.Msg.ImageFileId != "" {
-		place.ImageFileID = req.Msg.ImageFileId
+	if command.Address == "" {
+		return MapPlaceView{}, domainerr.Required("address")
 	}
-
+	if command.Lat < -90 || command.Lat > 90 {
+		return MapPlaceView{}, domainerr.InvalidField("lat", "must be between -90 and 90")
+	}
+	if command.Lng < -180 || command.Lng > 180 {
+		return MapPlaceView{}, domainerr.InvalidField("lng", "must be between -180 and 180")
+	}
 	createCan, err := policyv1.MapPlace.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		memberID, err := requireLockedMapPlaceAuthority(ctx, tx, createCan, false, s.spiceDB)
-		if err != nil {
-			return err
-		}
-		place.CreatedByMemberID = &memberID
-		place.UpdatedByMemberID = &memberID
-		if place.ImageFileID != nil {
-			if err := s.assets.LockForAttachment(ctx, tx, []string{*place.ImageFileID}); err != nil {
-				return err
-			}
-		}
-		if err := tx.Clauses(clause.Returning{}).Create(&place).Error; err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.MapPlace.TouchPolicy(place.ID)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.MapPlace.DeletePolicy(place.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{policyTouch},
-			[]policyv1.RelationshipMutation{policyDelete},
-		); err != nil {
-			return err
-		}
-		if place.ImageFileID != nil {
-			if _, err := s.assets.BindReady(ctx, tx, AssetBinding{
-				SourceFileID: *place.ImageFileID,
-				Owner:        AssetOwner{Type: "map_place", ID: place.ID}, Key: "image", Kind: "map_image",
-			}); err != nil {
-				return err
-			}
-		}
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMapPlaceCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMapPlaceCreatedAuditRecord(metadata, place.ID)
-		}); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		return nil, errs.Internal(err)
-	}
-	users, err := s.resolveMembersForPlaces(ctx, []model.MapPlace{place})
-	if err != nil {
-		return nil, errs.Internal(err)
+		return MapPlaceView{}, err
 	}
 
-	proto, err := s.toProtoWithMembers(ctx, &place, users)
+	place, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[MapPlace, Store]{
+		Access: s.mapPlaceAccess(createCan, false),
+		Change: func(ctx context.Context, store Store) (MapPlace, error) {
+			return insertMapPlace(ctx, store, command)
+		},
+		Audit: func(place MapPlace) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMapPlaceCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMapPlaceCreatedAuditRecord(metadata, place.ID)
+			})
+		},
+		Relationships: func(place MapPlace) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			return referencePolicyRelationships(policyv1.MapPlace, place.ID, true)
+		},
+	})
 	if err != nil {
-		return nil, err
+		return MapPlaceView{}, err
 	}
-	return connect.NewResponse(proto), nil
+	return s.committedMapPlaceView(ctx, place)
+}
+
+// insertMapPlace stores the place created by the authorized principal and
+// binds its image.
+func insertMapPlace(ctx context.Context, store Store, command CreateMapPlaceCommand) (MapPlace, error) {
+	memberID := auth.GetUser(ctx).MemberID.String()
+	place := MapPlace{
+		Name: command.Name, Address: command.Address, Lat: command.Lat, Lng: command.Lng,
+		AddressComponents: command.AddressComponents, GooglePlaceID: normalizeGooglePlaceID(command.GooglePlaceID),
+		CreatedByMemberID: &memberID, UpdatedByMemberID: &memberID,
+	}
+	if command.ImageFileID != nil && *command.ImageFileID != "" {
+		place.ImageFileID = command.ImageFileID
+		if err := store.LockFilesForAttachment(ctx, []string{*place.ImageFileID}); err != nil {
+			return MapPlace{}, err
+		}
+	}
+	place, err := store.InsertMapPlace(ctx, place)
+	if err != nil {
+		return MapPlace{}, err
+	}
+	if place.ImageFileID != nil {
+		if _, err := store.BindReadyAsset(ctx, AssetBinding{
+			SourceFileID: *place.ImageFileID,
+			Owner:        AssetOwner{Type: "map_place", ID: place.ID}, Key: "image", Kind: "map_image",
+		}); err != nil {
+			return MapPlace{}, err
+		}
+	}
+	return place, nil
 }
 
 // UpdateMapPlace updates an existing map place (author+)
-func (s *MapPlaceService) UpdateMapPlace(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateMapPlaceRequest],
-) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) UpdateMapPlace(ctx context.Context, command UpdateMapPlaceCommand) (_ MapPlaceView, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", command.ID))
 
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
+	if command.ID == "" {
+		return MapPlaceView{}, domainerr.Required("id")
 	}
-	editCan, err := policyv1.MapPlace.Edit(req.Msg.Id)
+	editCan, err := policyv1.MapPlace.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return MapPlaceView{}, err
 	}
-	var place model.MapPlace
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, err := lockMapPlaceForUpdate(ctx, tx, req.Msg.Id)
-		if err != nil {
+	var locked MapPlace
+	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[mapPlaceUpdatePlan, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			locked, err = lockMapPlace(ctx, store, command.ID)
 			return err
-		}
-		memberID, err := requireLockedMapPlaceAuthority(ctx, tx, editCan, false, s.spiceDB)
-		if err != nil {
-			return err
-		}
-		updated, err := s.updateLockedMapPlaceWithDB(ctx, tx, req.Msg, memberID, locked)
-		place = updated
-		return err
-	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("map place", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	users, err := s.resolveMembersForPlaces(ctx, []model.MapPlace{place})
+		},
+		Access: s.mapPlaceAccess(editCan, false),
+		Change: func(ctx context.Context, store Store) (mapPlaceUpdatePlan, error) {
+			return updateLockedMapPlace(ctx, store, command, auth.GetUser(ctx).MemberID.String(), locked)
+		},
+		Audit: mapPlaceUpdateAudit,
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return MapPlaceView{}, err
 	}
-
-	proto, err := s.toProtoWithMembers(ctx, &place, users)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	return s.committedMapPlaceView(ctx, update.place)
 }
 
-func (s *MapPlaceService) updateLockedMapPlaceWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	request *managev1.UpdateMapPlaceRequest,
-	memberID string,
-	place model.MapPlace,
-) (model.MapPlace, error) {
-	update, err := planMapPlaceUpdate(place, request, memberID)
-	if err != nil {
-		return model.MapPlace{}, err
-	}
-	if !update.changed() {
-		return place, nil
-	}
-	if update.imageChanged {
-		if err := s.assets.LockForAttachment(ctx, tx, []string{mapPlaceOptionalString(place.ImageFileID), mapPlaceOptionalString(update.place.ImageFileID)}); err != nil {
-			return model.MapPlace{}, err
-		}
-	}
-	if err := tx.Save(&update.place).Error; err != nil {
-		return model.MapPlace{}, err
-	}
-	if err := s.updateMapPlaceImageBinding(ctx, tx, &update); err != nil {
-		return model.MapPlace{}, err
-	}
+// mapPlaceUpdateAudit records the metadata change and the image change of an
+// update, one record each.
+func mapPlaceUpdateAudit(update mapPlaceUpdatePlan) mutation.Audit {
+	var audits []mutation.Audit
 	if len(update.metadataChangedFields) > 0 {
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMapPlaceUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		audits = append(audits, mutation.RequestAudit(sharedtelemetry.AuditMapPlaceUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewMapPlaceMetadataUpdatedAuditRecord(metadata, update.place.ID, update.metadataChangedFields)
-		}); err != nil {
-			return model.MapPlace{}, err
-		}
+		}))
 	}
 	if update.imageChanged {
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMapPlaceUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		audits = append(audits, mutation.RequestAudit(sharedtelemetry.AuditMapPlaceUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewMapPlaceImageUpdatedAuditRecord(metadata, update.place.ID, update.imageOperation, update.imageFileID)
-		}); err != nil {
-			return model.MapPlace{}, err
+		}))
+	}
+	return mutation.Audits(audits...)
+}
+
+// updateLockedMapPlace applies command to the locked place and moves its
+// image binding.
+func updateLockedMapPlace(
+	ctx context.Context,
+	store Store,
+	command UpdateMapPlaceCommand,
+	memberID string,
+	place MapPlace,
+) (mapPlaceUpdatePlan, error) {
+	update, err := planMapPlaceUpdate(place, command, memberID)
+	if err != nil || !update.changed() {
+		return update, err
+	}
+	if update.imageChanged {
+		if err := store.LockFilesForAttachment(ctx, []string{mapPlaceOptionalString(place.ImageFileID), mapPlaceOptionalString(update.place.ImageFileID)}); err != nil {
+			return mapPlaceUpdatePlan{}, err
 		}
 	}
-	return update.place, nil
+	if update.place, err = store.SaveMapPlace(ctx, update.place); err != nil {
+		return mapPlaceUpdatePlan{}, err
+	}
+	return update, updateMapPlaceImageBinding(ctx, store, &update)
 }
 
 type mapPlaceUpdatePlan struct {
-	place                 model.MapPlace
+	place                 MapPlace
 	metadataChangedFields []string
 	imageChanged          bool
 	imageOperation        sharedtelemetry.AuditCollectionOperation
@@ -242,14 +197,14 @@ func (update mapPlaceUpdatePlan) changed() bool {
 }
 
 func planMapPlaceUpdate(
-	current model.MapPlace,
-	request *managev1.UpdateMapPlaceRequest,
+	current MapPlace,
+	request UpdateMapPlaceCommand,
 	memberID string,
 ) (mapPlaceUpdatePlan, error) {
 	update := mapPlaceUpdatePlan{place: current}
 	if request.Name != nil {
 		if strings.TrimSpace(*request.Name) == "" {
-			return mapPlaceUpdatePlan{}, errs.Required("name")
+			return mapPlaceUpdatePlan{}, domainerr.Required("name")
 		}
 		if *request.Name != current.Name {
 			update.place.Name = *request.Name
@@ -262,7 +217,7 @@ func planMapPlaceUpdate(
 	}
 	if request.Lat != nil {
 		if *request.Lat < -90 || *request.Lat > 90 {
-			return mapPlaceUpdatePlan{}, errs.InvalidArgument("lat", "must be between -90 and 90")
+			return mapPlaceUpdatePlan{}, domainerr.InvalidField("lat", "must be between -90 and 90")
 		}
 		if *request.Lat != current.Lat {
 			update.place.Lat = *request.Lat
@@ -271,31 +226,37 @@ func planMapPlaceUpdate(
 	}
 	if request.Lng != nil {
 		if *request.Lng < -180 || *request.Lng > 180 {
-			return mapPlaceUpdatePlan{}, errs.InvalidArgument("lng", "must be between -180 and 180")
+			return mapPlaceUpdatePlan{}, domainerr.InvalidField("lng", "must be between -180 and 180")
 		}
 		if *request.Lng != current.Lng {
 			update.place.Lng = *request.Lng
 			update.metadataChangedFields = append(update.metadataChangedFields, "lng")
 		}
 	}
-	if request.GooglePlaceId != nil {
-		next := normalizeGooglePlaceID(request.GooglePlaceId)
+	if request.GooglePlaceID != nil {
+		next := normalizeGooglePlaceID(request.GooglePlaceID)
 		if !sameMapPlaceOptionalString(next, current.GooglePlaceID) {
 			update.place.GooglePlaceID = next
 			update.metadataChangedFields = append(update.metadataChangedFields, "google_place_id")
 		}
 	}
 	if request.AddressComponents != nil {
-		next := &model.AddressComponents{
-			Street: request.AddressComponents.Street, City: request.AddressComponents.City,
-			Region: request.AddressComponents.Region, Country: request.AddressComponents.Country,
-			PostalCode: request.AddressComponents.PostalCode,
-		}
+		next := request.AddressComponents
 		if !reflect.DeepEqual(next, current.AddressComponents) {
 			update.place.AddressComponents = next
 			update.metadataChangedFields = append(update.metadataChangedFields, "address_components")
 		}
 	}
+	update.planImage(current, request)
+	if update.changed() {
+		update.place.UpdatedByMemberID = &memberID
+	}
+	return update, nil
+}
+
+// planImage removes the image on ClearImage, which takes precedence, or
+// selects a different supplied one.
+func (update *mapPlaceUpdatePlan) planImage(current MapPlace, request UpdateMapPlaceCommand) {
 	if request.ClearImage {
 		if current.ImageFileID != nil {
 			update.place.ImageFileID = nil
@@ -303,16 +264,12 @@ func planMapPlaceUpdate(
 			update.imageOperation = sharedtelemetry.AuditCollectionOperationRemoved
 			update.imageFileID = *current.ImageFileID
 		}
-	} else if request.ImageFileId != nil && strings.TrimSpace(*request.ImageFileId) != "" && !sameMapPlaceOptionalString(request.ImageFileId, current.ImageFileID) {
-		update.place.ImageFileID = request.ImageFileId
+	} else if request.ImageFileID != nil && strings.TrimSpace(*request.ImageFileID) != "" && !sameMapPlaceOptionalString(request.ImageFileID, current.ImageFileID) {
+		update.place.ImageFileID = request.ImageFileID
 		update.imageChanged = true
 		update.imageOperation = sharedtelemetry.AuditCollectionOperationAdded
-		update.imageFileID = *request.ImageFileId
+		update.imageFileID = *request.ImageFileID
 	}
-	if update.changed() {
-		update.place.UpdatedByMemberID = &memberID
-	}
-	return update, nil
 }
 
 func mapPlaceOptionalString(value *string) string {
@@ -328,20 +285,21 @@ func sameMapPlaceOptionalString(left, right *string) bool {
 	}
 	return *left == *right
 }
-func (s *MapPlaceService) updateMapPlaceImageBinding(
+
+func updateMapPlaceImageBinding(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	update *mapPlaceUpdatePlan,
 ) error {
 	if !update.imageChanged {
 		return nil
 	}
 	if update.imageOperation == sharedtelemetry.AuditCollectionOperationRemoved {
-		return s.assets.Release(ctx, tx, AssetRelease{
+		return store.ReleaseAssets(ctx, AssetRelease{
 			Owner: AssetOwner{Type: "map_place", ID: update.place.ID}, BindingPrefix: "image",
 		})
 	}
-	_, err := s.assets.BindReady(ctx, tx, AssetBinding{
+	_, err := store.BindReadyAsset(ctx, AssetBinding{
 		SourceFileID: update.imageFileID,
 		Owner:        AssetOwner{Type: "map_place", ID: update.place.ID},
 		Key:          "image",
@@ -351,89 +309,46 @@ func (s *MapPlaceService) updateMapPlaceImageBinding(
 }
 
 // DeleteMapPlace deletes a map place (admin)
-func (s *MapPlaceService) DeleteMapPlace(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteMapPlaceRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) DeleteMapPlace(ctx context.Context, command DeleteMapPlaceCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", command.ID))
 
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
+	if command.ID == "" {
+		return domainerr.Required("id")
 	}
-	deleteCan, err := policyv1.MapPlace.Delete(req.Msg.Id)
+	deleteCan, err := policyv1.MapPlace.Delete(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
-
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		place, err := lockMapPlaceForUpdate(ctx, tx, req.Msg.Id)
-		if err != nil {
+	var place MapPlace
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[MapPlace, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			place, err = lockMapPlace(ctx, store, command.ID)
 			return err
-		}
-		if _, err := requireLockedMapPlaceAuthority(ctx, tx, deleteCan, true, s.spiceDB); err != nil {
-			return err
-		}
-		if err := requireMapPlaceUnused(ctx, tx, place.ID); err != nil {
-			return err
-		}
-		if err := tx.Delete(&place).Error; err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.MapPlace.DeletePolicy(place.ID)
-		if err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.MapPlace.TouchPolicy(place.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{policyDelete},
-			[]policyv1.RelationshipMutation{policyTouch},
-		); err != nil {
-			return err
-		}
-		if err := s.assets.Release(ctx, tx, AssetRelease{
-			Owner: AssetOwner{Type: "map_place", ID: place.ID}, BindingPrefix: "image",
-		}); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMapPlaceDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMapPlaceDeletedAuditRecord(metadata, place.ID)
-		}); err != nil {
-			return err
-		}
-		return nil
+		},
+		Access: s.mapPlaceAccess(deleteCan, true),
+		Change: func(ctx context.Context, store Store) (MapPlace, error) {
+			inUse, err := store.MapPlaceInUse(ctx, place.ID)
+			if err != nil {
+				return MapPlace{}, err
+			}
+			if inUse {
+				return MapPlace{}, domainerr.Precondition("map place is still referenced")
+			}
+			if err := store.DeleteMapPlace(ctx, place.ID); err != nil {
+				return MapPlace{}, err
+			}
+			return place, store.ReleaseAssets(ctx, AssetRelease{
+				Owner: AssetOwner{Type: "map_place", ID: place.ID}, BindingPrefix: "image",
+			})
+		},
+		Audit: func(place MapPlace) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMapPlaceDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMapPlaceDeletedAuditRecord(metadata, place.ID)
+			})
+		},
+		Relationships: func(place MapPlace) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			return referencePolicyRelationships(policyv1.MapPlace, place.ID, false)
+		},
 	})
-	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("map place", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
-}
-
-func requireMapPlaceUnused(ctx context.Context, tx *gorm.DB, placeID string) error {
-	for _, table := range []string{"post", "work", "program_event"} {
-		var count int64
-		if err := tx.WithContext(ctx).Table(table).Where("map_place_id = ?", placeID).Limit(1).Count(&count).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if count > 0 {
-			return errs.FailedPrecondition("map place is still referenced")
-		}
-	}
-	return nil
+	return err
 }

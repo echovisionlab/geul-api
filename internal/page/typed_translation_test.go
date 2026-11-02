@@ -5,14 +5,11 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func TestPageTypedTranslationExtractsAndAppliesTypedLocaleFields(t *testing.T) {
@@ -78,7 +75,7 @@ func TestPageTypedTranslationExtractsAndAppliesTypedLocaleFields(t *testing.T) {
 			},
 		},
 	}
-	job := &model.TranslationJob{
+	job := TranslationJob{
 		EntityType:   "page",
 		EntityID:     "page-a",
 		SourceLocale: "en",
@@ -167,7 +164,7 @@ func TestPageTypedRichTextKeepsMarkBoundariesInsideOneSemanticUnit(t *testing.T)
 			}},
 		}}},
 	}}
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
@@ -197,7 +194,7 @@ func TestPageTypedTranslationKeepsExplicitEmptyRichTextUnitBesideContent(t *test
 		pageParagraphLocale("empty"),
 		pageParagraphLocale("body", "본문"),
 	)
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
@@ -209,7 +206,7 @@ func TestPageTypedTranslationKeepsExplicitEmptyRichTextUnitBesideContent(t *test
 func TestPageTypedTranslationRejectsAllExplicitEmptyRichTextUnits(t *testing.T) {
 	t.Parallel()
 	source := pageRichTextTranslationSource(pageParagraphLocale("empty-a"), pageParagraphLocale("empty-b"))
-	_, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	_, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.ErrorIs(t, err, translation.ErrNoTranslatableUnits)
@@ -282,7 +279,7 @@ func TestProviderPageTargetPatchInitializesMissingCurrentRichTextLocale(t *testi
 		Locale: "ko", Base: base,
 		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "ko", Sections: []*contentv1.PageSectionLocale{{SectionId: "rich"}}},
 	}
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page", SourceLocale: "en", TargetLocale: "ko",
 	}, &translation.SourceDocument{PageDocument: source})
 	require.NoError(t, err)
@@ -305,22 +302,10 @@ func TestProviderPageTargetPatchInitializesMissingCurrentRichTextLocale(t *testi
 }
 
 func TestPageProviderResultCannotWritePromotedTargetIntoSource(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE page (
-			id TEXT PRIMARY KEY,
-			content_document_id TEXT NOT NULL,
-			source_locale TEXT NOT NULL
-		)
-	`).Error)
-
+	store := newMemoryStore()
 	pageID := uuid.NewString()
 	documentID := uuid.New()
-	require.NoError(t, db.Exec(
-		`INSERT INTO page (id, content_document_id, source_locale) VALUES (?, ?, ?)`,
-		pageID, documentID.String(), "ko",
-	).Error)
+	store.putPage(pageID, "ko", "원본", documentID)
 
 	// A running en→ko provider request can outlive promoting ko to source. Keep
 	// the stable unit patch populated: the adapter must reject before compiling
@@ -340,16 +325,11 @@ func TestPageProviderResultCannotWritePromotedTargetIntoSource(t *testing.T) {
 		unitID: {UnitID: unitID, TranslatedText: "late translation"},
 	}
 	require.NoError(t, candidate.SetProviderUnitPatch(plan, results))
-	job := &model.TranslationJob{
+	job := TranslationJob{
 		EntityType: "page", EntityID: pageID, SourceLocale: "en", TargetLocale: "ko",
 	}
 
-	err = db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTranslationCandidateWithDB(
-			t.Context(), tx, &contentblock.Store{}, job, candidate,
-			translation.EntryWrite{}, nil,
-		)
-	})
+	err := ApplyTranslationCandidate(t.Context(), Joined{Store: store}, job, candidate, translation.EntryWrite{})
 	require.ErrorIs(t, err, translation.ErrSourceNoLongerCurrent)
 }
 
@@ -404,7 +384,7 @@ func TestPageTypedTranslationUnitIDsSurviveSectionAndImmersiveUnitReorder(t *tes
 			ExternalVideo: &contentv1.ExternalVideoSectionLocale{},
 		},
 	}
-	job := &model.TranslationJob{
+	job := TranslationJob{
 		EntityType: "page", EntityID: "page-a", SourceLocale: "en", TargetLocale: "ko",
 	}
 	build := func(sections []*contentv1.PageSectionLocale) map[string]string {
@@ -483,7 +463,7 @@ func TestPageTypedTranslationMutationsFlattenSectionAndRichTextRowsSeparately(t 
 }
 
 func TestPageTypedTranslationRejectsLocaleMismatch(t *testing.T) {
-	job := &model.TranslationJob{
+	job := TranslationJob{
 		EntityType:   "page",
 		EntityID:     "page-a",
 		SourceLocale: "en",

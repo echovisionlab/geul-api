@@ -5,13 +5,13 @@ package main
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresPGMQReadinessCheckIntegration(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

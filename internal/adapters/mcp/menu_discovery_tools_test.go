@@ -9,10 +9,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestMenuDiscoveryDescriptorsAndDependencies(t *testing.T) {
@@ -47,10 +47,10 @@ func TestMenuDiscoveryDescriptorsAndDependencies(t *testing.T) {
 func TestMenuDiscoveryPreservesNativeAuthorityAndProjectsSelectionOnly(t *testing.T) {
 	actor := &auth.UserInfo{Authenticated: true, IdentityID: "identity", MemberID: "member"}
 	ctx := auth.WithUser(t.Context(), actor)
-	fixture := &recordingMenuDiscovery{
-		menus:      []*managev1.Menu{nil, {Id: managementWorkID, Name: "Main", SourceLocale: "ko", Items: []*managev1.MenuItem{{Label: "private menu body"}}}},
-		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
-	}
+	fixture := &recordingMenuDiscovery{page: menu.MenuPage{
+		Menus: []menu.Menu{{ID: managementWorkID, Name: "Main", SourceLocale: "ko", Items: []menu.Item{{Label: "private menu body"}}}},
+		Total: 31, HasMore: true,
+	}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
 	result, err := tools.CallTool(ctx, mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{"limit":10,"offset":20}`))
@@ -62,7 +62,7 @@ func TestMenuDiscoveryPreservesNativeAuthorityAndProjectsSelectionOnly(t *testin
 	items := result.StructuredContent["items"].([]any)
 	require.Equal(t, []any{map[string]any{"id": managementWorkID, "name": "Main", "source_locale": "ko"}}, items)
 	require.NotContains(t, result.Content[0]["text"], "private menu body")
-	fixture.pagination = nil
+	fixture.page = menu.MenuPage{}
 	result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{}`))
 	require.NoError(t, err)
 	require.Equal(t, int32(20), fixture.paginationRequest.Limit)
@@ -79,7 +79,7 @@ func TestMenuDiscoveryRejectsInvalidInputsBeforeCallingOwners(t *testing.T) {
 		require.ErrorAs(t, err, &executionError, input)
 		require.Zero(t, fixture.calls, input)
 	}
-	fixture := &recordingMenuDiscovery{pagination: &commonv1.PaginationResponse{HasMore: true}}
+	fixture := &recordingMenuDiscovery{page: menu.MenuPage{HasMore: true}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{"offset":2147483640,"limit":20}`))
@@ -91,11 +91,11 @@ func TestMenuDiscoveryRejectsInvalidInputsBeforeCallingOwners(t *testing.T) {
 }
 
 func TestMenuLocationsReadsOnlyFixedMenuKeysAndPreservesUnassignedSlots(t *testing.T) {
-	fixture := &recordingMenuDiscovery{values: map[string]*structpb.Value{
-		"menu_header_id":          structpb.NewStringValue(managementWorkID),
-		"menu_secondary_id":       structpb.NewNullValue(),
-		"menu_footer_id":          structpb.NewStringValue(managementPostID),
-		"menu_avatar_dropdown_id": structpb.NewStringValue(""),
+	fixture := &recordingMenuDiscovery{values: map[string]structured.Value{
+		"menu_header_id":          managementWorkID,
+		"menu_secondary_id":       nil,
+		"menu_footer_id":          managementPostID,
+		"menu_avatar_dropdown_id": "",
 	}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestMenuLocationsReadsOnlyFixedMenuKeysAndPreservesUnassignedSlots(t *testi
 	require.NoError(t, err)
 	require.Equal(t, []string{"menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id"}, fixture.keys)
 	require.Equal(t, map[string]any{"menu_header_id": managementWorkID, "menu_secondary_id": nil, "menu_footer_id": managementPostID, "menu_avatar_dropdown_id": nil}, result.StructuredContent)
-	for _, bad := range []*structpb.Value{structpb.NewBoolValue(true), structpb.NewStringValue("not-a-uuid"), nil} {
+	for _, bad := range []structured.Value{true, "not-a-uuid", float64(1)} {
 		fixture.values["menu_header_id"] = bad
 		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMenuLocationsGet, toolArguments(t, `{}`))
 		require.Error(t, err)
@@ -133,26 +133,25 @@ func TestMenuDiscoveryReturnsOwnerDenialsAndKeepsInternalErrorsPrivate(t *testin
 }
 
 type recordingMenuDiscovery struct {
-	menus             []*managev1.Menu
-	pagination        *commonv1.PaginationResponse
-	paginationRequest *commonv1.PaginationRequest
-	values            map[string]*structpb.Value
+	page              menu.MenuPage
+	paginationRequest menu.ListMenusQuery
+	values            map[string]structured.Value
 	keys              []string
 	actor             *auth.UserInfo
 	calls             int
 	err               error
 }
 
-func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, req *connect.Request[managev1.ListMenusRequest]) (*connect.Response[managev1.ListMenusResponse], error) {
+func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListMenusQuery) (menu.MenuPage, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
-	r.paginationRequest = req.Msg.Pagination
-	return connect.NewResponse(&managev1.ListMenusResponse{Menus: r.menus, Pagination: r.pagination}), r.err
+	r.paginationRequest = query
+	return r.page, r.err
 }
 
-func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, req *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error) {
+func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (sitesettings.Setting, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
-	r.keys = append(r.keys, req.Msg.Key)
-	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{Key: req.Msg.Key, Value: r.values[req.Msg.Key]}}), r.err
+	r.keys = append(r.keys, query.Key)
+	return sitesettings.Setting{Key: query.Key, Value: r.values[query.Key]}, r.err
 }

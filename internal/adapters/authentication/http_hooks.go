@@ -73,7 +73,7 @@ func (h *HooksHandler) AfterLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req AfterLoginRequest
-	if !kratoswebhook.Decode(w, r, &req, "Failed to decode after-login request") {
+	if !kratoswebhook.Decode(w, r, &req) {
 		return
 	}
 
@@ -83,13 +83,12 @@ func (h *HooksHandler) AfterLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, authentication.ErrLoginHookInput) {
-			slog.WarnContext(r.Context(), "Rejected invalid login hook input", "failure_cause", failurecause.Message(err))
+			recordHookFailure(r, err, slog.String("identity_id", req.IdentityID))
 			http.Error(w, "Missing identity_id", http.StatusBadRequest)
 			return
 		}
-		operation, responseMessage := loginHookFailureResponse(err)
-		slog.ErrorContext(r.Context(), "After-login lifecycle failed", "operation", operation, "failure_cause", failurecause.Message(err), "identity_id", req.IdentityID)
-		http.Error(w, responseMessage, http.StatusInternalServerError)
+		recordHookFailure(r, err, slog.String("identity_id", req.IdentityID))
+		http.Error(w, loginHookFailureResponse(err), http.StatusInternalServerError)
 		return
 	}
 	if result.Banned {
@@ -97,7 +96,7 @@ func (h *HooksHandler) AfterLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kratoswebhook.WriteEmpty(w)
+	kratoswebhook.WriteEmpty(r.Context(), w)
 }
 
 // RejectCredentialRegistration is the fail-closed policy boundary for public
@@ -111,55 +110,59 @@ func (h *HooksHandler) RejectCredentialRegistration(w http.ResponseWriter, r *ht
 
 	var req CredentialRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.WarnContext(r.Context(), "Failed to decode credential-registration policy request", "failure_cause", failurecause.Message(err))
-		kratoswebhook.WriteError(w, http.StatusBadRequest, "Could not validate the registration method.", "registration_method_invalid")
+		recordHookFailure(r, err)
+		kratoswebhook.WriteError(r.Context(), w, http.StatusBadRequest, "Could not validate the registration method.", "registration_method_invalid")
 		return
 	}
 	err := h.registrationHooks.Validate(r.Context(), authentication.RegistrationHookInput{
 		Email: req.Email, PendingEmail: req.PendingEmail, Method: req.Method,
 	})
+	if err != nil {
+		recordHookFailure(r, err, slog.String("method", req.Method), slog.String("flow_id", req.FlowID))
+	}
 	switch {
 	case err == nil:
-		kratoswebhook.WriteEmpty(w)
+		kratoswebhook.WriteEmpty(r.Context(), w)
 	case errors.Is(err, authentication.ErrRegistrationPendingEmail):
-		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationPendingEmail", "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(
+			r.Context(),
 			w,
 			http.StatusConflict,
 			"An account email can only be changed from account settings.",
 			"registration_pending_email_forbidden",
 		)
 	case errors.Is(err, authentication.ErrRegistrationMethodDenied):
-		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationMethodDenied", "method", req.Method, "flow_id", req.FlowID)
-		kratoswebhook.WriteError(w, http.StatusConflict, "Use email verification or social sign-in to create an account.", "registration_method_denied")
+		kratoswebhook.WriteError(r.Context(), w, http.StatusConflict, "Use email verification or social sign-in to create an account.", "registration_method_denied")
 	case errors.Is(err, authentication.ErrRegistrationMethodUnknown):
-		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationMethodUnknown", "method", req.Method, "flow_id", req.FlowID)
-		kratoswebhook.WriteError(w, http.StatusForbidden, "This registration method is not available.", "registration_method_unknown")
+		kratoswebhook.WriteError(r.Context(), w, http.StatusForbidden, "This registration method is not available.", "registration_method_unknown")
 	case errors.Is(err, authentication.ErrRegistrationReuseHeld):
-		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationReuseHeld", "method", req.Method, "flow_id", req.FlowID)
-		kratoswebhook.WriteError(w, http.StatusConflict, "Registration could not be completed.", "registration_unavailable")
+		kratoswebhook.WriteError(r.Context(), w, http.StatusConflict, "Registration could not be completed.", "registration_unavailable")
 	case errors.Is(err, authentication.ErrRegistrationUnavailable):
-		slog.ErrorContext(r.Context(), "Registration email reuse policy unavailable", "failure_cause", failurecause.Message(err), "method", req.Method, "flow_id", req.FlowID)
-		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
+		kratoswebhook.WriteError(r.Context(), w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
 	default:
-		slog.ErrorContext(r.Context(), "Registration policy failed", "failure_cause", failurecause.Message(err), "method", req.Method, "flow_id", req.FlowID)
-		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
+		kratoswebhook.WriteError(r.Context(), w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
 	}
 }
 
-func loginHookFailureResponse(err error) (string, string) {
+func loginHookFailureResponse(err error) string {
 	switch {
 	case errors.Is(err, authentication.ErrLoginIdentityLoad):
-		return "load identity from Kratos", "Failed to get user identity"
+		return "Failed to get user identity"
 	case errors.Is(err, authentication.ErrLoginMemberProvision):
-		return "provision registration member", "Failed to create member account"
+		return "Failed to create member account"
 	case errors.Is(err, authentication.ErrLoginMemberValidation):
-		return "validate identity member link", "Failed to validate member account"
+		return "Failed to validate member account"
 	case errors.Is(err, authentication.ErrLoginRoleSynchronization):
-		return "sync login role", "Failed to sync user role"
+		return "Failed to sync user role"
 	default:
-		return "process after-login lifecycle", "Failed to validate member account"
+		return "Failed to validate member account"
 	}
+}
+
+// recordHookFailure hands a Kratos hook failure to the HTTP request record,
+// which logs it once with the response status.
+func recordHookFailure(r *http.Request, err error, attrs ...slog.Attr) {
+	failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(failurecause.WithAttrs(err, attrs...)))
 }
 
 func writeBannedAfterLoginResponse(

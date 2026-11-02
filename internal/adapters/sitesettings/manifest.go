@@ -2,9 +2,16 @@ package sitesettings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
+
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 
 	"gorm.io/gorm"
 
@@ -14,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // ManifestMenus adapts Menu and Page read models to the public Site Settings
@@ -33,9 +39,9 @@ func (ManifestMenus) Localize(
 	sourceItems []model.MenuItem,
 	acceptLanguage string,
 ) ([]model.MenuItem, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(db).RuntimeSettings(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to load menu localization settings", "failure_cause", failurecause.Message(err), "menu_id", menuID)
+		slog.ErrorContext(ctx, "Menu localization settings load failed; using default settings", failurecause.Attr(err), "menu_id", menuID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	requested := settings.DefaultLocale
@@ -48,7 +54,7 @@ func (ManifestMenus) Localize(
 	}
 	if err := db.WithContext(ctx).Table("menu").Select("source_locale").Where("id = ?", menuID).Take(&source).Error; err == nil {
 		sourceLocale = localization.NormalizeWithDefault(source.SourceLocale, settings.DefaultLocale)
-	} else if err != gorm.ErrRecordNotFound {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return sourceItems, err
 	}
 
@@ -145,7 +151,7 @@ func projectManifestMenuLabels(
 	for i := range items {
 		item := items[i]
 		sourceLabel := item.Label
-		if menudomain.ShouldTranslateItemLabel(&item, sourceLocale) {
+		if menudomain.ShouldTranslateItemLabel(item.LocalizationMode, item.FixedLocale, sourceLocale) {
 			sourceLabel = labels[sourceLocale][item.ID]
 		}
 		locale := displayLocale
@@ -241,7 +247,7 @@ func filterPublishedPageTargets(items []model.MenuItem, byID, bySlug map[string]
 			} else if item.TargetSlug != nil {
 				target, ok = bySlug[strings.TrimSpace(*item.TargetSlug)]
 			}
-			if !ok || target.Status != managev1.PageStatus_PAGE_STATUS_PUBLISHED.String() {
+			if !ok || target.Status != string(model.PageStatusPublished) {
 				continue
 			}
 			route := target.ID
@@ -266,19 +272,26 @@ func (ManifestMenus) TargetSlug(ctx context.Context, db *gorm.DB, item *model.Me
 	if item.TargetID == nil || strings.TrimSpace(*item.TargetID) == "" {
 		return item.TargetSlug
 	}
-	table := map[string]string{"page": "page", "category": "category", "tag": "tag", "series": "series"}[item.LinkType]
-	if table == "" {
+	var lookup func(context.Context, *gorm.DB, string) (*string, error)
+	switch item.LinkType {
+	case "page":
+		lookup = pagepostgres.PageTargetSlug
+	case "category":
+		lookup = referencecatalogpostgres.CategoryTargetSlug
+	case "tag":
+		lookup = referencecatalogpostgres.TagTargetSlug
+	case "series":
+		lookup = seriespostgres.SeriesTargetSlug
+	default:
 		return item.TargetSlug
 	}
-	var row struct {
-		Slug *string `gorm:"column:slug"`
-	}
-	if err := db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", strings.TrimSpace(*item.TargetID)).Take(&row).Error; err != nil || row.Slug == nil || strings.TrimSpace(*row.Slug) == "" {
-		if err != nil && err != gorm.ErrRecordNotFound {
-			slog.ErrorContext(ctx, "Failed to load menu target slug", "failure_cause", failurecause.Message(err))
+	targetSlug, err := lookup(ctx, db, strings.TrimSpace(*item.TargetID))
+	if err != nil || targetSlug == nil || strings.TrimSpace(*targetSlug) == "" {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.ErrorContext(ctx, "Menu target slug lookup failed; keeping the stored slug", failurecause.Attr(err), "link_type", item.LinkType, "target_id", strings.TrimSpace(*item.TargetID))
 		}
 		return item.TargetSlug
 	}
-	slug := strings.TrimSpace(*row.Slug)
+	slug := strings.TrimSpace(*targetSlug)
 	return &slug
 }

@@ -2,17 +2,19 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -27,20 +29,16 @@ type sourceLocaleAuditBuilder func(
 ) (sharedtelemetry.AuditRecord, error)
 
 func sourceLocaleAudit(
-	auditWriter domainaudit.Appender,
 	action sharedtelemetry.AuditAction,
 	builder sourceLocaleAuditBuilder,
-) func(context.Context, *gorm.DB, string, string, string) error {
+) func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error) {
 	if builder == nil {
 		panic("translation source-locale Audit builder is required")
 	}
-	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) error {
-		if auditWriter == nil {
-			return errs.InternalMsg("translation source-locale Audit writer is required")
-		}
-		return domainaudit.AppendRequest(ctx, tx, auditWriter, action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return func(_ context.Context, _ *gorm.DB, entityID string, previousLocale string, newLocale string) (application.SourceLocaleAudit, error) {
+		return application.SourceLocaleAudit{Action: action, Build: func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return builder(metadata, entityID, previousLocale, newLocale)
-		})
+		}}, nil
 	}
 }
 
@@ -52,33 +50,31 @@ type legalSourceLocaleAuditBuilder func(
 	string,
 ) (sharedtelemetry.AuditRecord, error)
 
+// legalSourceLocaleAudit records the switch against the policy version it
+// changed, read under the history row's lock.
 func legalSourceLocaleAudit(
-	auditWriter domainaudit.Appender,
 	table string,
 	entityType string,
 	builder legalSourceLocaleAuditBuilder,
-) func(context.Context, *gorm.DB, string, string, string) error {
+) func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error) {
 	if table == "" || entityType == "" || builder == nil {
 		panic("legal source-locale Audit dependencies are required")
 	}
-	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) error {
-		if auditWriter == nil {
-			return errs.InternalMsg("translation source-locale Audit writer is required")
-		}
+	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) (application.SourceLocaleAudit, error) {
 		var row struct {
 			Version int64 `gorm:"column:version"`
 		}
 		if err := tx.WithContext(ctx).Table(table).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound(entityType, entityID)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return application.SourceLocaleAudit{}, errs.NotFound(entityType, entityID)
 			}
-			return errs.Internal(err)
+			return application.SourceLocaleAudit{}, errs.Internal(err)
 		}
-		return domainaudit.AppendRequest(ctx, tx, auditWriter, sharedtelemetry.AuditLegalPolicyUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return application.SourceLocaleAudit{Action: sharedtelemetry.AuditLegalPolicyUpdated, Build: func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return builder(metadata, entityID, row.Version, previousLocale, newLocale)
-		})
+		}}, nil
 	}
 }
 
@@ -103,12 +99,12 @@ func prepareScalarSourceLocale(domain core.Kind) func(context.Context, *gorm.DB,
 	}
 }
 
-func localeAwareOG(domain core.Kind) func(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string) (bool, error) {
+func localeAwareOG(domain core.Kind) func(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string) (bool, error) {
 	entityType := string(domain)
 	if !og.SupportsLocaleAware(entityType) {
 		panic(fmt.Sprintf("translation domain %q does not support locale-aware OG", domain))
 	}
-	return func(ctx context.Context, tx *gorm.DB, _ *og.Planner, refresher *og.Refresher, entityID string, locale string, reason string) (bool, error) {
+	return func(ctx context.Context, tx *gorm.DB, _ *ogpostgres.Planner, refresher *ogpostgres.Refresher, entityID string, locale string, reason string) (bool, error) {
 		_, err := refresher.RequestCurrentWithDB(
 			ctx, tx, og.EntityTypeForName(entityType), entityID, locale, false, reason,
 		)
@@ -127,8 +123,7 @@ func requireJobEdit(factory func(string) (policyv1.Can, error)) func(context.Con
 		}
 		decision, err := auth.AuthorizationDecision(ctx, can)
 		if err != nil {
-			slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err), "entity_id", entityID)
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(err, slog.String("entity_id", entityID)))
 		}
 		allowed, err := spiceDB.Can(ctx, decision)
 		if err != nil {
@@ -160,9 +155,9 @@ func genericInterchangeView(
 			columns = "id, status"
 		}
 		if err := tx.WithContext(ctx).Table(definition.RootTable).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select(columns).Where("id = ?", entityID).Take(&root).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound(string(domain), entityID)
 			}
 			return errs.Internal(err)
@@ -198,7 +193,7 @@ func genericSourceLocaleEdit(
 			}
 			if err := tx.WithContext(ctx).Table(definition.RootTable).Select("status").
 				Where("id = ?::uuid", entityID).Take(&root).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound(string(domain), entityID)
 				}
 				return errs.Internal(err)
@@ -241,13 +236,11 @@ func requireTranslationPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound(can.Resource().Type(), entityID)

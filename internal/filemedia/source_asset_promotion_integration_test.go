@@ -16,7 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,7 +26,7 @@ import (
 
 func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	client := runtimeS3Client(t, stack)
 	body := bytes.Repeat([]byte{0x5a}, 16*1024*1024+1)
 	digest := sha256.Sum256(body)
@@ -62,16 +63,13 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 		_ = stack.DB.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 
-	service := &FileService{
-		db: stack.DB, s3Client: client, s3Bucket: stack.S3MediaBucket,
-		cdnDomain: stack.CDNURL,
-	}
+	service := withNativeFileUnits(&Service{s3Client: client, s3Bucket: stack.S3MediaBucket, cdnDomain: stack.CDNURL}, stack.DB, nativeFilePorts{})
 	ref, err := service.promoteSourceFileToPublicAsset(t.Context(), file.ID, "image")
 	require.NoError(t, err)
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, digest[:], ref.SHA256)
 
 	var asset model.PublicAsset
-	require.NoError(t, stack.DB.Where("id = ?", ref.GetAssetId()).Take(&asset).Error)
+	require.NoError(t, stack.DB.Where("id = ?", ref.AssetID).Take(&asset).Error)
 	assetObjectKey = asset.ObjectKey
 	head, err := client.HeadObject(t.Context(), &s3.HeadObjectInput{
 		Bucket: aws.String(stack.S3MediaBucket),
@@ -142,7 +140,7 @@ func TestSourceAssetPromotionConcurrentReplicasConvergeOnOneReadyAssetIntegratio
 			ref, err := service.promoteSourceFileToPublicAsset(context.Background(), file.ID, "image")
 			errs[index] = err
 			if ref != nil {
-				refs[index] = ref.GetAssetId()
+				refs[index] = ref.AssetID
 			}
 		}(i)
 	}
@@ -186,7 +184,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	deleteTx := db.WithContext(t.Context()).Begin()
 	require.NoError(t, deleteTx.Error)
 	var locked model.File
-	require.NoError(t, deleteTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, deleteTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").Where("id = ?", fileID).Take(&locked).Error)
 	require.NoError(t, deleteTx.Model(&model.File{}).Where("id = ?", fileID).
 		Update("delete_requested_at", now).Error)
@@ -194,7 +192,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	digest := sha256.Sum256([]byte("verified public source"))
 	completionDone := make(chan error, 1)
 	go func() {
-		completionDone <- (&FileService{db: db}).completeSourceAssetPromotion(
+		completionDone <- (withNativeFileUnits(&Service{}, db, nativeFilePorts{})).completeSourceAssetPromotion(
 			context.Background(), fileID, assetID, 22, digest[:],
 		)
 	}()
@@ -220,7 +218,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 func seedSourceAssetPromotionIntegrationFixture(
 	t *testing.T,
 	db *gorm.DB,
-) (model.File, *sourceAssetPromotionS3Fixture, *FileService) {
+) (model.File, *sourceAssetPromotionS3Fixture, *Service) {
 	t.Helper()
 	body := []byte("concurrent verified public source")
 	file := model.File{
@@ -233,7 +231,7 @@ func seedSourceAssetPromotionIntegrationFixture(
 		_ = db.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
-	service := &FileService{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
+	service := withNativeFileUnits(&Service{s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}, db, nativeFilePorts{})
 	return file, store, service
 }
 

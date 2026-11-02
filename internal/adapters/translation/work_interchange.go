@@ -2,12 +2,14 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/work"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -16,18 +18,18 @@ import (
 // WorkInterchangePort maps Translation application's generic XLIFF command to
 // the Work-owned lock, lifecycle-aware CAS and exact locale mutation boundary.
 type WorkInterchangePort struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewWorkInterchangePort(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *WorkInterchangePort {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Work translation interchange Audit dependencies are required")
 	}
-	return &WorkInterchangePort{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &WorkInterchangePort{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*WorkInterchangePort) LoadTranslationInterchangeTarget(
@@ -45,8 +47,11 @@ func (*WorkInterchangePort) LoadTranslationInterchangeTarget(
 			"target", "Work translation interchange identity does not match the route",
 		)
 	}
+	if db == nil || store == nil {
+		return application.TranslationInterchangeTargetState{}, errors.New("Work translation interchange load identity is invalid")
+	}
 	state, err := work.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale, plan, ProjectRichTextInterchangeTargets,
+		ctx, workStore(db, store), entityID, locale, plan, ProjectRichTextInterchangeTargets,
 	)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
@@ -73,9 +78,12 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := work.ApplyTranslationInterchange(ctx, db, store, work.TranslationInterchangeMutation{
+	if db == nil || store == nil {
+		return application.TranslationInterchangeApplyResult{}, errors.New("Work translation interchange load identity is invalid")
+	}
+	result, err := work.ApplyTranslationInterchange(ctx, workStore(db, store), work.TranslationInterchangeMutation{
 		WorkID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: workInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 		ProjectTargets: ProjectRichTextInterchangeTargets,
@@ -86,7 +94,7 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, p.auditWriter, p.auditBuilder, sharedtelemetry.AuditWorkUpdated,
+			ctx, db, p.audit, p.auditBuilder, sharedtelemetry.AuditWorkUpdated,
 			memberID, command.EntityID, command.TargetLocale, result.TargetPreviouslyExists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -98,4 +106,15 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*WorkInterchangePort)(nil)
+var _ translationpostgres.InterchangeRegistry = (*WorkInterchangePort)(nil)
+
+func workInterchangeMode(mode application.InterchangeMode) work.InterchangeMode {
+	switch mode {
+	case application.InterchangeModePatch:
+		return work.InterchangePatch
+	case application.InterchangeModeReplace:
+		return work.InterchangeReplace
+	default:
+		return 0
+	}
+}

@@ -7,13 +7,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -37,44 +35,44 @@ func (e *uploadPermissionValidationError) Error() string {
 	return e.message
 }
 
-func uploadTypeToResourceType(uploadType managev1.UploadType) (resourceType string, requiresSpiceDBCheck bool) {
+func uploadTypeToResourceType(uploadType UploadType) (resourceType string, requiresSpiceDBCheck bool) {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_ARTIST_IMAGE:
+	case UploadArtistImage:
 		return "artist", true
-	case managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE:
+	case UploadFeaturedImage:
 		return "post", true
-	case managev1.UploadType_UPLOAD_TYPE_WORK_FEATURED_IMAGE:
+	case UploadWorkFeaturedImage:
 		return "work", true
-	case managev1.UploadType_UPLOAD_TYPE_SERIES_FEATURED_IMAGE:
+	case UploadSeriesFeaturedImage:
 		return "series", true
-	case managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE:
+	case UploadFormFeaturedImage:
 		return "form", true
-	case managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER:
+	case UploadProgramEventPoster:
 		return "", false
-	case managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadReleaseArtwork, UploadTrackAudio:
 		return "release", false
-	case managev1.UploadType_UPLOAD_TYPE_LABEL_IMAGE:
+	case UploadLabelImage:
 		return "label", true
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		return "", false
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR:
+	case UploadUserAvatar:
 		return "user", false
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOADER,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
-		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO:
+	case UploadSiteLogo,
+		UploadSiteFavicon,
+		UploadSiteLoader,
+		UploadSiteOGBackground,
+		UploadClientLogo:
 		return "", false
 	default:
 		return "", false
 	}
 }
 
-func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType string) (uploadPermissionTarget, error) {
+func resolveUploadPermissionTarget(uploadType UploadType, entityType string) (uploadPermissionTarget, error) {
 	resourceType, requiresSpiceDBCheck := uploadTypeToResourceType(uploadType)
 	target := uploadPermissionTarget{
 		resourceType:         resourceType,
@@ -82,32 +80,32 @@ func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType st
 	}
 
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE:
+	case UploadGeneralFile:
 		target.authorOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR:
+	case UploadUserAvatar:
 		target.userOwned = true
-	case managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE:
-		if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String() {
+	case UploadFeaturedImage:
+		if entityType == EntityPage.String() {
 			target.resourceType = "page"
 			target.requiresSpiceDBCheck = true
 		}
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOADER,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
-		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE:
+	case UploadSiteLogo,
+		UploadSiteFavicon,
+		UploadSiteLoader,
+		UploadSiteOGBackground,
+		UploadClientLogo,
+		UploadMapImage:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK,
-		managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadReleaseArtwork,
+		UploadTrackAudio:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER:
+	case UploadProgramEventPoster:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		if strings.TrimSpace(entityType) != "" {
 			return target, &uploadPermissionValidationError{
 				field:   "entity_type",
@@ -118,26 +116,26 @@ func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType st
 	}
 
 	if target.resourceType == "page" || target.resourceType == "work" ||
-		uploadType == managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE {
+		uploadType == UploadFormFeaturedImage {
 		target.adminOnly = true
 	}
 	return target, nil
 }
 
-func uploadPermissionRequiresEntityID(uploadType managev1.UploadType, target uploadPermissionTarget) bool {
+func uploadPermissionRequiresEntityID(uploadType UploadType, target uploadPermissionTarget) bool {
 	if target.resourceType != "" || target.requiresSpiceDBCheck || target.userOwned {
 		return true
 	}
-	return uploadType == managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO
+	return uploadType == UploadClientLogo
 }
 
 func connectUploadPermissionValidationError(err error) error {
 	var validationErr *uploadPermissionValidationError
 	if errors.As(err, &validationErr) {
 		if validationErr.required {
-			return errs.Required(validationErr.field)
+			return domainerr.Required(validationErr.field)
 		}
-		return errs.InvalidArgument(validationErr.field, validationErr.message)
+		return domainerr.InvalidField(validationErr.field, validationErr.message)
 	}
 	return err
 }
@@ -150,11 +148,15 @@ func uploadPermissionPartError(err error) error {
 	return err
 }
 
-func (s *FileService) resolvePartUploadPermissionTarget(
+func (s *Service) resolvePartUploadPermissionTarget(
 	ctx context.Context,
-	uploadType managev1.UploadType,
-	session model.UploadSession,
+	uploadType UploadType,
+	session domain.UploadSession,
 ) (uploadPermissionTarget, string, error) {
+	return resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, s.resolveTrackReleaseID)
+}
+
+func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType UploadType, session domain.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
 	entityType := ""
 	if session.EntityType != nil {
 		entityType = *session.EntityType
@@ -167,11 +169,11 @@ func (s *FileService) resolvePartUploadPermissionTarget(
 	if uploadPermissionRequiresEntityID(uploadType, target) && entityID == "" {
 		return target, "", fmt.Errorf("entity_id is required")
 	}
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
+	if uploadType != UploadTrackAudio {
 		return target, entityID, nil
 	}
-	releaseID, err := s.resolveTrackReleaseID(ctx, session.EntityID)
-	if err == gorm.ErrRecordNotFound {
+	releaseID, err := lookup(ctx, session.EntityID)
+	if errors.Is(err, domain.ErrUploadTrackNotFound) {
 		return target, "", fmt.Errorf("track not found")
 	}
 	if err != nil {
@@ -180,9 +182,9 @@ func (s *FileService) resolvePartUploadPermissionTarget(
 	return target, releaseID, nil
 }
 
-func (s *FileService) validatePartUploadTarget(
+func (s *Service) validatePartUploadTarget(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	target uploadPermissionTarget,
 	entityID string,
 ) error {
@@ -195,16 +197,12 @@ func (s *FileService) validatePartUploadTarget(
 		}
 	}
 	if target.resourceType == "work" {
-		attachment, err := requireWorkAttachment(s.workAttachment)
-		if err != nil {
-			return err
-		}
-		return attachment.RequireExists(ctx, entityID)
+		return s.readUploadFacts(ctx, func(store Store) error { return store.RequireUploadWork(ctx, entityID) })
 	}
 	return nil
 }
 
-func (s *FileService) checkMemberAuthorityUploadTarget(
+func (s *Service) checkMemberAuthorityUploadTarget(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
@@ -216,25 +214,17 @@ func (s *FileService) checkMemberAuthorityUploadTarget(
 	return false, nil
 }
 
-func (s *FileService) checkRoleAndSpiceDBUploadPermission(
+func (s *Service) checkRoleAndSpiceDBUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
 	userID string,
 ) error {
 	if target.resourceType == "post" {
-		access, err := requirePostAccess(s.postAccess)
-		if err != nil {
-			return err
-		}
-		return access.RequireEdit(ctx, entityID)
+		return s.requireOwnerPreflight(ctx, "post", entityID, true)
 	}
 	if target.resourceType == "program_event" {
-		access, err := requireProgramEventAttachment(s.programEventAttachment)
-		if err != nil {
-			return err
-		}
-		return access.RequireEdit(ctx, s.spiceDB, entityID)
+		return s.requireOwnerPreflight(ctx, "program_event", entityID, true)
 	}
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
@@ -247,7 +237,7 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 	if isAdmin {
 		return nil
 	}
-	if err := s.requireUploadRole(ctx, target, userID); err != nil {
+	if err := s.requireUploadRole(ctx, target); err != nil {
 		return err
 	}
 	if target.adminOnly {
@@ -259,13 +249,12 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 		}
 		return nil
 	}
-	return s.checkSpiceDBEntityUploadPermission(ctx, target, entityID, userID)
+	return s.checkSpiceDBEntityUploadPermission(ctx, target, entityID)
 }
 
-func (s *FileService) requireUploadRole(
+func (s *Service) requireUploadRole(
 	ctx context.Context,
 	target uploadPermissionTarget,
-	userID string,
 ) error {
 	if !target.authorOnly {
 		return nil
@@ -284,16 +273,15 @@ func (s *FileService) requireUploadRole(
 	return nil
 }
 
-func (s *FileService) checkSpiceDBEntityUploadPermission(
+func (s *Service) checkSpiceDBEntityUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
-	userID string,
 ) error {
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
 	}
-	if _, err := uploadPermissionIdentityID(ctx, userID); err != nil {
+	if err := requireUploadIdentity(ctx); err != nil {
 		return err
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)
@@ -306,13 +294,10 @@ func (s *FileService) checkSpiceDBEntityUploadPermission(
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "SpiceDB permission check failed during part upload",
-			failurecause.Attr(err),
-			"resourceType", target.resourceType,
-			"entityID", entityID,
-			"userID", userID,
+		return failurecause.WithAttrs(
+			fmt.Errorf("permission check failed: %w", err),
+			slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID),
 		)
-		return fmt.Errorf("permission check failed")
 	}
 	if !hasPermission {
 		return fmt.Errorf("no permission to upload to this entity")
@@ -345,19 +330,19 @@ func uploadPermissionEditCan(resourceType, resourceID string) (policyv1.Can, err
 	}
 }
 
-func uploadPermissionIdentityID(ctx context.Context, _ string) (string, error) {
+func requireUploadIdentity(ctx context.Context) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.IdentityID.String()) == "" {
-		return "", errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
-	return user.IdentityID.String(), nil
+	return nil
 }
 
 func checkSpiceDBCan(
 	ctx context.Context,
 	user *auth.UserInfo,
 	can policyv1.Can,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 ) (bool, error) {
 	if user == nil || spiceDB == nil {
 		return false, fmt.Errorf("SpiceDB authorization is not configured")

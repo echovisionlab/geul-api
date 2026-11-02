@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -93,11 +92,12 @@ func (h *PasswordHasher) Hash(password string) (string, error) {
 }
 
 // Verify compares a password against an argon2id hash.
-// Returns true if the password matches.
+// Returns true if the password matches. A hash that cannot be decoded is a
+// server fault: callers verify against a stored hash, never client input.
 func (h *PasswordHasher) Verify(password, encodedHash string) (bool, error) {
 	params, salt, hash, err := decodeHash(encodedHash)
 	if err != nil {
-		return false, err
+		return false, failurecause.ServerFault(err)
 	}
 
 	// Derive the key from the password with the extracted parameters
@@ -119,7 +119,6 @@ func (h *PasswordHasher) Verify(password, encodedHash string) (bool, error) {
 func (h *PasswordHasher) NeedsRehash(encodedHash string) bool {
 	params, _, _, err := decodeHash(encodedHash)
 	if err != nil {
-		slog.Warn("Stored password hash requires repair", failurecause.Attr(err, encodedHash))
 		return true
 	}
 
@@ -139,12 +138,15 @@ func decodeHash(encodedHash string) (*Argon2idParams, []byte, []byte, error) {
 	if parts[1] != "argon2id" {
 		return nil, nil, nil, ErrInvalidHash
 	}
+	// The parse errors keep their cause; the hash and its parts never reach a log.
+	invalid := func(err error) error {
+		return failurecause.WithPrivate(fmt.Errorf("%w: %w", ErrInvalidHash, err), encodedHash, parts[2], parts[3], parts[4], parts[5])
+	}
 
 	var version int
 	_, err := fmt.Sscanf(parts[2], "v=%d", &version)
 	if err != nil {
-		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
-		return nil, nil, nil, ErrInvalidHash
+		return nil, nil, nil, invalid(err)
 	}
 	if version != argon2.Version {
 		return nil, nil, nil, ErrIncompatibleVersion
@@ -154,20 +156,17 @@ func decodeHash(encodedHash string) (*Argon2idParams, []byte, []byte, error) {
 	var parallelism uint8
 	_, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
 	if err != nil {
-		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
-		return nil, nil, nil, ErrInvalidHash
+		return nil, nil, nil, invalid(err)
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
-		return nil, nil, nil, ErrInvalidHash
+		return nil, nil, nil, invalid(err)
 	}
 
 	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
-		return nil, nil, nil, ErrInvalidHash
+		return nil, nil, nil, invalid(err)
 	}
 
 	params := &Argon2idParams{

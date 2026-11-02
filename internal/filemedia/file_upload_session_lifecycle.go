@@ -6,118 +6,91 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (s *FileService) createUploadSession(ctx context.Context, session *model.UploadSession) error {
+func (s *Service) createUploadSession(ctx context.Context, session *domain.UploadSession) error {
 	if session == nil {
 		return fmt.Errorf("upload session is required")
 	}
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String() {
-		return s.db.WithContext(ctx).Omit("EntityID").Create(session).Error
+	mode := domain.UploadTargetUnknown
+	switch {
+	case session.UploadType == UploadGeneralFile.String():
+		mode = domain.UploadTargetGeneral
+	case session.UploadType == UploadTrackAudio.String():
+		mode = domain.UploadTargetTrackProjection
+	default:
+		if value, ok := domain.ParseUploadType(session.UploadType); ok && isEditorFileIngestUploadType(UploadType(value)) {
+			mode = domain.UploadTargetEditorFile
+		}
 	}
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() {
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			trackAttachment, dependencyErr := requireTrackAttachment(s.trackAttachment)
-			if dependencyErr != nil {
-				return dependencyErr
-			}
-			if err := trackAttachment.LockExistsWithDB(ctx, tx, session.EntityID); err != nil {
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		if mode == domain.UploadTargetTrackProjection {
+			if err := store.RequireUploadTrack(ctx, session.EntityID); err != nil {
 				return err
 			}
-			return tx.Create(session).Error
-		})
-	}
+		}
+		row, err := store.InsertUploadSession(ctx, *session, mode)
+		if err == nil {
+			*session = row
+		}
+		return err
+	})
+}
 
-	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
-	if !ok || !isEditorFileIngestUploadType(managev1.UploadType(uploadTypeValue)) {
-		return s.db.WithContext(ctx).Create(session).Error
+func (s *Service) refreshUploadSessionActivity(ctx context.Context, uploadID string) {
+	now := time.Now()
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error { return unit.Store().RenewUploadActivity(ctx, uploadID, now) }); err != nil {
+		slog.ErrorContext(ctx, "Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
 	}
-	if err := s.db.WithContext(ctx).
-		Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").
-		Create(session).Error; err != nil {
+}
+
+func (s *Service) deleteCompletedUploadSession(ctx context.Context, uploadID string) error {
+	var deleted bool
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		deleted, err = unit.Store().DeleteFinalizingUpload(ctx, uploadID)
+		return err
+	})
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func (s *FileService) refreshUploadSessionActivity(ctx context.Context, uploadID string) {
-	now := time.Now()
-	if err := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where("upload_id = ?", uploadID).
-		Updates(structured.Fields{
-			"last_activity_at": now,
-			"updated_at":       now,
-		}).Error; err != nil {
-		slog.Error("Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
-	}
-}
-
-func (s *FileService) deleteCompletedUploadSession(ctx context.Context, uploadID string) error {
-	result := s.db.WithContext(ctx).
-		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusFinalizing).
-		Delete(&model.UploadSession{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
+	if !deleted {
 		return fmt.Errorf("completed upload session changed before deletion")
 	}
 	return nil
 }
-
-func (s *FileService) deleteAbortedUploadSession(ctx context.Context, uploadID string) error {
-	result := s.db.WithContext(ctx).
-		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusAborted).
-		Delete(&model.UploadSession{})
-	if result.Error != nil {
-		return result.Error
+func (s *Service) deleteAbortedUploadSession(ctx context.Context, uploadID string) error {
+	var deleted bool
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		deleted, err = unit.Store().DeleteAbortedUpload(ctx, uploadID)
+		return err
+	})
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected != 1 {
+	if !deleted {
 		return fmt.Errorf("aborted upload session changed before deletion")
 	}
 	return nil
 }
-
-func (s *FileService) claimUploadSessionAbort(
-	ctx context.Context,
-	uploadID string,
-	fileID string,
-	now time.Time,
-) (bool, error) {
-	result := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where(
-			"upload_id = ? AND file_id = ? AND status IN ?",
-			uploadID,
-			fileID,
-			[]model.UploadSessionStatus{
-				model.UploadSessionStatusInitiated,
-				model.UploadSessionStatusUploading,
-				model.UploadSessionStatusFailed,
-				model.UploadSessionStatusAborted,
-			},
-		).
-		Updates(structured.Fields{
-			"status":           model.UploadSessionStatusAborted,
-			"last_activity_at": now,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected == 1, nil
+func (s *Service) claimUploadSessionAbort(ctx context.Context, uploadID, fileID string, now time.Time) (bool, error) {
+	var claimed bool
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		claimed, err = unit.Store().ClaimUploadAborted(ctx, uploadID, fileID, now)
+		return err
+	})
+	return claimed, err
 }
 
-func containsFinalizingUploadSession(sessions []model.UploadSession) bool {
+func containsFinalizingUploadSession(sessions []domain.UploadSession) bool {
 	for _, session := range sessions {
-		if session.Status == model.UploadSessionStatusFinalizing {
+		if session.Status == domain.UploadSessionStatusFinalizing {
 			return true
 		}
 	}

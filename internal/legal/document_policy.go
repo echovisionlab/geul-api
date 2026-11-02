@@ -2,98 +2,88 @@ package legal
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-type legalDocumentPolicy struct {
-	table           string
-	draftStatus     string
-	scheduledStatus string
-	archivedStatus  string
-}
-
-func legalDocumentPolicyForType(entityType string) (legalDocumentPolicy, error) {
-	switch entityType {
-	case "terms":
-		return legalDocumentPolicy{
-			table:           "terms_history",
-			draftStatus:     managev1.TermsStatus_TERMS_STATUS_DRAFT.String(),
-			scheduledStatus: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
-			archivedStatus:  managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String(),
-		}, nil
-	case "privacy":
-		return legalDocumentPolicy{
-			table:           "privacy_history",
-			draftStatus:     managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String(),
-			scheduledStatus: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
-			archivedStatus:  managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String(),
-		}, nil
-	default:
-		return legalDocumentPolicy{}, errs.InternalMsg("unsupported legal document type")
+// legalKind returns the descriptor of entityType, which names a policy kind.
+func legalKind(entityType string) (*policyKind, error) {
+	kind, ok := policyKinds[PolicyKind(entityType)]
+	if !ok {
+		return nil, errors.New("unsupported legal document type")
 	}
+	return kind, nil
 }
 
 func requireLegalPermission(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
-	entityType string,
+	checker authz.AuthorizationDecisionChecker,
+	kind *policyKind,
 	entityID string,
 	action legalAction,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.Banned {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
-	return requireLegalPermissionForPrincipal(
-		ctx, checker, legalCollaborationResourceType(entityType), entityID, action, principal,
-	)
+	return requireLegalPermissionForPrincipal(ctx, checker, kind.kind, entityID, action, principal)
 }
 
 func requireActiveLegalPrincipal(
 	ctx context.Context,
-	tx *gorm.DB,
+	lockActive LockActive,
 	actionName string,
 	maskNotFound bool,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if active {
 		return nil
 	}
 	if maskNotFound {
-		return errs.NotFoundMsg("legal policy not found")
+		return domainerr.New(domainerr.NotFound, "", "legal policy not found")
 	}
-	return errs.NoPermission(actionName, "legal policy")
+	return domainerr.NoPermission(actionName, "legal policy")
 }
 
-func legalViewAction(policy legalDocumentPolicy, status string) legalAction {
-	if status == policy.archivedStatus {
+// authorizeLegal fences the request's principal and checks action on the
+// version. An inactive principal is denied actionName, or finds no policy
+// when maskNotFound.
+func authorizeLegal(
+	ctx context.Context,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
+	kind *policyKind,
+	entityID string,
+	actionName string,
+	maskNotFound bool,
+	action legalAction,
+) error {
+	if err := requireActiveLegalPrincipal(ctx, lockActive, actionName, maskNotFound); err != nil {
+		return err
+	}
+	return requireLegalPermission(ctx, checker, kind, entityID, action)
+}
+
+func legalViewAction(kind *policyKind, status Status) legalAction {
+	if status == kind.archived {
 		return legalActionViewArchived
 	}
 	return legalActionView
 }
 
-func legalMutationAction(
-	policy legalDocumentPolicy,
-	status string,
-	normal legalAction,
-) legalAction {
-	if status == policy.archivedStatus {
+func legalMutationAction(kind *policyKind, status Status, normal legalAction) legalAction {
+	if status == kind.archived {
 		return legalActionEditArchived
 	}
 	return normal
@@ -103,133 +93,93 @@ func legalMutationAction(
 // from the already loaded lifecycle. Denials intentionally appear absent.
 func requireLegalVersionViewOrNotFound(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker *auth.SpiceDBClient,
-	entityType string,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
+	kind *policyKind,
 	entityID string,
-	status string,
+	status Status,
 ) error {
-	policy, err := legalDocumentPolicyForType(entityType)
-	if err != nil {
-		return err
-	}
-	if err := requireActiveLegalPrincipal(ctx, tx, "view", true); err != nil {
-		return err
-	}
-	if err := requireLegalPermission(ctx, checker, entityType, entityID, legalViewAction(policy, status)); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			slog.WarnContext(ctx, "Legal version access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
-			return errs.NotFound(entityType, entityID)
+	if err := authorizeLegal(ctx, checker, lockActive, kind, entityID, "view", true, legalViewAction(kind, status)); err != nil {
+		if mutation.IsDenied(err) {
+			return domainerr.ResourceNotFound(kind.entity(), entityID).WithCause(err)
 		}
 		return err
 	}
 	return nil
 }
 
-// RequireEditableTranslationMutationWithDB authorizes explicit target-locale
-// translation requests in every lifecycle. Archived histories use
-// edit_archived; every other lifecycle uses edit.
-func RequireEditableTranslationMutationWithDB(
+// lockLegalStatus locks the version and returns its stored status.
+func lockLegalStatus(ctx context.Context, store Store, kind *policyKind, entityID string) (Status, error) {
+	status, err := store.LockStatus(ctx, kind.kind, entityID)
+	if errors.Is(err, ErrPolicyNotFound) {
+		return "", domainerr.ResourceNotFound(kind.entity(), entityID)
+	}
+	return status, err
+}
+
+// RequireEditableTranslationMutation authorizes explicit target-locale
+// translation requests in every lifecycle, in the Translation application's
+// transaction. Archived histories use edit_archived; every other lifecycle
+// uses edit.
+func RequireEditableTranslationMutation(
 	ctx context.Context,
-	db *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
 	entityType string,
 	entityID string,
 ) error {
 	if entityType != "privacy" && entityType != "terms" {
 		return nil
 	}
-	policy, err := legalDocumentPolicyForType(entityType)
-	if err != nil {
-		return err
-	}
-	var row struct {
-		Status string `gorm:"column:status"`
-	}
-	if err := db.WithContext(ctx).Table(policy.table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFound(entityType, entityID)
-		}
-		return errs.Internal(err)
-	}
-	if err := requireActiveLegalPrincipal(ctx, db, "edit", false); err != nil {
-		return err
-	}
-	if err := requireLegalPermission(
-		ctx, checker, entityType, entityID,
-		legalMutationAction(policy, row.Status, legalActionEdit),
-	); err != nil {
-		return err
-	}
-	return nil
+	return RequireLockedSourceLocaleEdit(ctx, store, checker, lockActive, entityType, entityID)
 }
 
-// RequireTranslationInterchangeViewWithDB authorizes a read-only XLIFF
-// projection from the locked Legal history lifecycle. Archived histories use
-// view_archived, allowing Authors to open/export them without granting the
-// edit_archived permission required by import.
-func RequireTranslationInterchangeViewWithDB(
+// RequireTranslationInterchangeView authorizes a read-only XLIFF projection
+// from the locked Legal history lifecycle, in the Translation application's
+// transaction. Archived histories use view_archived, allowing Authors to
+// open/export them without granting the edit_archived permission required
+// by import.
+func RequireTranslationInterchangeView(
 	ctx context.Context,
-	db *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
 	entityType string,
 	entityID string,
 ) error {
 	if entityType != "privacy" && entityType != "terms" {
 		return nil
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, db, entityType, entityID, false)
+	kind, err := legalKind(entityType)
 	if err != nil {
 		return err
 	}
-	if err := requireActiveLegalPrincipal(ctx, db, "view", true); err != nil {
-		return err
-	}
-	policy, err := legalDocumentPolicyForType(entityType)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false)
 	if err != nil {
 		return err
 	}
-	if err := requireLegalPermission(
-		ctx, checker, entityType, entityID, legalViewAction(policy, root.Status),
-	); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			slog.WarnContext(ctx, "Legal translation access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
-			return errs.NotFound(entityType, entityID)
-		}
-		return err
-	}
-	return nil
+	return requireLegalVersionViewOrNotFound(ctx, checker, lockActive, kind, entityID, root.Status)
 }
 
+// RequireLockedSourceLocaleEdit locks the version and authorizes an edit of
+// it in the caller's transaction: edit_archived for an archived version,
+// edit otherwise.
 func RequireLockedSourceLocaleEdit(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
 	entityType string,
 	entityID string,
 ) error {
-	policy, err := legalDocumentPolicyForType(entityType)
+	kind, err := legalKind(entityType)
 	if err != nil {
 		return err
 	}
-	var row struct {
-		Status string `gorm:"column:status"`
-	}
-	if err := tx.WithContext(ctx).Table(policy.table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFound(entityType, entityID)
-		}
-		return errs.Internal(err)
-	}
-	if err := requireActiveLegalPrincipal(ctx, tx, "edit", false); err != nil {
+	status, err := lockLegalStatus(ctx, store, kind, entityID)
+	if err != nil {
 		return err
 	}
-	return requireLegalPermission(
-		ctx, checker, entityType, entityID,
-		legalMutationAction(policy, row.Status, legalActionEdit),
-	)
+	return authorizeLegal(ctx, checker, lockActive, kind, entityID, "edit", false, legalMutationAction(kind, status, legalActionEdit))
 }

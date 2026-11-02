@@ -1,13 +1,10 @@
 package contentblock
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -132,7 +129,7 @@ func RestorePageAffectedLocaleValues(
 			richTextValues = append(richTextValues, value)
 			continue
 		}
-		canonical, canonicalKey, field, unitID, err := validatePageLocaleValueTarget(
+		canonicalKey, field, unitID, err := validatePageLocaleValueTarget(
 			upsert, section, immersiveFields, value,
 		)
 		if err != nil {
@@ -141,7 +138,7 @@ func RestorePageAffectedLocaleValues(
 		if canonicalKey != key {
 			return fmt.Errorf("target %d is not canonical", index)
 		}
-		if err := restorePageLocaleValue(upsert, canonical, field, unitID); err != nil {
+		if err := restorePageLocaleValue(upsert, field, unitID); err != nil {
 			return fmt.Errorf("target %d: %w", index, err)
 		}
 		touchedSections[upsert.BlockID] = upsert
@@ -296,49 +293,40 @@ func validatePageLocaleValueTarget(
 	section contentv1.PageSectionDescriptor,
 	immersiveFields map[string]contentv1.ContentFieldDescriptor,
 	value *managev1.AIDocumentFieldTarget,
-) (*managev1.AIDocumentFieldTarget, string, contentv1.ContentFieldDescriptor, string, error) {
+) (string, contentv1.ContentFieldDescriptor, string, error) {
 	blockID := value.GetBlockHandle()
 	parsed, err := uuid.Parse(blockID)
 	if err != nil || parsed.String() != blockID {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.validatePageLocaleValueTarget", "outcome", "failed", failurecause.Attr(err))
-		}
-		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("block handle must be a canonical UUID")
+		return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("block handle must be a canonical UUID")
 	}
 	if value.GetFieldHandle() != pageLocaleDataField {
-		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page locale field handle must be %q", pageLocaleDataField)
+		return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page locale field handle must be %q", pageLocaleDataField)
 	}
 	path := value.GetPath()
 	if len(path) == 2 && path[0].GetFieldHandle() == "props" && path[1].GetFieldHandle() != "" {
 		field, ok := pageLocaleScalarField(section.Fields, path[1].GetFieldHandle())
 		if !ok {
-			return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("field %s is not a Page Section locale scalar leaf", path[1].GetFieldHandle())
+			return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("field %s is not a Page Section locale scalar leaf", path[1].GetFieldHandle())
 		}
-		canonical := pageSectionLocaleValueTarget(blockID, field.Name)
-		return canonical, localeValueTargetKey(canonical), field, "", nil
+		return localeValueTargetKey(pageSectionLocaleValueTarget(blockID, field.Name)), field, "", nil
 	}
 	if section.Kind != "immersive-scene" || len(path) != 4 || path[0].GetFieldHandle() != "units" || path[1].GetItemHandle() == "" || path[2].GetFieldHandle() != "props" || path[3].GetFieldHandle() == "" {
-		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page locale value path is invalid for kind %s", upsert.ExpectedKind)
+		return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page locale value path is invalid for kind %s", upsert.ExpectedKind)
 	}
 	unitID := path[1].GetItemHandle()
 	parsedUnitID, err := uuid.Parse(unitID)
 	if err != nil || parsedUnitID.String() != unitID {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.validatePageLocaleValueTarget", "outcome", "failed", failurecause.Attr(err))
-		}
-		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page immersive unit handle must be a canonical UUID")
+		return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page immersive unit handle must be a canonical UUID")
 	}
 	field, ok := immersiveFields[path[3].GetFieldHandle()]
 	if !ok || !isPageLocaleScalar(field) {
-		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("field %s is not a Page immersive locale scalar leaf", path[3].GetFieldHandle())
+		return "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("field %s is not a Page immersive locale scalar leaf", path[3].GetFieldHandle())
 	}
-	canonical := pageImmersiveLocaleValueTarget(blockID, unitID, field.Name)
-	return canonical, localeValueTargetKey(canonical), field, unitID, nil
+	return localeValueTargetKey(pageImmersiveLocaleValueTarget(blockID, unitID, field.Name)), field, unitID, nil
 }
 
 func restorePageLocaleValue(
 	upsert *contentv1.ContentStorageLocaleUpsert,
-	target *managev1.AIDocumentFieldTarget,
 	field contentv1.ContentFieldDescriptor,
 	unitID string,
 ) error {
@@ -441,9 +429,6 @@ func requiredCanonicalUUIDString(object map[string]json.RawMessage, field string
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed.String() != value {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.requiredCanonicalUUIDString", "outcome", "failed", failurecause.Attr(err))
-		}
 		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
 	return parsed.String(), nil

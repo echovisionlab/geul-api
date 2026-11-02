@@ -5,9 +5,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
 // LegalNoticeDeliveryRunDefinition carries source-owned immutable facts into
@@ -43,18 +41,18 @@ func ValidateLegalNoticeDeliveryTemplateData(
 // Authoring snapshots in Campaign-owned delivery history.
 func SealLegalNoticeDeliveryRun(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	definition LegalNoticeDeliveryRunDefinition,
-) (*model.CampaignDeliveryRun, error) {
+) (*DeliveryRun, error) {
 	eventKey := strings.TrimSpace(definition.TemplateEventKey)
 	if eventKey == "" {
-		return nil, errs.Required("template_event_key")
+		return nil, domainerr.Required("template_event_key")
 	}
 	if err := validateLegalNoticeDeliveryAuthority(definition); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	if err := ValidateCampaignDeliverySnapshot(definition.Snapshot); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	templateData, err := newCampaignDeliveryTemplateData(
 		EmailDeliveryRunKindLegalNotice,
@@ -62,13 +60,13 @@ func SealLegalNoticeDeliveryRun(
 		definition.TemplateData,
 	)
 	if err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	renderSnapshot, err := campaignDeliverySnapshotJSONFields(definition.Snapshot)
 	if err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
-	sealedTemplateData := model.JSONFields{}
+	sealedTemplateData := map[string]any{}
 	if templateData.PolicyTitle != nil {
 		sealedTemplateData["policy_title"] = *templateData.PolicyTitle
 	}
@@ -86,7 +84,7 @@ func SealLegalNoticeDeliveryRun(
 	}
 	templateID := strings.TrimSpace(definition.SourceTemplateID)
 	templateUpdatedAt := definition.SourceTemplateUpdatedAt.UTC()
-	run := &model.CampaignDeliveryRun{
+	run := &DeliveryRun{
 		RunKind:                 EmailDeliveryRunKindLegalNotice,
 		TermsID:                 definition.TermsID,
 		PrivacyID:               definition.PrivacyID,
@@ -106,7 +104,7 @@ func SealLegalNoticeDeliveryRun(
 		TargetMode:              CampaignDeliveryTargetModeAllUsers,
 		TargetRecipientScope:    campaignRecipientScopeAllMatchingUsers,
 	}
-	if err := sealCampaignOwnedEmailDeliveryRun(ctx, tx, run, nil); err != nil {
+	if err := joined.Store.InsertSealedRun(ctx, run, nil); err != nil {
 		return nil, err
 	}
 	return run, nil
@@ -118,21 +116,21 @@ func validateLegalNoticeDeliveryAuthority(
 	termsID := strings.TrimSpace(ptrStringValue(definition.TermsID))
 	privacyID := strings.TrimSpace(ptrStringValue(definition.PrivacyID))
 	if (termsID == "") == (privacyID == "") {
-		return errs.InvalidArgumentMsg("legal notice delivery requires exactly one policy reference")
+		return domainerr.New(domainerr.Invalid, "", "legal notice delivery requires exactly one policy reference")
 	}
 	if termsID != "" {
 		if definition.SourceTermsVersion == nil || definition.SourcePrivacyVersion != nil {
-			return errs.InvalidArgumentMsg("terms delivery source version authority is invalid")
+			return domainerr.New(domainerr.Invalid, "", "terms delivery source version authority is invalid")
 		}
 	} else if definition.SourcePrivacyVersion == nil || definition.SourceTermsVersion != nil {
-		return errs.InvalidArgumentMsg("privacy delivery source version authority is invalid")
+		return domainerr.New(domainerr.Invalid, "", "privacy delivery source version authority is invalid")
 	}
 	if strings.TrimSpace(definition.SourceTemplateID) == "" || definition.SourceTemplateUpdatedAt.IsZero() {
-		return errs.InvalidArgumentMsg("legal notice email template source revision is required")
+		return domainerr.New(domainerr.Invalid, "", "legal notice email template source revision is required")
 	}
 	if definition.SourceLayoutID == nil && definition.SourceLayoutUpdatedAt != nil ||
 		definition.SourceLayoutID != nil && definition.SourceLayoutUpdatedAt == nil {
-		return errs.InvalidArgumentMsg("legal notice email layout identity and revision must appear together")
+		return domainerr.New(domainerr.Invalid, "", "legal notice email layout identity and revision must appear together")
 	}
 	return nil
 }

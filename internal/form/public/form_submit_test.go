@@ -7,10 +7,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/geoip"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,8 +22,8 @@ func TestValidateFormSubmissionDataPayloadRejectsReservedSystemMetadata(t *testi
 	err := validateFormSubmissionDataPayload([]byte(`{"email":"hello@example.com","__meta.locale":"spoofed"}`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "__meta.locale")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "__meta.locale")
 }
 
 func TestValidateFormSubmissionDataPayloadRejectsMalformedJSON(t *testing.T) {
@@ -33,14 +32,14 @@ func TestValidateFormSubmissionDataPayloadRejectsMalformedJSON(t *testing.T) {
 	err := validateFormSubmissionDataPayload([]byte(`{"email":`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "must be a JSON object")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "must be a JSON object")
 
 	err = validateFormSubmissionDataPayload([]byte(`null`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "must be a JSON object")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "must be a JSON object")
 }
 
 func TestBuildFormSubmissionSystemMetadataUsesRequestAndRuntimeContext(t *testing.T) {
@@ -62,7 +61,7 @@ func TestBuildFormSubmissionSystemMetadataUsesRequestAndRuntimeContext(t *testin
 	req.Header().Set("X-Forwarded-For", "198.51.100.10, 10.0.0.2")
 	req.Header().Set("User-Agent", "metadata-unit-agent")
 
-	metadata := buildFormSubmissionSystemMetadata(ctx, req)
+	metadata := buildFormSubmissionSystemMetadata(ctx, submitFormCommand(req))
 
 	require.NotNil(t, metadata.ipAddress)
 	assert.Equal(t, "198.51.100.10", *metadata.ipAddress)
@@ -86,7 +85,7 @@ func TestBuildFormSubmissionSystemMetadataDoesNotReadProfileFromAuthContext(t *t
 		Authenticated: true,
 	})
 
-	metadata := buildFormSubmissionSystemMetadata(ctx, connect.NewRequest(&openv1.SubmitFormRequest{}))
+	metadata := buildFormSubmissionSystemMetadata(ctx, submitFormCommand(connect.NewRequest(&openv1.SubmitFormRequest{})))
 
 	assert.Nil(t, metadata.locale)
 	assert.Nil(t, metadata.countryCode)
@@ -117,73 +116,73 @@ func TestStringifyDashboardValueSupportsStoredScalarTypes(t *testing.T) {
 func TestMapFormAccessReasonToErrorCodes(t *testing.T) {
 	t.Parallel()
 
-	require.NoError(t, mapFormAccessReasonToError(openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, false))
+	require.NoError(t, mapFormAccessReasonToError(ReasonAllowed, false))
 
 	cases := []struct {
 		name            string
-		reason          openv1.FormAccessReason
+		reason          AccessReason
 		draftAsNotFound bool
 		code            connect.Code
 	}{
 		{
 			name:   "not found",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_FOUND,
+			reason: ReasonFormNotFound,
 			code:   connect.CodeNotFound,
 		},
 		{
 			name:            "draft hidden as not found",
-			reason:          openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED,
+			reason:          ReasonFormNotPublished,
 			draftAsNotFound: true,
 			code:            connect.CodeNotFound,
 		},
 		{
 			name:   "draft explicit precondition",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED,
+			reason: ReasonFormNotPublished,
 			code:   connect.CodeFailedPrecondition,
 		},
 		{
 			name:   "not public",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_PUBLIC,
+			reason: ReasonNotPublic,
 			code:   connect.CodeNotFound,
 		},
 		{
 			name:   "auth required",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_AUTH_REQUIRED,
+			reason: ReasonAuthRequired,
 			code:   connect.CodeUnauthenticated,
 		},
 		{
 			name:   "role denied",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_ROLE_NOT_ALLOWED,
+			reason: ReasonRoleNotAllowed,
 			code:   connect.CodePermissionDenied,
 		},
 		{
 			name:   "password required",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_PASSWORD_REQUIRED,
+			reason: ReasonPasswordRequired,
 			code:   connect.CodePermissionDenied,
 		},
 		{
 			name:   "not yet open",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_YET_OPEN,
+			reason: ReasonNotYetOpen,
 			code:   connect.CodeFailedPrecondition,
 		},
 		{
 			name:   "closed",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_CLOSED,
+			reason: ReasonClosed,
 			code:   connect.CodeFailedPrecondition,
 		},
 		{
 			name:   "max submissions",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_MAX_SUBMISSIONS_REACHED,
+			reason: ReasonMaxSubmissionsReached,
 			code:   connect.CodeFailedPrecondition,
 		},
 		{
 			name:   "duplicate submission",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_ALREADY_SUBMITTED,
+			reason: ReasonAlreadySubmitted,
 			code:   connect.CodeFailedPrecondition,
 		},
 		{
 			name:   "unknown reason",
-			reason: openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED,
+			reason: ReasonUnspecified,
 			code:   connect.CodeInternal,
 		},
 	}
@@ -192,7 +191,7 @@ func TestMapFormAccessReasonToErrorCodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := mapFormAccessReasonToError(tc.reason, tc.draftAsNotFound)
 			require.Error(t, err)
-			assert.Equal(t, tc.code, connect.CodeOf(err))
+			assert.Equal(t, tc.code, errs.Wrap(err).Code())
 		})
 	}
 }
@@ -208,29 +207,28 @@ func TestFormAccessNormalizationAndStatusMapping(t *testing.T) {
 	assert.Equal(t, openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM, normalizeFormAccessTarget(openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM))
 	assert.Equal(t, openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD, normalizeFormAccessTarget(openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD))
 
-	svc := &FormService{}
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_DRAFT, svc.toProtoStatus(model.FormStatus(managev1.FormStatus_FORM_STATUS_DRAFT.String())))
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_PUBLISHED, svc.toProtoStatus(model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())))
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_UNSPECIFIED, svc.toProtoStatus(model.FormStatus("FORM_STATUS_CORRUPT")))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_DRAFT, formStatusToOpen(form.StatusDraft))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_PUBLISHED, formStatusToOpen(form.StatusPublished))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_UNSPECIFIED, formStatusToOpen(form.Status("FORM_STATUS_CORRUPT")))
 }
 
 func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *testing.T) {
 	t.Parallel()
 
-	applyLocalizedFormDocument(nil, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), nil, LocalizationSelection{
 		Title: new("ignored"),
 	})
 
 	sourceSchema := []byte(`{"id":"schema","steps":[{"id":"step","title":"Contact","fields":[{"id":"name","key":"name","label":"Name","type":"text"}]}]}`)
 	sourceText := "Contact\nName"
-	document := &formdomain.FormSourceDocument{
+	document := &form.FormSourceDocument{
 		Title:       "Source title",
 		Schema:      sourceSchema,
 		ContentText: &sourceText,
 	}
 	localizedTitle := "Localized title"
 	localizedText := "Contact\nNombre"
-	applyLocalizedFormDocument(document, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), document, LocalizationSelection{
 		Title:           &localizedTitle,
 		ContentJSON:     []byte(`{"id":"schema","steps":[{"id":"step","title":"Contacto","fields":[{"id":"name","label":"Nombre"}]}]}`),
 		ContentText:     &localizedText,
@@ -244,12 +242,12 @@ func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *test
 
 	rawLocalizedSchema := []byte(`{not-json`)
 	rawText := "Raw localized text"
-	fallback := &formdomain.FormSourceDocument{
+	fallback := &form.FormSourceDocument{
 		Title:       "Source title",
 		Schema:      sourceSchema,
 		ContentText: &sourceText,
 	}
-	applyLocalizedFormDocument(fallback, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), fallback, LocalizationSelection{
 		ContentJSON:     rawLocalizedSchema,
 		ContentText:     &rawText,
 		SourceLocale:    "en",
@@ -270,16 +268,31 @@ func TestVerifyFormPasswordSupportsArgon2idAndLegacyBcrypt(t *testing.T) {
 		SaltLength:  8,
 		KeyLength:   16,
 	})
-	svc := &FormService{password: hasher}
+	svc := &Service{password: hasher}
 
 	argonHash, err := hasher.Hash("correct")
 	require.NoError(t, err)
-	assert.True(t, svc.verifyFormPassword("correct", argonHash))
-	assert.False(t, svc.verifyFormPassword("wrong", argonHash))
-	assert.False(t, svc.verifyFormPassword("correct", "$argon2id$not-valid"))
+	assert.True(t, svc.verifyFormPassword(t.Context(), "correct", argonHash))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "wrong", argonHash))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "correct", "$argon2id$not-valid"))
 
 	bcryptHash, err := bcrypt.GenerateFromPassword([]byte("legacy"), bcrypt.MinCost)
 	require.NoError(t, err)
-	assert.True(t, svc.verifyFormPassword("legacy", string(bcryptHash)))
-	assert.False(t, svc.verifyFormPassword("wrong", string(bcryptHash)))
+	assert.True(t, svc.verifyFormPassword(t.Context(), "legacy", string(bcryptHash)))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "wrong", string(bcryptHash)))
+}
+
+// Every API access reason is the mapping of the reason of its name; a new
+// API reason fails here until it is mapped.
+func TestAccessReasonMappingCoversEveryAPIReason(t *testing.T) {
+	t.Parallel()
+	mapped := map[openv1.FormAccessReason]AccessReason{}
+	for reason, message := range accessReasonMessages {
+		mapped[message] = reason
+		assert.Equal(t, message.String(), reason.String())
+	}
+	for value, name := range openv1.FormAccessReason_name {
+		_, ok := mapped[openv1.FormAccessReason(value)]
+		assert.True(t, ok, "API reason %s is not mapped", name)
+	}
 }

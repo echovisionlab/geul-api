@@ -7,8 +7,14 @@ import (
 	"github.com/lib/pq"
 )
 
-// PageStatus represents the status of a page
+// PageStatus is the stored lifecycle state of a page. The values are the
+// strings the page table already holds.
 type PageStatus string
+
+const (
+	PageStatusDraft     PageStatus = "PAGE_STATUS_DRAFT"
+	PageStatusPublished PageStatus = "PAGE_STATUS_PUBLISHED"
+)
 
 // Page represents a CMS page (Domain Object)
 // Maps to: schema migrations - page table
@@ -95,8 +101,15 @@ type MenuVisibility struct {
 	Roles []string `json:"roles,omitempty"`
 }
 
-// FormStatus represents the status of a form
+// FormStatus is the stored lifecycle state of a form. The values are the
+// strings the form table holds; internal/form maps them to and from the API
+// enums, so this package never names a generated type.
 type FormStatus string
+
+const (
+	FormStatusDraft     FormStatus = "FORM_STATUS_DRAFT"
+	FormStatusPublished FormStatus = "FORM_STATUS_PUBLISHED"
+)
 
 // Form represents a form (Domain Object)
 // Maps to: schema migrations - form table

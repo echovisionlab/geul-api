@@ -5,8 +5,55 @@ import (
 	"sort"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
 )
+
+// ValidateTargetLocaleBatch admits a target-locale batch against the state its
+// caller locked. A target locale owns only its locale values: the shared Block
+// graph and File ownership belong to the source room, and a value is cleared
+// by writing an explicit empty value unless the caller is an authoritative
+// whole-locale replacement (allowLocaleDeletes). entity names the owner in
+// client messages, such as "Work".
+func ValidateTargetLocaleBatch(
+	entity string,
+	batch Batch,
+	documentID uuid.UUID,
+	expectedRevision uuid.UUID,
+	locale string,
+	allowLocaleDeletes bool,
+) error {
+	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
+		return errs.InvalidArgument("batch", entity+" target document identity and revision must match the locked state")
+	}
+	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
+		return errs.CollaborationMutationRejection(
+			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+			entity+" target locale cannot mutate the shared Block graph or File ownership",
+		)
+	}
+	if len(batch.LocaleGroups) > 1 {
+		return errs.CollaborationMutationRejection(
+			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
+			entity+" target locale contains multiple locale groups",
+		)
+	}
+	for _, group := range batch.LocaleGroups {
+		if group.Locale != locale {
+			return errs.CollaborationMutationRejection(
+				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
+				entity+" target mutation must match the authorized locale",
+			)
+		}
+		if len(group.Deletes) != 0 && !allowLocaleDeletes {
+			return errs.CollaborationMutationRejection(
+				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+				entity+" target patch cannot unset locale Blocks; write explicit empty values instead",
+			)
+		}
+	}
+	return nil
+}
 
 // CloneBatch copies one mutation batch without sharing caller-owned mutable
 // slices, JSON payloads, or validated File-reference provenance.

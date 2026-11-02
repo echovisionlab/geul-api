@@ -4,49 +4,49 @@ import (
 	"context"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestPostAllowedActionsKeepArchivedAuthorReadOnlyAndAdminEditable(t *testing.T) {
 	const postID = "33333333-3333-4333-8333-333333333333"
-	status := model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String())
+	status := StatusArchived
 	viewArchived, err := policyv1.Post.ViewArchived(postID)
 	require.NoError(t, err)
 	editArchived, err := policyv1.Post.EditArchived(postID)
 	require.NoError(t, err)
 
 	authorActions := postAllowedActions(postID, status, postAuthority(viewArchived))
-	require.Equal(t, []managev1.PostAction{
-		managev1.PostAction_POST_ACTION_VIEW_VERSIONS,
+	require.Equal(t, []Action{
+		ActionViewVersions,
 	}, authorActions)
 
 	adminActions := postAllowedActions(postID, status, postAuthority(viewArchived, editArchived))
-	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_REPUBLISH)
-	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_UNPUBLISH)
-	require.NotContains(t, adminActions, managev1.PostAction_POST_ACTION_DELETE)
-	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_EDIT)
-	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_RESTORE_VERSION)
+	require.Contains(t, adminActions, ActionRepublish)
+	require.Contains(t, adminActions, ActionUnpublish)
+	require.NotContains(t, adminActions, ActionDelete)
+	require.Contains(t, adminActions, ActionEdit)
+	require.Contains(t, adminActions, ActionRestoreVersion)
 }
 
 func TestPostAllowedActionsDoNotInferOrdinaryActionsFromEdit(t *testing.T) {
 	const postID = "33333333-3333-4333-8333-333333333333"
-	status := model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String())
+	status := StatusDraft
 	view, err := policyv1.Post.View(postID)
 	require.NoError(t, err)
 	edit, err := policyv1.Post.Edit(postID)
 	require.NoError(t, err)
 	actions := postAllowedActions(postID, status, postAuthority(view, edit))
 
-	require.Contains(t, actions, managev1.PostAction_POST_ACTION_EDIT)
-	require.NotContains(t, actions, managev1.PostAction_POST_ACTION_PUBLISH_NOW)
-	require.NotContains(t, actions, managev1.PostAction_POST_ACTION_MANAGE_SHARE_LINKS)
-	require.NotContains(t, actions, managev1.PostAction_POST_ACTION_MANAGE_COLLABORATORS)
+	require.Contains(t, actions, ActionEdit)
+	require.NotContains(t, actions, ActionPublishNow)
+	require.NotContains(t, actions, ActionManageShareLinks)
+	require.NotContains(t, actions, ActionManageCollaborators)
 }
 
 func TestPostAuthorityIsBoundToExactPostResource(t *testing.T) {
@@ -65,7 +65,7 @@ func TestPostAuthorityIsBoundToExactPostResource(t *testing.T) {
 
 func TestPostAllowedActionsSeparateAuthorRemovalFromParticipantManagement(t *testing.T) {
 	const postID = "33333333-3333-4333-8333-333333333333"
-	status := model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String())
+	status := StatusDraft
 	view, err := policyv1.Post.View(postID)
 	require.NoError(t, err)
 	manageParticipants, err := policyv1.Post.ManageParticipants(postID)
@@ -73,12 +73,12 @@ func TestPostAllowedActionsSeparateAuthorRemovalFromParticipantManagement(t *tes
 	removeAuthor, err := policyv1.Post.RemoveAuthor(postID)
 	require.NoError(t, err)
 	authorActions := postAllowedActions(postID, status, postAuthority(view, manageParticipants))
-	require.Contains(t, authorActions, managev1.PostAction_POST_ACTION_ADD_AUTHOR)
-	require.Contains(t, authorActions, managev1.PostAction_POST_ACTION_MANAGE_COLLABORATORS)
-	require.NotContains(t, authorActions, managev1.PostAction_POST_ACTION_REMOVE_AUTHOR)
+	require.Contains(t, authorActions, ActionAddAuthor)
+	require.Contains(t, authorActions, ActionManageCollaborators)
+	require.NotContains(t, authorActions, ActionRemoveAuthor)
 
 	adminActions := postAllowedActions(postID, status, postAuthority(view, manageParticipants, removeAuthor))
-	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_REMOVE_AUTHOR)
+	require.Contains(t, adminActions, ActionRemoveAuthor)
 }
 
 func TestPostActionMapUsesGeneratedActions(t *testing.T) {
@@ -155,14 +155,14 @@ func TestPostActionAuthorizationChecksExactlyOneSelectedPermission(t *testing.T)
 	postID := "33333333-3333-4333-8333-333333333333"
 	tests := []struct {
 		name     string
-		status   model.PostStatus
+		status   Status
 		ordinary postAction
 		want     postAction
 	}{
-		{name: "ordinary edit", status: model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()), ordinary: policyv1.Post.Edit, want: policyv1.Post.Edit},
-		{name: "ordinary publish", status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()), ordinary: policyv1.Post.Publish, want: policyv1.Post.Publish},
-		{name: "ordinary remove author", status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()), ordinary: policyv1.Post.RemoveAuthor, want: policyv1.Post.RemoveAuthor},
-		{name: "archived mutation", status: model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()), ordinary: policyv1.Post.ManageParticipants, want: policyv1.Post.EditArchived},
+		{name: "ordinary edit", status: StatusPublished, ordinary: policyv1.Post.Edit, want: policyv1.Post.Edit},
+		{name: "ordinary publish", status: StatusDraft, ordinary: policyv1.Post.Publish, want: policyv1.Post.Publish},
+		{name: "ordinary remove author", status: StatusDraft, ordinary: policyv1.Post.RemoveAuthor, want: policyv1.Post.RemoveAuthor},
+		{name: "archived mutation", status: StatusArchived, ordinary: policyv1.Post.ManageParticipants, want: policyv1.Post.EditArchived},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,7 +186,7 @@ func TestArchivedPostViewChecksOnlyViewArchived(t *testing.T) {
 	}
 	_, err := requirePostViewPermissionForPrincipal(
 		context.Background(), checker, "33333333-3333-4333-8333-333333333333", principal,
-		model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()),
+		StatusArchived,
 	)
 	require.NoError(t, err)
 	want, err := policyv1.Post.ViewArchived("33333333-3333-4333-8333-333333333333")
@@ -204,11 +204,11 @@ func TestArchivedPostMutationDenialDoesNotFallbackToOrdinaryPermission(t *testin
 	}
 	_, err := requirePostActionPermissionForPrincipal(
 		context.Background(), checker, "33333333-3333-4333-8333-333333333333", principal,
-		model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()),
+		StatusArchived,
 		policyv1.Post.ManageShareLinks,
 		false,
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	want, err := policyv1.Post.EditArchived("33333333-3333-4333-8333-333333333333")
 	require.NoError(t, err)
 	require.Equal(t, []string{want.Action().Permission()}, checker.permissions)

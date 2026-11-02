@@ -46,7 +46,7 @@ func (e *Executor) GenerateVideoThumbnail(
 		return fmt.Errorf("ffmpeg failed: %w, output: %s", err, string(output))
 	}
 
-	slog.Debug("Generated video thumbnail",
+	slog.DebugContext(ctx, "Generated video thumbnail",
 		"input", inputPath,
 		"output", outputPath,
 		"time_sec", opts.TimeSec,

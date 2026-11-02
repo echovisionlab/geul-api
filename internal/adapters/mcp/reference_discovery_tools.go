@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -44,31 +49,31 @@ const fileListOutputJSONSchema = `{
   }
 }`
 
-var referenceDiscoveryTools = []mcpserver.Tool{
-	oauthTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools. Client and Map Place limits are at most 50; other types allow 100. For Client, Map Place, and Member, has_more is null at a full service cap, so refine the query to find omitted candidates.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false),
-	oauthTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false),
+var referenceDiscoveryTools = toolRegistry[ReferenceDiscoveryTools]{
+	defineTool(oauthTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools. Client and Map Place limits are at most 50; other types allow 100. For Client, Map Place, and Member, has_more is null at a full service cap, so refine the query to find omitted candidates.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false), (*ReferenceDiscoveryTools).searchReferences),
+	defineTool(oauthTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false), (*ReferenceDiscoveryTools).listFiles),
 }
 
 type CategoryReferenceDiscovery interface {
-	ListCategories(context.Context, *connect.Request[managev1.ListCategoriesRequest]) (*connect.Response[managev1.ListCategoriesResponse], error)
+	ListCategories(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error)
 }
 type TagReferenceDiscovery interface {
-	ListTags(context.Context, *connect.Request[managev1.ListTagsRequest]) (*connect.Response[managev1.ListTagsResponse], error)
+	ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error)
 }
 type ClientReferenceDiscovery interface {
-	SearchClients(context.Context, *connect.Request[managev1.SearchClientsRequest]) (*connect.Response[managev1.SearchClientsResponse], error)
+	SearchClients(context.Context, referencecatalog.SearchClientsQuery) ([]referencecatalog.ClientView, error)
 }
 type MapPlaceReferenceDiscovery interface {
-	SearchMapPlaces(context.Context, *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error)
+	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error)
 }
 type MemberReferenceDiscovery interface {
-	SearchMembers(context.Context, *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error)
+	SearchMembers(context.Context, member.SearchMembersQuery) ([]memberref.Summary, error)
 }
 type ArtistReferenceDiscovery interface {
-	ListArtists(context.Context, *connect.Request[managev1.ListArtistsRequest]) (*connect.Response[managev1.ListArtistsResponse], error)
+	ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error)
 }
 type FileReferenceDiscovery interface {
-	ListFileManagerItems(context.Context, *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error)
+	ListFileManagerItems(context.Context, filemedia.ListFileManagerItemsQuery) (filemedia.FileManagerItemPage, error)
 }
 
 type ReferenceDiscoveryTools struct {
@@ -88,22 +93,13 @@ func NewReferenceDiscoveryTools(categories CategoryReferenceDiscovery, tags TagR
 	return &ReferenceDiscoveryTools{categories: categories, tags: tags, clients: clients, mapPlaces: mapPlaces, members: members, artists: artists, files: files}, nil
 }
 
-func (*ReferenceDiscoveryTools) ToolNames() []string {
-	return toolDefinitionNames(referenceDiscoveryTools)
-}
+func (*ReferenceDiscoveryTools) ToolNames() []string { return referenceDiscoveryTools.names() }
 func (*ReferenceDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(referenceDiscoveryTools), nil
+	return referenceDiscoveryTools.list(), nil
 }
 
 func (tools *ReferenceDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolReferenceSearch:
-		return tools.searchReferences(ctx, arguments)
-	case ToolFileList:
-		return tools.listFiles(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return referenceDiscoveryTools.call(tools, ctx, name, arguments)
 }
 
 type referenceSearchArguments struct {
@@ -112,24 +108,10 @@ type referenceSearchArguments struct {
 	Limit         int32  `json:"limit,omitempty"`
 }
 
-func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input referenceSearchArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, _ string, call toolCall[referenceSearchArguments]) (mcpserver.ToolResult, error) {
+	input, maximum, err := decodeReferenceSearchArguments(call)
+	if err != nil {
 		return executionError(err)
-	}
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Query == "" {
-		return executionError(errors.New("query is required"))
-	}
-	if input.Limit == 0 {
-		input.Limit = 20
-	}
-	maximum := int32(100)
-	if input.ReferenceType == "client" || input.ReferenceType == "map_place" {
-		maximum = 50
-	}
-	if input.Limit < 1 || input.Limit > maximum {
-		return executionError(fmt.Errorf("limit must be between 1 and %d for %s references", maximum, input.ReferenceType))
 	}
 	items := make([]map[string]any, 0)
 	var hasMore any
@@ -137,70 +119,58 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit}
 	switch input.ReferenceType {
 	case "category":
-		response, err := tools.categories.ListCategories(ctx, connect.NewRequest(&managev1.ListCategoriesRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.categories.ListCategories(ctx, referencecatalog.ReferenceListQuery{Filters: searchFilter, Limit: input.Limit})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Categories {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
-			}
+		hasMore = page.Pagination.HasMore
+		for _, item := range page.Items {
+			items = append(items, referenceItem(item.ID, item.Name, &item.Slug, "", "", false))
 		}
 	case "tag":
-		response, err := tools.tags.ListTags(ctx, connect.NewRequest(&managev1.ListTagsRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.tags.ListTags(ctx, referencecatalog.ReferenceListQuery{Filters: searchFilter, Limit: input.Limit})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Tags {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
-			}
+		hasMore = page.Pagination.HasMore
+		for _, item := range page.Items {
+			items = append(items, referenceItem(item.ID, item.Name, &item.Slug, "", "", false))
 		}
 	case "client":
-		response, err := tools.clients.SearchClients(ctx, connect.NewRequest(&managev1.SearchClientsRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		clients, err := tools.clients.SearchClients(ctx, referencecatalog.SearchClientsQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Clients), input.Limit, maximum)
-		for _, item := range response.Msg.Clients[:min(len(response.Msg.Clients), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, nil, "", "", false))
-			}
+		hasMore = quickSearchHasMore(len(clients), input.Limit, maximum)
+		for _, item := range clients[:min(len(clients), int(input.Limit))] {
+			items = append(items, referenceItem(item.Client.ID, item.Client.Name, nil, "", "", false))
 		}
 	case "map_place":
-		response, err := tools.mapPlaces.SearchMapPlaces(ctx, connect.NewRequest(&managev1.SearchMapPlacesRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		places, err := tools.mapPlaces.SearchMapPlaces(ctx, referencecatalog.SearchMapPlacesQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Places), input.Limit, maximum)
-		for _, item := range response.Msg.Places[:min(len(response.Msg.Places), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, nil, item.Address, "", false))
-			}
+		hasMore = quickSearchHasMore(len(places), input.Limit, maximum)
+		for _, item := range places[:min(len(places), int(input.Limit))] {
+			items = append(items, referenceItem(item.ID, item.Name, nil, item.Address, "", false))
 		}
 	case "member":
-		response, err := tools.members.SearchMembers(ctx, connect.NewRequest(&managev1.SearchMembersRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		members, err := tools.members.SearchMembers(ctx, member.SearchMembersQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Members), input.Limit, maximum)
-		for _, item := range response.Msg.Members[:min(len(response.Msg.Members), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Nickname, nil, "", "", item.Deleted))
-			}
+		hasMore = quickSearchHasMore(len(members), input.Limit, maximum)
+		for _, item := range members[:min(len(members), int(input.Limit))] {
+			items = append(items, referenceItem(item.ID, item.Nickname, nil, "", "", item.Deleted))
 		}
 	case "artist":
-		response, err := tools.artists.ListArtists(ctx, connect.NewRequest(&managev1.ListArtistsRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.artists.ListArtists(ctx, artist.ListArtistsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: searchFilter})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Artists {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", item.Status, false))
-			}
+		hasMore = page.Pagination.HasMore
+		for _, item := range page.Artists {
+			items = append(items, referenceItem(item.Artist.ID, item.Name, item.Artist.Slug, "", string(item.Artist.Status), false))
 		}
 	default:
 		return executionError(fmt.Errorf("unsupported reference_type %q", input.ReferenceType))
@@ -212,6 +182,28 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		return mcpserver.ToolResult{}, fmt.Errorf("encode reference search: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+func decodeReferenceSearchArguments(call toolCall[referenceSearchArguments]) (referenceSearchArguments, int32, error) {
+	var input referenceSearchArguments
+	if err := call.Decode(&input); err != nil {
+		return referenceSearchArguments{}, 0, err
+	}
+	input.Query = strings.TrimSpace(input.Query)
+	if input.Query == "" {
+		return referenceSearchArguments{}, 0, errors.New("query is required")
+	}
+	if input.Limit == 0 {
+		input.Limit = 20
+	}
+	maximum := int32(100)
+	if input.ReferenceType == "client" || input.ReferenceType == "map_place" {
+		maximum = 50
+	}
+	if input.Limit < 1 || input.Limit > maximum {
+		return referenceSearchArguments{}, 0, fmt.Errorf("limit must be between 1 and %d for %s references", maximum, input.ReferenceType)
+	}
+	return input, maximum, nil
 }
 
 func quickSearchHasMore(count int, limit, maximum int32) any {
@@ -249,12 +241,14 @@ type fileListArguments struct {
 	PageToken      *string `json:"page_token,omitempty"`
 }
 
-func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, _ string, call toolCall[fileListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "page_size"); err != nil {
 		return executionError(err)
 	}
 	var input fileListArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if _, supplied := arguments["page_size"]; !supplied {
@@ -263,42 +257,42 @@ func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments m
 	if input.PageSize < 1 || input.PageSize > 100 {
 		return executionError(errors.New("page_size must be between 1 and 100, or omitted for the default"))
 	}
-	response, err := tools.files.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
-		FolderId: input.FolderID, Query: input.Query, MimeTypePrefix: input.MIMETypePrefix,
-		SortField: managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT,
-		SortOrder: commonv1.SortOrder_SORT_ORDER_DESC, PageSize: input.PageSize, PageToken: input.PageToken,
-	}))
+	response, err := tools.files.ListFileManagerItems(ctx, filemedia.ListFileManagerItemsQuery{
+		FolderID: optionalString(input.FolderID), Query: optionalString(input.Query), MimeTypePrefix: optionalString(input.MIMETypePrefix),
+		SortField: filemedia.LibrarySortUpdatedAt,
+		SortOrder: filemedia.SortDesc, PageSize: input.PageSize, PageToken: optionalString(input.PageToken),
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	items := make([]map[string]any, 0, len(response.Msg.Items))
-	for _, item := range response.Msg.Items {
+	items := make([]map[string]any, 0, len(response.Items))
+	for _, item := range response.Items {
 		if item == nil {
 			continue
 		}
 		path := make([]map[string]any, 0, len(item.FolderPath))
 		for _, segment := range item.FolderPath {
 			if segment != nil {
-				path = append(path, map[string]any{"id": segment.Id, "name": segment.Name})
+				path = append(path, map[string]any{"id": segment.ID, "name": segment.Name})
 			}
 		}
-		if file := item.GetFile(); file != nil {
-			output := map[string]any{"item_type": "file", "id": file.Id, "name": file.FileName, "mime_type": file.MimeType, "file_size": file.FileSize, "usage_count": file.UsageCount, "created_at": timestampString(file.CreatedAt), "folder_path": path}
-			if file.FolderId != nil {
-				output["folder_id"] = *file.FolderId
+		if file := item.File; file != nil {
+			output := map[string]any{"item_type": "file", "id": file.ID, "name": file.FileName, "mime_type": file.MimeType, "file_size": file.FileSize, "usage_count": file.UsageCount, "created_at": fileManagerTimeString(file.CreatedAt), "folder_path": path}
+			if file.FolderID != nil {
+				output["folder_id"] = *file.FolderID
 			}
 			items = append(items, output)
 			continue
 		}
-		if folder := item.GetFolder(); folder != nil {
-			output := map[string]any{"item_type": "folder", "id": folder.Id, "name": folder.Name, "created_at": timestampString(folder.CreatedAt), "folder_path": path}
-			if folder.ParentId != nil {
-				output["folder_id"] = *folder.ParentId
+		if folder := item.Folder; folder != nil {
+			output := map[string]any{"item_type": "folder", "id": folder.ID, "name": folder.Name, "created_at": fileManagerTimeString(folder.CreatedAt), "folder_path": path}
+			if folder.ParentID != nil {
+				output["folder_id"] = *folder.ParentID
 			}
 			items = append(items, output)
 		}
 	}
-	return contentResult(map[string]any{"items": items, "total": response.Msg.Total, "next_page_token": optionalStringValue(response.Msg.NextPageToken)})
+	return contentResult(map[string]any{"items": items, "total": response.Total, "next_page_token": optionalStringValue(response.NextPageToken)})
 }
 
 var _ ToolProvider = (*ReferenceDiscoveryTools)(nil)

@@ -2,105 +2,75 @@ package audience
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-var authenticatedAccessSegmentTypes = []string{
-	managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
-	managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+// GrantsAuthenticatedAccess reports whether a download policy may grant
+// authenticated access through the segment: it is active and selects Members
+// by tag or filter.
+func (s Segment) GrantsAuthenticatedAccess() bool {
+	return s.ArchivedAt == nil && authenticatedAccessSegmentType(s.Type)
 }
 
-// ValidateAuthenticatedAccessSegmentIDs validates active segment references
-// while holding the same row locks used by relation-policy mutation.
-func ValidateAuthenticatedAccessSegmentIDs(ctx context.Context, db *gorm.DB, segmentIDs []string) error {
-	if len(segmentIDs) == 0 {
-		return nil
-	}
-	var segments []model.AudienceSegment
-	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id IN ?", segmentIDs).
-		Order("id ASC").
-		Find(&segments).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if len(segments) != len(segmentIDs) {
-		return errs.InvalidArgument(
-			"audience_segment_ids",
-			"one or more audience segments do not exist or cannot grant authenticated access",
-		)
-	}
-	for i := range segments {
-		if segments[i].ArchivedAt != nil || !authenticatedAccessSegmentType(segments[i].SegmentType) {
-			return errs.InvalidArgument(
-				"audience_segment_ids",
-				"one or more audience segments do not exist or cannot grant authenticated access",
-			)
-		}
-	}
-	return nil
-}
-
-// AuthenticatedAccessSegmentSummary returns the non-config summary exposed by
-// restricted download policy APIs.
-func AuthenticatedAccessSegmentSummary(segment *model.AudienceSegment) (*managev1.AudienceSegmentSummary, bool) {
-	if segment == nil || segment.ArchivedAt != nil || !authenticatedAccessSegmentType(segment.SegmentType) {
-		return nil, false
-	}
-	segmentType := managev1.SegmentType(managev1.SegmentType_value[strings.TrimSpace(segment.SegmentType)])
-	return &managev1.AudienceSegmentSummary{
-		Id:          segment.ID,
-		Name:        segment.Name,
-		Description: segment.Description,
-		SegmentType: segmentType,
-	}, true
-}
-
-func authenticatedAccessSegmentType(segmentType string) bool {
-	switch strings.TrimSpace(segmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+func authenticatedAccessSegmentType(segmentType SegmentType) bool {
+	switch segmentType.trimmed() {
+	case SegmentMemberTags, SegmentMembersByFilter:
 		return true
 	default:
 		return false
 	}
 }
 
-func requireDownloadPolicyAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+// RequireAuthenticatedAccessSegments validates the segments a download
+// policy names against the ones its caller locked
+// (audience/postgres.ValidateAuthenticatedAccessSegmentIDs): every one must
+// exist and grant authenticated access.
+func RequireAuthenticatedAccessSegments(segmentIDs []string, locked []Segment) error {
+	if len(locked) != len(segmentIDs) {
+		return invalidAuthenticatedAccessSegments()
+	}
+	for _, segment := range locked {
+		if !segment.GrantsAuthenticatedAccess() {
+			return invalidAuthenticatedAccessSegments()
+		}
+	}
+	return nil
+}
+
+func invalidAuthenticatedAccessSegments() error {
+	return domainerr.InvalidField(
+		"audience_segment_ids",
+		"one or more audience segments do not exist or cannot grant authenticated access",
+	)
+}
+
+func requireDownloadPolicyAuthor(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return domainerr.New(domainerr.Unauthenticated, "", "authentication required")
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return domainerr.Denied("account is banned")
 	}
 	can, err := policyv1.AudienceSegment.ListAuthenticatedAccess()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "audience", "event", "audience.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return domainerr.New(domainerr.Unauthenticated, "", "authentication required").WithCause(err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "audience", "event", "audience.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return nil, errs.AuthorRequired()
+		return domainerr.Denied("author access required")
 	}
-	return user, nil
+	return nil
 }

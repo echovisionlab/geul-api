@@ -3,9 +3,10 @@ package post
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
 
@@ -50,7 +51,7 @@ func TestValidateCompiledPostAIDocumentMutationKeepsLockedStateAuthoritative(t *
 			mutation := valid
 			test.mutate(&mutation)
 			_, err := validateCompiledPostAIDocumentMutation(state, mutation)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			if errs.CodeOf(err) != connect.CodeInvalidArgument {
 				t.Fatalf("mismatched compiled mutation error = %v", err)
 			}
 		})
@@ -79,14 +80,13 @@ func TestPostAIDocumentUpdatedEventUsesExactStoreChangeKinds(t *testing.T) {
 	if event == nil {
 		t.Fatal("source event is missing")
 	}
-	if event.GetSource() != managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI ||
-		event.GetDocumentRevision() != revision.String() || len(event.GetContributorMemberIds()) != 1 ||
-		event.GetContributorMemberIds()[0] != mutation.ContributorMemberID.String() {
+	if event.Source != SourceAI ||
+		event.DocumentRevision != revision.String() || len(event.Contributors) != 1 ||
+		event.Contributors[0] != mutation.ContributorMemberID.String() {
 		t.Fatalf("source event envelope = %+v", event)
 	}
-	if len(event.GetChangedFields()) != 2 || event.GetChangedFields()[0].GetPath() != "title" ||
-		event.GetChangedFields()[1].GetPath() != "document.content" {
-		t.Fatalf("source event fields = %+v", event.GetChangedFields())
+	if len(event.Fields) != 2 || event.Fields[0] != "title" || event.Fields[1] != "content" {
+		t.Fatalf("source event fields = %+v", event.Fields)
 	}
 }
 

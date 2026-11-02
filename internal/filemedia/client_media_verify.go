@@ -6,27 +6,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
-	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type clientTSValidator struct{ offset int64 }
@@ -42,7 +38,7 @@ func (v *clientTSValidator) Write(p []byte) (int, error) {
 }
 
 // verifyClientMediaObject bounds every read and derives integrity from stored bytes.
-func (s *FileService) verifyClientMediaObject(ctx context.Context, key string, artifact clientMediaArtifact) ([]byte, error) {
+func (s *Service) verifyClientMediaObject(ctx context.Context, key string, artifact clientMediaArtifact) ([]byte, error) {
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.s3Bucket), Key: aws.String(key)})
 	if err != nil {
 		if isMissingStoredObjectError(err) {
@@ -86,9 +82,6 @@ func validateClientArtifactContent(path string, data []byte) error {
 	case "spectrogram.png":
 		cfg, err := png.DecodeConfig(bytes.NewReader(data))
 		if err != nil || cfg.Width != 1600 || cfg.Height != 224 {
-			if err != nil {
-				slog.Warn("Failed to decode client spectrogram", failurecause.Attr(err))
-			}
 			return fmt.Errorf("invalid spectrogram image")
 		}
 	case "thumbnail.webp":
@@ -104,7 +97,6 @@ func validateClientArtifactContent(path string, data []byte) error {
 func validateClientWaveform(data []byte) error {
 	var peaks [][]*float64
 	if err := json.Unmarshal(data, &peaks); err != nil {
-		slog.Warn("Failed to decode client waveform", failurecause.Attr(err))
 		return fmt.Errorf("invalid waveform JSON")
 	}
 	if len(peaks) < 1 || len(peaks) > 2 {
@@ -126,7 +118,7 @@ func validateClientWaveform(data []byte) error {
 	}
 	return nil
 }
-func (s *FileService) verifyClientMediaBundle(ctx context.Context, session model.UploadSession) (clientMediaPlan, error) {
+func (s *Service) verifyClientMediaBundle(ctx context.Context, session domain.UploadSession) (clientMediaPlan, error) {
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
 		return plan, err
@@ -149,23 +141,23 @@ func (s *FileService) verifyClientMediaBundle(ctx context.Context, session model
 
 // A durable READY receipt skips staging reads on completion recovery. Otherwise
 // verify the sealed plan under the caller's advisory lock before claiming completion.
-func (s *FileService) loadClientMediaPlan(ctx context.Context, session model.UploadSession, memberID string) (*clientMediaPlan, error) {
+func (s *Service) loadClientMediaPlan(ctx context.Context, session domain.UploadSession, memberID string) (*clientMediaPlan, error) {
 	if session.ClientMediaBundleID == nil {
 		return nil, nil
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if plan.MemberID != memberID {
-		return nil, errs.PermissionDenied("client media bundle belongs to another member")
+		return nil, domainerr.Denied("client media bundle belongs to another member")
 	}
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
 		return nil, err
 	}
 	ready, err := s.clientMediaRegistrationReady(ctx, session)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if ready {
 		return nil, nil
@@ -177,13 +169,13 @@ func (s *FileService) loadClientMediaPlan(ctx context.Context, session model.Upl
 	return &verified, nil
 }
 
-func (s *FileService) registerClientMediaBundle(ctx context.Context, completion *multipartCompletion) error {
-	return s.registerVerifiedClientMediaBundle(ctx, completion, func(ctx context.Context, tx *gorm.DB) error {
-		return requireFreshFileIngestAuthority(ctx, tx, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID)
+func (s *Service) registerClientMediaBundle(ctx context.Context, completion *multipartCompletion) error {
+	return s.registerVerifiedClientMediaBundle(ctx, completion, func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return requireFreshFileIngestAuthority(ctx, store, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID, lockActive)
 	})
 }
 
-func clientMediaFileReady(ctx context.Context, db *gorm.DB, file model.File) (bool, error) {
+func clientMediaFileReady(ctx context.Context, store Store, file File) (bool, error) {
 	if file.ClientMediaBundleID == nil {
 		return false, nil
 	}
@@ -193,16 +185,21 @@ func clientMediaFileReady(ctx context.Context, db *gorm.DB, file model.File) (bo
 	} else {
 		required = append(required, clientThumbnail.String())
 	}
-	var count int64
-	err := db.WithContext(ctx).Table("file_derivative AS d").
-		Joins("LEFT JOIN media_generation AS g ON g.id = d.media_generation_id").
-		Joins("LEFT JOIN public_asset AS artifact ON artifact.id = d.asset_id").
-		Where("d.file_id = ? AND d.type IN ? AND ((g.file_id = ? AND g.status = ?) OR (artifact.source_file_id = ? AND artifact.status = ?))",
-			file.ID, required, file.ID, model.MediaGenerationStatusReady, file.ID, model.PublicAssetStatusReady).
-		Count(&count).Error
+	count, err := store.ReadyIngestDerivativeCount(ctx, file.ID, required)
 	return count == int64(len(required)), err
 }
-func (s *FileService) publishClientMediaReady(ctx context.Context, completion *multipartCompletion) error {
+
+func (s *Service) clientMediaFileReady(ctx context.Context, file File) (bool, error) {
+	var ready bool
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		ready, err = clientMediaFileReady(ctx, store, file)
+		return err
+	})
+	return ready, err
+}
+
+func (s *Service) publishClientMediaReady(ctx context.Context, completion *multipartCompletion) error {
 	if completion.session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -213,36 +210,43 @@ func (s *FileService) publishClientMediaReady(ctx context.Context, completion *m
 		return err
 	}
 	duration := int32(math.Ceil(plan.DurationSeconds))
-	outputs := &managev1.MediaProcessingLifecycleOutputs{HlsGenerationId: &hlsID, DurationSeconds: &duration}
+	outputs := &domain.ProcessingOutputs{HLSGenerationID: &hlsID, DurationSeconds: &duration}
 	for _, artifact := range plan.Artifacts {
 		kind := artifact.assetKind()
 		id := stableFileIngestFinalizerID(fileID, kind)
 		switch kind {
 		case "waveform":
-			outputs.WaveformAssetId = &id
+			outputs.WaveformAssetID = &id
 		case "spectrogram":
-			outputs.SpectrogramAssetId = &id
+			outputs.SpectrogramAssetID = &id
 		case "thumbnail":
-			outputs.ThumbnailAssetId = &id
+			outputs.ThumbnailAssetID = &id
 		}
 	}
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
+	entityType := EntityFile
 	entityID := fileID
 	var trackID, releaseID *string
 	if completion.target.requiresDurableAttachment() {
-		entityType = managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
+		entityType = EntityTrack
 		entityID = completion.session.EntityID
 		trackID = &entityID
-		var track model.Track
-		if err := s.db.WithContext(ctx).Select("release_id").Where("id = ? AND audio_original_file_id = ?", entityID, fileID).Take(&track).Error; err != nil {
+		var release string
+		if err := s.units.Read(ctx, func(store Store) error {
+			var err error
+			release, err = store.AttachedIngestTrackRelease(ctx, entityID, fileID)
+			return err
+		}); err != nil {
 			return err
 		}
-		releaseID = &track.ReleaseID
+		releaseID = &release
 	}
-	event := &managev1.MediaProcessingLifecycleEvent{CorrelationId: completion.correlationID, EntityType: entityType, EntityId: entityID, FileId: fileID, Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, Outputs: outputs, TimestampMs: time.Now().UnixMilli(), SlotId: completion.session.SlotID, AttemptId: completion.session.AttemptID, TrackId: trackID, ReleaseId: releaseID}
-	return publishSignalProto(ctx, s.asyncPublisher, eventpkg.SignalMediaProcessingLifecycle, event)
+	event := domain.ProcessingEvent{CorrelationID: completion.correlationID, EntityType: int32(entityType), EntityID: entityID, FileID: fileID, Status: int32(ProcessingReady), Outputs: outputs, TimestampMS: time.Now().UnixMilli(), SlotID: completion.session.SlotID, AttemptID: completion.session.AttemptID, TrackID: trackID, ReleaseID: releaseID}
+	if s.asyncPublisher == nil {
+		return fmt.Errorf("async publisher is required")
+	}
+	return s.asyncPublisher.PublishProcessing(ctx, event)
 }
-func (s *FileService) cleanupClientMediaStaging(ctx context.Context, session model.UploadSession) error {
+func (s *Service) cleanupClientMediaStaging(ctx context.Context, session domain.UploadSession) error {
 	if session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -275,12 +279,13 @@ func CleanupClientMediaStaging(ctx context.Context, client *s3.Client, bucket, b
 	return nil
 }
 
-func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
-	var file model.File
-	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if err == gorm.ErrRecordNotFound {
+func (s *Service) clientMediaRegistrationReady(ctx context.Context, session domain.UploadSession) (bool, error) {
+	var file File
+	err := s.readUploadFacts(ctx, func(store Store) error { var err error; file, err = store.IngestFile(ctx, session.FileID); return err })
+	if errors.Is(err, domain.ErrFileNotFound) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, err
 	}
@@ -290,19 +295,26 @@ func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session 
 	if session.ClientMediaBundleID == nil || *file.ClientMediaBundleID != *session.ClientMediaBundleID {
 		return false, fmt.Errorf("registered bundle authority differs")
 	}
-	return clientMediaFileReady(ctx, s.db, file)
+	return s.clientMediaFileReady(ctx, file)
 }
 
 func clientMediaCompletionError(err error) error {
-	if connect.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
+	if errors.As(err, new(missingClientArtifactError)) {
 		return err
 	}
-	if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {
+	if mutation.IsDenied(err) || mutation.IsUnauthenticated(err) {
 		return err
 	}
-	return errs.FailedPrecondition(err.Error())
+	return domainerr.Precondition(clientErrorText(err))
 }
 
+// missingClientArtifactError answers a client media artifact that is not
+// staged yet; the client may upload it and retry.
+type missingClientArtifactError struct{ answer *domainerr.Error }
+
+func (err missingClientArtifactError) Error() string { return err.answer.Error() }
+func (err missingClientArtifactError) Unwrap() error { return err.answer }
+
 func missingClientArtifact(path string) error {
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s %s", missingClientArtifactReason, path))
+	return missingClientArtifactError{domainerr.New(domainerr.Unavailable, "", fmt.Sprintf("%s %s", missingClientArtifactReason, path))}
 }

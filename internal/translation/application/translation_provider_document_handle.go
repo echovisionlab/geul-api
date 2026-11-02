@@ -7,11 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var errTranslationProviderDocumentHandleMismatch = errors.New("translation provider document handle does not match the running job")
@@ -31,8 +27,8 @@ func (m *TranslationJobManager) persistTranslationProviderDocumentHandle(
 		return fmt.Errorf("translation provider document handle requires document identity and submission time")
 	}
 
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		job, err := lockRunningTranslationProviderDocumentJob(ctx, tx, jobID, provider, modelName)
+	return runRunningJobStep(ctx, m.mutations, jobID, func(ctx context.Context, store JobStore) error {
+		job, err := lockRunningTranslationProviderDocumentJob(ctx, store, jobID, provider, modelName)
 		if err != nil {
 			return err
 		}
@@ -45,20 +41,14 @@ func (m *TranslationJobManager) persistTranslationProviderDocumentHandle(
 			return errTranslationProviderDocumentHandleMismatch
 		}
 
-		now := m.now().UTC()
-		result := tx.WithContext(ctx).
-			Model(&model.TranslationJob{}).
-			Where("id = ? AND status = ? AND provider = ? AND model = ?", jobID, translationJobStatusRunning, provider, modelName).
-			Updates(structured.Fields{
-				"provider_document_id":           handle.DocumentID(),
-				"provider_document_key":          handle.DocumentKey(),
-				"provider_document_submitted_at": submittedAt.UTC(),
-				"updated_at":                     now,
-			})
-		if result.Error != nil {
-			return result.Error
+		updated, err := store.SetJobProviderDocument(ctx, jobID, ProviderDocument{
+			Provider: provider, Model: modelName,
+			DocumentID: handle.DocumentID(), DocumentKey: handle.DocumentKey(), SubmittedAt: submittedAt.UTC(),
+		}, m.now().UTC())
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected == 0 {
+		if !updated {
 			return errTranslationJobNoLongerCurrent
 		}
 		return nil
@@ -67,36 +57,26 @@ func (m *TranslationJobManager) persistTranslationProviderDocumentHandle(
 
 func (m *TranslationJobManager) clearExpiredTranslationProviderDocumentHandle(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 ) error {
 	if job == nil || job.Provider == nil || job.Model == nil ||
 		job.ProviderDocumentID == nil || job.ProviderDocumentKey == nil ||
 		job.ProviderDocumentSubmittedAt == nil {
 		return errTranslationProviderDocumentHandleMismatch
 	}
-	result := m.db.WithContext(ctx).Model(&model.TranslationJob{}).
-		Where(
-			`id = ? AND status = ? AND provider = ? AND model = ?
-				AND provider_document_id = ? AND provider_document_key = ?
-				AND provider_document_submitted_at = ?`,
-			job.ID,
-			translationJobStatusRunning,
-			*job.Provider,
-			*job.Model,
-			*job.ProviderDocumentID,
-			*job.ProviderDocumentKey,
-			job.ProviderDocumentSubmittedAt.UTC(),
-		).
-		Updates(structured.Fields{
-			"provider_document_id":           nil,
-			"provider_document_key":          nil,
-			"provider_document_submitted_at": nil,
-			"updated_at":                     m.now().UTC(),
-		})
-	if result.Error != nil {
-		return result.Error
+	document := ProviderDocument{
+		Provider: *job.Provider, Model: *job.Model,
+		DocumentID: *job.ProviderDocumentID, DocumentKey: *job.ProviderDocumentKey,
+		SubmittedAt: job.ProviderDocumentSubmittedAt.UTC(),
 	}
-	if result.RowsAffected != 1 {
+	now := m.now().UTC()
+	cleared, err := m.runJobUpdate(ctx, func(ctx context.Context, store JobStore) (bool, error) {
+		return store.ClearJobProviderDocument(ctx, job.ID, document, now)
+	})
+	if err != nil {
+		return err
+	}
+	if !cleared {
 		return errTranslationJobNoLongerCurrent
 	}
 	job.ProviderDocumentID = nil
@@ -107,16 +87,16 @@ func (m *TranslationJobManager) clearExpiredTranslationProviderDocumentHandle(
 
 func lockRunningTranslationProviderDocumentJob(
 	ctx context.Context,
-	tx *gorm.DB,
+	store JobStore,
 	jobID string,
 	provider string,
 	modelName string,
-) (*model.TranslationJob, error) {
-	job, err := lockTranslationProviderDocumentJob(ctx, tx, jobID)
+) (*Job, error) {
+	job, err := lockTranslationProviderDocumentJob(ctx, store, jobID)
 	if err != nil {
 		return nil, err
 	}
-	if job.Status != translationJobStatusRunning || job.Provider == nil || job.Model == nil ||
+	if job.Status != JobRunning || job.Provider == nil || job.Model == nil ||
 		*job.Provider != provider || *job.Model != modelName {
 		return nil, errTranslationJobNoLongerCurrent
 	}
@@ -125,18 +105,14 @@ func lockRunningTranslationProviderDocumentJob(
 
 func lockTranslationProviderDocumentJob(
 	ctx context.Context,
-	tx *gorm.DB,
+	store JobStore,
 	jobID string,
-) (*model.TranslationJob, error) {
-	var job model.TranslationJob
-	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "status", "provider", "model", "provider_document_id", "provider_document_key", "provider_document_submitted_at").
-		First(&job, "id = ?", jobID).Error
+) (*Job, error) {
+	job, err := store.LockJobProviderDocument(ctx, jobID)
+	if errors.Is(err, ErrJobNotFound) {
+		return nil, errTranslationJobNoLongerCurrent
+	}
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errTranslationJobNoLongerCurrent
-		}
 		return nil, err
 	}
 	return &job, nil

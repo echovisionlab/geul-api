@@ -2,23 +2,20 @@ package work
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"log/slog"
+	"fmt"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
+	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -29,7 +26,7 @@ import (
 // consumed by the DCDP adapter. The adapter, rather than this domain package,
 // owns conversion to compact protocol nodes and operations.
 type AIDocumentState struct {
-	Work             model.Work
+	Work             Work
 	SourceLocale     string
 	Locale           string
 	LocaleExists     bool
@@ -73,45 +70,29 @@ type AIDocumentMutationResult struct {
 	TargetRevision *string
 }
 
-// AIDocumentService owns Work authorization, lifecycle, aggregate locking and
-// atomic metadata+Block persistence for DCDP clients.
-type AIDocumentService struct{ internal *InternalWorkService }
-
 var errRollbackWorkAIDocumentValidation = errors.New("rollback Work AI document validation")
 
-func NewAIDocumentService(internal *InternalWorkService) (*AIDocumentService, error) {
-	if internal == nil || internal.db == nil || internal.spiceDB == nil || internal.contentBlocks == nil {
-		return nil, errors.New("work AI document service dependencies are required")
-	}
-	return &AIDocumentService{internal: internal}, nil
-}
-
-func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Load", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+// LoadAIDocument reads the authorized Work state of one locale for a DCDP
+// client.
+func (s *Service) LoadAIDocument(ctx context.Context, workID, locale string) (AIDocumentState, error) {
 	if err := validateWorkAIDocumentIdentity(workID, locale); err != nil {
 		return AIDocumentState{}, err
 	}
+	var root Work
+	var documentID uuid.UUID
+	var principal *auth.UserInfo
+	access := mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		var err error
+		if root, documentID, err = loadWorkAIDocumentRoot(ctx, store, workID, ShareLock); err != nil {
+			return err
+		}
+		principal, err = authorizeWorkAIDocument(ctx, lockActive, s.spiceDB, root, workAuthorizationRead)
+		return err
+	})
 	var state AIDocumentState
-	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, "SHARE")
-		if err != nil {
-			return err
-		}
-		principal, err := authorizeWorkAIDocument(
-			ctx, tx, s.internal.spiceDB, root, workAuthorizationRead,
-		)
-		if err != nil {
-			return err
-		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, documentID, locale, principal.MemberID.String(),
-		)
+	err := s.readLocked(ctx, access, func(ctx context.Context, store Store) error {
+		var err error
+		state, err = loadAIDocumentStateAfterAuthorization(ctx, store, root, documentID, locale, principal.MemberID.String())
 		return err
 	})
 	return state, err
@@ -127,19 +108,19 @@ func validateWorkAIDocumentIdentity(workID, locale string) error {
 	return nil
 }
 
-func (s *AIDocumentService) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.Work,
+	store Store,
+	root Work,
 	documentID uuid.UUID,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
-	state, err := loadWorkTargetLocaleState(ctx, tx, s.internal.contentBlocks, root.ID, documentID, locale, false)
+	state, err := loadWorkTargetLocaleState(ctx, store, root.ID, documentID, locale, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-	metadata := workLocaleMetadataRow{}
+	metadata := LocaleMetadata{}
 	exists := locale == state.SourceLocale
 	var targetRevision *string
 	if exists {
@@ -162,196 +143,180 @@ func (s *AIDocumentService) loadAIDocumentStateAfterAuthorization(
 	}, nil
 }
 
-func (s *AIDocumentService) Apply(ctx context.Context, mutation AIDocumentMutation) (AIDocumentMutationResult, error) {
-	return s.ExecuteAIDocumentMutation(
-		ctx, mutation.WorkID, mutation.Locale, AIDocumentExecutionApply,
-		func(AIDocumentState) (AIDocumentMutation, error) { return mutation, nil },
-	)
+// workAIDocumentApply is the outcome of an applied AI document mutation.
+type workAIDocumentApply struct {
+	result    AIDocumentMutationResult
+	operation sharedtelemetry.AuditItemOperation
+	audited   bool
 }
 
-// Validate executes the exact generated/File/domain mutation path and rolls it
-// back, keeping DCDP Validate and Apply behavior identical.
-func (s *AIDocumentService) Validate(ctx context.Context, mutation AIDocumentMutation) error {
-	_, err := s.ExecuteAIDocumentMutation(
-		ctx, mutation.WorkID, mutation.Locale, AIDocumentExecutionValidate,
-		func(AIDocumentState) (AIDocumentMutation, error) { return mutation, nil },
-	)
-	return err
-}
-
-func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
+func applyAIDocumentMutationInTransaction(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation AIDocumentMutation,
-	fence contentblock.DomainFence,
-) (AIDocumentMutationResult, error) {
-	if _, err := parseWorkContentUUID("work_id", mutation.WorkID); err != nil {
-		return AIDocumentMutationResult{}, err
+	fence ContentFence,
+) (workAIDocumentApply, error) {
+	if err := validateWorkAIDocumentMutation(mutation); err != nil {
+		return workAIDocumentApply{}, err
 	}
-	if mutation.ExpectedRevision == uuid.Nil || mutation.Batch.DocumentID == uuid.Nil {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("expected_revision", "is required")
-	}
-	contributorIDs := workAIContributorIDs(mutation.ContributorMemberID)
-	if len(contributorIDs) != 1 || len(mutation.Batch.ContributorMemberIDs) != 1 ||
-		mutation.Batch.ContributorMemberIDs[0] != contributorIDs[0] {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("contributor", "compiled attribution must match the current Member")
-	}
-	if mutation.Batch.ExpectedRevision != mutation.ExpectedRevision {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("expected_revision", "does not match the compiled Block batch")
-	}
-	if strings.TrimSpace(mutation.ObservedSourceLocale) == "" {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("source_locale", "observed source locale is required")
-	}
-	if mutation.Locale != mutation.ObservedSourceLocale {
-		if len(mutation.Batch.Upserts) != 0 || len(mutation.Batch.Deletes) != 0 || len(mutation.Batch.Reorders) != 0 {
-			return AIDocumentMutationResult{}, errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Work target locale cannot mutate the shared Block graph",
-			)
-		}
-		for _, group := range mutation.Batch.LocaleGroups {
-			if group.Locale != mutation.Locale {
-				return AIDocumentMutationResult{}, errs.CollaborationMutationRejection(
-					intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-					"Work target mutation must match the authorized locale",
-				)
-			}
-		}
-	}
-	if mutation.Locale == mutation.ObservedSourceLocale &&
-		(mutation.Metadata.EnsureLocale || mutation.CreateTranslation || mutation.DeleteTranslation) {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("locale", "Work source translation lifecycle cannot be changed")
-	}
-	if mutation.CreateTranslation && (mutation.DeleteTranslation || mutation.Metadata.SetTitle || mutation.Metadata.SetSummary || hasWorkAIDocumentBatchChanges(mutation.Batch)) {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("operations", "translation creation must be the only mutation")
-	}
-	if mutation.DeleteTranslation && (mutation.CreateTranslation || mutation.Metadata != AIDocumentMetadataPatch{} || hasWorkAIDocumentBatchChanges(mutation.Batch)) {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("operations", "translation deletion must be the only mutation")
-	}
-
 	now := time.Now().UTC()
 	if mutation.Locale != mutation.ObservedSourceLocale {
-		patch := workTargetMetadataPatch{
-			EnsureLocale: mutation.Metadata.EnsureLocale || mutation.CreateTranslation,
-			UpdateTitle:  mutation.Metadata.SetTitle, Title: mutation.Metadata.Title,
-			UpdateSummary: mutation.Metadata.SetSummary, Summary: mutation.Metadata.Summary,
-			DeleteLocale: mutation.DeleteTranslation,
-		}
-		result, targetRevision, err := applyWorkTargetLocaleBatch(
-			ctx, tx, s.internal.contentBlocks, mutation.WorkID, mutation.Batch.DocumentID,
-			mutation.Locale, mutation.Batch, mutation.ExpectedTargetRevision, patch,
-			true, !mutation.ObservedLocaleExists, false, false, now, fence,
-		)
-		if err != nil {
-			return AIDocumentMutationResult{}, err
-		}
-		if result.Changed {
-			operation := sharedtelemetry.AuditItemOperationUpdated
-			if !mutation.ObservedLocaleExists {
-				operation = sharedtelemetry.AuditItemOperationCreated
-			}
-			if mutation.DeleteTranslation {
-				operation = sharedtelemetry.AuditItemOperationDeleted
-			}
-			if err := appendWorkMemberTargetLocaleAudit(
-				ctx, tx, s.internal.auditWriter, mutation.ContributorMemberID,
-				mutation.WorkID, mutation.Locale, operation,
-			); err != nil {
-				return AIDocumentMutationResult{}, err
-			}
-		}
-		return AIDocumentMutationResult{Content: result, TargetRevision: targetRevision}, nil
+		return applyWorkAIDocumentTarget(ctx, store, mutation, fence, now)
 	}
 	if mutation.ExpectedTargetRevision != nil {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("expected_target_revision", "source Work mutation cannot carry a target revision")
+		return workAIDocumentApply{}, domainerr.InvalidField("expected_target_revision", "source Work mutation cannot carry a target revision")
 	}
-
-	var metadataEffect contentblock.MetadataEffect
-	var err error
-	result, err := s.internal.contentBlocks.ApplyBatchWithMetadata(
-		ctx, tx, mutation.Batch, fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			metadataEffect, err = applyWorkAIDocumentMetadata(
-				ctx, tx, mutation.WorkID, mutation.Locale,
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, mutation.Batch, fence,
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			return applyWorkAIDocumentMetadata(
+				ctx, store, mutation.WorkID, mutation.Locale,
 				mutation.ObservedLocaleExists, mutation.Metadata, now,
 			)
-			return metadataEffect, err
 		},
 	)
-	if err != nil {
-		return AIDocumentMutationResult{}, err
+	applied := workAIDocumentApply{
+		result:    AIDocumentMutationResult{Content: result},
+		operation: sharedtelemetry.AuditItemOperationUpdated,
+		audited:   result.Changed,
 	}
-	if !result.Changed {
-		return AIDocumentMutationResult{Content: result}, nil
+	if err != nil || !result.Changed {
+		return applied, err
 	}
-	if err := tx.WithContext(ctx).Model(&model.Work{}).
-		Where("id = ?", mutation.WorkID).UpdateColumn("updated_at", now).Error; err != nil {
-		return AIDocumentMutationResult{}, err
-	}
-	return AIDocumentMutationResult{Content: result}, nil
+	return applied, store.TouchWork(ctx, mutation.WorkID, now)
 }
 
-func loadWorkAIDocumentRoot(ctx context.Context, tx *gorm.DB, workID, lock string) (model.Work, uuid.UUID, error) {
-	var root model.Work
-	query := tx.WithContext(ctx).Table("work").Where("id = ?", workID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
+// validateWorkAIDocumentMutation rejects a compiled mutation whose shape
+// the Work document cannot take.
+func validateWorkAIDocumentMutation(mutation AIDocumentMutation) error {
+	if _, err := parseWorkContentUUID("work_id", mutation.WorkID); err != nil {
+		return err
 	}
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.Work{}, uuid.Nil, errs.NotFound("work", workID)
+	if mutation.ExpectedRevision == uuid.Nil || mutation.Batch.DocumentID == uuid.Nil {
+		return domainerr.InvalidField("expected_revision", "is required")
+	}
+	contributorID, parseErr := uuid.Parse(mutation.ContributorMemberID)
+	if parseErr != nil || contributorID == uuid.Nil || len(mutation.Batch.ContributorMemberIDs) != 1 ||
+		mutation.Batch.ContributorMemberIDs[0] != contributorID {
+		return domainerr.InvalidField("contributor", "compiled attribution must match the current Member").WithCause(parseErr)
+	}
+	if mutation.Batch.ExpectedRevision != mutation.ExpectedRevision {
+		return domainerr.InvalidField("expected_revision", "does not match the compiled Block batch")
+	}
+	if strings.TrimSpace(mutation.ObservedSourceLocale) == "" {
+		return domainerr.InvalidField("source_locale", "observed source locale is required")
+	}
+	if mutation.Locale != mutation.ObservedSourceLocale {
+		if err := validateWorkAIDocumentTargetBatch(mutation); err != nil {
+			return err
 		}
-		return model.Work{}, uuid.Nil, errs.Internal(err)
+	} else if mutation.Metadata.EnsureLocale || mutation.CreateTranslation || mutation.DeleteTranslation {
+		return domainerr.InvalidField("locale", "Work source translation lifecycle cannot be changed")
+	}
+	if mutation.CreateTranslation && (mutation.DeleteTranslation || mutation.Metadata.SetTitle || mutation.Metadata.SetSummary || hasWorkAIDocumentBatchChanges(mutation.Batch)) {
+		return domainerr.InvalidField("operations", "translation creation must be the only mutation")
+	}
+	if mutation.DeleteTranslation && (mutation.CreateTranslation || mutation.Metadata != AIDocumentMetadataPatch{} || hasWorkAIDocumentBatchChanges(mutation.Batch)) {
+		return domainerr.InvalidField("operations", "translation deletion must be the only mutation")
+	}
+	return nil
+}
+
+// validateWorkAIDocumentTargetBatch rejects a target locale batch that
+// changes the shared Block graph or another locale.
+func validateWorkAIDocumentTargetBatch(mutation AIDocumentMutation) error {
+	if len(mutation.Batch.Upserts) != 0 || len(mutation.Batch.Deletes) != 0 || len(mutation.Batch.Reorders) != 0 {
+		return domainerr.CollaborationRejection(
+			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+			"Work target locale cannot mutate the shared Block graph",
+		)
+	}
+	for _, group := range mutation.Batch.LocaleGroups {
+		if group.Locale != mutation.Locale {
+			return domainerr.CollaborationRejection(
+				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
+				"Work target mutation must match the authorized locale",
+			)
+		}
+	}
+	return nil
+}
+
+func applyWorkAIDocumentTarget(
+	ctx context.Context,
+	store Store,
+	mutation AIDocumentMutation,
+	fence ContentFence,
+	now time.Time,
+) (workAIDocumentApply, error) {
+	patch := workTargetMetadataPatch{
+		EnsureLocale: mutation.Metadata.EnsureLocale || mutation.CreateTranslation,
+		UpdateTitle:  mutation.Metadata.SetTitle, Title: mutation.Metadata.Title,
+		UpdateSummary: mutation.Metadata.SetSummary, Summary: mutation.Metadata.Summary,
+		DeleteLocale: mutation.DeleteTranslation,
+	}
+	result, targetRevision, err := applyWorkTargetLocaleMutation(ctx, store, workTargetLocaleMutationInput{
+		WorkID: mutation.WorkID, DocumentID: mutation.Batch.DocumentID, Locale: mutation.Locale,
+		Batch: mutation.Batch, ExpectedTargetRevision: mutation.ExpectedTargetRevision, Patch: patch,
+		Policy: targetlocale.Policy{AllowCreate: true, SeedSource: !mutation.ObservedLocaleExists},
+		Now:    now, Fence: fence,
+	})
+	applied := workAIDocumentApply{
+		result:    AIDocumentMutationResult{Content: result, TargetRevision: targetRevision},
+		operation: sharedtelemetry.AuditItemOperationUpdated,
+		audited:   result.Changed,
+	}
+	switch {
+	case mutation.DeleteTranslation:
+		applied.operation = sharedtelemetry.AuditItemOperationDeleted
+	case !mutation.ObservedLocaleExists:
+		applied.operation = sharedtelemetry.AuditItemOperationCreated
+	}
+	return applied, err
+}
+
+func loadWorkAIDocumentRoot(ctx context.Context, store Store, workID string, lock RowLock) (Work, uuid.UUID, error) {
+	root, err := store.LockWork(ctx, workID, lock)
+	if err != nil {
+		if errors.Is(err, ErrWorkNotFound) {
+			return Work{}, uuid.Nil, domainerr.ResourceNotFound("work", workID)
+		}
+		return Work{}, uuid.Nil, err
 	}
 	if root.ContentDocumentID == nil {
-		return model.Work{}, uuid.Nil, errs.FailedPrecondition("Work content document is not initialized")
+		return Work{}, uuid.Nil, domainerr.Precondition("Work content document is not initialized")
 	}
 	documentID, err := uuid.Parse(*root.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadWorkAIDocumentRoot", failurecause.Attr(err))
-		}
-		return model.Work{}, uuid.Nil, errs.InternalMsg("Work content document ID is invalid")
+		return Work{}, uuid.Nil, fmt.Errorf("Work content document ID %q is invalid", *root.ContentDocumentID)
 	}
 	return root, documentID, nil
 }
 
-type workAIDocumentLocale struct {
-	Title   *string
-	Summary *string
-}
-
 func applyWorkAIDocumentMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	workID, locale string,
 	observedExists bool,
 	patch AIDocumentMetadataPatch,
 	now time.Time,
 ) (contentblock.MetadataEffect, error) {
-	var source struct {
-		SourceLocale string `gorm:"column:source_locale"`
+	sourceLocale, err := store.LockSourceLocale(ctx, workID)
+	if err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
-	if err := tx.WithContext(ctx).
-		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("source_locale").
-		Where("id = ?", workID).
-		Take(&source).Error; err != nil {
-		return contentblock.MetadataEffect{}, errs.Internal(err)
+	if locale != sourceLocale || patch.EnsureLocale {
+		return contentblock.MetadataEffect{}, domainerr.InvalidField("locale", "Work source metadata mutation must target the current source locale")
 	}
-	if locale != source.SourceLocale || patch.EnsureLocale {
-		return contentblock.MetadataEffect{}, errs.InvalidArgument("locale", "Work source metadata mutation must target the current source locale")
-	}
-	current, exists, err := loadWorkAIDocumentLocaleForUpdate(ctx, tx, workID, locale)
+	current, exists, err := store.LockedLocaleText(ctx, workID, locale)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	if exists != observedExists {
-		return contentblock.MetadataEffect{}, errs.FailedPrecondition("Work translation presence changed; reload before saving")
+		return contentblock.MetadataEffect{}, domainerr.Precondition("Work translation presence changed; reload before saving")
 	}
 	if !exists {
-		return contentblock.MetadataEffect{}, errs.FailedPrecondition("Work source translation is missing")
+		return contentblock.MetadataEffect{}, domainerr.Precondition("Work source translation is missing")
 	}
 	nextTitle := cloneOptionalString(current.Title)
 	nextSummary := cloneOptionalString(current.Summary)
@@ -362,54 +327,29 @@ func applyWorkAIDocumentMetadata(
 		nextSummary = cloneOptionalString(patch.Summary)
 	}
 	if nextTitle == nil || strings.TrimSpace(*nextTitle) == "" {
-		return contentblock.MetadataEffect{}, errs.InvalidArgument("title", "Work source title cannot be empty")
+		return contentblock.MetadataEffect{}, domainerr.InvalidField("title", "Work source title cannot be empty")
 	}
 	changed := !exists || !nullableStringEqual(current.Title, nextTitle) || !nullableStringEqual(current.Summary, nextSummary)
 	if !changed {
 		return contentblock.MetadataEffect{}, nil
 	}
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO work_translation (entity_id, locale, title, summary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-			title = EXCLUDED.title, summary = EXCLUDED.summary, updated_at = EXCLUDED.updated_at
-	`, workID, locale, nextTitle, nextSummary, now, now).Error; err != nil {
-		return contentblock.MetadataEffect{}, errs.Internal(err)
+	if err := store.UpsertSourceLocale(ctx, workID, locale, nextTitle, nextSummary, now); err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{
 		Changed: true, AffectsTranslationSource: true,
-		SourceLocale: source.SourceLocale, ChangedLocales: []string{locale},
+		SourceLocale: sourceLocale, ChangedLocales: []string{locale},
 	}, nil
-}
-
-func loadWorkAIDocumentLocaleForUpdate(ctx context.Context, tx *gorm.DB, workID, locale string) (workAIDocumentLocale, bool, error) {
-	var row struct {
-		Title   sql.NullString `gorm:"column:title"`
-		Summary sql.NullString `gorm:"column:summary"`
-	}
-	result := tx.WithContext(ctx).
-		Table("work_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("title", "summary").
-		Where("entity_id = ? AND locale = ?", workID, locale).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return workAIDocumentLocale{}, false, nil
-	}
-	if result.Error != nil {
-		return workAIDocumentLocale{}, false, errs.Internal(result.Error)
-	}
-	return workAIDocumentLocale{Title: nullableStringFromSQL(row.Title), Summary: nullableStringFromSQL(row.Summary)}, true, nil
 }
 
 func authorizeWorkAIDocument(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
-	root model.Work,
+	lockActive func(*auth.UserInfo) (bool, error),
+	checker authz.AuthorizationDecisionChecker,
+	root Work,
 	use workAuthorizationUse,
 ) (*auth.UserInfo, error) {
-	principal, err := lockWorkAIDocumentPrincipal(ctx, tx)
+	principal, err := lockWorkAIDocumentPrincipal(ctx, lockActive)
 	if err != nil {
 		return nil, err
 	}
@@ -417,39 +357,55 @@ func authorizeWorkAIDocument(
 	if use == workAuthorizationMutation {
 		normal = policyv1.Work.Edit
 	}
-	action := workLifecycleAction(string(root.Status), normal, use)
+	action := workLifecycleAction(root.Status, normal, use)
 	if err := requireWorkPermissionForCurrentActor(ctx, checker, root.ID, action); err != nil {
 		return nil, err
 	}
 	return principal, nil
 }
 
-func lockWorkAIDocumentPrincipal(ctx context.Context, tx *gorm.DB) (*auth.UserInfo, error) {
+func lockWorkAIDocumentPrincipal(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error)) (*auth.UserInfo, error) {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if !active {
-		return nil, errs.NoPermission("edit", "work")
+		return nil, domainerr.NoPermission("edit", "work")
 	}
 	return principal, nil
 }
 
-func workAIContributorIDs(memberID string) []uuid.UUID {
-	parsed, err := uuid.Parse(memberID)
-	if err != nil || parsed == uuid.Nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "parse_ai_contributor", failurecause.Attr(err))
-		}
-		return nil
-	}
-	return []uuid.UUID{parsed}
-}
-
 func hasWorkAIDocumentBatchChanges(batch contentblock.Batch) bool {
 	return len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 || len(batch.LocaleGroups) != 0
+}
+
+// requireDocumentContributors validates the contributors of a save and
+// key-share-locks their Members.
+func requireDocumentContributors(ctx context.Context, store Store, contributors []string) error {
+	if len(contributors) == 0 {
+		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
+	}
+	normalized := make([]string, 0, len(contributors))
+	for _, contributor := range contributors {
+		contributor = strings.TrimSpace(contributor)
+		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
+		}
+		if len(normalized) > 0 && normalized[len(normalized)-1] >= contributor {
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
+		}
+		normalized = append(normalized, contributor)
+	}
+	locked, err := store.LockContributors(ctx, normalized)
+	if err != nil {
+		return fmt.Errorf("lock Work save contributor Members: %w", err)
+	}
+	if len(locked) != len(normalized) {
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
+	}
+	return nil
 }

@@ -8,27 +8,27 @@ import (
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // ArtistInterchange adapts XLIFF target projection and exact sparse mutation
 // to Artist's existing typed Content Block transaction seam.
 type ArtistInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewArtistInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *ArtistInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Artist translation interchange Audit dependencies are required")
 	}
-	return &ArtistInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &ArtistInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*ArtistInterchange) LoadTranslationInterchangeTarget(
@@ -70,13 +70,12 @@ func (a *ArtistInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
+	job := artistdomain.TranslationJob{
 		EntityType: command.EntityType, EntityID: command.EntityID,
-		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		RequestedByMemberID: memberID,
+		TargetLocale: command.TargetLocale, RequestedByMemberID: memberID,
 	}
-	if err := artistdomain.ApplyTypedTranslationInterchangeCandidateWithDB(
-		ctx, db, store, job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
+	if err := artistdomain.ApplyTypedTranslationInterchangeCandidate(
+		ctx, artistJoined(db, store, nil), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
@@ -89,7 +88,7 @@ func (a *ArtistInterchange) ApplyTranslationInterchange(
 	changed := after.state.Revision != current.state.Revision
 	if changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditArtistUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditArtistUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -113,11 +112,11 @@ func loadArtistInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindArtist)); err != nil {
 		return creativeInterchangeTarget{}, err
 	}
-	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
+	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, artistJoined(db, store, nil), entityID, locale)
 	if err != nil {
 		return creativeInterchangeTarget{}, err
 	}
 	return projectCreativeInterchangeTarget(plan, target.Exists, target.Revision, target.Document)
 }
 
-var _ application.TranslationInterchangeDomains = (*ArtistInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*ArtistInterchange)(nil)

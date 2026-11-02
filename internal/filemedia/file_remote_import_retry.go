@@ -3,27 +3,18 @@ package filemedia
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/postgreslock"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var remoteImportFileNamespace = uuid.MustParse("1b9e8e7d-3051-52c6-a782-3cb87f5b82cc")
-
-const maxConcurrentRemoteImportAdvisoryLocks = 2
-
-var remoteImportAdvisoryLockSlots = make(chan struct{}, maxConcurrentRemoteImportAdvisoryLocks)
 
 type remoteImportOperationIdentity struct {
 	fileID    string
@@ -41,7 +32,7 @@ func resolveRemoteImportOperationIdentity(
 	if !isEditorFileIngestUploadType(opts.uploadType) &&
 		!requiresDurableFileIngestAttachment(projection) &&
 		!dedicatedPublicAsset &&
-		(opts.uploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || strings.TrimSpace(opts.correlationID) == "") {
+		(opts.uploadType != UploadGeneralFile || strings.TrimSpace(opts.correlationID) == "") {
 		return remoteImportOperationIdentity{
 			fileID:    uuid.NewString(),
 			attemptID: uuid.NewString(),
@@ -93,28 +84,7 @@ func stringValueOrEmpty(value *string) string {
 	return *value
 }
 
-func remoteImportAdvisoryLockKey(fileID string) int64 {
-	digest := sha256.Sum256([]byte(strings.TrimSpace(fileID)))
-	return int64(binary.BigEndian.Uint64(digest[:8]))
-}
-
-func withRemoteImportAdvisoryLock(
-	ctx context.Context,
-	db *gorm.DB,
-	fileID string,
-	operation func(*gorm.DB) error,
-) error {
-	return postgreslock.WithBoundedAdvisoryLock(
-		ctx,
-		db,
-		remoteImportAdvisoryLockKey(fileID),
-		remoteImportAdvisoryLockSlots,
-		"remote import",
-		operation,
-	)
-}
-
-func (s *FileService) restoreCompletedRemoteImport(
+func (s *Service) restoreCompletedRemoteImport(
 	ctx context.Context,
 	opts remoteFileImportOptions,
 	entityID string,
@@ -139,22 +109,26 @@ func (s *FileService) restoreCompletedRemoteImport(
 	return result, true, err
 }
 
-func (s *FileService) loadCompletedRemoteImportFile(
+func (s *Service) loadCompletedRemoteImportFile(
 	ctx context.Context,
 	fileID string,
-) (model.File, bool, error) {
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return model.File{}, false, nil
+) (File, bool, error) {
+	var file File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, fileID)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrFileNotFound) {
+			return File{}, false, nil
 		}
-		return model.File{}, false, fmt.Errorf("load existing remote import file: %w", err)
+		return File{}, false, fmt.Errorf("load existing remote import file: %w", err)
 	}
 	return file, true, nil
 }
 
 func validateCompletedRemoteImportFile(
-	file model.File,
+	file File,
 	slotID string,
 	identity remoteImportOperationIdentity,
 ) error {
@@ -177,18 +151,23 @@ func validateCompletedRemoteImportFile(
 	return nil
 }
 
-func (s *FileService) validateCompletedRemoteImportBinding(
+func (s *Service) validateCompletedRemoteImportBinding(
 	ctx context.Context,
 	fileID string,
 	entityID string,
 	opts remoteFileImportOptions,
 ) error {
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
+	var binding domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		binding, err = store.IngestBinding(ctx, fileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load existing remote import binding: %w", err)
 	}
+
 	var expectedEntityType *string
-	if opts.transcodeEntityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if opts.transcodeEntityType != EntityUnspecified {
 		value := opts.transcodeEntityType.String()
 		expectedEntityType = &value
 	}
@@ -200,12 +179,12 @@ func (s *FileService) validateCompletedRemoteImportBinding(
 	return nil
 }
 
-func (s *FileService) verifyCompletedRemoteImportObject(
+func (s *Service) verifyCompletedRemoteImportObject(
 	ctx context.Context,
-	file model.File,
-	uploadType managev1.UploadType,
+	file File,
+	uploadType UploadType,
 ) error {
-	target, err := CanonicalMediaObjectTargetForFile(file)
+	target, err := CanonicalObjectTarget(file)
 	if err != nil {
 		return fmt.Errorf("build existing remote import object target: %w", err)
 	}
@@ -221,8 +200,8 @@ func (s *FileService) verifyCompletedRemoteImportObject(
 	return nil
 }
 
-func (s *FileService) buildCompletedRemoteImportResult(
-	file model.File,
+func (s *Service) buildCompletedRemoteImportResult(
+	file File,
 	slotID string,
 	identity remoteImportOperationIdentity,
 	projection fileIngestProjectionIdentity,
@@ -240,7 +219,7 @@ func (s *FileService) buildCompletedRemoteImportResult(
 	if err != nil {
 		return nil, fmt.Errorf("sign existing remote import inline delivery: %w", err)
 	}
-	downloadFileName := CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
+	downloadFileName := mediaauth.CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
@@ -267,9 +246,9 @@ func (s *FileService) buildCompletedRemoteImportResult(
 	}, nil
 }
 
-func (s *FileService) createOrRestoreVerifiedRemoteImportRecord(
+func (s *Service) createOrRestoreVerifiedRemoteImportRecord(
 	ctx context.Context,
-	file structured.Fields,
+	file fileIngestRecord,
 	entityID string,
 	slotID string,
 	identity remoteImportOperationIdentity,
@@ -316,7 +295,7 @@ func (s *FileService) createOrRestoreVerifiedRemoteImportRecord(
 	return createErr
 }
 
-func (s *FileService) finishConfirmedRemoteImport(
+func (s *Service) finishConfirmedRemoteImport(
 	ctx context.Context,
 	opts remoteFileImportOptions,
 	result *remoteFileImportResult,

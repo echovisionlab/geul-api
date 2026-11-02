@@ -7,6 +7,16 @@ import (
 // TrackMetadata represents track metadata stored as JSONB
 type TrackMetadata = JSONFields
 
+// TrackProcessingStatus is the stored audio processing state of a Track.
+// The values are the strings the track table already holds.
+type TrackProcessingStatus string
+
+const (
+	TrackProcessingStatusProcessing TrackProcessingStatus = "TRACK_PROCESSING_STATUS_PROCESSING"
+	TrackProcessingStatusCompleted  TrackProcessingStatus = "TRACK_PROCESSING_STATUS_COMPLETED"
+	TrackProcessingStatusFailed     TrackProcessingStatus = "TRACK_PROCESSING_STATUS_FAILED"
+)
+
 // Track represents a track in a release
 // Maps to: sql/001_schema.sql - track table
 type Track struct {

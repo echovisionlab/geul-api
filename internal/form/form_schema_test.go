@@ -4,8 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,18 +171,14 @@ func TestFormSourceCreateAndUpdateRejectInvalidStableIdentityBeforePersistence(t
 	t.Parallel()
 
 	invalid := []byte(`{"id":"schema","steps":[{"id":"step-a","fields":[{"id":"field-a","key":"choice","type":"select","options":[{"value":"a"}]}]}]}`)
-	service := &FormService{}
+	service := &Service{}
 
-	_, createErr := service.CreateForm(t.Context(), connect.NewRequest(&managev1.CreateFormRequest{
-		Title: "Form", Schema: invalid,
-	}))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(createErr))
+	_, createErr := service.CreateForm(t.Context(), CreateFormCommand{Title: "Form", Schema: invalid})
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(createErr).Code())
 	assert.Contains(t, createErr.Error(), "options[0].id is required")
 
-	_, updateErr := service.prepareFormUpdate(
-		t.Context(), nil, &model.Form{}, &managev1.UpdateFormRequest{Schema: invalid},
-	)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(updateErr))
+	_, updateErr := service.prepareFormUpdate(t.Context(), nil, &Form{}, UpdateFormCommand{Schema: invalid})
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(updateErr).Code())
 	assert.Contains(t, updateErr.Error(), "options[0].id is required")
 }
 

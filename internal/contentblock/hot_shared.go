@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -201,9 +199,6 @@ func (s *Store) validateHotSharedResult(
 			candidate.LocalizedData = localized
 			normalized, err := normalizeBlock(s.contract, row.Profile, candidate)
 			if err != nil || !sameBlockShared(after, normalized) {
-				if err != nil {
-					slog.WarnContext(ctx, "content operation failed", "domain", "contentblock", "operation", "contentblock.validateHotSharedResult", "outcome", "failed", failurecause.Attr(err))
-				}
 				return Result{}, fmt.Errorf("%w: Block %s locale %s is incompatible with shared edit", ErrInvalidMutation, input.ID, locale)
 			}
 		}

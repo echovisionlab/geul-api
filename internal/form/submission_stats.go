@@ -1,89 +1,83 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"encoding/json"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/securityaccess"
+	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-func (s *FormService) GetFormSubmissionStats(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFormSubmissionStatsRequest],
-) (rpcResponse *connect.Response[managev1.GetFormSubmissionStatsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionStats", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	formID := strings.TrimSpace(req.Msg.FormId)
-	if formID == "" {
-		return nil, errs.Required("form_id")
-	}
-
-	var form model.Form
-	if err := s.db.WithContext(ctx).Select("id").First(&form, "id = ?", formID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("form", formID)
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := s.requireFormAction(ctx, formID, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("form", formID)
-		}
-		return nil, err
-	}
-
-	formSchema, _, err := loadFormSourceSchema(ctx, s.db, formID)
-	if err != nil {
-		return nil, err
-	}
-
-	var submissions []formSubmissionStatsRow
-	if err := s.db.WithContext(ctx).
-		Table("form_submission").
-		Select("created_at, data").
-		Where("form_id = ?", formID).
-		Order("created_at DESC").
-		Find(&submissions).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	stats := buildFormSubmissionStats(formSchema, submissions, time.Now())
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmissions(ctx, formID); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
-		}
-	}
-	return connect.NewResponse(&managev1.GetFormSubmissionStatsResponse{Stats: stats}), nil
+// GetFormSubmissionStatsQuery reads the submission statistics of a Form.
+type GetFormSubmissionStatsQuery struct {
+	FormID string
 }
 
-type formSubmissionStatsRow struct {
-	CreatedAt time.Time `gorm:"column:created_at"`
-	Data      []byte    `gorm:"column:data"`
+// SubmissionStats aggregates the submissions of a Form.
+type SubmissionStats struct {
+	TotalSubmissions     int32
+	SubmissionsToday     int32
+	SubmissionsThisWeek  int32
+	SubmissionsThisMonth int32
+	FieldStats           []FieldStat
+}
+
+// FieldStat is the ten most frequent answers of one field.
+type FieldStat struct {
+	FieldID    string
+	FieldLabel string
+	Values     []FieldValue
+}
+
+// FieldValue is one answer and how often it was given.
+type FieldValue struct {
+	Value string
+	Count int32
+}
+
+// GetFormSubmissionStats aggregates the submissions of a Form the caller
+// manages and records the personal data access.
+func (s *Service) GetFormSubmissionStats(ctx context.Context, query GetFormSubmissionStatsQuery) (SubmissionStats, error) {
+	formID := strings.TrimSpace(query.FormID)
+	if formID == "" {
+		return SubmissionStats{}, domainerr.Required("form_id")
+	}
+	if err := s.requireExistingFormAction(ctx, formID, formActionManage, domainerr.ResourceNotFound("form", formID)); err != nil {
+		return SubmissionStats{}, err
+	}
+	var formSchema []byte
+	var submissions []SubmissionData
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if formSchema, _, err = loadFormSourceSchema(ctx, store, formID); err != nil {
+			return err
+		}
+		submissions, err = store.SubmissionData(ctx, formID)
+		return err
+	}); err != nil {
+		return SubmissionStats{}, err
+	}
+	stats := buildFormSubmissionStats(ctx, formSchema, submissions, time.Now())
+	if err := s.personalDataAccess.AppendFormSubmissions(ctx, formID); err != nil {
+		return SubmissionStats{}, securityaccess.Unavailable().WithCause(err)
+	}
+	return stats, nil
 }
 
 func buildFormSubmissionStats(
+	ctx context.Context,
 	formSchema []byte,
-	submissions []formSubmissionStatsRow,
+	submissions []SubmissionData,
 	now time.Time,
-) *managev1.FormSubmissionStats {
+) SubmissionStats {
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfWeek := startOfDay.AddDate(0, 0, -int(startOfDay.Weekday()))
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
@@ -108,7 +102,7 @@ func buildFormSubmissionStats(
 
 		var data structured.Fields
 		if err := json.Unmarshal(submission.Data, &data); err != nil {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "decode_submission_stats", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored form submission is not valid JSON; skipping it in stats", "domain", "form", "event", "form.operation_failed", "operation", "decode_submission_stats", "outcome", "failed", failurecause.Attr(err))
 			continue
 		}
 
@@ -124,16 +118,16 @@ func buildFormSubmissionStats(
 		}
 	}
 
-	fieldStats := make([]*managev1.FormSubmissionFieldStat, 0, len(fieldValues))
+	fieldStats := make([]FieldStat, 0, len(fieldValues))
 	for fieldID, valueCounts := range fieldValues {
 		fieldLabel := fieldLabels[fieldID]
 		if strings.TrimSpace(fieldLabel) == "" {
 			fieldLabel = fieldID
 		}
 
-		values := make([]*managev1.FormSubmissionFieldValue, 0, len(valueCounts))
+		values := make([]FieldValue, 0, len(valueCounts))
 		for value, count := range valueCounts {
-			values = append(values, &managev1.FormSubmissionFieldValue{
+			values = append(values, FieldValue{
 				Value: value,
 				Count: count,
 			})
@@ -149,18 +143,18 @@ func buildFormSubmissionStats(
 			values = values[:10]
 		}
 
-		fieldStats = append(fieldStats, &managev1.FormSubmissionFieldStat{
-			FieldId:    fieldID,
+		fieldStats = append(fieldStats, FieldStat{
+			FieldID:    fieldID,
 			FieldLabel: fieldLabel,
 			Values:     values,
 		})
 	}
 
 	sort.Slice(fieldStats, func(i, j int) bool {
-		return fieldStats[i].FieldId < fieldStats[j].FieldId
+		return fieldStats[i].FieldID < fieldStats[j].FieldID
 	})
 
-	return &managev1.FormSubmissionStats{
+	return SubmissionStats{
 		TotalSubmissions:     int32(len(submissions)),
 		SubmissionsToday:     submissionsToday,
 		SubmissionsThisWeek:  submissionsThisWeek,
@@ -169,8 +163,6 @@ func buildFormSubmissionStats(
 	}
 }
 
-// GetFormSubmissionWithSchema retrieves a submission with its form schema (admin only)
-// This combines GetFormSubmission and GetForm into a single call for efficiency
 func stringifySubmissionStatValue(value structured.Value) (string, bool) {
 	switch v := value.(type) {
 	case string:

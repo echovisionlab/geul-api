@@ -15,7 +15,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -23,16 +24,11 @@ import (
 
 func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := &FileService{
-		db:             db,
-		s3Bucket:       "media-bucket",
-		spiceDB:        stack.SpiceDBClient,
-		asyncPublisher: publisher,
-	}
+	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))
 	fileID := uuid.NewString()
 	seedFileDeleteLifecycleFile(t, db, fileID, "poster.jpg", "image/jpeg", "jpg")
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, fileID)
@@ -63,8 +59,8 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 	}
 	require.NoError(t, db.Create(&retiredGeneration).Error)
 
-	resp, err := service.DeleteFile(
-		auth.WithUser(t.Context(), admin.AuthUserInfo()),
+	resp, err := NewConnectHandler(service).DeleteFile(
+		auditedUserContext(t.Context(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.DeleteFileRequest{FileId: fileID}),
 	)
 	require.NoError(t, err)
@@ -101,16 +97,11 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 
 func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := &FileService{
-		db:             db,
-		s3Bucket:       "media-bucket",
-		spiceDB:        stack.SpiceDBClient,
-		asyncPublisher: publisher,
-	}
+	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))
 	pageID := seedHardCutPageFixture(t, db)
 	sourceFileID := seedMeshOptimizationSourceFile(t, db)
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, sourceFileID)
@@ -125,8 +116,8 @@ func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegrat
 		Status:       model.MeshOptimizationCandidateStatusReady,
 	})
 
-	resp, err := service.DeleteFile(
-		auth.WithUser(t.Context(), admin.AuthUserInfo()),
+	resp, err := NewConnectHandler(service).DeleteFile(
+		auditedUserContext(t.Context(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.DeleteFileRequest{FileId: sourceFileID}),
 	)
 	require.NoError(t, err)
@@ -245,14 +236,6 @@ func seedFileDeleteLifecycleGenerationDerivative(t *testing.T, db *gorm.DB, file
 		CreatedAt:         now,
 	}).Error)
 	return generation
-}
-
-func requireFileDeleteLifecycleFileAbsent(t *testing.T, db *gorm.DB, fileID string) {
-	t.Helper()
-
-	var file model.File
-	err := db.First(&file, "id = ?", fileID).Error
-	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
 func requireFileDeleteLifecyclePending(t *testing.T, db *gorm.DB, fileID string) {

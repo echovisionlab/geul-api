@@ -611,12 +611,17 @@ func TestHandlerHelpersCoverEnumsAndCancellation(t *testing.T) {
 func TestProgressReporterRateLimitsAndRejectsNonIncreasingProgress(t *testing.T) {
 	t.Parallel()
 	pub := &recordingHandlerPublisher{}
-	report := (progressPublisher{publisher: pub}).newReporter(context.Background(), "job", apiv1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, "entity", "file")
+	state := &progressState{}
+	identity := progressIdentity{jobID: "job", entityType: apiv1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, entityID: "entity", fileID: "file"}
 	stage := apiv1.TranscodeStage_TRANSCODE_STAGE_PROCESSING
+	report := func(stage apiv1.TranscodeStage, percent int) {
+		state.publish(context.Background(), pub, identity, stage, percent)
+	}
 	report(stage, 10)
 	report(stage, 20)
 	require.Len(t, pub.progress, 1)
-	time.Sleep(510 * time.Millisecond)
+	// Age the last send past the rate-limit window instead of waiting it out.
+	state.lastSentAt = state.lastSentAt.Add(-time.Second)
 	report(stage, 5)
 	require.Len(t, pub.progress, 1)
 	report(stage, 30)

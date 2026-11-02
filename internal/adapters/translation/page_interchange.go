@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -16,18 +17,18 @@ import (
 // PageInterchangePort maps Translation application's generic XLIFF command to
 // the Page-owned lock, CAS and exact locale mutation boundary.
 type PageInterchangePort struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewPageInterchangePort(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *PageInterchangePort {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Page translation interchange Audit dependencies are required")
 	}
-	return &PageInterchangePort{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &PageInterchangePort{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*PageInterchangePort) LoadTranslationInterchangeTarget(
@@ -46,7 +47,7 @@ func (*PageInterchangePort) LoadTranslationInterchangeTarget(
 		)
 	}
 	state, err := page.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale, plan,
+		ctx, pageStore(db, store), entityID, locale, plan,
 		ProjectRichTextInterchangeTargets, InterchangeProtoPathPresent,
 		CloneInterchangeUnitResult, EmptyInterchangeTargetInline,
 	)
@@ -75,9 +76,9 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := page.ApplyTranslationInterchange(ctx, db, store, page.TranslationInterchangeMutation{
+	result, err := page.ApplyTranslationInterchange(ctx, pageStore(db, store), page.TranslationInterchangeMutation{
 		PageID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: pageInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 		ProjectTargets: ProjectRichTextInterchangeTargets,
@@ -92,7 +93,7 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, p.auditWriter, p.auditBuilder, sharedtelemetry.AuditPageUpdated,
+			ctx, db, p.audit, p.auditBuilder, sharedtelemetry.AuditPageUpdated,
 			memberID, command.EntityID, command.TargetLocale, result.TargetPreviouslyExists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -104,4 +105,17 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*PageInterchangePort)(nil)
+// pageInterchangeMode names the Page import mode of mode; an unknown mode
+// stays unknown for the Page to reject.
+func pageInterchangeMode(mode application.InterchangeMode) page.InterchangeMode {
+	switch mode {
+	case application.InterchangeModePatch:
+		return page.InterchangePatch
+	case application.InterchangeModeReplace:
+		return page.InterchangeReplace
+	default:
+		return 0
+	}
+}
+
+var _ translationpostgres.InterchangeRegistry = (*PageInterchangePort)(nil)

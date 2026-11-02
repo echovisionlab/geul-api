@@ -5,12 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 )
+
+// MapPlaceView is a Map Place with its ready image and the Members who
+// created and last updated it.
+type MapPlaceView struct {
+	Place           MapPlace
+	ImageAsset      *mediaasset.Reference
+	CreatedByMember *MemberSummary
+	UpdatedByMember *MemberSummary
+}
 
 func normalizeGooglePlaceID(value *string) *string {
 	if value == nil {
@@ -23,110 +28,90 @@ func normalizeGooglePlaceID(value *string) *string {
 	return &trimmed
 }
 
-func resolvedMapPlaceMember(
-	members map[string]*commonv1.MemberSummary,
-	memberID string,
-) (*commonv1.MemberSummary, error) {
-	summary := members[memberID]
-	if summary == nil || strings.TrimSpace(summary.GetNickname()) == "" {
+func resolvedMapPlaceMember(members map[string]MemberSummary, memberID string) (*MemberSummary, error) {
+	summary, ok := members[memberID]
+	if !ok || strings.TrimSpace(summary.Nickname) == "" {
 		return nil, fmt.Errorf("map place references unresolved member %s", memberID)
 	}
-	return summary, nil
+	return &summary, nil
 }
 
-// toProto converts a model.MapPlace to protobuf MapPlace
-func (s *MapPlaceService) toProto(p *model.MapPlace) *managev1.MapPlace {
-	proto := &managev1.MapPlace{
-		Id:        p.ID,
-		Name:      p.Name,
-		Address:   p.Address,
-		Lat:       p.Lat,
-		Lng:       p.Lng,
-		CreatedAt: timestamppb.New(p.CreatedAt),
-		UpdatedAt: timestamppb.New(p.UpdatedAt),
-	}
-
-	if p.AddressComponents != nil {
-		proto.AddressComponents = &managev1.AddressComponents{
-			Street:     p.AddressComponents.Street,
-			City:       p.AddressComponents.City,
-			Region:     p.AddressComponents.Region,
-			Country:    p.AddressComponents.Country,
-			PostalCode: p.AddressComponents.PostalCode,
+// committedMapPlaceView projects a place a mutation committed, in its own
+// snapshot.
+func (s *Service) committedMapPlaceView(ctx context.Context, place MapPlace) (MapPlaceView, error) {
+	var view MapPlaceView
+	err := s.units.Read(ctx, func(store Store) error {
+		views, err := mapPlaceViews(ctx, store, []MapPlace{place})
+		if err != nil {
+			return err
 		}
-	}
-
-	if p.ImageFileID != nil && *p.ImageFileID != "" {
-		proto.ImageFileId = p.ImageFileID
-	}
-	if p.GooglePlaceID != nil && *p.GooglePlaceID != "" {
-		proto.GooglePlaceId = p.GooglePlaceID
-	}
-	if p.CreatedByMemberID != nil && *p.CreatedByMemberID != "" {
-		proto.CreatedByMemberId = p.CreatedByMemberID
-	}
-	if p.UpdatedByMemberID != nil && *p.UpdatedByMemberID != "" {
-		proto.UpdatedByMemberId = p.UpdatedByMemberID
-	}
-
-	return proto
+		view = views[0]
+		return nil
+	})
+	return view, err
 }
 
-func (s *MapPlaceService) toProtoWithMembers(
-	ctx context.Context,
-	p *model.MapPlace,
-	members map[string]*commonv1.MemberSummary,
-) (*managev1.MapPlace, error) {
-	proto := s.toProto(p)
-	if p.ImageFileID != nil && *p.ImageFileID != "" {
-		asset, err := s.assets.ReadyRef(ctx, s.db, AssetSource{FileID: *p.ImageFileID, Kind: "map_image"})
-		if err != nil {
+// mapPlaceViews projects places with their images and member summaries. A
+// place whose image or member cannot be resolved fails the read.
+func mapPlaceViews(ctx context.Context, store Store, places []MapPlace) ([]MapPlaceView, error) {
+	members, err := resolveMembersForPlaces(ctx, store, places)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]MapPlaceView, len(places))
+	for i := range places {
+		if result[i], err = mapPlaceView(ctx, store, places[i], members); err != nil {
 			return nil, err
 		}
-		proto.ImageAsset = asset
 	}
-	if p.CreatedByMemberID != nil && *p.CreatedByMemberID != "" {
-		member, err := resolvedMapPlaceMember(members, *p.CreatedByMemberID)
-		if err != nil {
-			return nil, err
-		}
-		proto.CreatedByMember = member
-	}
-	if p.UpdatedByMemberID != nil && *p.UpdatedByMemberID != "" {
-		member, err := resolvedMapPlaceMember(members, *p.UpdatedByMemberID)
-		if err != nil {
-			return nil, err
-		}
-		proto.UpdatedByMember = member
-	}
-	return proto, nil
+	return result, nil
 }
 
-func (s *MapPlaceService) resolveMembersForPlaces(
-	ctx context.Context,
-	places []model.MapPlace,
-) (map[string]*commonv1.MemberSummary, error) {
+func mapPlaceView(ctx context.Context, store Store, place MapPlace, members map[string]MemberSummary) (MapPlaceView, error) {
+	view := MapPlaceView{Place: place}
+	if place.ImageFileID != nil && *place.ImageFileID != "" {
+		asset, err := store.ReadyAsset(ctx, AssetSource{FileID: *place.ImageFileID, Kind: "map_image"})
+		if err != nil {
+			return MapPlaceView{}, err
+		}
+		view.ImageAsset = asset
+	}
+	if place.CreatedByMemberID != nil && *place.CreatedByMemberID != "" {
+		member, err := resolvedMapPlaceMember(members, *place.CreatedByMemberID)
+		if err != nil {
+			return MapPlaceView{}, err
+		}
+		view.CreatedByMember = member
+	}
+	if place.UpdatedByMemberID != nil && *place.UpdatedByMemberID != "" {
+		member, err := resolvedMapPlaceMember(members, *place.UpdatedByMemberID)
+		if err != nil {
+			return MapPlaceView{}, err
+		}
+		view.UpdatedByMember = member
+	}
+	return view, nil
+}
+
+func resolveMembersForPlaces(ctx context.Context, store Store, places []MapPlace) (map[string]MemberSummary, error) {
 	ids := make([]string, 0, len(places)*2)
 	seen := make(map[string]struct{}, len(places)*2)
 	for i := range places {
-		if places[i].CreatedByMemberID != nil && *places[i].CreatedByMemberID != "" {
-			if _, ok := seen[*places[i].CreatedByMemberID]; !ok {
-				seen[*places[i].CreatedByMemberID] = struct{}{}
-				ids = append(ids, *places[i].CreatedByMemberID)
+		for _, memberID := range []*string{places[i].CreatedByMemberID, places[i].UpdatedByMemberID} {
+			if memberID == nil || *memberID == "" {
+				continue
 			}
-		}
-		if places[i].UpdatedByMemberID != nil && *places[i].UpdatedByMemberID != "" {
-			if _, ok := seen[*places[i].UpdatedByMemberID]; !ok {
-				seen[*places[i].UpdatedByMemberID] = struct{}{}
-				ids = append(ids, *places[i].UpdatedByMemberID)
+			if _, ok := seen[*memberID]; !ok {
+				seen[*memberID] = struct{}{}
+				ids = append(ids, *memberID)
 			}
 		}
 	}
 
 	if len(ids) == 0 {
-		return map[string]*commonv1.MemberSummary{}, nil
+		return map[string]MemberSummary{}, nil
 	}
-	members, err := s.members.Resolve(ctx, s.db, ids)
+	members, err := store.MemberSummaries(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -136,19 +121,4 @@ func (s *MapPlaceService) resolveMembersForPlaces(
 		}
 	}
 	return members, nil
-}
-
-// toBasicProto converts a model.MapPlace to protobuf MapPlaceBasic
-func (s *MapPlaceService) toBasicProto(p *model.MapPlace) *managev1.MapPlaceBasic {
-	basic := &managev1.MapPlaceBasic{
-		Id:      p.ID,
-		Name:    p.Name,
-		Address: p.Address,
-		Lat:     p.Lat,
-		Lng:     p.Lng,
-	}
-	if p.GooglePlaceID != nil && *p.GooglePlaceID != "" {
-		basic.GooglePlaceId = p.GooglePlaceID
-	}
-	return basic
 }

@@ -46,7 +46,7 @@ func validateNormalizedXLIFFUnitInline(unit XLIFFUnit, hasTarget bool) error {
 		data[original.ID] = original.Value
 	}
 
-	sourceProjection, sourceCodes, err := projectAndValidateXLIFFInline(unit.SourceInline, data, "")
+	sourceProjection, sourceCodes, err := projectAndValidateXLIFFInline(unit.SourceInline, data)
 	if err != nil {
 		return fmt.Errorf("invalid source inline content: %w", err)
 	}
@@ -62,7 +62,7 @@ func validateNormalizedXLIFFUnitInline(unit XLIFFUnit, hasTarget bool) error {
 	if unit.Target == nil {
 		return fmt.Errorf("target is required")
 	}
-	targetProjection, targetCodes, err := projectAndValidateXLIFFInline(unit.TargetInline, data, "")
+	targetProjection, targetCodes, err := projectAndValidateXLIFFInline(unit.TargetInline, data)
 	if err != nil {
 		return fmt.Errorf("invalid target inline content: %w", err)
 	}
@@ -88,7 +88,7 @@ func validateProtectedXLIFFPartOrder(source, target []XLIFFInline) error {
 	targetEvents := xliffLeafEvents(target)
 	expected := make(map[int][]string)
 	for _, event := range sourceEvents {
-		group, _, ok := parseProtectedXLIFFPartID(event)
+		group, ok := parseProtectedXLIFFPartID(event)
 		if ok {
 			expected[group] = append(expected[group], event)
 		}
@@ -97,7 +97,7 @@ func validateProtectedXLIFFPartOrder(source, target []XLIFFInline) error {
 		positions := make([]int, 0, len(expectedParts))
 		targetParts := make([]string, 0, len(expectedParts))
 		for position, event := range targetEvents {
-			eventGroup, _, ok := parseProtectedXLIFFPartID(event)
+			eventGroup, ok := parseProtectedXLIFFPartID(event)
 			if ok && eventGroup == group {
 				positions = append(positions, position)
 				targetParts = append(targetParts, event)
@@ -136,17 +136,18 @@ func xliffLeafEvents(nodes []XLIFFInline) []string {
 	return events
 }
 
-func parseProtectedXLIFFPartID(id string) (int, int, bool) {
+// parseProtectedXLIFFPartID returns the group of a well-formed protected part ID.
+func parseProtectedXLIFFPartID(id string) (int, bool) {
 	if !strings.HasPrefix(id, protectedXLIFFCodePrefix) {
-		return 0, 0, false
+		return 0, false
 	}
 	groupAndPart := strings.Split(strings.TrimPrefix(id, protectedXLIFFCodePrefix), "Part")
 	if len(groupAndPart) != 2 {
-		return 0, 0, false
+		return 0, false
 	}
 	group, groupErr := strconv.Atoi(groupAndPart[0])
 	part, partErr := strconv.Atoi(groupAndPart[1])
-	return group, part, groupErr == nil && partErr == nil && group > 0 && part > 0
+	return group, groupErr == nil && partErr == nil && group > 0 && part > 0
 }
 
 func collectXLIFFTextParents(nodes []XLIFFInline, parent string, parents map[string]struct{}) {
@@ -242,7 +243,7 @@ func ProjectXLIFFInline(inline []XLIFFInline, originalData []XLIFFOriginalData) 
 		}
 		data[original.ID] = original.Value
 	}
-	projection, _, err := projectAndValidateXLIFFInline(inline, data, "")
+	projection, _, err := projectAndValidateXLIFFInline(inline, data)
 	return projection, err
 }
 
@@ -269,7 +270,6 @@ type xliffCodeIdentity struct {
 func projectAndValidateXLIFFInline(
 	inline []XLIFFInline,
 	data map[string]string,
-	parentID string,
 ) (string, []xliffCodeIdentity, error) {
 	var projection strings.Builder
 	codes := make([]xliffCodeIdentity, 0)
@@ -323,7 +323,7 @@ func projectAndValidateXLIFFInline(
 		}
 		return nil
 	}
-	if err := visit(inline, parentID); err != nil {
+	if err := visit(inline, ""); err != nil {
 		return "", nil, err
 	}
 	sort.Slice(codes, func(i, j int) bool {

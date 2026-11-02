@@ -4,19 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type translationDeliveryExecution struct {
-	job                             *model.TranslationJob
+	job                             *Job
 	startedAt                       time.Time
 	allowExpiredDocumentReplacement bool
 	sourceDoc                       *translation.SourceDocument
@@ -29,22 +24,7 @@ type translationDeliveryExecution struct {
 func (m *TranslationJobManager) ProcessDelivery(
 	ctx context.Context,
 	jobID string,
-) (retErr error) {
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		// Terminal mappings already log the cause before bounding it.
-		var bounded boundedTranslationFailureError
-		if errors.As(retErr, &bounded) {
-			return
-		}
-		level := slog.LevelError
-		if translationDeliveryTransportStopped(ctx, retErr) {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Translation delivery failed", "domain", "translation", "event", "translation.delivery.failed", "job_id", jobID, "reason", classifyTranslationFailure(retErr), failurecause.Attr(retErr))
-	}()
+) error {
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return fmt.Errorf("job ID is required")
@@ -73,19 +53,19 @@ func (m *TranslationJobManager) ProcessDelivery(
 func (m *TranslationJobManager) loadEligibleTranslationDelivery(
 	ctx context.Context,
 	jobID string,
-) (*model.TranslationJob, bool, bool, error) {
+) (*Job, bool, bool, error) {
 	job, err := m.loadTranslationJob(ctx, jobID)
 	if err != nil || job == nil {
 		return job, false, false, err
 	}
-	resumeRunning := job.Status == translationJobStatusRunning
-	proceed := job.Status == translationJobStatusQueued || resumeRunning
+	resumeRunning := job.Status == JobRunning
+	proceed := job.Status == JobQueued || resumeRunning
 	return job, resumeRunning, proceed, nil
 }
 
 func (m *TranslationJobManager) resolveDeliveryGenerators(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	resumeRunning bool,
 ) ([]translation.Generator, error) {
 	generators, err := m.resolveGenerators(ctx)
@@ -119,7 +99,7 @@ func permanentTranslationGeneratorResolutionFailure(err error) bool {
 }
 
 func exactTranslationProviderDocumentGenerator(
-	job *model.TranslationJob,
+	job *Job,
 	generators []translation.Generator,
 ) ([]translation.Generator, error) {
 	if job == nil {
@@ -145,7 +125,7 @@ func exactTranslationProviderDocumentGenerator(
 }
 
 func exactTranslationGenerator(
-	job *model.TranslationJob,
+	job *Job,
 	generators []translation.Generator,
 ) ([]translation.Generator, error) {
 	var exact translation.Generator
@@ -185,10 +165,10 @@ func exactTranslationGenerator(
 
 func (m *TranslationJobManager) claimTranslationDelivery(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	generator translation.Generator,
 	resumeRunning bool,
-) (*model.TranslationJob, time.Time, bool, error) {
+) (*Job, time.Time, bool, error) {
 	claimed, err := m.tryClaimTranslationDelivery(ctx, job.ID, generator, resumeRunning)
 	if err != nil {
 		return job, time.Time{}, false, err
@@ -197,7 +177,7 @@ func (m *TranslationJobManager) claimTranslationDelivery(
 		return m.handleUnclaimedTranslationDelivery(ctx, job.ID)
 	}
 	claimedAt := m.now().UTC()
-	job.Status = translationJobStatusRunning
+	job.Status = JobRunning
 	job, err = m.loadTranslationJob(ctx, job.ID)
 	if err != nil {
 		return job, claimedAt, false, m.handleRunningDeliveryFailure(ctx, job, claimedAt, err)
@@ -223,7 +203,7 @@ func (m *TranslationJobManager) tryClaimTranslationDelivery(
 func (m *TranslationJobManager) handleUnclaimedTranslationDelivery(
 	ctx context.Context,
 	jobID string,
-) (*model.TranslationJob, time.Time, bool, error) {
+) (*Job, time.Time, bool, error) {
 	job, err := m.loadTranslationJob(ctx, jobID)
 	if err != nil {
 		return job, time.Time{}, false, err
@@ -236,7 +216,7 @@ func (m *TranslationJobManager) runClaimedTranslationDelivery(
 	execution *translationDeliveryExecution,
 	generators []translation.Generator,
 ) error {
-	m.metrics.recordJobStatus(ctx, execution.job, translationJobStatusRunning)
+	m.metrics.recordJobStatus(ctx, execution.job, JobRunning)
 
 	proceed, err := m.prepareTranslationDelivery(ctx, execution)
 	if err != nil || !proceed {
@@ -257,7 +237,7 @@ func (m *TranslationJobManager) prepareTranslationDelivery(
 	execution *translationDeliveryExecution,
 ) (bool, error) {
 	job := execution.job
-	artifact, err := loadTranslationRequestArtifact(ctx, m.db, job.ID)
+	artifact, err := m.loadRequestArtifact(ctx, job.ID)
 	if err != nil {
 		return false, m.failTranslationDelivery(ctx, execution, err)
 	}
@@ -334,7 +314,7 @@ func (m *TranslationJobManager) reloadTranslationDeliveryForApply(
 		return false, m.failTranslationDelivery(ctx, execution, err)
 	}
 	execution.job = job
-	if job == nil || job.Status != translationJobStatusRunning {
+	if job == nil || job.Status != JobRunning {
 		return false, nil
 	}
 	currentSource, err := m.loadTranslationSourceDocument(ctx, job.EntityType, job.EntityID)
@@ -354,7 +334,7 @@ func (m *TranslationJobManager) applyTranslationDelivery(
 	ctx context.Context,
 	execution *translationDeliveryExecution,
 ) error {
-	candidate, err := buildTranslationCandidateContent(m.domains, execution.plan, execution.sourceDoc, execution.response)
+	candidate, err := buildTranslationCandidateContent(m.plans, execution.plan, execution.sourceDoc, execution.response)
 	if err != nil {
 		return m.failTranslationDelivery(ctx, execution, markTranslationTargetApplyFailure(err))
 	}
@@ -383,9 +363,9 @@ func (m *TranslationJobManager) finalizeAppliedTranslationDelivery(
 	now time.Time,
 ) error {
 	job := execution.job
-	m.publishLifecycle(ctx, job, managev1.TranslationLifecycleStatus_TRANSLATION_LIFECYCLE_STATUS_APPLIED, nil)
-	m.metrics.recordJobStatus(ctx, job, translationJobStatusApplied)
-	m.metrics.recordJobDuration(ctx, job, translationJobStatusApplied, execution.startedAt, now)
+	m.publishLifecycle(ctx, job, LifecycleApplied, nil)
+	m.metrics.recordJobStatus(ctx, job, JobApplied)
+	m.metrics.recordJobDuration(ctx, job, JobApplied, execution.startedAt, now)
 	emitTranslationJobTerminal(
 		ctx,
 		job,

@@ -9,8 +9,6 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,17 +45,17 @@ func TestMemberTagListForwardsSupportedSearchAndNativePagination(t *testing.T) {
 		{arguments: `{"query":"  patrons  ","limit":500,"offset":2147483647}`, limit: 500, offset: 2147483647, query: "patrons", hasMore: true},
 	} {
 		t.Run(test.arguments, func(t *testing.T) {
-			reader := &recordingMemberTagReader{response: &managev1.ListMemberTagsAdminResponse{
-				Tags:       []*managev1.MemberTag{{Id: memberAdminTestID, Name: "Patrons", MemberCount: 3}},
-				Pagination: &commonv1.PaginationResponse{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: test.hasMore},
+			reader := &recordingMemberTagReader{response: memberdomain.TagPage{
+				Tags:       []memberdomain.Tag{{ID: memberAdminTestID, Name: "Patrons", MemberCount: 3}},
+				Pagination: memberdomain.Pagination{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: test.hasMore},
 			}}
 			tools, err := NewMemberTagTools(reader)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMemberTagList, toolArguments(t, test.arguments))
 			require.NoError(t, err)
 			require.Equal(t, t.Context(), reader.ctx)
-			require.Equal(t, test.limit, reader.request.Pagination.Limit)
-			require.Equal(t, test.offset, reader.request.Pagination.Offset)
+			require.Equal(t, test.limit, reader.request.Limit)
+			require.Equal(t, test.offset, reader.request.Offset)
 			require.Equal(t, discoverySearchFilters(test.query), reader.request.Filters)
 			require.Empty(t, reader.request.Sorts)
 			require.Equal(t, float64(7), result.StructuredContent["total"])
@@ -88,7 +86,7 @@ func TestMemberTagListRejectsUnsupportedArgumentsBeforeReading(t *testing.T) {
 }
 
 func TestMemberTagListRetainsNativeAuthenticationAndDenial(t *testing.T) {
-	tools, err := NewMemberTagTools(&memberdomain.MemberService{})
+	tools, err := NewMemberTagTools(&memberdomain.Service{})
 	require.NoError(t, err)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMemberTagList, toolArguments(t, `{}`))
 	var execution *mcpserver.ToolExecutionError
@@ -109,15 +107,15 @@ func TestMemberTagListRetainsNativeAuthenticationAndDenial(t *testing.T) {
 }
 
 type recordingMemberTagReader struct {
-	response *managev1.ListMemberTagsAdminResponse
-	request  *managev1.ListMemberTagsAdminRequest
+	response memberdomain.TagPage
+	request  memberdomain.ListMemberTagsQuery
 	ctx      context.Context
 	err      error
 	calls    int
 }
 
-func (reader *recordingMemberTagReader) ListMemberTagsAdmin(ctx context.Context, request *connect.Request[managev1.ListMemberTagsAdminRequest]) (*connect.Response[managev1.ListMemberTagsAdminResponse], error) {
-	reader.ctx, reader.request = ctx, request.Msg
+func (reader *recordingMemberTagReader) ListMemberTags(ctx context.Context, query memberdomain.ListMemberTagsQuery) (memberdomain.TagPage, error) {
+	reader.ctx, reader.request = ctx, query
 	reader.calls++
-	return connect.NewResponse(reader.response), reader.err
+	return reader.response, reader.err
 }

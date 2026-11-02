@@ -2,21 +2,17 @@ package page
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -24,7 +20,7 @@ import (
 // AIDocumentState is the Page-owned coherent metadata and typed section tree
 // consumed by the DCDP adapter.
 type AIDocumentState struct {
-	Page           model.Page
+	Page           Page
 	DocumentID     uuid.UUID
 	Revision       string
 	TargetRevision *string
@@ -45,7 +41,7 @@ type AIDocumentMetadataPatch struct {
 	SetSummary        bool
 	Summary           *string
 	SetDocumentLayout bool
-	DocumentLayout    model.DocumentLayout
+	DocumentLayout    DocumentLayout
 }
 
 type AIDocumentMutation struct {
@@ -61,41 +57,49 @@ type AIDocumentMutation struct {
 	ContributorMemberID    string
 }
 
-// AIDocumentService owns Page edit authorization, root locking and the single
-// revision transaction shared by Page metadata and generated section Blocks.
-type AIDocumentService struct{ internal *InternalPageService }
-
-var errRollbackPageAIDocumentValidation = errors.New("rollback Page AI document validation")
-
-func NewAIDocumentService(internal *InternalPageService) (*AIDocumentService, error) {
-	if internal == nil || internal.db == nil || internal.spiceDB == nil || internal.contentBlocks == nil {
-		return nil, errors.New("page AI document service dependencies are required")
-	}
-	return &AIDocumentService{internal: internal}, nil
+// LoadAIDocumentQuery reads the AI document of one Page locale.
+type LoadAIDocumentQuery struct {
+	PageID string
+	Locale string
 }
 
-func (s *AIDocumentService) Load(ctx context.Context, pageID, locale string) (AIDocumentState, error) {
-	if err := validatePageAIDocumentIdentity(pageID, locale); err != nil {
+// LoadAIDocument reads the coherent metadata and typed section tree of a
+// Page locale the caller may view, under one share lock of the Page root.
+func (s *Service) LoadAIDocument(ctx context.Context, query LoadAIDocumentQuery) (AIDocumentState, error) {
+	if err := validatePageAIDocumentIdentity(query.PageID, query.Locale); err != nil {
 		return AIDocumentState{}, err
 	}
+	var root lockedAIDocumentRoot
 	var state AIDocumentState
-	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, "SHARE")
-		if err != nil {
-			return err
-		}
-		principal, err := authorizePagePermissionAfterRootLock(
-			ctx, tx, s.internal.spiceDB, pageID, policyv1.Page.View,
-		)
-		if err != nil {
-			return err
-		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, documentID, locale, principal.MemberID.String(),
-		)
-		return err
+	access := mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		return lockAIDocumentRoot(ctx, store, require, query.PageID, ShareLock, policyv1.Page.View, &root)
 	})
+	err := s.readLocked(ctx, access,
+		func(ctx context.Context, store Store) error {
+			var err error
+			state, err = loadAIDocumentStateAfterAuthorization(ctx, store, root, query.Locale)
+			return err
+		})
 	return state, err
+}
+
+// lockedAIDocumentRoot is the Page root an AI document read or mutation
+// locked and the principal authorized on it.
+type lockedAIDocumentRoot struct {
+	page       Page
+	documentID uuid.UUID
+	principal  *auth.UserInfo
+}
+
+// lockAIDocumentRoot locks the Page root with lock into root, then checks
+// the one exact action on it.
+func lockAIDocumentRoot(ctx context.Context, store Store, require mutation.Require, pageID string, lock RowLock, action pageAction, root *lockedAIDocumentRoot) error {
+	var err error
+	if root.page, root.documentID, err = loadPageAIDocumentRoot(ctx, store, pageID, lock); err != nil {
+		return err
+	}
+	root.principal, err = authorizePagePermissionAfterRootLock(ctx, require, pageID, action)
+	return err
 }
 
 func validatePageAIDocumentIdentity(pageID, locale string) error {
@@ -106,15 +110,13 @@ func validatePageAIDocumentIdentity(pageID, locale string) error {
 	return err
 }
 
-func (s *AIDocumentService) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.Page,
-	documentID uuid.UUID,
+	store Store,
+	root lockedAIDocumentRoot,
 	locale string,
-	viewerMemberID string,
 ) (AIDocumentState, error) {
-	state, err := loadPageTargetLocaleState(ctx, tx, s.internal.contentBlocks, root.ID, documentID, locale, false)
+	state, err := loadPageTargetLocaleState(ctx, store, root.page.ID, root.documentID, locale, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -123,218 +125,193 @@ func (s *AIDocumentService) loadAIDocumentStateAfterAuthorization(
 		return AIDocumentState{}, normalizePageContentBlockError(err)
 	}
 	return AIDocumentState{
-		Page: root, DocumentID: documentID, Revision: state.Snapshot.Document.Revision.String(),
+		Page: root.page, DocumentID: root.documentID, Revision: state.Snapshot.Document.Revision.String(),
 		TargetRevision: clonePageTargetRevision(state.TargetRevision),
 		SourceLocale:   state.SourceLocale,
 		Locale:         locale, LocaleExists: state.TargetMetadata != nil,
 		Title: stateMetadataTitle(state.TargetMetadata), Summary: stateMetadataSummary(state.TargetMetadata),
-		Snapshot: state.Snapshot, Document: document, ViewerMemberID: viewerMemberID,
+		Snapshot: state.Snapshot, Document: document, ViewerMemberID: root.principal.MemberID.String(),
 	}, nil
 }
 
-func stateMetadataTitle(row *pageLocaleMetadataRow) *string {
+func stateMetadataTitle(row *Locale) *string {
 	if row == nil {
 		return nil
 	}
 	return cloneOptionalString(row.Title)
 }
 
-func stateMetadataSummary(row *pageLocaleMetadataRow) *string {
+func stateMetadataSummary(row *Locale) *string {
 	if row == nil {
 		return nil
 	}
 	return cloneOptionalString(row.Summary)
 }
 
-func (s *AIDocumentService) Apply(ctx context.Context, mutation AIDocumentMutation) (contentblock.Result, error) {
-	output, err := s.ExecuteAIDocumentMutation(
-		ctx, mutation.PageID, mutation.Locale, AIDocumentExecutionApply,
-		func(AIDocumentState) (AIDocumentMutation, error) { return mutation, nil },
-	)
-	if err != nil {
-		return contentblock.Result{}, err
-	}
-	revision, err := uuid.Parse(output.DocumentRevision)
-	if err != nil {
-		return contentblock.Result{}, err
-	}
-	return contentblock.Result{DocumentRevision: revision, Changed: output.Changed}, nil
+// pageAIDocumentApply is the outcome of a compiled AI document mutation.
+type pageAIDocumentApply struct {
+	result         contentblock.Result
+	targetRevision *string
+	// metadataChanged reports a changed source title or summary.
+	metadataChanged bool
+	layoutChanged   bool
 }
 
-func (s *AIDocumentService) Validate(ctx context.Context, mutation AIDocumentMutation) error {
-	_, err := s.ExecuteAIDocumentMutation(
-		ctx, mutation.PageID, mutation.Locale, AIDocumentExecutionValidate,
-		func(AIDocumentState) (AIDocumentMutation, error) { return mutation, nil },
-	)
-	return err
-}
-
-func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
+func applyAIDocumentMutationInTransaction(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation AIDocumentMutation,
-	fence contentblock.DomainFence,
-) (contentblock.Result, *string, error) {
+	fence ContentFence,
+) (pageAIDocumentApply, error) {
+	if err := validatePageAIDocumentAttribution(mutation); err != nil {
+		return pageAIDocumentApply{}, err
+	}
+	if err := validatePageAIDocumentLocaleScope(mutation); err != nil {
+		return pageAIDocumentApply{}, err
+	}
+	now := dbtime.Now()
+	if mutation.Locale != mutation.ObservedSourceLocale {
+		return applyAIDocumentTargetMutation(ctx, store, mutation, fence, now)
+	}
+	return applyAIDocumentSourceMutation(ctx, store, mutation, fence, now)
+}
+
+// validatePageAIDocumentAttribution requires the compiled batch to carry
+// the mutation's identity, revision and one current Member.
+func validatePageAIDocumentAttribution(mutation AIDocumentMutation) error {
 	if _, err := parsePageContentUUID("page_id", mutation.PageID); err != nil {
-		return contentblock.Result{}, nil, err
+		return err
 	}
 	if mutation.ExpectedRevision == uuid.Nil || mutation.Batch.DocumentID == uuid.Nil {
-		return contentblock.Result{}, nil, errs.InvalidArgument("expected_revision", "is required")
+		return domainerr.InvalidField("expected_revision", "is required")
 	}
 	contributorIDs := pageAIContributorIDs(mutation.ContributorMemberID)
 	if len(contributorIDs) != 1 || len(mutation.Batch.ContributorMemberIDs) != 1 ||
 		mutation.Batch.ContributorMemberIDs[0] != contributorIDs[0] {
-		return contentblock.Result{}, nil, errs.InvalidArgument("contributor", "compiled attribution must match the current Member")
+		return domainerr.InvalidField("contributor", "compiled attribution must match the current Member")
 	}
 	if mutation.Batch.ExpectedRevision != mutation.ExpectedRevision {
-		return contentblock.Result{}, nil, errs.InvalidArgument("expected_revision", "does not match the compiled section batch")
+		return domainerr.InvalidField("expected_revision", "does not match the compiled section batch")
 	}
 	if strings.TrimSpace(mutation.ObservedSourceLocale) == "" {
-		return contentblock.Result{}, nil, errs.InvalidArgument("source_locale", "observed source locale is required")
+		return domainerr.InvalidField("source_locale", "observed source locale is required")
 	}
-	if mutation.Locale != mutation.ObservedSourceLocale {
+	return nil
+}
+
+// validatePageAIDocumentLocaleScope keeps a non-source mutation to its own
+// locale and the translation lifecycle to target locales.
+func validatePageAIDocumentLocaleScope(mutation AIDocumentMutation) error {
+	source := mutation.Locale == mutation.ObservedSourceLocale
+	if !source {
 		if mutation.Metadata.SetDocumentLayout {
-			return contentblock.Result{}, nil, errs.InvalidArgument("document_layout", "only the source locale may change Page document layout")
+			return domainerr.InvalidField("document_layout", "only the source locale may change Page document layout")
 		}
 		if len(mutation.Batch.Upserts) != 0 || len(mutation.Batch.Deletes) != 0 || len(mutation.Batch.Reorders) != 0 {
-			return contentblock.Result{}, nil, errs.InvalidArgument("operations", "non-source locale cannot mutate the Page section graph")
+			return domainerr.InvalidField("operations", "non-source locale cannot mutate the Page section graph")
 		}
 		for _, group := range mutation.Batch.LocaleGroups {
 			if group.Locale != mutation.Locale {
-				return contentblock.Result{}, nil, errs.InvalidArgument("operations", "compiled locale mutation targets another locale")
+				return domainerr.InvalidField("operations", "compiled locale mutation targets another locale")
 			}
 		}
 	}
-	if mutation.Locale == mutation.ObservedSourceLocale && (mutation.Metadata.EnsureLocale || mutation.DeleteTranslation) {
-		return contentblock.Result{}, nil, errs.InvalidArgument("locale", "Page source translation lifecycle cannot be changed")
+	if source && (mutation.Metadata.EnsureLocale || mutation.DeleteTranslation) {
+		return domainerr.InvalidField("locale", "Page source translation lifecycle cannot be changed")
 	}
 	if mutation.DeleteTranslation && (mutation.Metadata != AIDocumentMetadataPatch{} || hasPageAIDocumentBatchChanges(mutation.Batch)) {
-		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "translation deletion must be the only mutation")
+		return domainerr.InvalidField("operations", "translation deletion must be the only mutation")
 	}
-	now := dbtime.Now()
-	if mutation.Locale != mutation.ObservedSourceLocale {
-		result, targetRevision, err := applyPageTargetLocaleBatch(
-			ctx, tx, s.internal.contentBlocks, mutation.PageID, mutation.Batch.DocumentID,
-			mutation.Locale, mutation.Batch, mutation.ExpectedTargetRevision,
-			pageTargetMetadataPatch{
-				EnsureLocale: mutation.Metadata.EnsureLocale,
-				UpdateTitle:  mutation.Metadata.SetTitle, Title: mutation.Metadata.Title,
-				UpdateSummary: mutation.Metadata.SetSummary, Summary: mutation.Metadata.Summary,
-				DeleteLocale: mutation.DeleteTranslation,
-			}, mutation.Metadata.EnsureLocale, false, now, fence,
-		)
-		if err != nil || !result.Changed {
-			return result, targetRevision, err
-		}
-		if err := tx.WithContext(ctx).Model(&model.Page{}).Where("id = ?", mutation.PageID).UpdateColumn("updated_at", now).Error; err != nil {
-			return contentblock.Result{}, nil, err
-		}
-		return result, targetRevision, nil
+	return nil
+}
+
+func applyAIDocumentTargetMutation(
+	ctx context.Context,
+	store Store,
+	mutation AIDocumentMutation,
+	fence ContentFence,
+	now time.Time,
+) (pageAIDocumentApply, error) {
+	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
+		PageID: mutation.PageID, DocumentID: mutation.Batch.DocumentID, Locale: mutation.Locale,
+		Batch: mutation.Batch, ExpectedTargetRevision: mutation.ExpectedTargetRevision,
+		Patch: pageTargetMetadataPatch{
+			EnsureLocale: mutation.Metadata.EnsureLocale,
+			UpdateTitle:  mutation.Metadata.SetTitle, Title: mutation.Metadata.Title,
+			UpdateSummary: mutation.Metadata.SetSummary, Summary: mutation.Metadata.Summary,
+			DeleteLocale: mutation.DeleteTranslation,
+		},
+		Policy: targetlocale.Policy{AllowCreate: mutation.Metadata.EnsureLocale},
+		Now:    now, Fence: fence,
+	})
+	applied := pageAIDocumentApply{result: result, targetRevision: targetRevision}
+	if err != nil || !result.Changed {
+		return applied, err
 	}
+	return applied, store.TouchPage(ctx, mutation.PageID, now)
+}
+
+func applyAIDocumentSourceMutation(
+	ctx context.Context,
+	store Store,
+	mutation AIDocumentMutation,
+	fence ContentFence,
+	now time.Time,
+) (pageAIDocumentApply, error) {
 	if mutation.ExpectedTargetRevision != nil {
-		return contentblock.Result{}, nil, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
+		return pageAIDocumentApply{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
 	if mutation.Metadata.SetDocumentLayout {
 		if err := mutation.Metadata.DocumentLayout.Validate(); err != nil {
-			return contentblock.Result{}, nil, errs.InvalidArgument("document_layout", err.Error())
+			return pageAIDocumentApply{}, domainerr.InvalidField("document_layout", err.Error())
 		}
 	}
-	result, err := s.internal.contentBlocks.ApplyBatchWithMetadata(
-		ctx, tx, mutation.Batch, fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+	var applied pageAIDocumentApply
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, mutation.Batch, fence,
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 			effect, err := applyPageAIDocumentMetadata(
-				ctx, tx, mutation.PageID, mutation.Locale,
+				ctx, store, mutation.PageID, mutation.Locale,
 				mutation.ObservedLocaleExists, mutation.Metadata, now,
 			)
+			applied.metadataChanged = effect.Changed
 			if err != nil || !mutation.Metadata.SetDocumentLayout {
 				return effect, err
 			}
-			layoutEffect, err := applyPageDocumentLayoutMetadata(ctx, tx, mutation.PageID, mutation.Metadata.DocumentLayout, now, s.internal.auditWriter)
+			layoutEffect, err := applyPageDocumentLayoutMetadata(ctx, store, mutation.PageID, mutation.Metadata.DocumentLayout, now)
+			applied.layoutChanged = layoutEffect.Changed
 			effect.Changed = effect.Changed || layoutEffect.Changed
 			return effect, err
 		},
 	)
+	applied.result = result
 	if err != nil || !result.Changed {
-		return result, nil, err
+		return applied, err
 	}
-	if err := tx.WithContext(ctx).Model(&model.Page{}).
-		Where("id = ?", mutation.PageID).UpdateColumn("updated_at", now).Error; err != nil {
-		return contentblock.Result{}, nil, err
-	}
-	return result, nil, nil
-}
-
-func loadPageAIDocumentRoot(ctx context.Context, tx *gorm.DB, pageID, lock string) (model.Page, uuid.UUID, error) {
-	var root model.Page
-	query := tx.WithContext(ctx).Table("page").Where("id = ?", pageID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.Page{}, uuid.Nil, errs.NotFound("page", pageID)
-		}
-		return model.Page{}, uuid.Nil, errs.Internal(err)
-	}
-	if root.ContentDocumentID == nil {
-		return model.Page{}, uuid.Nil, errs.FailedPrecondition("Page content document is not initialized")
-	}
-	documentID, err := uuid.Parse(*root.ContentDocumentID)
-	if err != nil || documentID == uuid.Nil {
-		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "parse_content_document_id", "outcome", "failed", failurecause.Attr(err))
-		}
-		return model.Page{}, uuid.Nil, errs.InternalMsg("Page content document ID is invalid")
-	}
-	return root, documentID, nil
-}
-
-type pageAIDocumentLocale struct {
-	Title   *string
-	Summary *string
-}
-
-func loadPageAIDocumentLocale(ctx context.Context, tx *gorm.DB, pageID, locale string, forUpdate bool) (pageAIDocumentLocale, bool, error) {
-	var row struct {
-		Title   sql.NullString `gorm:"column:title"`
-		Summary sql.NullString `gorm:"column:summary"`
-	}
-	query := tx.WithContext(ctx).Table("page_translation").Select("title", "summary").
-		Where("entity_id = ? AND locale = ?", pageID, locale)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	}
-	result := query.Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return pageAIDocumentLocale{}, false, nil
-	}
-	if result.Error != nil {
-		return pageAIDocumentLocale{}, false, errs.Internal(result.Error)
-	}
-	return pageAIDocumentLocale{Title: pageAINullableString(row.Title), Summary: pageAINullableString(row.Summary)}, true, nil
+	return applied, store.TouchPage(ctx, mutation.PageID, now)
 }
 
 func applyPageAIDocumentMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	pageID, locale string,
 	observedExists bool,
 	patch AIDocumentMetadataPatch,
 	now time.Time,
 ) (contentblock.MetadataEffect, error) {
-	source, err := lockPageAIDocumentSource(ctx, tx, pageID)
+	source, err := store.FindPage(ctx, ByID, pageID, UpdateLock)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	current, exists, err := loadPageAIDocumentLocale(ctx, tx, pageID, locale, true)
+	current, exists, err := store.Locale(ctx, pageID, locale, UpdateLock)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	if exists != observedExists {
-		return contentblock.MetadataEffect{}, errs.FailedPrecondition("Page translation presence changed; reload before saving")
+		return contentblock.MetadataEffect{}, domainerr.Precondition("Page translation presence changed; reload before saving")
 	}
 	if locale == source.SourceLocale && !exists {
-		return contentblock.MetadataEffect{}, errs.FailedPrecondition("Page source translation is missing")
+		return contentblock.MetadataEffect{}, domainerr.Precondition("Page source translation is missing")
 	}
 	if !exists && !patch.EnsureLocale && !patch.SetTitle && !patch.SetSummary {
 		return contentblock.MetadataEffect{}, nil
@@ -348,19 +325,14 @@ func applyPageAIDocumentMetadata(
 		nextSummary = cloneOptionalString(patch.Summary)
 	}
 	if locale == source.SourceLocale && (nextTitle == nil || strings.TrimSpace(*nextTitle) == "") {
-		return contentblock.MetadataEffect{}, errs.InvalidArgument("title", "Page source title cannot be empty")
+		return contentblock.MetadataEffect{}, domainerr.InvalidField("title", "Page source title cannot be empty")
 	}
 	changed := !exists || !nullableStringEqual(current.Title, nextTitle) || !nullableStringEqual(current.Summary, nextSummary)
 	if !changed {
 		return contentblock.MetadataEffect{}, nil
 	}
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO page_translation (entity_id, locale, title, summary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-			title = EXCLUDED.title, summary = EXCLUDED.summary, updated_at = EXCLUDED.updated_at
-	`, pageID, locale, nextTitle, nextSummary, now, now).Error; err != nil {
-		return contentblock.MetadataEffect{}, errs.Internal(err)
+	if err := store.UpsertLocale(ctx, pageID, locale, nextTitle, nextSummary, now); err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{
 		Changed: true, AffectsTranslationSource: locale == source.SourceLocale,
@@ -368,28 +340,9 @@ func applyPageAIDocumentMetadata(
 	}, nil
 }
 
-func lockPageAIDocumentSource(ctx context.Context, tx *gorm.DB, pageID string) (model.Page, error) {
-	var page model.Page
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", pageID).Take(&page).Error; err != nil {
-		return model.Page{}, err
-	}
-	return page, nil
-}
-
-func pageAINullableString(value sql.NullString) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
-}
-
 func pageAIContributorIDs(memberID string) []uuid.UUID {
 	parsed, err := uuid.Parse(memberID)
 	if err != nil || parsed == uuid.Nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.pageAIContributorIDs", "outcome", "failed", failurecause.Attr(err))
-		}
 		return nil
 	}
 	return []uuid.UUID{parsed}

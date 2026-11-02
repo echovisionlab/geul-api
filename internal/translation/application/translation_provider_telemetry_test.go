@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/llm"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -46,13 +45,13 @@ func TestTranslationProviderSpanUsesOnlyBoundedAllowlistedAttributes(t *testing.
 		require.NotContains(t, attr.Value.AsString(), sensitiveProviderError)
 	}
 	require.Equal(t, map[string]string{
-		"failure_reason": translationFailureInternal,
+		"failure_reason": FailureInternal,
 		"operation":      "download",
 		"provider":       "unknown",
 		"exception_type": "unknown",
 	}, keys)
 	require.Empty(t, spans[0].Events())
-	require.Equal(t, translationFailureInternal, spans[0].Status().Description)
+	require.Equal(t, FailureInternal, spans[0].Status().Description)
 }
 
 func TestTranslationProviderGenerateSpanUsesTypedLLMFailureDetails(t *testing.T) {
@@ -91,12 +90,12 @@ func TestTranslationProviderGenerateSpanUsesTypedLLMFailureDetails(t *testing.T)
 	require.Equal(t, map[string]string{
 		"provider":          "gemini",
 		"operation":         "generate",
-		"failure_reason":    translationFailureProviderRateLimited,
+		"failure_reason":    FailureProviderRateLimited,
 		"http.status_class": "4xx",
 		"exception_type":    string(llm.ProviderExceptionGenAIAPI),
 	}, keys)
 	require.Empty(t, spans[0].Events())
-	require.Equal(t, translationFailureProviderRateLimited, spans[0].Status().Description)
+	require.Equal(t, FailureProviderRateLimited, spans[0].Status().Description)
 }
 
 func TestGenerateValidatedTranslationEmitsProviderGenerateSpan(t *testing.T) {
@@ -138,7 +137,7 @@ func TestGenerateValidatedTranslationEmitsProviderGenerateSpan(t *testing.T) {
 	require.Equal(t, "gemini", attributes["provider"])
 	require.Equal(t, "generate", attributes["operation"])
 	require.Equal(t, "4xx", attributes["http.status_class"])
-	require.Equal(t, translationFailureProviderAuthentication, attributes["failure_reason"])
+	require.Equal(t, FailureProviderAuthentication, attributes["failure_reason"])
 	require.Equal(t, string(llm.ProviderExceptionGenAIAPI), attributes["exception_type"])
 	for _, value := range attributes {
 		require.NotContains(t, value, "Gemini response body")
@@ -165,7 +164,7 @@ func TestTranslationResponseIssuesReachSpansAndJobFailureLog(t *testing.T) {
 		func(context.Context) (struct{}, error) { return struct{}{}, validationErr })
 	require.ErrorIs(t, err, errTranslationProviderResponseInvalid)
 	ctx, deliverySpan := otel.Tracer("test").Start(context.Background(), "translation process")
-	job := &model.TranslationJob{ID: "job-1", OperationID: "op-1", EntityType: "page", EntityID: "page-9", TargetLocale: "ko"}
+	job := &Job{ID: "job-1", OperationID: "op-1", EntityType: "page", EntityID: "page-9", TargetLocale: "ko"}
 	fields := translationJobFailedLogFields(ctx, job, pinTranslationProviderDocumentError(validationErr), validationErr)
 	deliverySpan.End()
 
@@ -179,7 +178,7 @@ func TestTranslationResponseIssuesReachSpansAndJobFailureLog(t *testing.T) {
 	})
 	require.Equal(t, "page-9", logged["entity_id"])
 	require.Equal(t, "inline_structure_changed,target_empty", logged["response_issues"])
-	require.Equal(t, translationFailureProviderResponseInvalid, logged["reason"])
+	require.Equal(t, FailureProviderResponseInvalid, logged["reason"])
 
 	spans := recorder.Ended()
 	require.Len(t, spans, 2)

@@ -8,17 +8,24 @@ import (
 	"strings"
 	"time"
 
+	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
+	filemediaapplicationpostgres "github.com/echovisionlab/geul-api/internal/filemedia/application/postgres"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
+	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -54,7 +61,7 @@ func New(
 	return &Runtime{
 		db:        db,
 		publisher: publisher,
-		transcode: transcodeapplication.New(db, publisher, jobs),
+		transcode: transcodeapplication.New(applicationpostgres.NewUnits(db, filemediaadapter.DerivativeResults{}), publisher, jobs),
 		spiceDB:   spiceDB,
 		s3Client:  s3Client,
 		bucket:    strings.TrimSpace(bucket),
@@ -69,15 +76,16 @@ func (r *Runtime) HandleFileDelete(
 	if err := filemediaapplication.ValidateDeleteEvent(event); err != nil {
 		return fmt.Errorf("%w: %v", filemediaapplication.ErrInvalidFileDeleteTarget, err)
 	}
-	deletion := filemediaapplication.NewDeletion(r.db, r.fileAuth)
-	exists, err := deletion.ValidatePending(ctx, event)
+	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(r.db, filereferences.Attachments{}), r.fileAuth)
+	target := filemediaapplication.DeletionTargetFromProto(event)
+	exists, err := deletion.ValidatePending(ctx, target)
 	if err != nil || !exists {
 		return err
 	}
 	if err := r.deleteFileObjects(ctx, event); err != nil {
 		return err
 	}
-	return deletion.Finalize(ctx, event)
+	return deletion.Finalize(ctx, target)
 }
 
 func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDeleteEvent) error {
@@ -86,10 +94,10 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 	}
 	original := event.GetOriginal()
 	derivativeCount := len(event.GetGenerations())
-	slog.Info("Deleting file objects from storage",
-		"fileId", event.GetFileId(),
+	slog.InfoContext(ctx, "Deleting file objects from storage",
+		"file_id", event.GetFileId(),
 		"bucket", r.bucket,
-		"derivativeCount", derivativeCount,
+		"derivative_count", derivativeCount,
 	)
 
 	if original.GetObjectKey() != "" {
@@ -97,8 +105,8 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 			Bucket: aws.String(r.bucket),
 			Key:    aws.String(original.GetObjectKey()),
 		}); err != nil {
-			slog.ErrorContext(ctx, "Failed to delete original storage object", "failure_cause", failurecause.Message(err), "file_id", event.GetFileId(), "bucket", r.bucket, "derivative_count", derivativeCount)
-			return errors.New("failed to delete original storage object")
+			return failurecause.WithAttrs(fmt.Errorf("delete original storage object: %w", err),
+				slog.String("file_id", event.GetFileId()), slog.String("bucket", r.bucket))
 		}
 	}
 
@@ -108,7 +116,7 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 		}
 	}
 
-	slog.Info("File objects deleted successfully", "fileId", event.GetFileId(), "derivativesDeleted", derivativeCount)
+	slog.InfoContext(ctx, "File objects deleted successfully", "file_id", event.GetFileId(), "derivative_count", derivativeCount)
 	return nil
 }
 
@@ -175,7 +183,7 @@ func (r *Runtime) HandleMeshOptimizationProgress(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization progress event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleProgress(ctx, &event)
+	_, err := r.meshOptimizationService().HandleProgress(ctx, filemediaqueue.MeshProgressEvent(&event))
 	return err
 }
 
@@ -187,7 +195,7 @@ func (r *Runtime) HandleMeshOptimizationComplete(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization complete event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleComplete(ctx, &event)
+	_, err := r.meshOptimizationService().HandleComplete(ctx, filemediaqueue.MeshCompleteEvent(&event))
 	return err
 }
 
@@ -199,7 +207,7 @@ func (r *Runtime) HandleMeshOptimizationFail(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization fail event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleFailed(ctx, &event)
+	_, err := r.meshOptimizationService().HandleFailed(ctx, filemediaqueue.MeshFailedEvent(&event))
 	return err
 }
 
@@ -208,12 +216,10 @@ func (r *Runtime) ExpireStaleMeshOptimizationCandidates(ctx context.Context, now
 }
 
 func (r *Runtime) meshOptimizationService() *filemedia.MeshOptimizationService {
-	return filemedia.NewMeshOptimizationService(
-		r.db,
-		nil,
-		meshOptimizationFileDeleter{runtime: r},
-		r.spiceDB,
-	)
+	return filemedia.NewMeshOptimizationService(filemedia.MeshOptimizationDeps{
+		Units:       filemediapostgres.NewUnits(r.db, filemediapostgres.Ports{}),
+		FileDeleter: meshOptimizationFileDeleter{runtime: r}, Authorizer: r.spiceDB,
+	})
 }
 
 type meshOptimizationFileDeleter struct{ runtime *Runtime }
@@ -222,5 +228,5 @@ func (d meshOptimizationFileDeleter) DeleteFileByID(ctx context.Context, fileID 
 	if d.runtime == nil || d.runtime.publisher == nil || fileID == "" {
 		return nil
 	}
-	return filemedia.RequestFileDeletion(ctx, d.runtime.db, d.runtime.publisher, fileID)
+	return filemedia.RequestFileDeletion(ctx, filemediapostgres.NewUnits(d.runtime.db, filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, DeletionQueue: filemediaqueue.Publisher(d.runtime.publisher)}), fileID)
 }

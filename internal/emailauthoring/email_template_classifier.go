@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type EmailTemplateClass string
@@ -54,28 +53,40 @@ func ClassifyEmailTemplateType(templateType string) EmailTemplateClass {
 	}
 }
 
-func EmailTemplateContextAllowed(job *managev1.SendEmailEvent) bool {
-	if job == nil {
-		return false
-	}
+// RecipientContext is the kind of recipient a queued email names.
+type RecipientContext string
 
-	class := ClassifyEmailTemplateType(job.GetTemplateType())
-	switch job.GetRecipientContext().(type) {
-	case *managev1.SendEmailEvent_AccountSelectedPrimaryEmail:
+// The recipient contexts of a queued email.
+const (
+	RecipientAccountSelectedPrimaryEmail RecipientContext = "account_selected_primary_email"
+	RecipientNewsletterSubscription      RecipientContext = "newsletter_subscription"
+	RecipientAccountVerification         RecipientContext = "account_verification"
+	RecipientAuthLogin                   RecipientContext = "auth_login"
+	RecipientAuthRegistration            RecipientContext = "auth_registration"
+	RecipientSystemDirect                RecipientContext = "system_direct"
+	RecipientTestEmail                   RecipientContext = "test_email"
+)
+
+// EmailTemplateContextAllowed reports whether an email of templateType may
+// go to a recipient of context; an unknown context is never allowed.
+func EmailTemplateContextAllowed(templateType string, context RecipientContext) bool {
+	class := ClassifyEmailTemplateType(templateType)
+	switch context {
+	case RecipientAccountSelectedPrimaryEmail:
 		return class == EmailTemplateClassCampaign ||
 			class == EmailTemplateClassLegalNotice ||
 			class == EmailTemplateClassAccountTransactional
-	case *managev1.SendEmailEvent_NewsletterSubscription:
+	case RecipientNewsletterSubscription:
 		return class == EmailTemplateClassCampaign
-	case *managev1.SendEmailEvent_AccountVerification:
+	case RecipientAccountVerification:
 		return class == EmailTemplateClassAccountVerification
-	case *managev1.SendEmailEvent_AuthLogin:
+	case RecipientAuthLogin:
 		return class == EmailTemplateClassAuthLogin
-	case *managev1.SendEmailEvent_AuthRegistration:
+	case RecipientAuthRegistration:
 		return class == EmailTemplateClassAuthRegistration
-	case *managev1.SendEmailEvent_SystemDirect:
+	case RecipientSystemDirect:
 		return class == EmailTemplateClassAccountTransactional
-	case *managev1.SendEmailEvent_TestEmail:
+	case RecipientTestEmail:
 		return class == EmailTemplateClassCampaign || class == EmailTemplateClassTestDirect
 	default:
 		return false

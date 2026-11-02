@@ -1,8 +1,8 @@
 package page_test
 
 import (
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 )
 
-var _ filemedia.PagePolicyAccess = (*pageadapter.PolicyAccess)(nil)
+var _ filemediapolicy.LockedPolicyAccess = (*pageadapter.PolicyAccess)(nil)

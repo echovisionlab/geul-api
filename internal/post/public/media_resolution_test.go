@@ -1,54 +1,58 @@
 package public
 
 import (
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	"context"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/echovisionlab/geul-api/internal/post"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 type publicDisplayPostFiles struct {
-	deliveries map[string]*commonv1.MediaDelivery
+	deliveries map[string]*fileref.Delivery
 }
 
-func (f publicDisplayPostFiles) ResolvePublicDisplayMedia(
+func (f publicDisplayPostFiles) ResolveDisplayMedia(
 	context.Context,
 	[]string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	return f.deliveries, nil
 }
 
 func (publicDisplayPostFiles) ResolveAuthorizedContentBlockMedia(
 	context.Context,
 	uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 
 func TestLoadPostFeaturedImageDeliveriesKeepsOnlyPublicDisplayProjection(t *testing.T) {
 	fileID := uuid.NewString()
-	asset := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example.test/asset.webp"}
-	service := &PostService{files: publicDisplayPostFiles{deliveries: map[string]*commonv1.MediaDelivery{
+	asset := &mediaasset.Reference{AssetID: uuid.NewString(), URL: "https://cdn.example.test/asset.webp"}
+	service := &Service{files: publicDisplayPostFiles{deliveries: map[string]*fileref.Delivery{
 		fileID: {
-			FileId: fileID, Asset: asset, Thumbnail: asset,
-			Inline:   &commonv1.ExpiringMediaRef{Url: "private-inline"},
-			Download: &commonv1.ExpiringMediaRef{Url: "private-download"},
+			FileID: fileID, Asset: asset, Thumbnail: asset,
+			Inline:   &mediaauth.Reference{URL: "private-inline"},
+			Download: &mediaauth.Reference{URL: "private-download"},
 		},
 	}}}
 
-	got, err := service.loadPostFeaturedImageDeliveries(t.Context(), []model.Post{{
+	got, err := service.loadPostFeaturedImageDeliveries(t.Context(), []post.Post{{
 		ID: uuid.NewString(), FeaturedImageFileID: &fileID,
 	}})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	for _, delivery := range got {
-		require.Equal(t, asset, delivery.GetAsset())
-		require.Equal(t, asset, delivery.GetThumbnail())
-		require.Nil(t, delivery.GetInline())
-		require.Nil(t, delivery.GetDownload())
+		require.Equal(t, asset, optional.Value(delivery).Asset)
+		require.Equal(t, asset, optional.Value(delivery).Thumbnail)
+		require.Nil(t, optional.Value(delivery).Inline)
+		require.Nil(t, optional.Value(delivery).Download)
 	}
 }

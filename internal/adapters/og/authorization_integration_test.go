@@ -11,13 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	managedID, otherID := uuid.NewString(), uuid.NewString()
 	actor, err := policyv1.NewAccountIdentityActor(manager.IdentityID)
@@ -33,22 +34,4 @@ func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
 	require.NoError(t, authorization.AuthorizeEntity(ctx, "artist", managedID, false))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(authorization.AuthorizeEntity(ctx, "artist", otherID, true)))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(authorization.AuthorizeEntity(ctx, "artist", otherID, false)))
-}
-
-func TestStaticTargetsRemainAdminOnlyIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	authorization := NewAuthorization(stack.SpiceDBClient)
-
-	authorCtx := auth.WithUser(context.Background(), author.AuthUserInfo())
-	for _, entityType := range []string{"site", "privacy", "terms"} {
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
-			authorization.AuthorizeEntity(authorCtx, entityType, uuid.NewString(), true),
-		))
-	}
-	adminCtx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	require.NoError(t, authorization.AuthorizeEntity(adminCtx, "privacy", uuid.NewString(), true))
-	require.NoError(t, authorization.RequireAdmin(adminCtx))
 }

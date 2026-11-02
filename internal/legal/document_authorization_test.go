@@ -6,8 +6,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -39,27 +37,17 @@ func (checker *recordingLegalPermissionChecker) Can(
 	return true, nil
 }
 
-func (checker *recordingLegalPermissionChecker) CheckActorCan(
-	_ context.Context,
-	_ policyv1.Actor,
-	_ policyv1.Can,
-) (bool, error) {
-	return true, nil
-}
-
 func TestLegalPermissionSelectionUsesArchivedCapabilitiesExclusively(t *testing.T) {
 	t.Parallel()
 
 	for _, entityType := range []string{"terms", "privacy"} {
-		policy, err := legalDocumentPolicyForType(entityType)
+		kind, err := legalKind(entityType)
 		require.NoError(t, err)
-		require.Equal(t, legalActionViewArchived, legalViewAction(policy, policy.archivedStatus))
-		activeStatus := managev1.TermsStatus_TERMS_STATUS_ACTIVE.String()
-		if entityType == "privacy" {
-			activeStatus = managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String()
-		}
-		for _, status := range []string{policy.draftStatus, policy.scheduledStatus, activeStatus} {
-			require.Equal(t, legalActionView, legalViewAction(policy, status))
+		archived := kind.archived
+		require.Equal(t, legalActionViewArchived, legalViewAction(kind, archived))
+		current := []Status{kind.draft, kind.scheduled, kind.active}
+		for _, status := range current {
+			require.Equal(t, legalActionView, legalViewAction(kind, status))
 		}
 		for _, normal := range []legalAction{
 			legalActionEdit,
@@ -68,9 +56,9 @@ func TestLegalPermissionSelectionUsesArchivedCapabilitiesExclusively(t *testing.
 			legalActionManage,
 			legalActionManageShareLinks,
 		} {
-			require.Equal(t, legalActionEditArchived, legalMutationAction(policy, policy.archivedStatus, normal))
-			for _, status := range []string{policy.draftStatus, policy.scheduledStatus, activeStatus} {
-				require.Equal(t, normal, legalMutationAction(policy, status, normal))
+			require.Equal(t, legalActionEditArchived, legalMutationAction(kind, archived, normal))
+			for _, status := range current {
+				require.Equal(t, normal, legalMutationAction(kind, status, normal))
 			}
 		}
 	}
@@ -89,7 +77,7 @@ func TestRequireLegalPermissionForPrincipalChecksExactObjectActionOnce(t *testin
 	}
 	require.NoError(t, requireLegalPermissionForPrincipal(
 		context.Background(), checker,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY,
+		Terms,
 		"22222222-2222-4222-8222-222222222222",
 		legalActionViewArchived,
 		principal,
@@ -112,5 +100,3 @@ func TestLegalTargetLocaleAuditOperationReflectsTranslationLifecycle(t *testing.
 	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, legalTargetLocaleContentOperation(AITranslationUnchanged, true))
 	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, legalTargetLocaleContentOperation(AITranslationDelete, true))
 }
-
-var _ CollaborationPermissionChecker = (*recordingLegalPermissionChecker)(nil)

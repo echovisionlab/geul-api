@@ -3,10 +3,10 @@ package middleware
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestRecoveryConvertsPanicToError(t *testing.T) {
+func TestRecoveryReturnsSanitizedPanicWithoutLogging(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -29,16 +29,21 @@ func TestRecoveryConvertsPanicToError(t *testing.T) {
 
 	err := handler(context.Background(), mq.Message{Queue: eventpkg.QueueEmailAuth, Body: body, MessageID: "message-1", CorrelationID: "command-1"})
 	require.Error(t, err)
-	assert.Equal(t, "queue handler panic", err.Error())
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Contains(t, entry["failure_cause"], "boom")
-	require.NotContains(t, output.String(), "person@example.test")
-	require.NotContains(t, output.String(), "829173")
-	require.NotContains(t, output.String(), "Private Person")
-	require.Contains(t, entry["panic_stack"], "TestRecoveryConvertsPanicToError")
-	require.Equal(t, "message-1", entry["message_id"])
-	require.Equal(t, "command-1", entry["command_id"])
+	// The queue consumer logs the returned failure once.
+	require.Empty(t, output.String())
+	failure := failurecause.Of(err)
+	require.Contains(t, failure.Cause, "queue handler panic: boom")
+	for _, private := range []string{"person@example.test", "829173", "Private Person"} {
+		require.NotContains(t, err.Error(), private)
+		require.NotContains(t, failure.Cause, private)
+	}
+	var stack string
+	for _, attr := range failure.Attrs {
+		if attr.Key == "panic_stack" {
+			stack = attr.Value.String()
+		}
+	}
+	require.Contains(t, stack, "TestRecoveryReturnsSanitizedPanicWithoutLogging")
 }
 
 func TestRecoveryPassesSuccessfulHandler(t *testing.T) {

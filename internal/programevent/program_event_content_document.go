@@ -2,91 +2,61 @@ package programevent
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/translation"
-	"log/slog"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/translation"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const programEventContentProfile = "program_event"
 
-type programEventContentDocumentRoot struct {
-	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
-}
-
 func loadProgramEventContentDocumentID(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	eventID string,
-	lock bool,
+	lock RowLock,
 ) (uuid.UUID, error) {
-	if db == nil {
-		return uuid.Nil, errs.Internal(errors.New("program Event content document database is required"))
-	}
-	query := db.WithContext(ctx).
-		Table("program_event").
-		Select("content_document_id").
-		Where("id = ?", eventID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	}
-	var root programEventContentDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound("program event", eventID)
-		}
-		return uuid.Nil, errs.Internal(err)
-	}
-	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String == "" {
-		return uuid.Nil, errs.FailedPrecondition("Program Event content document is not initialized")
-	}
-	documentID, err := uuid.Parse(root.ContentDocumentID.String)
+	reference, err := store.ContentDocumentID(ctx, eventID, lock)
 	if err != nil {
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid Program Event content_document_id: %w", err))
+		return uuid.Nil, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
+	}
+	if reference == nil || *reference == "" {
+		return uuid.Nil, domainerr.Precondition("Program Event content document is not initialized")
+	}
+	documentID, err := uuid.Parse(*reference)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid Program Event content_document_id: %w", err)
 	}
 	return documentID, nil
 }
 
+// programEventContentDocumentFence locks the event root, requires it to
+// still own the document and runs authorize before the content rows lock.
 func programEventContentDocumentFence(
 	eventID string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		query := tx.WithContext(ctx).
-			Table("program_event").
-			Select("content_document_id").
-			Where("id = ?", eventID).
-			Clauses(clause.Locking{Strength: "UPDATE"})
-		var root programEventContentDocumentRoot
-		if err := query.Take(&root).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return contentblock.DomainContext{}, errs.NotFound("program event", eventID)
-			}
-			return contentblock.DomainContext{}, errs.Internal(err)
+	authorize func(context.Context, Store) error,
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		reference, err := store.ContentDocumentID(ctx, eventID, UpdateLock)
+		if err != nil {
+			return contentblock.DomainContext{}, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 		}
-		if !root.ContentDocumentID.Valid || root.ContentDocumentID.String != documentID.String() {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Program Event content document ownership changed; reload before saving")
+		if reference == nil || *reference != documentID.String() {
+			return contentblock.DomainContext{}, domainerr.Precondition("Program Event content document ownership changed; reload before saving")
 		}
 		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("program Event content document authorization is required"))
+			return contentblock.DomainContext{}, errors.New("program Event content document authorization is required")
 		}
-		if err := authorize(ctx, tx); err != nil {
+		if err := authorize(ctx, store); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		sourceState, err := loadProgramEventSourceLocale(ctx, tx, eventID, true)
+		sourceState, err := loadProgramEventSourceLocale(ctx, store, eventID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
@@ -96,116 +66,97 @@ func programEventContentDocumentFence(
 
 func requireProgramEventBlockBootstrap(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB CollaborationPermissionChecker,
+	store Store,
+	spiceDB ActorChecker,
 	eventID string,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID *string,
 ) (uuid.UUID, *auth.UserInfo, error) {
-	if principalMessage == nil {
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+	if sessionID == nil {
+		return uuid.Nil, nil, authenticationRequired()
 	}
-	documentID, err := loadProgramEventContentDocumentID(ctx, tx, eventID, true)
+	documentID, err := loadProgramEventContentDocumentID(ctx, store, eventID, UpdateLock)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := RequireExists(ctx, tx, eventID); err != nil {
+	if err := RequireExists(ctx, store, eventID); err != nil {
 		return uuid.Nil, nil, err
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		tx,
-		principalMessage.GetSessionId(),
-	)
+	principal, err := store.ResolveSessionPrincipal(ctx, *sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+		return uuid.Nil, nil, authenticationRequired().WithCause(err)
 	}
 	if err != nil {
-		return uuid.Nil, nil, errs.Internal(fmt.Errorf("resolve Program Event collaboration principal: %w", err))
+		return uuid.Nil, nil, fmt.Errorf("resolve Program Event collaboration principal: %w", err)
 	}
 	if principal == nil || !principal.Authenticated {
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+		return uuid.Nil, nil, authenticationRequired()
 	}
 	if principal.Banned {
-		return uuid.Nil, nil, errs.AccountBanned()
+		return uuid.Nil, nil, domainerr.Denied("account is banned")
 	}
 	if !principal.Onboarded {
-		return uuid.Nil, nil, errs.NoPermission("edit", "program event")
+		return uuid.Nil, nil, noPermission("edit")
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := store.LockActivePrincipal(ctx, principal)
 	if err != nil {
-		return uuid.Nil, nil, errs.Internal(err)
+		return uuid.Nil, nil, err
 	}
 	if !active {
-		return uuid.Nil, nil, errs.NoPermission("edit", "program event")
+		return uuid.Nil, nil, noPermission("edit")
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+		return uuid.Nil, nil, authenticationRequired().WithCause(err)
 	}
-	var root struct {
-		Status string `gorm:"column:status"`
-	}
-	if err := tx.WithContext(ctx).Table("program_event").Select("status").Where("id = ?", eventID).Take(&root).Error; err != nil {
-		return uuid.Nil, nil, errs.Internal(fmt.Errorf("load Program Event collaboration status: %w", err))
+	status, err := store.EventStatus(ctx, eventID, NoLock)
+	if err != nil {
+		return uuid.Nil, nil, fmt.Errorf("load Program Event collaboration status: %w", err)
 	}
 	if err := requireProgramEventPermissionForSubject(
-		ctx, spiceDB, eventID, programEventViewAction(root.Status), subject,
+		ctx, spiceDB, eventID, programEventViewAction(status), subject,
 	); err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, tx, principalMessage.GetSessionId(), principal); err != nil {
+	if err := store.LockSession(ctx, *sessionID, principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-			return uuid.Nil, nil, errs.AuthenticationRequired()
+			return uuid.Nil, nil, authenticationRequired().WithCause(err)
 		}
-		return uuid.Nil, nil, errs.Internal(fmt.Errorf("lock Program Event collaboration session: %w", err))
+		return uuid.Nil, nil, fmt.Errorf("lock Program Event collaboration session: %w", err)
 	}
 	return documentID, principal, nil
 }
 
-func requireProgramEventContentContributors(
-	ctx context.Context,
-	tx *gorm.DB,
-	checkpoints persistencecheckpoint.ContributorFence,
-	eventID string,
-	contributors []string,
-) error {
-	return checkpoints.RequireCurrentContributors(
-		ctx,
-		tx,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT,
-		eventID,
-		contributors,
-	)
-}
-
 func normalizeProgramEventContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || rejected(err, domainerr.Invalid, domainerr.NotFound, domainerr.AlreadyExists,
+		domainerr.FailedPrecondition, domainerr.PermissionDenied, domainerr.Unauthenticated, domainerr.Unavailable) {
 		return err
 	}
+	// A revision conflict keeps its cause, so a conflict found while storing
+	// takes the same errors.Is/As branches (AI document conflict result,
+	// translation source no longer current) as one found by the pre-check.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
+		return errors.Join(domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			targetConflict.Error(), domainerr.CollaborationRevisionsOf(err),
+		), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.NotFoundMsg("Program Event content document not found")
+		return domainerr.New(domainerr.NotFound, "", "Program Event content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "Program Event content revision changed; reload before saving", err)
+		return errors.Join(domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+			"Program Event content revision changed; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		), err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("program Event content document: %w", err))
+		return fmt.Errorf("program Event content document: %w", err)
 	}
 }

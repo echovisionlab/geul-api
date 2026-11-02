@@ -8,7 +8,6 @@ import (
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -134,7 +133,7 @@ func TestFinishTranscodeJobDefersToTracker(t *testing.T) {
 
 func TestWaveformJobMatchesEvent(t *testing.T) {
 	t.Parallel()
-	job := &model.WaveformJob{
+	job := &transcodestate.WaveformJob{
 		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST.String(),
 		EntityID:   "entity",
 		FileID:     "file",

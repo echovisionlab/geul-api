@@ -15,31 +15,31 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) (*FileService, *recordingPostAccess) {
+func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) (*Service, *recordingPostAccess) {
 	t.Helper()
 	upstream := httptest.NewTLSServer(handler)
 	t.Cleanup(upstream.Close)
 	access := &recordingPostAccess{}
-	service := &FileService{
-		postAccess: access,
-		uploadConfigs: map[managev1.UploadType]*model.UploadConfig{
-			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE: {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
+	service := &Service{
+		units: mutationtest.New[Store](&sourcePreflightStore{access: access}),
+		uploadConfigs: map[string]*domain.UploadConfig{
+			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String(): {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
 		},
 		remoteImportResolver:      &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}},
-		remoteImportBaseTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // Local TLS fixture only.
+		remoteImportBaseTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		remoteImportDialer: func(ctx context.Context, network, address string) (net.Conn, error) {
 			require.Equal(t, "8.8.8.8:443", address)
 			return new(net.Dialer).DialContext(ctx, network, upstream.Listener.Addr().String())
 		},
 	}
-	// db, S3, processing, and async dependencies remain nil: a successful relay
-	// must never access those persistence or lifecycle dependencies.
+	// A source relay only needs owner authorization; it does not persist an upload.
 	return service, access
 }
 
@@ -99,7 +99,7 @@ func TestUploadSourceOriginalBytesAndMetadata(t *testing.T) {
 				require.Equal(t, strconv.Itoa(len(original)), rec.Header().Get("Content-Length"))
 				require.Equal(t, strconv.Itoa(len(original)), rec.Header().Get("X-Upload-Source-Size"))
 			}
-			require.Equal(t, 1, access.requireEditCount)
+			require.Equal(t, 1, access.requireLockedEditCount)
 		})
 	}
 }
@@ -107,43 +107,43 @@ func TestUploadSourceOriginalBytesAndMetadata(t *testing.T) {
 func TestUploadSourceRejectsBeforeOutput(t *testing.T) {
 	tests := []struct {
 		name  string
-		alter func(*http.Request, *FileService, *recordingPostAccess)
+		alter func(*http.Request, *Service, *recordingPostAccess)
 		want  int
 	}{
-		{"method", func(r *http.Request, _ *FileService, _ *recordingPostAccess) { r.Method = http.MethodPost }, 405},
-		{"unauthenticated", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"method", func(r *http.Request, _ *Service, _ *recordingPostAccess) { r.Method = http.MethodPost }, 405},
+		{"unauthenticated", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			*r = *r.WithContext(context.Background())
 		}, 401},
-		{"forbidden", func(_ *http.Request, _ *FileService, a *recordingPostAccess) { a.err = errs.PermissionDenied("denied") }, 403},
-		{"invalid upload", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"forbidden", func(_ *http.Request, _ *Service, a *recordingPostAccess) { a.err = errs.PermissionDenied("denied") }, 403},
+		{"invalid upload", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("uploadType", "99999")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"invalid entity", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"invalid entity", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("entityId", "bad")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"invalid entity enum", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"invalid entity enum", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("entityType", "99999")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"duplicate url", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"duplicate url", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			r.URL.RawQuery += "&url=https%3A%2F%2Felsewhere.example.com"
 		}, 400},
-		{"HTTP url", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"HTTP url", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("url", "http://media.example.com/file.png")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"credentials", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"credentials", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("url", "https://user:secret@media.example.com/file.png")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"SSRF", func(_ *http.Request, s *FileService, _ *recordingPostAccess) {
+		{"SSRF", func(_ *http.Request, s *Service, _ *recordingPostAccess) {
 			s.remoteImportResolver = &remoteImportTestResolver{ips: []net.IP{net.ParseIP("127.0.0.1")}}
 		}, 400},
 	}
@@ -261,7 +261,7 @@ func TestUploadSourceBelowMinimumRejected(t *testing.T) {
 	service, _ := uploadSourceTestService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(uploadSourcePNG(20))
 	}), 100)
-	service.uploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE].MinSize = 30
+	service.uploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String()].MinSize = 30
 	rec := httptest.NewRecorder()
 	service.HandleUploadSource(rec, uploadSourceTestRequest(t))
 	require.Equal(t, http.StatusBadRequest, rec.Code)
@@ -314,4 +314,19 @@ func TestUploadSourcePublicRedirectPreservesDownload(t *testing.T) {
 	service.HandleUploadSource(rec, uploadSourceTestRequest(t))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, original, rec.Body.Bytes())
+}
+
+type sourcePreflightStore struct {
+	Store
+	access *recordingPostAccess
+}
+
+func (s *sourcePreflightStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
+func (s *sourcePreflightStore) RequirePolicyOwner(ctx context.Context, kind, id string, edit bool) error {
+	if kind != "post" || !edit {
+		panic("unexpected source owner permission")
+	}
+	return s.access.RequireLockedEdit(ctx, nil, id)
 }

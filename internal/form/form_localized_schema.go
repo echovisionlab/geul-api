@@ -121,7 +121,8 @@ type formSchemaTranslationText struct {
 
 // walkFormSchemaTranslationText is the single traversal for form-owned
 // translated fields. The localization projection and translation adapter both
-// use it so their slot identity cannot drift apart.
+// use it so their slot identity cannot drift apart. Each level below a step
+// is its own walk: a field, its options and its validators.
 func walkFormSchemaTranslationText(
 	steps formDocumentArray,
 	visit func(formSchemaTranslationText),
@@ -131,98 +132,99 @@ func walkFormSchemaTranslationText(
 		if !ok {
 			continue
 		}
-		stepID := formNodeID(step, "id", fmt.Sprintf("step:%d", stepIndex))
-		visit(formSchemaTranslationText{
-			object: step, field: "title", unitID: fmt.Sprintf("step:%s:title", stepID),
-			path:          fmt.Sprintf("schema:step:%s:title", stepID),
-			blockHandle:   intrav1.FormStepBlockHandlePrefix + stepID,
-			fieldHandle:   intrav1.FormStepTitleFieldHandle,
-			containerType: translation.ContainerTypeSection, containerID: stepID,
-		})
-		visit(formSchemaTranslationText{
-			object: step, field: "description", unitID: fmt.Sprintf("step:%s:description", stepID),
-			path:          fmt.Sprintf("schema:step:%s:description", stepID),
-			blockHandle:   intrav1.FormStepBlockHandlePrefix + stepID,
-			fieldHandle:   intrav1.FormStepDescriptionFieldHandle,
-			containerType: translation.ContainerTypeSection, containerID: stepID,
-		})
+		stepID := formNodeID(step, fmt.Sprintf("step:%d", stepIndex))
+		for _, stepSpec := range []struct{ name, fieldHandle string }{
+			{name: "title", fieldHandle: intrav1.FormStepTitleFieldHandle},
+			{name: "description", fieldHandle: intrav1.FormStepDescriptionFieldHandle},
+		} {
+			visit(formSchemaTranslationText{
+				object: step, field: stepSpec.name, unitID: fmt.Sprintf("step:%s:%s", stepID, stepSpec.name),
+				path:          fmt.Sprintf("schema:step:%s:%s", stepID, stepSpec.name),
+				blockHandle:   intrav1.FormStepBlockHandlePrefix + stepID,
+				fieldHandle:   stepSpec.fieldHandle,
+				containerType: translation.ContainerTypeSection, containerID: stepID,
+			})
+		}
 		for fieldIndex, rawField := range formValueSlice(step["fields"]) {
-			field, ok := rawField.(formDocumentObject)
-			if !ok {
-				continue
-			}
-			fieldID := formNodeID(field, "id", fmt.Sprintf("%s:field:%d", stepID, fieldIndex))
-			context := strings.TrimSpace(formStringField(field, "type"))
-			var contextPointer *string
-			if context != "" {
-				contextPointer = &context
-			}
-			for _, fieldSpec := range []struct {
-				name        string
-				pathName    string
-				fieldHandle string
-			}{
-				{name: "label", pathName: "label", fieldHandle: intrav1.FormFieldLabelFieldHandle},
-				{name: "description", pathName: "description", fieldHandle: intrav1.FormFieldDescriptionFieldHandle},
-				{name: "placeholder", pathName: "placeholder", fieldHandle: intrav1.FormFieldPlaceholderFieldHandle},
-				{name: "checkboxLabel", pathName: "checkboxLabel", fieldHandle: intrav1.FormFieldCheckboxLabelFieldHandle},
-			} {
-				visit(formSchemaTranslationText{
-					object: field, field: fieldSpec.name,
-					unitID: fmt.Sprintf(
-						"field:%s:%s",
-						fieldID,
-						strings.ReplaceAll(fieldSpec.pathName, "checkboxLabel", "checkbox_label"),
-					),
-					path:          fmt.Sprintf("schema:step:%s:field:%s:%s", stepID, fieldID, fieldSpec.pathName),
-					blockHandle:   intrav1.FormFieldBlockHandlePrefix + fieldID,
-					fieldHandle:   fieldSpec.fieldHandle,
-					containerType: translation.ContainerTypeBlock, containerID: fieldID,
-					context: contextPointer,
-				})
-			}
-			for optionIndex, rawOption := range formValueSlice(field["options"]) {
-				option, ok := rawOption.(formDocumentObject)
-				if !ok {
-					continue
-				}
-				optionID := formNodeID(option, "id", "")
-				if optionID == "" {
-					if valueKey, ok := NormalizeFormOptionValueKey(option["value"]); ok && valueKey != "" {
-						optionID = valueKey
-					} else {
-						optionID = fmt.Sprintf("%d", optionIndex)
-					}
-				}
-				visit(formSchemaTranslationText{
-					object: option, field: "label",
-					unitID:        fmt.Sprintf("field:%s:option:%s:label", fieldID, optionID),
-					path:          fmt.Sprintf("schema:step:%s:field:%s:option:%s:label", stepID, fieldID, optionID),
-					blockHandle:   intrav1.FormOptionBlockHandlePrefix + optionID,
-					fieldHandle:   intrav1.FormOptionLabelFieldHandle,
-					containerType: translation.ContainerTypeBlock, containerID: fieldID,
-					context: contextPointer,
-				})
-			}
-			validation := formMapField(field, "validation")
-			for validatorIndex, rawValidator := range formValueSlice(validation["validators"]) {
-				validator, ok := rawValidator.(formDocumentObject)
-				if !ok {
-					continue
-				}
-				validatorID := formNodeID(validator, "id", fmt.Sprintf("%d", validatorIndex))
-				visit(formSchemaTranslationText{
-					object: validator, field: "message",
-					unitID:        fmt.Sprintf("field:%s:validator:%s:message", fieldID, validatorID),
-					path:          fmt.Sprintf("schema:step:%s:field:%s:validator:%s:message", stepID, fieldID, validatorID),
-					blockHandle:   intrav1.FormValidatorBlockHandlePrefix + validatorID,
-					fieldHandle:   intrav1.FormValidatorMessageFieldHandle,
-					containerType: translation.ContainerTypeBlock, containerID: fieldID,
-					context: contextPointer,
-				})
+			if field, ok := rawField.(formDocumentObject); ok {
+				walkFormFieldTranslationText(stepID, formNodeID(field, fmt.Sprintf("%s:field:%d", stepID, fieldIndex)), field, visit)
 			}
 		}
 	}
+}
+
+// walkFormFieldTranslationText visits one field's translated copy, then its
+// options' and validators' copy. Every slot of the field carries the field
+// type as its translation context.
+func walkFormFieldTranslationText(stepID, fieldID string, field formDocumentObject, visit func(formSchemaTranslationText)) {
+	var context *string
+	if fieldType := strings.TrimSpace(formStringField(field, "type")); fieldType != "" {
+		context = &fieldType
+	}
+	for _, fieldSpec := range []struct {
+		name        string
+		unitName    string
+		fieldHandle string
+	}{
+		{name: "label", unitName: "label", fieldHandle: intrav1.FormFieldLabelFieldHandle},
+		{name: "description", unitName: "description", fieldHandle: intrav1.FormFieldDescriptionFieldHandle},
+		{name: "placeholder", unitName: "placeholder", fieldHandle: intrav1.FormFieldPlaceholderFieldHandle},
+		{name: "checkboxLabel", unitName: "checkbox_label", fieldHandle: intrav1.FormFieldCheckboxLabelFieldHandle},
+	} {
+		visit(formSchemaTranslationText{
+			object: field, field: fieldSpec.name,
+			unitID:        fmt.Sprintf("field:%s:%s", fieldID, fieldSpec.unitName),
+			path:          fmt.Sprintf("schema:step:%s:field:%s:%s", stepID, fieldID, fieldSpec.name),
+			blockHandle:   intrav1.FormFieldBlockHandlePrefix + fieldID,
+			fieldHandle:   fieldSpec.fieldHandle,
+			containerType: translation.ContainerTypeBlock, containerID: fieldID,
+			context: context,
+		})
+	}
+	for optionIndex, rawOption := range formValueSlice(field["options"]) {
+		option, ok := rawOption.(formDocumentObject)
+		if !ok {
+			continue
+		}
+		optionID := formOptionTranslationID(option, optionIndex)
+		visit(formSchemaTranslationText{
+			object: option, field: "label",
+			unitID:        fmt.Sprintf("field:%s:option:%s:label", fieldID, optionID),
+			path:          fmt.Sprintf("schema:step:%s:field:%s:option:%s:label", stepID, fieldID, optionID),
+			blockHandle:   intrav1.FormOptionBlockHandlePrefix + optionID,
+			fieldHandle:   intrav1.FormOptionLabelFieldHandle,
+			containerType: translation.ContainerTypeBlock, containerID: fieldID,
+			context: context,
+		})
+	}
+	for validatorIndex, rawValidator := range formValueSlice(formMapField(field, "validation")["validators"]) {
+		validator, ok := rawValidator.(formDocumentObject)
+		if !ok {
+			continue
+		}
+		validatorID := formNodeID(validator, fmt.Sprintf("%d", validatorIndex))
+		visit(formSchemaTranslationText{
+			object: validator, field: "message",
+			unitID:        fmt.Sprintf("field:%s:validator:%s:message", fieldID, validatorID),
+			path:          fmt.Sprintf("schema:step:%s:field:%s:validator:%s:message", stepID, fieldID, validatorID),
+			blockHandle:   intrav1.FormValidatorBlockHandlePrefix + validatorID,
+			fieldHandle:   intrav1.FormValidatorMessageFieldHandle,
+			containerType: translation.ContainerTypeBlock, containerID: fieldID,
+			context: context,
+		})
+	}
+}
+
+// formOptionTranslationID is an option's stable ID, else its normalized
+// value, else its position.
+func formOptionTranslationID(option formDocumentObject, index int) string {
+	if id := formNodeID(option, ""); id != "" {
+		return id
+	}
+	if valueKey, ok := NormalizeFormOptionValueKey(option["value"]); ok && valueKey != "" {
+		return valueKey
+	}
+	return fmt.Sprintf("%d", index)
 }
 
 func extractFormSchemaText(steps formDocumentArray) string {
@@ -259,8 +261,8 @@ func formStringField(value formDocumentObject, key string) string {
 	return fmt.Sprintf("%v", raw)
 }
 
-func formNodeID(value formDocumentObject, key, fallback string) string {
-	if id := strings.TrimSpace(formStringField(value, key)); id != "" {
+func formNodeID(value formDocumentObject, fallback string) string {
+	if id := strings.TrimSpace(formStringField(value, "id")); id != "" {
 		return id
 	}
 	return fallback

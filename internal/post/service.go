@@ -5,1046 +5,852 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// PostService implements the PostService Connect handler
-type PostService struct {
-	managev1connect.UnimplementedPostServiceHandler
-	db             *gorm.DB
-	cdnDomain      string
-	spiceDB        *auth.SpiceDBClient
-	kratosClient   auth.IdentityManager
-	authz          *authz.SpiceDBResourceChecker
-	fileService    FileService
-	asyncPublisher AsyncPublisher
-	shareLinks     ShareLinkValidator
-	mediaLoader    ContentBlockMediaLoader
-	mediaHydrator  ContentBlockMediaHydrator
-	members        MemberSummaryLoader
-	versionRestore VersionRestoreSupport
-	auditWriter    domainaudit.Appender
-	contentBlocks  *contentblock.Store
-	ogRefresher    *og.Refresher
+// msgPostAlreadyPublished answers publishing a published Post.
+const msgPostAlreadyPublished = "post is already published"
+
+// Authorizer is the SpiceDB port of the Post use cases: the mutation
+// pipeline's checks and relationship writes, the checks of another Identity
+// (participants, collaboration contributors), the lookups of the Posts a
+// principal may read, and the relationship snapshot a deletion removes.
+// *auth.SpiceDBClient is the production Authorizer.
+type Authorizer interface {
+	mutation.Authorizer
+	CheckActorCan(ctx context.Context, actor policyv1.Actor, can policyv1.Can) (bool, error)
+	LookupResources(ctx context.Context, lookup policyv1.ResourceLookup, actor policyv1.Actor) ([]string, error)
+	SnapshotResourceRelationshipDescriptors(ctx context.Context, plan policyv1.RelationshipSnapshotPlan) ([]auth.RelationshipSnapshot, auth.ZedToken, error)
 }
 
-type PostServiceOption func(*PostService)
-
-func WithPostContentBlockMediaHydrator(hydrator ContentBlockMediaHydrator) PostServiceOption {
-	return func(s *PostService) { s.mediaHydrator = hydrator }
+// Deps are the collaborators of the Post use cases. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	Units   mutation.UnitOfWork[Store] // postpostgres.NewUnits
+	SpiceDB Authorizer
+	Fence   identitystate.Fence // identitystate.PostgresFence{}
+	Audit   domainaudit.Appender
+	Files   FileService
+	Members MemberSummaryLoader
 }
 
-func WithPostContentBlockStore(store *contentblock.Store) PostServiceOption {
-	return func(service *PostService) {
-		service.contentBlocks = store
-	}
-}
-
-// NewPostService creates a new PostService
-func NewPostService(
-	db *gorm.DB,
-	cdnDomain string,
-	ogRefresher *og.Refresher,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	fileService FileService,
-	asyncPublisher AsyncPublisher,
-	shareLinks ShareLinkValidator,
-	mediaLoader ContentBlockMediaLoader,
-	members MemberSummaryLoader,
-	versionRestore VersionRestoreSupport,
-	options ...PostServiceOption,
-) *PostService {
-	dependencycheck.New("PostService").
-		RequireNotNil(db, "db").
-		RequireNotNil(ogRefresher, "ogRefresher").
-		RequireNotNil(spiceDB, "spiceDB").
-		RequireNotNil(kratosClient, "kratosClient").
-		RequireNotNil(fileService, "fileService").
-		RequireNotNil(asyncPublisher, "asyncPublisher").
-		RequireNotNil(shareLinks, "shareLinks").
-		RequireNotNil(mediaLoader, "mediaLoader").
-		RequireNotNil(members, "members").
-		RequireNotNil(versionRestore, "versionRestore").
-		Validate()
-	service := &PostService{
-		db: db, cdnDomain: cdnDomain, ogRefresher: ogRefresher, spiceDB: spiceDB,
-		kratosClient: kratosClient,
-		authz:        authz.NewSpiceDBResourceChecker(spiceDB, db, "post"),
-		fileService:  fileService, asyncPublisher: asyncPublisher, shareLinks: shareLinks,
-		mediaLoader: mediaLoader, members: members, versionRestore: versionRestore,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Files": d.Files == nil, "Members": d.Members == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
 		}
 	}
-	return service
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("post dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-func NewAuditedPostService(
-	db *gorm.DB,
-	cdnDomain string,
-	ogRefresher *og.Refresher,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	fileService FileService,
-	asyncPublisher AsyncPublisher,
-	shareLinks ShareLinkValidator,
-	mediaLoader ContentBlockMediaLoader,
-	members MemberSummaryLoader,
-	versionRestore VersionRestoreSupport,
-	auditWriter domainaudit.Appender,
-	options ...PostServiceOption,
-) *PostService {
-	if auditWriter == nil {
-		panic("post audit writer is required")
-	}
-	service := NewPostService(
-		db, cdnDomain, ogRefresher, spiceDB, kratosClient, fileService, asyncPublisher,
-		shareLinks, mediaLoader, members, versionRestore, options...,
-	)
-	service.auditWriter = auditWriter
-	return service
+// Service holds the Post use cases: management, participants, versions,
+// the collaboration boundary and AI documents. Adapters translate their
+// requests into its commands and queries.
+type Service struct {
+	units       mutation.UnitOfWork[Store]
+	spiceDB     Authorizer
+	fileService FileService
+	members     MemberSummaryLoader
+	mutations   *mutation.StoreRunner[Store]
 }
 
-func (s *PostService) appendPostLifecycleAudit(ctx context.Context, tx *gorm.DB, postID string, previous, next model.PostStatus) error {
-	if s.auditWriter == nil {
-		return nil
+// NewService validates deps and returns the Post use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		units: deps.Units, spiceDB: deps.SpiceDB, fileService: deps.Files, members: deps.Members, mutations: mutations,
+	}, nil
+}
+
+// postEffects collects what a Post mutation names while its change runs:
+// the audit records appended once it commits, and the OG requests and
+// content.updated signals of its outbox.
+type postEffects struct {
+	audits  []mutation.Audit
+	og      []postOGRequest
+	signals []ContentUpdate
+	// ogRunID is the run of the last OG request the outbox started.
+	ogRunID *string
+}
+
+type postOGRequest struct {
+	postID, locale, reason string
+	force                  bool
+}
+
+func (e *postEffects) audit(action sharedtelemetry.AuditAction, build domainaudit.Builder) {
+	e.audits = append(e.audits, mutation.RequestAudit(action, build))
+}
+
+func (e *postEffects) updated(build domainaudit.Builder) {
+	e.audit(sharedtelemetry.AuditPostUpdated, build)
+}
+
+func (e *postEffects) requestOG(postID, locale string, force bool, reason string) {
+	e.og = append(e.og, postOGRequest{postID: postID, locale: locale, force: force, reason: reason})
+}
+
+func (e *postEffects) signal(update ContentUpdate) {
+	e.signals = append(e.signals, update)
+}
+
+// runPostMutation runs change through the pipeline with spec's access and
+// relationships; the records, OG requests and signals change names are its
+// audit and outbox.
+func runPostMutation[R any](
+	ctx context.Context,
+	s *Service,
+	spec mutation.StoreSpec[R, Store],
+	change func(context.Context, Store, *postEffects) (R, error),
+) (R, *postEffects, error) {
+	effects := &postEffects{}
+	spec.Change = func(ctx context.Context, store Store) (R, error) { return change(ctx, store, effects) }
+	spec.Audit = func(R) mutation.Audit { return mutation.Audits(effects.audits...) }
+	spec.Outbox = func(ctx context.Context, store Store, _ R) error { return flushPostEffects(ctx, store, effects) }
+	result, err := mutation.Run(ctx, s.mutations, spec)
+	return result, effects, err
+}
+
+func flushPostEffects(ctx context.Context, store Store, effects *postEffects) error {
+	for _, request := range effects.og {
+		runID, err := store.RequestOG(ctx, request.postID, request.locale, request.force, request.reason)
+		if err != nil {
+			return err
+		}
+		if runID != nil {
+			effects.ogRunID = runID
+		}
+	}
+	for _, update := range effects.signals {
+		if err := store.PublishContentUpdate(ctx, update); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readLocked runs read in one transaction after access, so the rows it
+// locks agree with each other.
+func (s *Service) readLocked(ctx context.Context, access mutation.Access, read func(context.Context, Store) error) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Access: access,
+		Change: func(ctx context.Context, store Store) (struct{}, error) { return struct{}{}, read(ctx, store) },
+		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	})
+	return err
+}
+
+// readStore runs load in one read-only snapshot.
+func readStore[T any](ctx context.Context, s *Service, load func(Store) (T, error)) (T, error) {
+	var result T
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		result, err = load(store)
+		return err
+	})
+	return result, err
+}
+
+func postLifecycleAudit(effects *postEffects, postID string, previous, next Status) {
+	effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewPostStatusLifecycleAuditRecord(metadata, postID, postAuditState(previous), postAuditState(next))
 	})
 }
 
-func (s *PostService) appendPostScheduleAudit(ctx context.Context, tx *gorm.DB, postID string, previous, next model.PostStatus, scheduledAt time.Time, timeZone string) error {
-	if s.auditWriter == nil {
-		return nil
-	}
-	return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+func postScheduleAudit(effects *postEffects, postID string, previous, next Status, scheduledAt time.Time, timeZone string) {
+	effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewPostScheduleLifecycleAuditRecord(metadata, postID, postAuditState(previous), postAuditState(next), scheduledAt, timeZone)
 	})
 }
 
-func postAuditState(status model.PostStatus) sharedtelemetry.AuditState {
+func postAuditState(status Status) sharedtelemetry.AuditState {
 	switch status {
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()):
+	case StatusDraft:
 		return sharedtelemetry.AuditStateDraft
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()):
+	case StatusScheduled:
 		return sharedtelemetry.AuditStateScheduled
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()):
+	case StatusPublished:
 		return sharedtelemetry.AuditStatePublished
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()):
+	case StatusArchived:
 		return sharedtelemetry.AuditStateArchived
 	default:
 		return sharedtelemetry.AuditState(status)
 	}
 }
 
-// GetPost retrieves a post by ID
-func (s *PostService) GetPost(
-	ctx context.Context,
-	req *connect.Request[managev1.GetPostRequest],
-) (_ *connect.Response[managev1.Post], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.GetPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+// Page selects a page of a list. A zero Limit reads the list's default.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
 
-	var post model.Post
-	if err := s.db.WithContext(ctx).
-		Preload("Categories").
-		Preload("Tags").
-		Preload("Series").
-		First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("post", req.Msg.Id)
+func (p Page) limitOr(fallback int32) int32 {
+	if p.Limit > 0 {
+		return p.Limit
+	}
+	return fallback
+}
+
+// GetPostQuery reads a Post for its editors.
+type GetPostQuery struct{ ID string }
+
+// ListPostsQuery lists Posts. The filters category_id, tag_id and, for the
+// administrator list, author_id select by relation.
+type ListPostsQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// CreatePostCommand creates a draft Post authored by the caller.
+// SourceLocale, when empty, is the creator's preferred locale or one
+// AcceptLanguage names.
+type CreatePostCommand struct {
+	Title           string
+	Slug            *string
+	Summary         *string
+	CategoryIDs     []string
+	TagIDs          []string
+	CommentsEnabled bool
+	MapPlaceID      *string
+	SourceLocale    string
+	Document        *contentv1.RichTextDocument
+	AcceptLanguage  string
+}
+
+// UpdatePostCommand edits Post settings under the configuration revision
+// the caller read. A nil field is left alone. A DocumentLayout value the
+// request left unspecified is empty.
+type UpdatePostCommand struct {
+	ID                            string
+	Slug                          *string
+	CommentsEnabled               *bool
+	MapPlaceID                    *string
+	DocumentLayout                *DocumentLayout
+	ExpectedConfigurationRevision string
+}
+
+type DeletePostCommand struct{ ID string }
+
+// PostLifecycleCommand names the Post a publish, unpublish, archive,
+// cancellation or republish moves.
+type PostLifecycleCommand struct{ ID string }
+
+type SetPostFeaturedImageCommand struct{ PostID, FileID string }
+type DeletePostFeaturedImageCommand struct{ PostID string }
+
+// GetPost retrieves a post by ID
+func (s *Service) GetPost(ctx context.Context, query GetPostQuery) (_ View, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", query.ID))
+
+	stored, err := readStore(ctx, s, func(store Store) (Post, error) { return store.FindPost(ctx, query.ID) })
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return View{}, domainerr.ResourceNotFound("post", query.ID)
 		}
-		return nil, errs.Internal(err)
+		return View{}, err
 	}
 	// The manage surface is only for exact editors/read-only archived editors.
 	// Public and ShareLink reads use open.v1 and never enter the private inline
 	// delivery path.
-	if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, post.Status); err != nil {
-		return nil, err
+	if _, err := requirePostViewForStatus(ctx, s.spiceDB, stored.ID, stored.Status); err != nil {
+		return View{}, err
 	}
-	if err := s.overlayPostSourceLocaleDocument(ctx, &post); err != nil {
-		return nil, err
+	if err := s.overlayPostSourceLocaleDocument(ctx, &stored); err != nil {
+		return View{}, err
 	}
-	return s.postResponseWithReadyOg(ctx, &post)
+	return s.postView(ctx, stored)
+}
+
+// postListPage is one page of Posts with the projections a list shows.
+type postListPage struct {
+	posts       []Post
+	total       int64
+	limit       int32
+	offset      int32
+	readyOg     map[string]*mediaasset.Reference
+	authors     map[string][]*memberref.Summary
+	featured    map[string]*fileref.Delivery
+	authorities map[string]PostAuthority
+	// contents are the hydrated content projections of posts, by index; a
+	// metadata-only list leaves them unset.
+	contents []postContent
+}
+
+// listPostPage filters, counts and pages the Posts query selects, then
+// overlays their source locale.
+func (s *Service) listPostPage(ctx context.Context, query ListPostsQuery, list ListQuery) (postListPage, error) {
+	page := postListPage{limit: query.Page.limitOr(20), offset: query.Page.Offset}
+	list.Filters, list.Sorts, list.Limit, list.Offset = query.Filters, query.Sorts, page.limit, page.offset
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		page.posts, page.total, err = store.ListPosts(ctx, list)
+		return err
+	})
+	if err != nil {
+		return postListPage{}, err
+	}
+	if err := s.overlayPostSourceLocaleDocuments(ctx, page.posts); err != nil {
+		return postListPage{}, err
+	}
+	return page, nil
+}
+
+func (s *Service) loadPostListProjections(ctx context.Context, page *postListPage) error {
+	var err error
+	if page.readyOg, err = s.loadReadyPostOgAssets(ctx, page.posts); err != nil {
+		return err
+	}
+	if page.authors, err = s.loadPostAuthorMembers(ctx, collectManagePostIDs(page.posts)); err != nil {
+		return err
+	}
+	if page.featured, err = s.loadPostPublicFeaturedImageDeliveries(ctx, page.posts); err != nil {
+		return err
+	}
+	page.authorities, err = s.loadCurrentPostAuthorities(ctx, collectManagePostIDs(page.posts))
+	return err
+}
+
+func (s *Service) projectListedPost(page postListPage, index int) (View, error) {
+	stored := page.posts[index]
+	var content postContent
+	if page.contents != nil {
+		content = page.contents[index]
+	}
+	return postViewWithProjection(stored, content, manageOgAssetFromReadyMap(
+		page.readyOg, stored.SourceLocaleOgAssetID, stored.OgAssetID,
+	), page.authors[stored.ID], page.featured[stored.ID], page.authorities[stored.ID])
+}
+
+func (page postListPage) pagination() Pagination {
+	return Pagination{
+		Total:   int32(page.total),
+		Limit:   page.limit,
+		Offset:  page.offset,
+		HasMore: page.offset+page.limit < int32(page.total),
+	}
 }
 
 // ListPostsAdmin returns a paginated list of all posts for admin
-func (s *PostService) ListPostsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListPostsAdminRequest],
-) (_ *connect.Response[managev1.ListPostsAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+func (s *Service) ListPostsAdmin(ctx context.Context, query ListPostsQuery) (AdminPage, error) {
 	if err := requirePostList(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return AdminPage{}, err
 	}
-
-	var posts []model.Post
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Post{})
-
-	// 1. Handle join filters directly (category_id, tag_id, author_id require subqueries)
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		switch f.GetField() {
-		case "category_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id IN ?)", f.GetValues())
-			}
-		case "tag_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id IN ?)", f.GetValues())
-			}
-		case "author_id":
-			// Authorship is a durable domain relation, independent of the current
-			// SpiceDB authorization grant.
-			var authorIDs []string
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				authorIDs = []string{f.GetValue()}
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				authorIDs = f.GetValues()
-			}
-			if len(authorIDs) > 0 {
-				query = query.Where("id IN (SELECT post_id FROM post_author WHERE member_id IN ?)", authorIDs)
-			}
-		default:
-			remainingFilters = append(remainingFilters, f)
-		}
-	}
-
-	// 2. Apply remaining filters using FilterConfig (status, series_id, published_at)
-	var err error
-	query, err = PostAdminFilterConfig.ApplyFilters(query, remainingFilters)
+	page, err := s.listPostPage(ctx, query, ListQuery{ByAuthor: true})
 	if err != nil {
-		return nil, err
-	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = postSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Load posts with relations
-	if err := query.
-		Preload("Categories").
-		Preload("Tags").
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Find(&posts).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := s.overlayPostSourceLocaleDocuments(ctx, posts); err != nil {
-		return nil, err
+		return AdminPage{}, err
 	}
 	// The admin list is metadata-only; full Content Document hydration belongs
 	// to GetPost so pagination does not perform one snapshot transaction per row.
-	readyOgAssets, err := s.loadReadyPostOgAssets(ctx, posts)
-	if err != nil {
-		return nil, err
+	if err := s.loadPostListProjections(ctx, &page); err != nil {
+		return AdminPage{}, err
 	}
-	authorMembers, err := s.loadPostAuthorMembers(ctx, collectManagePostIDs(posts))
+	commentCounts, err := s.loadPostCommentCounts(ctx, collectManagePostIDs(page.posts))
 	if err != nil {
-		return nil, err
+		return AdminPage{}, err
 	}
-
-	commentCounts, err := s.loadPostCommentCounts(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-	featuredDeliveries, err := s.loadPostPublicFeaturedImageDeliveries(ctx, posts)
-	if err != nil {
-		return nil, err
-	}
-
-	authorities, err := s.loadCurrentPostAuthorities(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-	postsWithStats := make([]*managev1.PostWithStats, len(posts))
-	for i := range posts {
-		protoPost, err := s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
-			readyOgAssets,
-			posts[i].SourceLocaleOgAssetID,
-			posts[i].OgAssetID,
-		), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID])
+	posts := make([]AdminView, len(page.posts))
+	for i := range page.posts {
+		view, err := s.projectListedPost(page, i)
 		if err != nil {
-			return nil, err
+			return AdminPage{}, err
 		}
-		postsWithStats[i] = &managev1.PostWithStats{
-			Post:         protoPost,
-			ViewCount:    0,
-			CommentCount: commentCounts[posts[i].ID],
-		}
+		posts[i] = AdminView{View: view, CommentCount: commentCounts[page.posts[i].ID]}
 	}
-
-	return connect.NewResponse(&managev1.ListPostsAdminResponse{
-		Posts: postsWithStats,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return AdminPage{Posts: posts, Pagination: page.pagination()}, nil
 }
 
-// CreatePost creates a new post
-func (s *PostService) CreatePost(
-	ctx context.Context,
-	req *connect.Request[managev1.CreatePostRequest],
-) (_ *connect.Response[managev1.Post], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreatePost", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+// CreatePost creates a draft Post authored by the caller.
+func (s *Service) CreatePost(ctx context.Context, command CreatePostCommand) (View, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return View{}, domainerr.AuthenticationRequired()
 	}
-
-	post, title, err := s.preparePostCreate(ctx, req.Msg)
+	created, title, err := preparePostCreate(command)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	_, err = s.persistNewPost(
-		ctx,
-		post,
-		req.Msg,
-		title,
-		user.MemberID.String(),
-		user.IdentityID,
-		req.Header().Get("Accept-Language"),
-	)
+	creator, err := policyv1.NewAccountIdentityActor(user.IdentityID.String())
 	if err != nil {
-		return nil, mapCreatePostError(err, req.Msg.Slug)
+		return View{}, err
 	}
-
-	loadedPost, err := s.loadCreatedPost(ctx, post.ID)
+	_, _, err = runPostMutation(ctx, s, mutation.StoreSpec[*Post, Store]{
+		Access: postCreatorAccess(),
+		Relationships: func(created *Post) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return postCreationRelationships(created.ID, creator)
+		},
+	}, func(ctx context.Context, store Store, effects *postEffects) (*Post, error) {
+		return created, persistNewPost(ctx, store, effects, created, command, title, user.MemberID.String())
+	})
 	if err != nil {
-		return nil, err
+		if !mutation.IsClassified(err) && errors.Is(err, ErrSlugTaken) {
+			return View{}, domainerr.Duplicate("post", "slug", ptrStringValue(command.Slug)).WithCause(err)
+		}
+		return View{}, err
 	}
-	response, err := s.postResponseWithReadyOg(ctx, loadedPost)
+	loaded, err := s.loadCreatedPost(ctx, created.ID)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	return response, nil
+	return s.postView(ctx, loaded)
 }
 
-// UpdatePost updates an existing post
-func (s *PostService) UpdatePost(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdatePostRequest],
-) (_ *connect.Response[managev1.UpdatePostResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+// UpdatePost updates Post settings.
+func (s *Service) UpdatePost(ctx context.Context, command UpdatePostCommand) (_ SettingsUpdate, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.ID))
 
-	var post model.Post
-	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("post", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+	if err := s.requireStoredPost(ctx, command.ID); err != nil {
+		return SettingsUpdate{}, err
 	}
+	update, err := s.buildPostUpdate(ctx, command)
+	if err != nil {
+		return SettingsUpdate{}, err
+	}
+	var stored Post
+	// Manage metadata fields do not alter the typed translation source, so
+	// an update publishes no content wake-up.
+	changed, _, err := runPostMutation(ctx, s, mutation.StoreSpec[bool, Store]{
+		Access: lockedPost(command.ID, policyv1.Post.Edit, nil),
+	}, func(ctx context.Context, store Store, effects *postEffects) (bool, error) {
+		return updatePost(ctx, store, effects, command.ID, &stored, update)
+	})
+	if err != nil {
+		return SettingsUpdate{}, err
+	}
+	if err := stored.DocumentLayout.validateStored(); err != nil {
+		return SettingsUpdate{}, err
+	}
+	return SettingsUpdate{
+		ID: stored.ID, Changed: changed, Slug: stored.Slug, CommentsEnabled: stored.CommentsEnabled,
+		MapPlaceID: stored.MapPlaceID, DocumentLayout: stored.DocumentLayout,
+		ConfigurationRevision: stored.ConfigurationRevision, UpdatedAt: stored.UpdatedAt,
+	}, nil
+}
 
-	update, err := s.buildPostUpdate(ctx, req.Msg)
-	if err != nil {
-		return nil, err
+// requireStoredPost answers a missing Post before the mutation locks it.
+func (s *Service) requireStoredPost(ctx context.Context, postID string) error {
+	err := s.units.Read(ctx, func(store Store) error { return store.FindPostID(ctx, postID) })
+	if errors.Is(err, ErrPostNotFound) {
+		return domainerr.ResourceNotFound("post", postID)
 	}
-	changed := false
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		changed, err = s.updatePostWithDB(ctx, tx, &post, update)
-		if err != nil || !changed {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-	documentLayout, err := post.DocumentLayout.Proto()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.UpdatePostResponse{
-		Id:                    post.ID,
-		Changed:               changed,
-		Slug:                  post.Slug,
-		CommentsEnabled:       post.CommentsEnabled,
-		MapPlaceId:            post.MapPlaceID,
-		DocumentLayout:        documentLayout,
-		ConfigurationRevision: post.ConfigurationRevision,
-		UpdatedAt:             timestamppb.New(post.UpdatedAt),
-	}), nil
+	return err
 }
 
 type postUpdate struct {
-	fields                        structured.Fields
+	change                        SettingsChange
 	normalizedSlug                *string
 	slugPresent                   bool
 	expectedConfigurationRevision string
 }
 
-func (s *PostService) buildPostUpdate(ctx context.Context, request *managev1.UpdatePostRequest) (postUpdate, error) {
-	update := postUpdate{
-		fields:                        structured.Fields{},
-		expectedConfigurationRevision: request.ExpectedConfigurationRevision,
-	}
-	update.normalizedSlug, update.slugPresent = normalizeOptionalNullableString(request.Slug)
+func (s *Service) buildPostUpdate(ctx context.Context, command UpdatePostCommand) (postUpdate, error) {
+	update := postUpdate{expectedConfigurationRevision: command.ExpectedConfigurationRevision}
+	update.normalizedSlug, update.slugPresent = normalizeOptionalNullableString(command.Slug)
 	if update.normalizedSlug != nil {
-		if err := validateSlugWithoutSlash(*update.normalizedSlug); err != nil {
+		if err := pathslug.Validate(*update.normalizedSlug); err != nil {
 			return postUpdate{}, err
 		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "post", "posts", *update.normalizedSlug); err != nil {
+		if err := s.units.Read(ctx, func(store Store) error { return store.CheckRoute(ctx, *update.normalizedSlug) }); err != nil {
 			return postUpdate{}, err
 		}
 	}
 	if update.slugPresent {
-		update.fields["slug"] = optionalPostStringValue(update.normalizedSlug)
+		update.change.Slug = &OptionalString{Value: update.normalizedSlug}
 	}
-	if request.CommentsEnabled != nil {
-		update.fields["comments_enabled"] = *request.CommentsEnabled
-	}
-	if request.MapPlaceId != nil {
-		mapPlaceID, err := s.normalizeMapPlaceID(ctx, *request.MapPlaceId)
+	update.change.CommentsEnabled = command.CommentsEnabled
+	if command.MapPlaceID != nil {
+		mapPlaceID, err := s.normalizeMapPlaceID(ctx, *command.MapPlaceID)
 		if err != nil {
 			return postUpdate{}, err
 		}
-		update.fields["map_place_id"] = optionalPostStringValue(mapPlaceID)
+		update.change.MapPlaceID = &OptionalString{Value: mapPlaceID}
 	}
-	if request.DocumentLayout != nil {
-		documentLayout, err := model.DocumentLayoutFromProto(request.DocumentLayout)
-		if err != nil {
-			return postUpdate{}, errs.InvalidArgumentMsg(err.Error())
+	if command.DocumentLayout != nil {
+		if err := command.DocumentLayout.validateRequested(); err != nil {
+			return postUpdate{}, domainerr.New(domainerr.Invalid, "", err.Error())
 		}
-		update.fields["document_layout"] = documentLayout
+		layout := *command.DocumentLayout
+		update.change.DocumentLayout = &layout
 	}
 	return update, nil
 }
 
-func optionalPostStringValue(value *string) structured.Value {
-	if value == nil {
-		return nil
+// postUpdateChangedFields names the settings change would move on stored,
+// in the order of the API's field names.
+func postUpdateChangedFields(stored Post, change SettingsChange) []string {
+	changed := make([]string, 0, 4)
+	if change.CommentsEnabled != nil && stored.CommentsEnabled != *change.CommentsEnabled {
+		changed = append(changed, "comments_enabled")
 	}
-	return *value
-}
-
-func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *model.Post, update postUpdate) (bool, error) {
-	if err := lockPostRootForLocaleWrite(ctx, tx, post.ID); err != nil {
-		return false, err
+	if change.DocumentLayout != nil && !reflect.DeepEqual(stored.DocumentLayout, *change.DocumentLayout) {
+		changed = append(changed, "document_layout")
 	}
-	var locked model.Post
-	if err := tx.WithContext(ctx).Take(&locked, "id = ?", post.ID).Error; err != nil {
-		return false, err
+	if change.MapPlaceID != nil && !nullableStringEqual(stored.MapPlaceID, change.MapPlaceID.Value) {
+		changed = append(changed, "map_place_id")
 	}
-	*post = locked
-	if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Edit); err != nil {
-		return false, err
-	}
-	if strings.TrimSpace(update.expectedConfigurationRevision) == "" {
-		return false, errs.FailedPrecondition("Post configuration revision is required; reload before saving")
-	}
-	expectedRevision, err := uuidutil.ParseCanonical(update.expectedConfigurationRevision, "expected_configuration_revision")
-	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.updatePostWithDB", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.InvalidArgumentMsg("expected_configuration_revision must be a canonical UUID")
-	}
-	if expectedRevision.String() != post.ConfigurationRevision {
-		return false, connect.NewError(connect.CodeAborted, errors.New("Post configuration changed; reload before saving"))
-	}
-	if update.slugPresent && update.normalizedSlug != nil {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "post", "posts", *update.normalizedSlug); err != nil {
-			return false, err
-		}
-	}
-	changedFields := postUpdateChangedFields(post, update.fields)
-	if len(changedFields) == 0 {
-		return false, nil
-	}
-	mutationNow := dbtime.Now()
-	update.fields["updated_at"] = mutationNow
-	if err := tx.Model(post).Clauses(clause.Returning{}).Updates(update.fields).Error; err != nil {
-		return false, err
-	}
-	if s.auditWriter == nil {
-		return true, nil
-	}
-	if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewPostConfigurationAuditRecord(metadata, post.ID, changedFields)
-	}); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func postUpdateChangedFields(post *model.Post, fields structured.Fields) []string {
-	changed := make([]string, 0, len(fields))
-	for field, next := range fields {
-		var current any
-		switch field {
-		case "slug":
-			current = post.Slug
-		case "comments_enabled":
-			current = post.CommentsEnabled
-		case "map_place_id":
-			current = post.MapPlaceID
-		case "document_layout":
-			current = post.DocumentLayout
-		default:
-			continue
-		}
-		if !reflect.DeepEqual(current, next) && !optionalPostValueEqual(current, next) {
-			changed = append(changed, field)
-		}
+	if change.Slug != nil && !nullableStringEqual(stored.Slug, change.Slug.Value) {
+		changed = append(changed, "slug")
 	}
 	return changed
 }
 
-func optionalPostValueEqual(current, next any) bool {
-	currentValue, ok := current.(*string)
-	if !ok {
-		return false
+func updatePost(ctx context.Context, store Store, effects *postEffects, postID string, stored *Post, update postUpdate) (bool, error) {
+	var err error
+	if *stored, err = store.TakePost(ctx, postID); err != nil {
+		return false, err
 	}
-	if next == nil {
-		return currentValue == nil
+	if strings.TrimSpace(update.expectedConfigurationRevision) == "" {
+		return false, domainerr.Precondition("Post configuration revision is required; reload before saving")
 	}
-	nextValue, ok := next.(string)
-	return ok && currentValue != nil && *currentValue == nextValue
+	expectedRevision, err := uuidutil.ParseCanonical(update.expectedConfigurationRevision, "expected_configuration_revision")
+	if err != nil {
+		return false, domainerr.New(domainerr.Invalid, "", "expected_configuration_revision must be a canonical UUID").WithCause(err)
+	}
+	if expectedRevision.String() != stored.ConfigurationRevision {
+		return false, domainerr.Retry("Post configuration changed; reload before saving")
+	}
+	if update.slugPresent && update.normalizedSlug != nil {
+		if err := store.LockRoute(ctx, *update.normalizedSlug); err != nil {
+			return false, err
+		}
+	}
+	changedFields := postUpdateChangedFields(*stored, update.change)
+	if len(changedFields) == 0 {
+		return false, nil
+	}
+	update.change.UpdatedAt = dbtime.Now()
+	if err := store.UpdateSettings(ctx, stored, update.change); err != nil {
+		return false, err
+	}
+	updatedID := stored.ID
+	effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewPostConfigurationAuditRecord(metadata, updatedID, changedFields)
+	})
+	return true, nil
 }
 
-// DeletePost deletes a post
-func (s *PostService) DeletePost(
-	ctx context.Context,
-	req *connect.Request[managev1.DeletePostRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeletePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+// DeletePost deletes a Post its lifecycle allows deleting, with its
+// authorization relationships.
+func (s *Service) DeletePost(ctx context.Context, command DeletePostCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.ID))
 
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Post content Block store is not configured")
+	if err := s.requireStoredPost(ctx, command.ID); err != nil {
+		return err
 	}
-	var post model.Post
-	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("post", req.Msg.Id)
+	var status Status
+	var restore []policyv1.RelationshipMutation
+	_, _, err := runPostMutation(ctx, s, mutation.StoreSpec[[]policyv1.RelationshipMutation, Store]{
+		Access: lockedPost(command.ID, policyv1.Post.Delete, &status),
+		Relationships: func(remove []policyv1.RelationshipMutation) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return remove, restore, nil
+		},
+	}, func(ctx context.Context, store Store, effects *postEffects) ([]policyv1.RelationshipMutation, error) {
+		if status == StatusArchived {
+			return nil, domainerr.Precondition("archived posts must be republished before deletion")
 		}
-		return nil, errs.Internal(err)
-	}
-
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := lockPostRootForLocaleWrite(ctx, tx, post.ID); err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).Take(&post, "id = ?", post.ID).Error; err != nil {
-			return err
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Delete); err != nil {
-			return err
-		}
-		if post.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-			return errs.FailedPrecondition("archived posts must be republished before deletion")
-		}
-		snapshotPlan, err := policyv1.Post.Snapshot(post.ID)
+		remove, compensate, err := s.postDeletionRelationships(ctx, command.ID)
 		if err != nil {
-			return err
-		}
-		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
-		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.DeletePost", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
-		}
-		deleteRelationships, restoreRelationships, err := postAuthorizationDeletionBatches(post.ID, snapshots)
-		if err != nil {
-			return err
-		}
-		if err := validateResourceDeletionAuthorizationBatchSize("post", deleteRelationships, restoreRelationships); err != nil {
-			return err
-		}
-		if len(deleteRelationships) == 0 {
-			return errs.InternalMsg("post authorization relationships are missing")
-		}
-		if err := tx.
-			Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST.String(), req.Msg.Id).
-			Delete(&model.ShareLink{}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := cancelAndReleaseEntityOgWithDB(
-			ctx, tx, s.cdnDomain,
-			managev1.OgEntityType_OG_ENTITY_TYPE_POST,
-			"post", req.Msg.Id,
-		); err != nil {
-			return err
-		}
-		documentID, err := loadPostContentDocumentID(ctx, tx, post.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.contentBlocks.DeleteDocument(
-			ctx,
-			tx,
-			documentID,
-			postLockedDocumentFence(post.ID, true),
-		); err != nil {
-			return normalizePostContentBlockError(err)
-		}
-		if err := tx.Delete(&post).Error; err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditPostDeleted,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewPostDeletedAuditRecord(metadata, post.ID)
-				},
-			); err != nil {
-				return err
-			}
-		}
-		return write(deleteRelationships, restoreRelationships)
-	})
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+		restore = compensate
+		if err := deletePost(ctx, store, command.ID); err != nil {
+			return nil, err
+		}
+		effects.audit(sharedtelemetry.AuditPostDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewPostDeletedAuditRecord(metadata, command.ID)
+		})
+		return remove, nil
+	})
+	return err
 }
 
-// PublishPost publishes a draft post
-func (s *PostService) PublishPost(
-	ctx context.Context,
-	req *connect.Request[managev1.PublishPostRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.PublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
-
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("post", req.Msg.Id)
-			}
-			return errs.Internal(err)
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
-			return err
-		}
-		if post.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
-			return errs.FailedPrecondition(errs.MsgPostAlreadyPublished)
-		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()) &&
-			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
-			return errs.FailedPrecondition("only draft or scheduled posts can be published")
-		}
-
-		now := dbtime.Now()
-		previousStatus := post.Status
-		updates := structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-			"scheduled_at":        nil,
-			"scheduled_time_zone": nil,
-			"updated_at":          now,
-		}
-		if post.PublishedAt == nil {
-			updates["published_at"] = now
-		}
-		if err := tx.Model(&post).Updates(updates).Error; err != nil {
-			return errs.Internal(err)
-		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String())
-		post.ScheduledAt = nil
-		post.ScheduledTimeZone = nil
-		post.UpdatedAt = now
-		if post.PublishedAt == nil {
-			post.PublishedAt = &now
-		}
-		return s.appendPostLifecycleAudit(ctx, tx, post.ID, previousStatus, post.Status)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+// postDeletionRelationships snapshots the Post's relationships and returns
+// their deletion batch and its exact restore.
+func (s *Service) postDeletionRelationships(ctx context.Context, postID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	snapshotPlan, err := policyv1.Post.Snapshot(postID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return connect.NewResponse(response), nil
+	snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
+	if err != nil {
+		return nil, nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	remove, restore, err := postAuthorizationDeletionBatches(postID, snapshots)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateResourceDeletionAuthorizationBatchSize("post", remove, restore); err != nil {
+		return nil, nil, err
+	}
+	if len(remove) == 0 {
+		return nil, nil, errors.New("post authorization relationships are missing")
+	}
+	return remove, restore, nil
+}
+
+func deletePost(ctx context.Context, store Store, postID string) error {
+	if err := store.DeleteShareLinks(ctx, postID); err != nil {
+		return err
+	}
+	if err := store.CancelOG(ctx, postID); err != nil {
+		return err
+	}
+	documentID, err := loadPostContentDocumentID(ctx, store, postID)
+	if err != nil {
+		return err
+	}
+	if err := store.DeleteContentDocument(ctx, documentID, postLockedDocumentFence(postID, true)); err != nil {
+		return normalizePostContentBlockError(err)
+	}
+	return store.DeletePost(ctx, postID)
+}
+
+// postLifecycleMove moves a locked Post to next when allowed accepts its
+// current status, and names the record of the move.
+type postLifecycleMove struct {
+	action  postAction
+	allowed func(Status) error
+	apply   func(stored *Post, change *LifecycleChange, now time.Time)
+	next    Status
+}
+
+func (s *Service) movePostLifecycle(ctx context.Context, postID string, move postLifecycleMove) (_ Lifecycle, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", postID))
+
+	moved, _, err := runPostMutation(ctx, s, mutation.StoreSpec[Post, Store]{
+		Access: lockedPost(postID, move.action, nil),
+	}, func(ctx context.Context, store Store, effects *postEffects) (Post, error) {
+		stored, err := store.ReadPost(ctx, postID)
+		if err != nil {
+			return stored, err
+		}
+		if err := move.allowed(stored.Status); err != nil {
+			return stored, err
+		}
+		now := dbtime.Now()
+		previousStatus := stored.Status
+		change := LifecycleChange{Status: move.next, UpdatedAt: now}
+		move.apply(&stored, &change, now)
+		if err := store.UpdateLifecycle(ctx, stored.ID, change); err != nil {
+			return stored, err
+		}
+		stored.Status = move.next
+		stored.UpdatedAt = now
+		postLifecycleAudit(effects, stored.ID, previousStatus, stored.Status)
+		return stored, nil
+	})
+	if err != nil {
+		return Lifecycle{}, err
+	}
+	return s.postLifecycle(ctx, moved)
+}
+
+// clearPostSchedule leaves a moved Post without a schedule.
+func clearPostSchedule(stored *Post, change *LifecycleChange) {
+	change.ClearSchedule = true
+	stored.ScheduledAt = nil
+	stored.ScheduledTimeZone = nil
+}
+
+// publishPostAt clears the schedule and keeps the first publication time.
+func publishPostAt(stored *Post, change *LifecycleChange, now time.Time) {
+	clearPostSchedule(stored, change)
+	if stored.PublishedAt == nil {
+		change.PublishedAt = &now
+		stored.PublishedAt = &now
+	}
+}
+
+// PublishPost publishes a draft or scheduled post now.
+func (s *Service) PublishPost(ctx context.Context, command PostLifecycleCommand) (Lifecycle, error) {
+	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
+		action: policyv1.Post.Publish,
+		allowed: func(status Status) error {
+			if status == StatusPublished {
+				return domainerr.Precondition(msgPostAlreadyPublished)
+			}
+			if status != StatusDraft &&
+				status != StatusScheduled {
+				return domainerr.Precondition("only draft or scheduled posts can be published")
+			}
+			return nil
+		},
+		apply: publishPostAt,
+		next:  StatusPublished,
+	})
 }
 
 // UnpublishPost returns a published or archived post to draft.
-func (s *PostService) UnpublishPost(
-	ctx context.Context,
-	req *connect.Request[managev1.UnpublishPostRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UnpublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
-
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("post", req.Msg.Id)
+func (s *Service) UnpublishPost(ctx context.Context, command PostLifecycleCommand) (Lifecycle, error) {
+	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
+		action: policyv1.Post.Publish,
+		allowed: func(status Status) error {
+			if status != StatusPublished &&
+				status != StatusArchived {
+				return domainerr.Precondition("only published or archived posts can be unpublished")
 			}
-			return errs.Internal(err)
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
-			return err
-		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
-			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-			return errs.FailedPrecondition("only published or archived posts can be unpublished")
-		}
-		now := dbtime.Now()
-		previousStatus := post.Status
-		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_DRAFT.String(),
-			"scheduled_at":        nil,
-			"scheduled_time_zone": nil,
-			"updated_at":          now,
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String())
-		post.ScheduledAt = nil
-		post.ScheduledTimeZone = nil
-		post.UpdatedAt = now
-		return s.appendPostLifecycleAudit(ctx, tx, post.ID, previousStatus, post.Status)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(response), nil
+			return nil
+		},
+		apply: func(stored *Post, change *LifecycleChange, _ time.Time) { clearPostSchedule(stored, change) },
+		next:  StatusDraft,
+	})
 }
 
-// ArchivePost archives a post
-func (s *PostService) ArchivePost(
-	ctx context.Context,
-	req *connect.Request[managev1.ArchivePostRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ArchivePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
-
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("post", req.Msg.Id)
+// ArchivePost archives a published post.
+func (s *Service) ArchivePost(ctx context.Context, command PostLifecycleCommand) (Lifecycle, error) {
+	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
+		action: policyv1.Post.Publish,
+		allowed: func(status Status) error {
+			if status != StatusPublished {
+				return domainerr.Precondition("only published posts can be archived")
 			}
-			return errs.Internal(err)
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
-			return err
-		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
-			return errs.FailedPrecondition("only published posts can be archived")
-		}
-		now := dbtime.Now()
-		previousStatus := post.Status
-		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":     managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
-			"updated_at": now,
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String())
-		post.UpdatedAt = now
-		return s.appendPostLifecycleAudit(ctx, tx, post.ID, previousStatus, post.Status)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(response), nil
+			return nil
+		},
+		apply: func(*Post, *LifecycleChange, time.Time) {},
+		next:  StatusArchived,
+	})
 }
 
-func (s *PostService) postLifecycleMutationResponse(
-	ctx context.Context,
-	post *model.Post,
-	changed bool,
-) (*managev1.PostLifecycleMutationResponse, error) {
-	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{post.ID})
+// RepublishPost moves an archived post back to published.
+func (s *Service) RepublishPost(ctx context.Context, command PostLifecycleCommand) (Lifecycle, error) {
+	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
+		action: policyv1.Post.Publish,
+		allowed: func(status Status) error {
+			if status != StatusArchived {
+				return domainerr.Precondition("only archived posts can be republished")
+			}
+			return nil
+		},
+		apply: publishPostAt,
+		next:  StatusPublished,
+	})
+}
+
+func (s *Service) postLifecycle(ctx context.Context, stored Post) (Lifecycle, error) {
+	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{stored.ID})
 	if err != nil {
-		return nil, err
+		return Lifecycle{}, err
 	}
-	authority := authorities[post.ID]
-	response := &managev1.PostLifecycleMutationResponse{
-		Id:                post.ID,
-		Changed:           changed,
-		Status:            managev1.PostStatus(managev1.PostStatus_value[string(post.Status)]),
-		ScheduledTimeZone: post.ScheduledTimeZone,
-		UpdatedAt:         timestamppb.New(post.UpdatedAt),
-		AllowedActions:    postAllowedActions(post.ID, post.Status, authority),
-	}
-	if post.PublishedAt != nil {
-		response.PublishedAt = timestamppb.New(*post.PublishedAt)
-	}
-	if post.ScheduledAt != nil {
-		response.ScheduledAt = timestamppb.New(*post.ScheduledAt)
-	}
-	return response, nil
+	return Lifecycle{
+		ID: stored.ID, Status: stored.Status, ScheduledAt: stored.ScheduledAt, ScheduledTimeZone: stored.ScheduledTimeZone,
+		PublishedAt: stored.PublishedAt, UpdatedAt: stored.UpdatedAt,
+		Actions: postAllowedActions(stored.ID, stored.Status, authorities[stored.ID]),
+	}, nil
 }
 
 // SetPostFeaturedImage sets the featured image for a post
-func (s *PostService) SetPostFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetPostFeaturedImageRequest],
-) (_ *connect.Response[managev1.SetPostFeaturedImageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.SetPostFeaturedImage", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) SetPostFeaturedImage(ctx context.Context, command SetPostFeaturedImageCommand) (_ FeaturedImage, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
 
-	// Verify post exists and check permission.
-	var post model.Post
-	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("post", req.Msg.PostId)
-		}
-		return nil, errs.Internal(err)
+	if err := s.requireStoredPost(ctx, command.PostID); err != nil {
+		return FeaturedImage{}, err
 	}
-
-	var ogRunID *string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "status", "featured_image_file_id").
-			First(&current, "id = ?", req.Msg.PostId).Error; err != nil {
-			return err
+	_, effects, err := runPostMutation(ctx, s, mutation.StoreSpec[struct{}, Store]{
+		Access: lockedPost(command.PostID, policyv1.Post.Edit, nil),
+	}, func(ctx context.Context, store Store, effects *postEffects) (struct{}, error) {
+		if err := store.LockAttachableFiles(ctx, []string{command.FileID}); err != nil {
+			return struct{}{}, err
 		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, current.ID, current.Status, policyv1.Post.Edit); err != nil {
-			return err
+		if err := store.FindFile(ctx, command.FileID); err != nil {
+			return struct{}{}, err
 		}
-		if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
+		fileID := command.FileID
+		if err := store.SetFeaturedImage(ctx, command.PostID, &fileID, time.Now()); err != nil {
+			return struct{}{}, err
 		}
-		var file model.File
-		if err := tx.First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&model.Post{}).Where("id = ?", req.Msg.PostId).Updates(structured.Fields{
-			"featured_image_file_id": req.Msg.FileId,
-			"updated_at":             time.Now(),
-		}).Error; err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPostFeaturedImageAuditRecord(metadata, current.ID, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
-			}); err != nil {
-				return err
-			}
-		}
-		plan, err := s.ogRefresher.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST,
-			req.Msg.PostId, "", true, "post_featured_image_updated",
-		)
-		if err != nil {
-			return err
-		}
-		ogRunID = &plan.RunID
-		return nil
+		effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewPostFeaturedImageAuditRecord(metadata, command.PostID, command.FileID, sharedtelemetry.AuditCollectionOperationAdded)
+		})
+		effects.requestOG(command.PostID, "", true, "post_featured_image_updated")
+		return struct{}{}, nil
 	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("file", req.Msg.FileId)
-		}
-		return nil, err
+	if errors.Is(err, ErrFileNotFound) {
+		return FeaturedImage{}, domainerr.ResourceNotFound("file", command.FileID)
 	}
-
-	featuredImageFileID := req.Msg.FileId
-	featuredDelivery, err := s.resolveAuthorizedPostFeaturedImage(ctx, &model.Post{
-		ID:                  post.ID,
+	if err != nil {
+		return FeaturedImage{}, err
+	}
+	featuredImageFileID := command.FileID
+	featuredDelivery, err := s.resolveAuthorizedPostFeaturedImage(ctx, &Post{
+		ID:                  command.PostID,
 		FeaturedImageFileID: &featuredImageFileID,
 	})
 	if err != nil {
-		return nil, err
+		return FeaturedImage{}, err
 	}
-
-	return connect.NewResponse(&managev1.SetPostFeaturedImageResponse{
-		ImageDelivery: featuredDelivery, OgGenerationRunId: ogRunID,
-	}), nil
+	return FeaturedImage{Delivery: featuredDelivery, OgRunID: effects.ogRunID}, nil
 }
 
-// DeletePostFeaturedImage removes the featured image from a post
-func (s *PostService) DeletePostFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.DeletePostFeaturedImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeletePostFeaturedImage", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+// DeletePostFeaturedImage removes the featured image from a post and
+// returns the OG generation the change started, if any.
+func (s *Service) DeletePostFeaturedImage(ctx context.Context, command DeletePostFeaturedImageCommand) (_ *string, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
 
-	var post model.Post
-	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("post", req.Msg.PostId)
-		}
-		return nil, errs.Internal(err)
+	if err := s.requireStoredPost(ctx, command.PostID); err != nil {
+		return nil, err
 	}
-
-	var ogRunID *string
-
 	// Clear the reference and its binding atomically.
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "status", "featured_image_file_id").
-			First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-			return err
+	_, effects, err := runPostMutation(ctx, s, mutation.StoreSpec[struct{}, Store]{
+		Access: lockedPost(command.PostID, policyv1.Post.Edit, nil),
+	}, func(ctx context.Context, store Store, effects *postEffects) (struct{}, error) {
+		current, err := store.FeaturedImageFileID(ctx, command.PostID)
+		if err != nil {
+			return struct{}{}, err
 		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Edit); err != nil {
-			return err
+		if err := store.SetFeaturedImage(ctx, command.PostID, nil, time.Now()); err != nil {
+			return struct{}{}, err
 		}
-		if err := tx.Model(&post).Updates(structured.Fields{
-			"featured_image_file_id": nil,
-			"updated_at":             time.Now(),
-		}).Error; err != nil {
-			return err
+		if current == nil {
+			return struct{}{}, nil
 		}
-		if post.FeaturedImageFileID != nil && s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPostFeaturedImageAuditRecord(metadata, post.ID, *post.FeaturedImageFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-			}); err != nil {
-				return err
-			}
-		}
-		if post.FeaturedImageFileID != nil {
-			ogPlan, err := s.ogRefresher.RequestCurrentWithDB(
-				ctx, tx,
-				managev1.OgEntityType_OG_ENTITY_TYPE_POST,
-				post.ID, "", true, "post_featured_image_removed",
-			)
-			if err != nil {
-				return err
-			}
-			if ogPlan != nil {
-				ogRunID = &ogPlan.RunID
-			}
-			return nil
-		}
-		return nil
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+		removed := *current
+		effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewPostFeaturedImageAuditRecord(metadata, command.PostID, removed, sharedtelemetry.AuditCollectionOperationRemoved)
+		})
+		effects.requestOG(command.PostID, "", true, "post_featured_image_removed")
+		return struct{}{}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: ogRunID}), nil
+	return effects.ogRunID, nil
 }

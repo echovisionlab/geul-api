@@ -7,24 +7,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
-func resolveInitialSourceLocale(
-	ctx context.Context,
-	db *gorm.DB,
-	acceptLanguage string,
-) string {
-	user := auth.GetUser(ctx)
-	if user != nil && user.Authenticated && db != nil {
-		var preferredLocale *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").
-			Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
-			Scan(&preferredLocale).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to load preferred source locale", "failure_cause", failurecause.Message(err))
+// resolveInitialSourceLocale chooses the locale after create authorization.
+// The Store isolates optional lookups so failures can fall back in this transaction.
+func resolveInitialSourceLocale(ctx context.Context, store Store, acceptLanguage string) string {
+	if user := auth.GetUser(ctx); user != nil && user.Authenticated {
+		preferredLocale, err := store.PreferredLocale(ctx, user.MemberID.String())
+		if err != nil {
+			slog.ErrorContext(ctx, "Member preferred locale load failed; inferring the source locale from the request", "domain", "legal", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		} else if preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
@@ -34,12 +26,10 @@ func resolveInitialSourceLocale(
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	if db != nil {
-		if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
-			slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
-		} else {
-			return settings.DefaultLocale
-		}
+	settings, err := store.TranslationSettings(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "Translation settings load failed; using the built-in default locale", "domain", "legal", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
+		return translation.DefaultLocale
 	}
-	return translation.DefaultLocale
+	return settings.DefaultLocale
 }

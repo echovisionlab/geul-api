@@ -1,0 +1,2 @@
+# Transactions and lifecycle locks opened directly in pipelineDomains, per
+# file. Mutations run through mutation.Run; lower with -update.

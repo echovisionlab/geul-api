@@ -1,31 +1,50 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	label "github.com/echovisionlab/geul-api/internal/label"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
 	"connectrpc.com/connect"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -34,18 +53,18 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "start Label integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	if err := testutil.RunIntegrationSuiteCleanups(); err != nil {
+	if err := pgtest.RunIntegrationSuiteCleanups(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "cleanup Label integration suite: %v\n", err)
 		code = 1
 	}
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "close Label integration suite: %v\n", err)
 		code = 1
@@ -53,48 +72,93 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
+// requestBackground carries the request context a request-attributed audit
+// record needs; the caller's user becomes its actor.
+func requestBackground() context.Context {
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.97")
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
+}
+
+// integrationDeps are the collaborators an integration test may set; the
+// rest take the integration defaults.
+type integrationDeps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	Audit         domainaudit.Appender
+	Publisher     contentsignal.Publisher
+	ContentBlocks *contentblock.Store
+	Checkpoints   persistencecheckpoint.ContributorFence
+	Translation   labelpostgres.Translation
+	Members       label.MemberProjection
+	Runtime       labelpostgres.Runtime
+	Artists       labelpostgres.ArtistRelations
+	Releases      labelpostgres.ReleaseRelations
+	ProgramEvents labelpostgres.ProgramEventRelations
+	ShareLinks    labelpostgres.ShareLinks
+}
+
+// newTestService fills the collaborators deps leaves unset with the
+// integration defaults: an audit recorder, a no-op signal publisher, the
+// creative content store and the real Label adapters.
+func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
+	if deps.Audit == nil {
+		deps.Audit = &audittest.Recorder{}
+	}
+	if deps.Publisher == nil {
+		deps.Publisher = noopLabelPublisher{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = newCreativeContentIntegrationStore(t, deps.SpiceDB)
+	}
+	if deps.Checkpoints == nil {
+		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)
+	}
+	if deps.Translation == nil {
+		deps.Translation = labeladapter.NewTranslation()
+	}
+	if deps.Members == nil {
+		deps.Members = labeladapter.NewMemberProjection(deps.DB, "")
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = newLabelRuntimeForTest(deps.DB, "")
+	}
+	if deps.Artists == nil {
+		deps.Artists = artistadapter.NewLabelRelations()
+	}
+	if deps.Releases == nil {
+		deps.Releases = releaseadapter.NewLabelRelations()
+	}
+	if deps.ProgramEvents == nil {
+		deps.ProgramEvents = programeventadapter.NewLabelRelations()
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
+	}
+	units, err := labelpostgres.NewUnits(deps.DB, labelpostgres.Ports{
+		ContentBlocks: deps.ContentBlocks, Publisher: deps.Publisher, Checkpoints: deps.Checkpoints,
+		Translation: deps.Translation, Runtime: deps.Runtime, Artists: deps.Artists, Releases: deps.Releases,
+		ProgramEvents: deps.ProgramEvents, ShareLinks: deps.ShareLinks,
+	})
+	require.NoError(t, err)
+	service, err := label.NewService(label.Deps{
+		Units: units, SpiceDB: deps.SpiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit, Members: deps.Members,
+	})
+	require.NoError(t, err)
+	return service
 }
 
-func integrationTestUUID() string { return uuid.NewString() }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dsub-label-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	t.Helper()
-	email := identityID + "@label.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: name})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`INSERT INTO account_identity (id, created_at) SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid ON CONFLICT (id) DO NOTHING`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{ID: memberID, AccountIdentityID: &identityID, Nickname: name, Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email}, SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now}).Error
-	}))
-	return memberID
-}
-
-func artistIntegrationAdminCtx(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(integrationMemberID(identityID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+func labelIntegrationAdminCtx(identityID string) context.Context {
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(orytest.PostIntegrationMemberID(identityID)),
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
-func syncArtistIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
+func syncLabelIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
 	t.Helper()
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
@@ -102,64 +166,16 @@ func syncArtistIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, 
 	require.NoError(t, err)
 }
 
-type recordingArtistFileDeleter struct{ deletedIDs []string }
+type noopLabelPublisher struct{}
 
-func (d *recordingArtistFileDeleter) DeleteFileByID(_ context.Context, fileID string) error {
-	d.deletedIDs = append(d.deletedIDs, fileID)
+func (noopLabelPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
+	return nil
+}
+func (noopLabelPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
 	return nil
 }
 
-type noopArtistAsyncPublisher struct{}
-
-func (noopArtistAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
-	return nil
-}
-func (noopArtistAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
-	return nil
-}
-
-type capturingAsyncPublisher struct{ noopArtistAsyncPublisher }
-
-type fakeIdentityManager struct{ identity *auth.Identity }
-
-func (f *fakeIdentityManager) GetIdentity(_ context.Context, identityID string) (*auth.Identity, error) {
-	if f.identity == nil || f.identity.ID != identityID {
-		return nil, errors.New("Label integration identity not found")
-	}
-	return f.identity, nil
-}
-func (f *fakeIdentityManager) GetIdentityWithIncludeCredential(ctx context.Context, identityID, _ string) (*auth.Identity, error) {
-	return f.GetIdentity(ctx, identityID)
-}
-func (*fakeIdentityManager) ListIdentities(context.Context, int, int) ([]*auth.Identity, int64, error) {
-	return nil, 0, nil
-}
-func (*fakeIdentityManager) UpdateIdentityTraits(context.Context, string, structured.Fields) error {
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityMetadataAdmin(context.Context, string, structured.Fields) error {
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityVerifiableAddresses(context.Context, string, []auth.VerifiableAddress) error {
-	return nil
-}
-func (*fakeIdentityManager) SetIdentityState(context.Context, string, string) error { return nil }
-func (*fakeIdentityManager) DeleteIdentitySessions(context.Context, string) error   { return nil }
-func (*fakeIdentityManager) DeleteIdentity(context.Context, string) error           { return nil }
-func (f *fakeIdentityManager) GetIdentityEmail(context.Context, string) (string, error) {
-	if f.identity == nil {
-		return "", nil
-	}
-	return f.identity.CurrentEmail(), nil
-}
-
-func postIntegrationIdentity(id, preferredLocale string) *auth.Identity {
-	traits := structured.Fields{"name": "Label integration admin"}
-	if preferredLocale != "" {
-		traits["preferred_locale"] = preferredLocale
-	}
-	return &auth.Identity{ID: id, ExternalID: integrationMemberID(id), State: auth.KratosStateActive, Traits: traits}
-}
+type capturingAsyncPublisher struct{ noopLabelPublisher }
 
 type labelTestRenderConfig struct{}
 
@@ -169,22 +185,18 @@ func (labelTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte
 	return payload, fmt.Sprintf("%x", digest[:]), nil
 }
 
-func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, labelTestRenderConfig{}, labeladapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(labeladapter.NewRequests()))
+func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, labelTestRenderConfig{}, labeladapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(labeladapter.NewRequests()))
 }
 
-func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) Runtime {
+func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) labelpostgres.Runtime {
 	return labeladapter.NewRuntime(cdnDomain, newOGRefresherForTest(db, cdnDomain))
 }
 
-func newPageIntegrationContentBlockStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
-	t.Helper()
-	return testutil.NewEmailContentBlockStore(t, spiceDB)
-}
-
 func newCreativeContentIntegrationStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
-	return newPageIntegrationContentBlockStore(t, spiceDB)
+	t.Helper()
+	return contenttest.NewEmailContentBlockStore(t)
 }
 
 func creativeContentIntegrationDocument(sourceLocale, text string) *contentv1.RichTextDocument {
@@ -208,7 +220,7 @@ func attachCreativeContentIntegrationDocument(t *testing.T, db *gorm.DB, store *
 	t.Helper()
 	var revision string
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		created, err := store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: creativeContentProfile, SourceLocale: sourceLocale})
+		created, err := store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: "compact", SourceLocale: sourceLocale})
 		if err != nil {
 			return err
 		}
@@ -231,7 +243,7 @@ func attachCreativeContentIntegrationDocument(t *testing.T, db *gorm.DB, store *
 	return revision
 }
 
-func createIntegrationLabel(t *testing.T, service *LabelService, ctx context.Context, name, slug string) string {
+func createIntegrationLabel(t *testing.T, service *label.ConnectHandler, ctx context.Context, name, slug string) string {
 	t.Helper()
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{Name: name, Slug: &slug, Document: creativeContentIntegrationDocument("en", name)}))
 	require.NoError(t, err)
@@ -247,7 +259,7 @@ func requireResourceManagerRow(t *testing.T, db *gorm.DB, tableName, resourceIDC
 }
 
 func requireInternalResourceAdmin(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string) {
-	syncArtistIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	syncLabelIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 }
 
 func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {
@@ -263,11 +275,11 @@ func seedImageBindingUploadedFileFixtureForKind(t *testing.T, db *gorm.DB, key, 
 	fileID := uuid.NewString()
 	digest := sha256.Sum256([]byte(key))
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, mime_type, file_size, extension, sha256) VALUES (?, ?, 'image/webp', 1024, 'webp', ?)`, fileID, fileID, digest[:]).Error)
-	lifecycle := mediaasset.NewLifecycle(db, "")
-	asset, _, err := lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{SourceFileID: &fileID, Kind: kind, Extension: "webp", MimeType: "image/webp", Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE})
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
+	asset, _, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{SourceFileID: &fileID, Kind: kind, Extension: "webp", MimeType: "image/webp", Disposition: mediaasset.DispositionInline}))
 	require.NoError(t, err)
 	assetDigest := sha256.Sum256([]byte(asset.ID))
-	_, err = lifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 1024, Sha256: assetDigest[:]})
+	_, err = lifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 1024, Sha256: assetDigest[:]}))
 	require.NoError(t, err)
 	return fileID
 }
@@ -286,11 +298,62 @@ func requirePublicAssetDeletePending(t *testing.T, db *gorm.DB, assetID string) 
 	require.Equal(t, model.PublicAssetStatusDeletePending, asset.Status)
 }
 
-func (publisher noopArtistAsyncPublisher) NotifyProtobufWithExecutor(
+func (publisher noopLabelPublisher) NotifyProtobufWithExecutor(
 	ctx context.Context,
 	_ eventpkg.DBTX,
 	signal string,
 	message proto.Message,
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
+}
+
+// seedLabelLocaleTitle stores a Label locale title as the source title save
+// does.
+func seedLabelLocaleTitle(ctx context.Context, db *gorm.DB, labelID, locale, title string, now time.Time) error {
+	return db.WithContext(ctx).Exec(`
+		INSERT INTO label_translation (entity_id, locale, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (entity_id, locale) DO UPDATE SET title = EXCLUDED.title, updated_at = EXCLUDED.updated_at`,
+		labelID, locale, title, now, now).Error
+}
+func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
+	t.Helper()
+	base := labelIntegrationAdminCtx(identityID)
+	user := auth.GetUser(base)
+	require.NotNil(t, user)
+	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
+		uuid.NewString(),
+		sharedtelemetry.MemberActor{
+			IdentityID: identityID,
+			MemberID:   orytest.PostIntegrationMemberID(identityID),
+			SessionID:  uuid.NewString(),
+		},
+	)
+	require.NoError(t, err)
+	return auth.WithUser(sharedtelemetry.WithRequestContext(base, requestContext), user)
+}
+
+func seedInternalLabel(t *testing.T, db *gorm.DB, contentBlocks *contentblock.Store, ownerID string) string {
+	t.Helper()
+
+	labelID := uuid.NewString()
+	now := time.Now().UTC()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		document, err := contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
+			Profile: "compact", SourceLocale: "en",
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO label (id, status, content_document_id, created_at, updated_at)
+			VALUES (?, 'LABEL_STATUS_DRAFT', ?, ?, ?)
+		`, labelID, document.Document.ID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO label_owner (label_id, member_id, created_at)
+			VALUES (?, ?, ?)
+		`, labelID, ownerID, now).Error
+	}))
+	return labelID
 }

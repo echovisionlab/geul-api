@@ -3,13 +3,10 @@ package label
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"gorm.io/gorm"
 )
 
 // TranslationInterchangeTarget is Label's raw sparse target projection.
@@ -19,30 +16,33 @@ type TranslationInterchangeTarget struct {
 	Document *contentv1.LocalizedRichTextDocument
 }
 
+// LoadTypedTranslationInterchangeTarget reads the Label's sparse target
+// projection in the translation domain's transaction, which store is bound
+// to.
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	joined Joined,
 	labelID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
-	if tx == nil || store == nil {
-		return TranslationInterchangeTarget{}, errs.Internal(errors.New("label translation interchange dependencies are not configured"))
+	store := joined.Store
+
+	if store == nil {
+		return TranslationInterchangeTarget{}, errors.New("label translation interchange dependencies are not configured")
 	}
 	if _, err := canonicalLabelUUID(labelID); err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.LoadTypedTranslationInterchangeTarget", "outcome", "failed", failurecause.Attr(err))
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("label_id", "must be a canonical UUID")
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("label_id", "must be a canonical UUID")
 	}
 	var err error
 	targetLocale, err = normalizeLabelDocumentLocale(targetLocale)
 	if err != nil {
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("target_locale", err.Error())
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", err.Error())
 	}
-	documentID, err := loadLabelContentDocumentID(ctx, tx, labelID)
+	documentID, err := loadLabelContentDocumentID(ctx, store, labelID)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	state, err := loadLabelTargetLocaleState(ctx, tx, store, labelID, documentID, targetLocale, false)
+	state, err := loadLabelTargetLocaleState(ctx, store, labelID, documentID, targetLocale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}

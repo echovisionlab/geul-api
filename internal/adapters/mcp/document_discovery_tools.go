@@ -8,27 +8,33 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const ToolDocumentList = "document_list"
 
-var documentDiscoveryTools = []mcpserver.Tool{{
-	Name:  ToolDocumentList,
-	Title: "List accessible documents",
-	Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
-		"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
-		"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
-	InputSchema:     json.RawMessage(documentListInputJSONSchema),
-	OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
-	SecuritySchemes: oauthSecuritySchemes(),
-	Annotations:     toolAnnotations(true, false, false),
-	Meta:            oauthSecurityMeta(),
-}}
+var documentDiscoveryTools = toolRegistry[DocumentDiscoveryTools]{
+	defineTool(mcpserver.Tool{
+		Name:  ToolDocumentList,
+		Title: "List accessible documents",
+		Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
+			"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
+			"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
+		InputSchema:     json.RawMessage(documentListInputJSONSchema),
+		OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
+		SecuritySchemes: oauthSecuritySchemes(),
+		Annotations:     toolAnnotations(true, false, false),
+		Meta:            oauthSecurityMeta(),
+	}, (*DocumentDiscoveryTools).list),
+}
 
 // PostDocumentDiscovery is the exact Post-owned read capability consumed by
 // the MCP discovery adapter. Authorization remains in the Post service.
@@ -37,23 +43,23 @@ type PostDocumentDiscovery interface {
 }
 
 type WorkDocumentDiscovery interface {
-	ListWorksAdmin(context.Context, *connect.Request[managev1.ListWorksAdminRequest]) (*connect.Response[managev1.ListWorksAdminResponse], error)
+	ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (workdomain.AdminWorkPage, error)
 }
 
 type PageDocumentDiscovery interface {
-	ListPagesAdmin(context.Context, *connect.Request[managev1.ListPagesAdminRequest]) (*connect.Response[managev1.ListPagesAdminResponse], error)
+	ListPagesAdmin(context.Context, pagedomain.ListPagesAdminQuery) (pagedomain.PageList, error)
 }
 
 type ProgramEventDocumentDiscovery interface {
-	ListProgramEventsAdmin(context.Context, *connect.Request[managev1.ListProgramEventsAdminRequest]) (*connect.Response[managev1.ListProgramEventsAdminResponse], error)
+	ListProgramEventsAdmin(context.Context, programevent.ListProgramEventsQuery) (programevent.EventList, error)
 }
 
 type ReleaseDocumentDiscovery interface {
-	ListReleasesAdmin(context.Context, *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error)
+	ListReleasesAdmin(context.Context, releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error)
 }
 
 type ArtistDocumentDiscovery interface {
-	ListArtistsAdmin(context.Context, *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error)
+	ListArtistsAdmin(context.Context, artist.ListArtistsQuery) (artist.AdminArtistPage, error)
 }
 
 // DocumentDiscoveryTools owns only document selection metadata. DCDP reads
@@ -96,12 +102,10 @@ func NewDocumentDiscoveryTools(
 	return &DocumentDiscoveryTools{posts: posts, works: works, pages: pages, programEvents: programEvents, releases: releases, artists: artists}, nil
 }
 
-func (*DocumentDiscoveryTools) ToolNames() []string {
-	return toolDefinitionNames(documentDiscoveryTools)
-}
+func (*DocumentDiscoveryTools) ToolNames() []string { return documentDiscoveryTools.names() }
 
 func (*DocumentDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(documentDiscoveryTools), nil
+	return documentDiscoveryTools.list(), nil
 }
 
 func (tools *DocumentDiscoveryTools) CallTool(
@@ -110,50 +114,7 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	name string,
 	arguments mcpserver.ToolArguments,
 ) (mcpserver.ToolResult, error) {
-	if name != ToolDocumentList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	var input struct {
-		Profile string `json:"p"`
-		Query   string `json:"q,omitempty"`
-		Limit   int    `json:"limit,omitempty"`
-		Offset  int    `json:"offset,omitempty"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
-		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
-	}
-	_, limitSupplied := arguments["limit"]
-	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
-		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
-	}
-	// The owning management APIs use int32 offsets. Validate before converting
-	// so a large offset cannot wrap around and select a different page.
-	if input.Offset < 0 || input.Offset > 1<<31-1 {
-		return executionError(errors.New("offset must be between 0 and 2147483647"))
-	}
-	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
-	if err != nil {
-		return expectedToolError(err)
-	}
-	var nextOffset any
-	if int64(input.Offset+limit) < total {
-		nextOffset = input.Offset + limit
-	}
-	encoded, err := json.Marshal(map[string]any{
-		"documents":   documents,
-		"total":       total,
-		"next_offset": nextOffset,
-	})
-	if err != nil {
-		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
-	}
-	return structuredResult(encoded, false)
+	return documentDiscoveryTools.call(tools, ctx, name, arguments)
 }
 
 func (tools *DocumentDiscoveryTools) listDocuments(
@@ -182,39 +143,35 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, listed.Total, listed.Limit, nil
 	case "work":
-		request := connect.NewRequest(&managev1.ListWorksAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.works.ListWorksAdmin(ctx, workdomain.ListWorksAdminQuery{
+			Page:    workdomain.Page{Limit: int32(limit), Offset: int32(offset)},
+			Filters: discoverySearchFilters(query),
+			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.works.ListWorksAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Works))
-		for _, item := range listed.Msg.Works {
-			if item == nil || item.Work == nil || item.Work.UpdatedAt == nil {
-				continue
-			}
-			work := item.Work
+		documents := make([]map[string]any, 0, len(listed.Works))
+		for _, item := range listed.Works {
+			work := item.View
 			documents = append(documents, discoveryDocument(
-				"work", work.Id, work.Title, work.Slug, work.SourceLocale,
-				strings.TrimPrefix(work.Status.String(), "WORK_STATUS_"), work.UpdatedAt.AsTime(),
+				"work", work.ID, work.Title, work.Slug, work.SourceLocale,
+				strings.TrimPrefix(workdomain.WorkStatusName(work.Status), "WORK_STATUS_"), timestamppb.New(work.UpdatedAt).AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
 	case "page":
-		request := connect.NewRequest(&managev1.ListPagesAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		list, err := tools.pages.ListPagesAdmin(ctx, pagedomain.ListPagesAdminQuery{
+			Page:    pagedomain.Paging{Limit: int32(limit), Offset: int32(offset)},
+			Filters: discoverySearchFilters(query),
+			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.pages.ListPagesAdmin(ctx, request)
+		listed, err := renderPage(list, err, pagedomain.PageListMessage)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Pages))
-		for _, page := range listed.Msg.Pages {
+		documents := make([]map[string]any, 0, len(listed.Pages))
+		for _, page := range listed.Pages {
 			if page == nil || page.UpdatedAt == nil {
 				continue
 			}
@@ -223,40 +180,36 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				strings.TrimPrefix(page.Status.String(), "PAGE_STATUS_"), page.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	case "program_event":
-		request := connect.NewRequest(&managev1.ListProgramEventsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, programevent.ListProgramEventsQuery{
+			Limit: int32(limit), Offset: int32(offset),
+			Filters: discoverySearchFilters(query),
+			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Events))
-		for _, event := range listed.Msg.Events {
-			if event == nil || event.UpdatedAt == nil {
-				continue
-			}
+		documents := make([]map[string]any, 0, len(listed.Events))
+		for _, summary := range listed.Events {
+			event := programevent.EventSummaryMessage(summary)
 			documents = append(documents, discoveryDocument(
 				"program_event", event.Id, event.Title, event.Slug, event.SourceLocale,
 				strings.TrimPrefix(event.Status.String(), "PROGRAM_EVENT_STATUS_"), event.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		pagination := programevent.PaginationMessage(listed.Pagination)
+		return documents, int64(pagination.GetTotal()), int(pagination.GetLimit()), nil
 	case "release":
-		request := connect.NewRequest(&managev1.ListReleasesAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.releases.ListReleasesAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Releases))
-		for _, item := range listed.Msg.Releases {
+		documents := make([]map[string]any, 0, len(listed.Releases))
+		for _, item := range releasedomain.ReleasesWithStatsMessage(listed.Releases) {
 			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
 				continue
 			}
@@ -266,29 +219,27 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				release.Status, release.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, listed.Total, int(listed.Limit), nil
 	case "artist":
-		request := connect.NewRequest(&managev1.ListArtistsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.artists.ListArtistsAdmin(ctx, artist.ListArtistsQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.artists.ListArtistsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Artists))
-		for _, item := range listed.Msg.Artists {
-			if item == nil || item.Artist == nil || item.Artist.UpdatedAt == nil {
+		documents := make([]map[string]any, 0, len(listed.Artists))
+		for _, item := range listed.Artists {
+			listedArtist := item.Artist.Artist
+			if listedArtist.UpdatedAt == nil {
 				continue
 			}
-			artist := item.Artist
 			documents = append(documents, discoveryDocument(
-				"artist", artist.Id, artist.Name, artist.Slug, artist.SourceLocale,
-				artist.Status, artist.UpdatedAt.AsTime(),
+				"artist", listedArtist.ID, item.Artist.Name, listedArtist.Slug, listedArtist.SourceLocale,
+				string(listedArtist.Status), *listedArtist.UpdatedAt,
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
 	default:
 		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
 	}
@@ -325,3 +276,49 @@ var (
 	_ mcpserver.ToolDispatcher = (*DocumentDiscoveryTools)(nil)
 	_ ToolProvider             = (*DocumentDiscoveryTools)(nil)
 )
+
+func (tools *DocumentDiscoveryTools) list(ctx context.Context, name string, call toolCall[documentListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return executionError(err)
+	}
+	var input documentListArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
+		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
+	}
+	_, limitSupplied := arguments["limit"]
+	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
+		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
+	}
+	if input.Offset < 0 || input.Offset > 1<<31-1 {
+		return executionError(errors.New("offset must be between 0 and 2147483647"))
+	}
+	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
+	if err != nil {
+		return expectedToolError(err)
+	}
+	var nextOffset any
+	if int64(input.Offset+limit) < total {
+		nextOffset = input.Offset + limit
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"documents":   documents,
+		"total":       total,
+		"next_offset": nextOffset,
+	})
+	if err != nil {
+		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
+	}
+	return structuredResult(encoded, false)
+}
+
+type documentListArguments = struct {
+	Profile string `json:"p"`
+	Query   string `json:"q,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Offset  int    `json:"offset,omitempty"`
+}

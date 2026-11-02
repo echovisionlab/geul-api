@@ -1,120 +1,64 @@
 //go:build integration
 
-package campaign
+package campaign_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/campaign"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"gorm.io/gorm"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-type captureFailingCampaignAuditAppender struct {
-	targetID string
-}
+type captureFailingCampaignAuditAppender struct{ targetID string }
 
-func (writer *captureFailingCampaignAuditAppender) AppendDomainAuditInTransaction(
-	_ context.Context,
-	_ *gorm.DB,
-	record sharedtelemetry.AuditRecord,
-) error {
-	writer.targetID = record.TargetID
+func (w *captureFailingCampaignAuditAppender) AppendDomainAuditInTransaction(_ context.Context, _ *gorm.DB, r sharedtelemetry.AuditRecord) error {
+	w.targetID = r.TargetID
 	return errors.New("audit unavailable")
 }
 
-func campaignAllTarget() *managev1.CreateCampaignRequest_All {
-	return &managev1.CreateCampaignRequest_All{All: &emptypb.Empty{}}
-}
-
+// This checks real policy grants and revocation across a rolled-back deletion.
 func TestCampaignAuthorizationIsSynchronousIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.123")
+	ctx := integrationPrincipal(t, admin.AuthUserInfo())
+	service := integrationService(t, db, stack.SpiceDBClient, nil)
+	created, err := service.CreateCampaign(ctx, campaign.CreateCampaignCommand{Name: "Synchronous campaign authorization", Subject: "subject", SourceLocale: "en", Target: campaign.CreateCampaignTarget{All: true}})
 	require.NoError(t, err)
-	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), admin.AuthUserInfo())
-	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	campaigns := NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
-	campaign, err := campaigns.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
-		Name: "Synchronous campaign authorization", Subject: "subject", SourceLocale: "en", Target: campaignAllTarget(),
-	}))
-	require.NoError(t, err)
-	requireResourcePermission(
-		t,
-		ctx,
-		stack.SpiceDBClient,
-		campaign.Msg.Campaign.Id,
-		true,
-	)
-	failingCampaignAudit := &captureFailingCampaignAuditAppender{}
-	failingCampaigns := NewAuditedCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)),
-		"",
-		"",
-		failingCampaignAudit,
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
-	_, err = failingCampaigns.DeleteCampaign(ctx, connect.NewRequest(&managev1.DeleteCampaignRequest{Id: campaign.Msg.Campaign.Id}))
+	permission := func(want bool) {
+		can, err := policyv1.Campaign.Manage(created.ID)
+		require.NoError(t, err)
+		decision, err := auth.AuthorizationDecision(ctx, can)
+		require.NoError(t, err)
+		allowed, err := stack.SpiceDBClient.Can(ctx, decision)
+		require.NoError(t, err)
+		require.Equal(t, want, allowed)
+	}
+	permission(true)
+	failing := &captureFailingCampaignAuditAppender{}
+	failedService := integrationService(t, db, stack.SpiceDBClient, failing)
+	err = failedService.DeleteCampaign(ctx, campaign.DeleteCampaignCommand{ID: created.ID})
 	require.Error(t, err)
-	require.Equal(t, campaign.Msg.Campaign.Id, failingCampaignAudit.targetID)
-	var preservedCampaignRows int64
-	require.NoError(t, db.Table("campaign").Where("id = ?", campaign.Msg.Campaign.Id).Count(&preservedCampaignRows).Error)
-	require.EqualValues(t, 1, preservedCampaignRows)
-	requireResourcePermission(
-		t,
-		ctx,
-		stack.SpiceDBClient,
-		campaign.Msg.Campaign.Id,
-		true,
-	)
-
-	_, err = campaigns.DeleteCampaign(ctx, connect.NewRequest(&managev1.DeleteCampaignRequest{Id: campaign.Msg.Campaign.Id}))
-	require.NoError(t, err)
-	requireResourcePermission(
-		t,
-		ctx,
-		stack.SpiceDBClient,
-		campaign.Msg.Campaign.Id,
-		false,
-	)
-}
-
-func requireResourcePermission(
-	t *testing.T,
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	resourceID string,
-	expected bool,
-) {
-	t.Helper()
-	can, err := policyv1.Campaign.Manage(resourceID)
-	require.NoError(t, err)
-	decision, err := auth.AuthorizationDecision(ctx, can)
-	require.NoError(t, err)
-	allowed, err := spiceDB.Can(ctx, decision)
-	require.NoError(t, err)
-	require.Equal(t, expected, allowed)
+	require.Equal(t, created.ID, failing.targetID)
+	var count int64
+	require.NoError(t, db.Table("campaign").Where("id = ?", created.ID).Count(&count).Error)
+	require.EqualValues(t, 1, count)
+	permission(true)
+	afterWriteFailure := errors.New("transaction failed after writing policy deletion")
+	compensated := integrationService(t, db, stack.SpiceDBClient, nil, func(units campaign.Units) campaign.Units {
+		return failedRelationshipUnits{Units: units, Err: afterWriteFailure}
+	})
+	require.ErrorIs(t, compensated.DeleteCampaign(ctx, campaign.DeleteCampaignCommand{ID: created.ID}), afterWriteFailure)
+	permission(true)
+	require.NoError(t, service.DeleteCampaign(ctx, campaign.DeleteCampaignCommand{ID: created.ID}))
+	permission(false)
 }

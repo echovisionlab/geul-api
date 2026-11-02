@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -16,37 +16,37 @@ func TestUploadSessionStatusToProtoMapsKnownStatuses(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		status model.UploadSessionStatus
+		status domain.UploadSessionStatus
 		want   managev1.UploadSessionStatus
 	}{
 		{
 			name:   "initiated",
-			status: model.UploadSessionStatusInitiated,
+			status: domain.UploadSessionStatusInitiated,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
 		},
 		{
 			name:   "uploading",
-			status: model.UploadSessionStatusUploading,
+			status: domain.UploadSessionStatusUploading,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
 		},
 		{
 			name:   "finalizing",
-			status: model.UploadSessionStatusFinalizing,
+			status: domain.UploadSessionStatusFinalizing,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING,
 		},
 		{
 			name:   "failed",
-			status: model.UploadSessionStatusFailed,
+			status: domain.UploadSessionStatusFailed,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED,
 		},
 		{
 			name:   "aborted",
-			status: model.UploadSessionStatusAborted,
+			status: domain.UploadSessionStatusAborted,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_ABORTED,
 		},
 		{
 			name:   "unknown",
-			status: model.UploadSessionStatus("paused"),
+			status: domain.UploadSessionStatus("paused"),
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UNSPECIFIED,
 		},
 	}
@@ -77,70 +77,68 @@ func TestNewStorageCompensationContextDetachesRequestCancellation(t *testing.T) 
 func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *testing.T) {
 	t.Parallel()
 
-	freshResp, err := multipartInitiateResponseFromSession(
-		model.UploadSession{
+	freshResp := multipartInitiateResponseFromSession(
+		domain.UploadSession{
 			UploadID:      "upload-fresh",
 			FileID:        "file-fresh",
 			RequestedMime: "image/webp",
 			TotalParts:    1,
 			ChunkSize:     int32(chunkSize),
-			Status:        model.UploadSessionStatusInitiated,
+			Status:        domain.UploadSessionStatusInitiated,
 		},
 		nil,
 		false,
 	)
-	require.NoError(t, err)
 
-	require.Equal(t, "upload-fresh", freshResp.GetUploadId())
-	require.Equal(t, "file-fresh", freshResp.GetFileId())
-	require.Equal(t, "webp", freshResp.GetExtension())
-	require.EqualValues(t, 1, freshResp.GetTotalParts())
-	require.EqualValues(t, chunkSize, freshResp.GetChunkSize())
-	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED, freshResp.GetStatus())
-	require.False(t, freshResp.GetResumed())
-	require.Empty(t, freshResp.GetUploadedParts())
+	require.Equal(t, "upload-fresh", freshResp.UploadID)
+	require.Equal(t, "file-fresh", freshResp.FileID)
+	require.Equal(t, "webp", freshResp.Extension)
+	require.EqualValues(t, 1, freshResp.TotalParts)
+	require.EqualValues(t, chunkSize, freshResp.ChunkSize)
+	require.Equal(t, domain.UploadSessionStatusInitiated, freshResp.Status)
+	require.False(t, freshResp.Resumed)
+	require.Empty(t, freshResp.UploadedParts)
 
 	attemptID := "attempt-1"
-	uploadedParts := []*managev1.UploadPartInfo{
-		{PartNumber: 1, Etag: "etag-1"},
-		{PartNumber: 2, Etag: "etag-2"},
+	uploadedParts := []*UploadedPart{
+		{PartNumber: 1, ETag: "etag-1"},
+		{PartNumber: 2, ETag: "etag-2"},
 	}
 
-	resp, err := multipartInitiateResponseFromSession(
-		model.UploadSession{
+	resp := multipartInitiateResponseFromSession(
+		domain.UploadSession{
 			UploadID:      "upload-1",
 			FileID:        "file-1",
 			RequestedMime: "image/webp",
 			TotalParts:    3,
 			ChunkSize:     64,
-			Status:        model.UploadSessionStatusUploading,
+			Status:        domain.UploadSessionStatusUploading,
 			AttemptID:     &attemptID,
 		},
 		uploadedParts,
 		true,
 	)
-	require.NoError(t, err)
 
-	require.Equal(t, "upload-1", resp.GetUploadId())
-	require.Equal(t, "file-1", resp.GetFileId())
-	require.Equal(t, "webp", resp.GetExtension())
-	require.EqualValues(t, 3, resp.GetTotalParts())
-	require.EqualValues(t, 64, resp.GetChunkSize())
-	require.Equal(t, uploadedParts, resp.GetUploadedParts())
-	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, resp.GetStatus())
-	require.True(t, resp.GetResumed())
-	require.Empty(t, resp.GetSlotId())
-	require.Equal(t, attemptID, resp.GetIngestAttemptId())
+	require.Equal(t, "upload-1", resp.UploadID)
+	require.Equal(t, "file-1", resp.FileID)
+	require.Equal(t, "webp", resp.Extension)
+	require.EqualValues(t, 3, resp.TotalParts)
+	require.EqualValues(t, 64, resp.ChunkSize)
+	require.Equal(t, uploadedParts, resp.UploadedParts)
+	require.Equal(t, domain.UploadSessionStatusUploading, resp.Status)
+	require.True(t, resp.Resumed)
+	require.Empty(t, resp.SlotID)
+	require.Equal(t, attemptID, *resp.IngestAttemptID)
 }
 
 func TestContainsFinalizingUploadSession(t *testing.T) {
 	t.Parallel()
 
 	require.False(t, containsFinalizingUploadSession(nil))
-	require.False(t, containsFinalizingUploadSession([]model.UploadSession{{Status: model.UploadSessionStatusUploading}}))
-	require.True(t, containsFinalizingUploadSession([]model.UploadSession{
-		{Status: model.UploadSessionStatusUploading},
-		{Status: model.UploadSessionStatusFinalizing},
+	require.False(t, containsFinalizingUploadSession([]domain.UploadSession{{Status: domain.UploadSessionStatusUploading}}))
+	require.True(t, containsFinalizingUploadSession([]domain.UploadSession{
+		{Status: domain.UploadSessionStatusUploading},
+		{Status: domain.UploadSessionStatusFinalizing},
 	}))
 }
 
@@ -150,7 +148,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 	storedLastModified := int64(1710000000000)
 	requestLastModified := storedLastModified
 	differentLastModified := storedLastModified + 1
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		FileName:         "image.jpeg",
 		FileSize:         1024,
 		RequestedMime:    "image/jpeg",
@@ -159,7 +157,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		session          model.UploadSession
+		session          domain.UploadSession
 		fileName         string
 		fileSize         int64
 		mimeType         string
@@ -206,7 +204,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 		},
 		{
 			name:             "rejects missing stored last modified",
-			session:          model.UploadSession{FileName: "image.jpeg", FileSize: 1024, RequestedMime: "image/jpeg"},
+			session:          domain.UploadSession{FileName: "image.jpeg", FileSize: 1024, RequestedMime: "image/jpeg"},
 			fileName:         "image.jpeg",
 			fileSize:         1024,
 			mimeType:         "image/jpeg",
@@ -240,14 +238,14 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 func TestMultipartSessionChunkSizeUsesStoredOrDefaultChunkSize(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, int64(9), multipartSessionChunkSize(model.UploadSession{ChunkSize: 9}))
-	require.Equal(t, int64(chunkSize), multipartSessionChunkSize(model.UploadSession{}))
+	require.Equal(t, int64(9), multipartSessionChunkSize(domain.UploadSession{ChunkSize: 9}))
+	require.Equal(t, int64(chunkSize), multipartSessionChunkSize(domain.UploadSession{}))
 }
 
 func TestUploadPartConversionsPreservePartOrder(t *testing.T) {
 	t.Parallel()
 
-	parts := []model.UploadPart{
+	parts := []domain.UploadPart{
 		{UploadID: "upload-1", PartNumber: 2, ETag: "etag-2"},
 		{UploadID: "upload-1", PartNumber: 1, ETag: "etag-1"},
 	}
@@ -261,10 +259,10 @@ func TestUploadPartConversionsPreservePartOrder(t *testing.T) {
 
 	uploadInfos := uploadPartInfos(parts)
 	require.Len(t, uploadInfos, 2)
-	require.EqualValues(t, 2, uploadInfos[0].GetPartNumber())
-	require.Equal(t, "etag-2", uploadInfos[0].GetEtag())
-	require.EqualValues(t, 1, uploadInfos[1].GetPartNumber())
-	require.Equal(t, "etag-1", uploadInfos[1].GetEtag())
+	require.EqualValues(t, 2, uploadInfos[0].PartNumber)
+	require.Equal(t, "etag-2", uploadInfos[0].ETag)
+	require.EqualValues(t, 1, uploadInfos[1].PartNumber)
+	require.Equal(t, "etag-1", uploadInfos[1].ETag)
 
 	require.Equal(t, []int32{2, 1}, uploadPartModelNumbers(parts))
 }

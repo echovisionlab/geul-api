@@ -9,15 +9,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,14 +31,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type directEditorMultipartFixture struct {
-	service  *FileService
+	service  *Service
 	ctx      context.Context
 	fileID   string
 	uploadID string
@@ -45,27 +49,26 @@ type directEditorMultipartFixture struct {
 
 func prepareDirectEditorImageMultipart(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	s3Client *s3.Client,
 	asyncPublisher AsyncPublisher,
 ) directEditorMultipartFixture {
 	t.Helper()
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-	service := NewFileService(
-		stack.DB,
-		s3Client,
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	service := newTestService(Deps{
+		S3:             s3Client,
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
-	response, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	response, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:   "retry-image.jpg",
 		FileSize:   int64(len(body)),
@@ -111,7 +114,7 @@ func prepareDirectEditorImageMultipart(
 
 func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	now := time.Now().UTC()
 
 	valid := model.UploadSession{
@@ -146,7 +149,7 @@ func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
 
 func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
 		t,
@@ -156,17 +159,17 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 	)
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", fixture.uploadID).
-		Update("status", model.UploadSessionStatusFinalizing).Error)
+		Update("status", domain.UploadSessionStatusFinalizing).Error)
 
-	abortResponse, err := fixture.service.AbortMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
+	abortResponse, err := NewConnectHandler(fixture.service).AbortMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
 		UploadId: fixture.uploadID,
 		FileId:   fixture.fileID,
 	}))
 	require.Error(t, err)
 	require.Nil(t, abortResponse)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
-	replacement, err := fixture.service.InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	replacement, err := NewConnectHandler(fixture.service).InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:   "replacement.jpg",
 		FileSize:   1,
@@ -182,7 +185,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 		managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING,
 	)
 
-	completed, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:        fixture.fileID,
 		UploadId:      fixture.uploadID,
 		CorrelationId: hardCutPtrString(uuid.NewString()),
@@ -193,27 +196,26 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 
 func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Guarded Track Delete")
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Guarded Track Delete")
 	requireTrackPolicyFixture(t, stack.SpiceDBClient, trackID)
 	asyncPublisher := &hardCutAsyncPublisher{}
-	fileService := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	fileService := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: &recordingFileTranscoderPublisher{}})
+	// The Track deletion records an audit entry for its request actor.
+	ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
-	initiated, err := fileService.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(fileService).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
 		EntityId:   trackID,
 		EntityType: &entityType,
@@ -224,21 +226,13 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", initiated.Msg.GetUploadId()).
-		Update("status", model.UploadSessionStatusFinalizing).Error)
+		Update("status", domain.UploadSessionStatusFinalizing).Error)
 
-	trackService := releasepkg.NewTrackService(
-		stack.DB,
-		releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
-		releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-		stack.SpiceDBClient,
-		releaseadapter.NewTrackFiles(fileService),
-		releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
-		releaseadapter.NewArtistSummaries(stack.DB),
-	)
+	trackService := newDirectTrackService(t, stack, fileService)
 	response, err := trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.Error(t, err)
 	require.Nil(t, response)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	requireUploadSessionStatus(
 		t,
 		stack.DB,
@@ -251,7 +245,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", initiated.Msg.GetUploadId()).
-		Update("status", model.UploadSessionStatusUploading).Error)
+		Update("status", domain.UploadSessionStatusUploading).Error)
 	response, err = trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.NoError(t, err)
 	require.True(t, response.Msg.GetSuccess())
@@ -274,37 +268,28 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 		{name: "session is visible before delete", pauseBeforeInsert: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			stack := testutil.SetupDirectMediaRuntimeStack(t)
+			stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 			manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-			releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-			trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Concurrent Track Delete")
+			releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+			trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Concurrent Track Delete")
 			requireTrackPolicyFixture(t, stack.SpiceDBClient, trackID)
 			asyncPublisher := &hardCutAsyncPublisher{}
 			s3Client := runtimeS3Client(t, stack)
-			fileService := NewFileService(
-				stack.DB,
-				s3Client,
-				asyncPublisher,
-				stack.S3MediaBucket,
-				stack.CDNURL,
-				stack.MediaURL,
-				stack.MediaSigningSecret,
-				&recordingFileTranscoderPublisher{},
-				stack.SpiceDBClient,
-				directTrackAttachmentOption(stack.DB),
-			)
-			trackService := releasepkg.NewTrackService(
-				stack.DB,
-				releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
-				releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-				stack.SpiceDBClient,
-				releaseadapter.NewTrackFiles(fileService),
-				releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
-				releaseadapter.NewArtistSummaries(stack.DB),
-			)
-			ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+			fileService := newTestService(Deps{
+				S3:             s3Client,
+				AsyncPublisher: asyncPublisher,
+				S3Bucket:       stack.S3MediaBucket,
+				CDNDomain:      stack.CDNURL,
+				MediaDomain:    stack.MediaURL,
+				MediaSecret:    stack.MediaSigningSecret,
 
-			paused := make(chan model.UploadSession, 1)
+				SpiceDB: stack.SpiceDBClient,
+			}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: &recordingFileTranscoderPublisher{}})
+			trackService := newDirectTrackService(t, stack, fileService)
+			// The Track deletion records an audit entry for its request actor.
+			ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
+
+			paused := make(chan domain.UploadSession, 1)
 			resume := make(chan struct{})
 			var resumeOnce sync.Once
 			resumeInitiation := func() {
@@ -312,12 +297,12 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			}
 			t.Cleanup(resumeInitiation)
 			if testCase.pauseBeforeInsert {
-				fileService.testBeforeTrackSessionInsert = func(session model.UploadSession) {
+				fileService.testBeforeTrackSessionInsert = func(session domain.UploadSession) {
 					paused <- session
 					<-resume
 				}
 			} else {
-				fileService.testAfterTrackSessionInsert = func(session model.UploadSession) {
+				fileService.testAfterTrackSessionInsert = func(session domain.UploadSession) {
 					paused <- session
 					<-resume
 				}
@@ -330,7 +315,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			initiateDone := make(chan initiateResult, 1)
 			entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
 			go func() {
-				response, err := fileService.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+				response, err := NewConnectHandler(fileService).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 					UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
 					EntityId:   trackID, EntityType: &entityType,
 					FileName: "concurrent-track.mp3", FileSize: 1024, MimeType: "audio/mpeg",
@@ -384,7 +369,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			}
 			if testCase.pauseBeforeInsert {
 				require.Error(t, initiated.err)
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(initiated.err))
+				require.Equal(t, connect.CodeNotFound, errs.CodeOf(initiated.err))
 				require.Nil(t, initiated.response)
 			} else {
 				require.NoError(t, initiated.err)
@@ -417,7 +402,7 @@ func requireTrackPolicyFixture(t *testing.T, spiceDB *auth.SpiceDBClient, trackI
 
 func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	observer := &multipartCompletionObservingTransport{returnNoSuchAfterCompletion: true}
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
@@ -432,15 +417,15 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		UploadId: fixture.uploadID,
 	}
 	wrongUploadID := "untrusted-opaque-upload-id"
-	_, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 0, observer.count(), "a wrong upload identity must not bypass an active session")
 
-	response, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
+	response, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, fixture.fileID, response.Msg.GetFileId())
 	require.Equal(t, 1, observer.count())
@@ -454,7 +439,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		return &managev1.FileIngestFailedEvent{}
 	}))
 
-	recovered, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
+	recovered, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, response.Msg.GetFileId(), recovered.Msg.GetFileId())
 	require.Equal(t, response.Msg.GetDelivery().GetFileId(), recovered.Msg.GetDelivery().GetFileId())
@@ -463,7 +448,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		return &managev1.FileIngestAttachedEvent{}
 	}), "independent editor Files never publish attachment projection events")
 
-	recoveredWithWrongID, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	recoveredWithWrongID, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
@@ -473,20 +458,20 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 
 	for _, role := range []policyv1.RoleID{policyv1.Role.Author(), policyv1.Role.User()} {
 		other := stack.CreateUser(t, role.ID())
-		otherCtx := auth.WithUser(context.Background(), other.AuthUserInfo())
-		recovered, err := fixture.service.CompleteMultipartUpload(otherCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{FileId: fixture.fileID, UploadId: wrongUploadID}))
+		otherCtx := auditedUserContext(context.Background(), other.AuthUserInfo())
+		recovered, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(otherCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{FileId: fixture.fileID, UploadId: wrongUploadID}))
 		if role == policyv1.Role.Author() {
 			require.NoError(t, err, "authors have file.list access")
 			require.Equal(t, fixture.fileID, recovered.Msg.GetFileId())
 		} else {
 			require.Error(t, err)
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 		}
 	}
 
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	adminCtx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	adminRecovery, err := fixture.service.CompleteMultipartUpload(adminCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	adminCtx := auditedUserContext(context.Background(), admin.AuthUserInfo())
+	adminRecovery, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(adminCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
@@ -497,24 +482,23 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 
 func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	asyncPublisher := &hardCutAsyncPublisher{}
-	service := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	service := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := base64.StdEncoding.DecodeString("UklGRiwAAABXRUJQVlA4ICAAAAAwAQCdASoBAAEAAAAGJZwAA3AA/u4KZ/9qflZ7vuAAAA==")
 	require.NoError(t, err)
-	initiated, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
 		EntityId:   manager.ID,
 		FileName:   "response-loss-avatar.webp",
@@ -536,14 +520,14 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 		FileId:   initiated.Msg.GetFileId(),
 		UploadId: initiated.Msg.GetUploadId(),
 	}
-	completed, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(request))
+	completed, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.NotNil(t, completed.Msg.GetDelivery().GetAsset())
 	finalizedBeforeRetry := len(decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestFinalizedEvent {
 		return &managev1.FileIngestFinalizedEvent{}
 	}))
 
-	recovered, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(request))
+	recovered, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, completed.Msg.GetDelivery().GetAsset().GetAssetId(), recovered.Msg.GetDelivery().GetAsset().GetAssetId())
 
@@ -559,27 +543,26 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 
 func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-	imageBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	imageBody, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	require.NotEmpty(t, imageBody)
 	asyncPublisher := &hardCutAsyncPublisher{}
-	svc := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	svc := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-image-%d.jpg", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
-	initResp, err := svc.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:         fileName,
 		FileSize:         int64(len(imageBody)),
@@ -593,7 +576,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	fileKey, err := mediaauth.MediaObjectKey(initResp.Msg.GetFileId(), initResp.Msg.GetExtension())
 	require.NoError(t, err)
 
-	candidateResp, err := svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err := NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:           hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:         hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -609,7 +592,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 
 	part := handleMultipartPartDirect(t, svc, manager, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), 1, imageBody)
 	require.NotEmpty(t, part.ETag)
-	candidateResp, err = svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err = NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:     hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:   hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -618,7 +601,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	requireUploadSessionStatus(t, stack.DB, initResp.Msg.GetUploadId(), managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING)
 	require.Equal(t, []*managev1.UploadPartInfo{{PartNumber: 1, Etag: part.ETag}}, candidateResp.Msg.GetUploadedParts())
 
-	completeResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completeResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   initResp.Msg.GetFileId(),
 		UploadId: initResp.Msg.GetUploadId(),
 	}))
@@ -629,7 +612,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	requireCanonicalInlineRef(t, completeResp.Msg.GetDelivery().GetInline(), initResp.Msg.GetFileId(), "jpg", "image/jpeg")
 	requireCanonicalDownloadRef(t, completeResp.Msg.GetDelivery().GetDownload(), initResp.Msg.GetFileId(), "jpg", "image/jpeg")
 	require.NotNil(t, completeResp.Msg.GetDelivery().GetAsset())
-	recoveredResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	recoveredResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   initResp.Msg.GetFileId(),
 		UploadId: initResp.Msg.GetUploadId(),
 	}))
@@ -662,7 +645,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 		Count(&assetCount).Error)
 	require.EqualValues(t, 1, assetCount)
 
-	candidateResp, err = svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err = NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:     hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:   hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -691,25 +674,24 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 
 func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	starter := stack.CreateUser(t, policyv1.Role.Author().ID())
 	completer := stack.CreateUser(t, policyv1.Role.Author().ID())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 
-	svc := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		&hardCutAsyncPublisher{},
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	starterCtx := auth.WithUser(context.Background(), starter.AuthUserInfo())
-	initiated, err := svc.InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	svc := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	starterCtx := auditedUserContext(context.Background(), starter.AuthUserInfo())
+	initiated, err := NewConnectHandler(svc).InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileName:   "Field Recording.jpg",
 		FileSize:   int64(len(body)),
@@ -726,18 +708,18 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	).Scan(&targetIsNull).Error)
 	require.True(t, targetIsNull)
 
-	_, err = svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	_, err = NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 	}))
 	require.Error(t, err, "general uploads cannot be rediscovered without the capability pair")
 
-	_, err = svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	_, err = NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileId:     &initiated.Msg.FileId,
 	}))
 	require.Error(t, err, "the file ID alone is not the upload capability")
 
-	candidate, err := svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidate, err := NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileId:     &initiated.Msg.FileId,
 		UploadId:   &initiated.Msg.UploadId,
@@ -747,8 +729,8 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	require.Equal(t, initiated.Msg.GetFileId(), candidate.Msg.GetFileId())
 
 	handleMultipartPartDirect(t, svc, completer, initiated.Msg.GetFileId(), initiated.Msg.GetUploadId(), 1, body)
-	completerCtx := auth.WithUser(context.Background(), completer.AuthUserInfo())
-	completed, err := svc.CompleteMultipartUpload(completerCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completerCtx := auditedUserContext(context.Background(), completer.AuthUserInfo())
+	completed, err := NewConnectHandler(svc).CompleteMultipartUpload(completerCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId: initiated.Msg.GetFileId(), UploadId: initiated.Msg.GetUploadId(),
 	}))
 	require.NoError(t, err)
@@ -779,103 +761,14 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	require.True(t, stored.BindingTargetNull)
 }
 
-func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupSharedDirectMediaRuntimeStackWithCDN(t)
-	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-
-	meshBody, err := os.ReadFile(testutil.RepositoryTestMeshGLB(t))
-	require.NoError(t, err)
-	require.NotEmpty(t, meshBody)
-
-	asyncPublisher := &hardCutAsyncPublisher{}
-	svc := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
-	fileName := fmt.Sprintf("editor-mesh-%d.glb", time.Now().UnixNano())
-	lastModified := time.Now().UnixMilli()
-	initResp, err := svc.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
-		FileName:         fileName,
-		FileSize:         int64(len(meshBody)),
-		MimeType:         "model/gltf-binary",
-		FileLastModified: &lastModified,
-	}))
-	require.NoError(t, err)
-	require.NotEmpty(t, initResp.Msg.GetUploadId())
-	require.NotEmpty(t, initResp.Msg.GetFileId())
-	require.Equal(t, "glb", initResp.Msg.GetExtension())
-	fileKey, err := mediaauth.MediaObjectKey(initResp.Msg.GetFileId(), initResp.Msg.GetExtension())
-	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(fileKey, ".glb"))
-
-	part := handleMultipartPartDirect(t, svc, manager, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), 1, meshBody)
-	require.NotEmpty(t, part.ETag)
-
-	completeResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-		FileId:   initResp.Msg.GetFileId(),
-		UploadId: initResp.Msg.GetUploadId(),
-	}))
-	require.NoError(t, err)
-	require.Equal(t, initResp.Msg.GetFileId(), completeResp.Msg.GetFileId())
-	delivery := completeResp.Msg.GetDelivery()
-	require.Equal(t, initResp.Msg.GetFileId(), delivery.GetFileId())
-	require.Equal(t, "glb", delivery.GetExtension())
-	requireCanonicalInlineRef(t, delivery.GetInline(), initResp.Msg.GetFileId(), "glb", "model/gltf-binary")
-	downloadURL := delivery.GetDownload().GetUrl()
-	requireCanonicalDownloadRef(t, delivery.GetDownload(), initResp.Msg.GetFileId(), "glb", "model/gltf-binary")
-	parsedDownloadURL, err := url.Parse(downloadURL)
-	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(parsedDownloadURL.Path, "/"+initResp.Msg.GetFileId()+".glb"))
-
-	var stored model.File
-	require.NoError(t, stack.DB.Where("id = ?", initResp.Msg.GetFileId()).First(&stored).Error)
-	require.Equal(t, strings.TrimSuffix(fileName, ".glb"), stored.FileName)
-	require.Equal(t, "model/gltf-binary", stored.MimeType)
-	require.EqualValues(t, len(meshBody), stored.FileSize)
-	require.Equal(t, "glb", stored.Extension)
-	require.Empty(t, stored.SHA256)
-	require.Nil(t, stored.IngestSlotID)
-
-	s3Client := runtimeS3Client(t, stack)
-	headResp, err := s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
-		Bucket: aws.String(stack.S3MediaBucket),
-		Key:    aws.String(fileKey),
-	})
-	require.NoError(t, err)
-	require.Equal(t, "model/gltf-binary", aws.ToString(headResp.ContentType))
-
-	cdnReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, downloadURL, nil)
-	require.NoError(t, err)
-	cdnReq.Header.Set("Origin", stack.WebURL)
-	cdnResp, err := http.DefaultClient.Do(cdnReq)
-	require.NoError(t, err)
-	defer cdnResp.Body.Close()
-	require.Equal(t, http.StatusOK, cdnResp.StatusCode)
-	require.Equal(t, stack.WebURL, cdnResp.Header.Get("Access-Control-Allow-Origin"))
-	require.Contains(t, cdnResp.Header.Get("Content-Type"), "model/gltf-binary")
-	deliveredBody, err := io.ReadAll(cdnResp.Body)
-	require.NoError(t, err)
-	require.Equal(t, meshBody, deliveredBody)
-}
-
 func ptrInt64(value int64) *int64 {
 	return &value
 }
 
 func handleMultipartPartRelayed(
 	t *testing.T,
-	svc *FileService,
-	user *testutil.OryUser,
+	svc *Service,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -888,10 +781,10 @@ func handleMultipartPartRelayed(
 	query.Set("uploadId", uploadID)
 	query.Set("partNumber", fmt.Sprintf("%d", partNumber))
 	req := httptest.NewRequest(http.MethodPut, "/upload/part?"+query.Encode(), bytes.NewReader(body))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	var payload uploadPartResponse
@@ -902,8 +795,8 @@ func handleMultipartPartRelayed(
 
 func requireMultipartPartRelayRejected(
 	t *testing.T,
-	svc *FileService,
-	user *testutil.OryUser,
+	svc *Service,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -915,17 +808,17 @@ func requireMultipartPartRelayRejected(
 	query.Set("uploadId", uploadID)
 	query.Set("partNumber", fmt.Sprintf("%d", partNumber))
 	req := httptest.NewRequest(http.MethodPut, "/upload/part?"+query.Encode(), bytes.NewReader(body))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
 func requireDirectMultipartPrefixRejected(
 	t *testing.T,
-	svc *FileService,
-	user *testutil.OryUser,
+	svc *Service,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	body []byte,
@@ -936,9 +829,22 @@ func requireDirectMultipartPrefixRejected(
 	query.Set("uploadId", uploadID)
 	prefixSize := min(len(body), multipartSniffBytes)
 	req := httptest.NewRequest(http.MethodPost, "/upload/prefix?"+query.Encode(), bytes.NewReader(body[:prefixSize]))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(prefixSize)
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// newDirectTrackService wires the Track RPCs to fileService as in
+// production.
+func newDirectTrackService(t *testing.T, stack *runtimetest.RuntimeStack, fileService *Service) *releasepkg.TrackConnectHandler {
+	t.Helper()
+	return releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasetest.Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient,
+		Transcodes:   releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
+		WaveformJobs: releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
+		Files:        directTrackFileManager{fileService},
+		Members:      releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
+	}))
 }

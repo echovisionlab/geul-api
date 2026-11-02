@@ -9,6 +9,19 @@ const (
 	CampaignTargetModeSegment = "segment"
 )
 
+// CampaignStatus is the stored lifecycle state of a campaign. The values are
+// the strings the campaign table holds; internal/campaign maps them to and
+// from the API enum.
+type CampaignStatus string
+
+const (
+	CampaignStatusDraft     CampaignStatus = "CAMPAIGN_STATUS_DRAFT"
+	CampaignStatusScheduled CampaignStatus = "CAMPAIGN_STATUS_SCHEDULED"
+	CampaignStatusSending   CampaignStatus = "CAMPAIGN_STATUS_SENDING"
+	CampaignStatusSent      CampaignStatus = "CAMPAIGN_STATUS_SENT"
+	CampaignStatusFailed    CampaignStatus = "CAMPAIGN_STATUS_FAILED"
+)
+
 // Campaign represents an email campaign
 type Campaign struct {
 	ID                string     `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`

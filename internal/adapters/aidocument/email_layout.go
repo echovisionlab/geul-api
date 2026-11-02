@@ -52,16 +52,13 @@ type emailLayoutAIDocumentDomain interface {
 
 type emailLayoutPort struct{ service emailLayoutAIDocumentDomain }
 
-func NewEmailLayoutRegistration(
-	layouts *emailauthoring.EmailLayoutService,
-) (DomainRegistration, error) {
-	service, err := emailauthoring.NewEmailLayoutAIDocumentService(layouts)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewEmailLayoutRegistration(internal *emailauthoring.InternalService) (DomainRegistration, error) {
+	if internal == nil {
+		return DomainRegistration{}, errors.New("email layout AI document owner is required")
 	}
 	return DomainRegistration{
 		Domain: core.DomainEmailLayout,
-		Port:   &emailLayoutPort{service: service},
+		Port:   &emailLayoutPort{service: internal.LayoutAIDocuments()},
 	}, nil
 }
 
@@ -114,79 +111,48 @@ func (p *emailLayoutPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Email Layout")
 	var changes []core.Change
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state emailauthoring.EmailLayoutAIDocumentState) (emailauthoring.EmailLayoutAIDocumentMutation, error) {
-			current, err := projectEmailLayoutDocument(identity, request.Locale, state)
-			if err != nil {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, err
-			}
+
+	return executeExactMutation(request, exactMutationSpec[emailauthoring.EmailLayoutAIDocumentState, emailauthoring.EmailLayoutAIDocumentMutation, emailauthoring.EmailLayoutAIDocumentMutationResult]{
+		Domain:       "Email Layout",
+		ValidateOnly: mode == emailauthoring.EmailLayoutAIDocumentExecutionValidate,
+		Execute: func(compiler func(emailauthoring.EmailLayoutAIDocumentState) (emailauthoring.EmailLayoutAIDocumentMutation, error)) (emailauthoring.EmailLayoutAIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state emailauthoring.EmailLayoutAIDocumentState) (core.Document, error) {
+			return projectEmailLayoutDocument(identity, request.Locale, state)
+		},
+		Compile: func(state emailauthoring.EmailLayoutAIDocumentState, current core.Document, command core.ValidatedApply) (emailauthoring.EmailLayoutAIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := uuid.Parse(state.ViewerMemberID)
 			if err != nil || contributor == uuid.Nil || contributor.String() != state.ViewerMemberID {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, errors.New(
-					"email Layout AI document contributor Member UUID is invalid",
-				)
+				return emailauthoring.EmailLayoutAIDocumentMutation{}, nil, errors.New("email Layout AI document contributor Member UUID is invalid")
 			}
-			changes, err = emailLayoutSemanticChanges(current, run.command.Operations)
+			changes, err = emailLayoutSemanticChanges(current, command.Operations)
 			if err != nil {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, err
+				return emailauthoring.EmailLayoutAIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := compileEmailLayoutMutation(
-				state,
-				current,
-				contributor,
-				run.command.Operations,
-			)
+			mutation, issues, err := compileEmailLayoutMutation(state, current, contributor, command.Operations)
 			if err != nil {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, err
+				return emailauthoring.EmailLayoutAIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return emailauthoring.EmailLayoutAIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == emailauthoring.EmailLayoutAIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *emailauthoring.EmailLayoutAIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			return core.ValidationResult{}, core.ApplyResult{}, emailLayoutConflict(
-				conflict,
-				run.command.AffectedHandles,
-			)
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == emailauthoring.EmailLayoutAIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-	if domainResult.Changed && len(changes) == 0 {
-		return core.ValidationResult{}, core.ApplyResult{}, errors.New(
-			"email Layout persisted without a semantic DCDP change",
-		)
-	}
-	result := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   emailLayoutCoreRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		result.Changes = changes
-	}
-	accepted, err := run.accept(result)
-	return run.validation, accepted, err
+		Result: func(domainResult emailauthoring.EmailLayoutAIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			if domainResult.Changed && len(changes) == 0 {
+				return core.ApplyResult{}, errors.New("email Layout persisted without a semantic DCDP change")
+			}
+			result := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
+			}
+			if domainResult.Changed {
+				result.Changes = changes
+			}
+
+			return result, nil
+		},
+	})
 }
 
 func projectEmailLayoutDocument(
@@ -221,7 +187,7 @@ func projectEmailLayoutDocument(
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: emailLayoutCoreRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: emailLayoutCatalog, Nodes: nodes,
 	}, nil
@@ -236,7 +202,7 @@ func compileEmailLayoutMutation(
 	mutation := emailauthoring.EmailLayoutAIDocumentMutation{
 		LayoutID: state.LayoutID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   emailLayoutStringRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale,
 		ExpectedPresence:         document.LocaleExists, ContributorMemberID: contributor,
 	}
@@ -282,7 +248,7 @@ func validateEmailLayoutOperation(
 	invalid := func(message string) *core.OperationIssue {
 		return &core.OperationIssue{
 			Operation: index, Code: core.IssueInvalidOperation,
-			Handle:  strings.Join(compactOperationHandles(operation, document.Locale, "email_layout"), "/"),
+			Handle:  compactIssueHandle(operation, document.Locale, "email_layout"),
 			Message: message,
 		}
 	}
@@ -346,7 +312,7 @@ func emailLayoutSemanticChanges(
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, document.Locale, "email_layout"),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next
@@ -364,38 +330,6 @@ func validateEmailLayoutIdentity(identity core.DocumentIdentity) error {
 		return errors.New("email Layout AI document reference must be a canonical UUID")
 	}
 	return nil
-}
-
-func emailLayoutConflict(
-	conflict *emailauthoring.EmailLayoutAIDocumentRevisionConflictError,
-	handles []string,
-) error {
-	code := core.ConflictDocumentRevision
-	if conflict.Kind == emailauthoring.EmailLayoutAIDocumentTargetRevisionConflict {
-		code = core.ConflictTargetRevision
-	}
-	return &core.ConflictError{Conflict: core.Conflict{
-		Code:                    code,
-		CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-		CurrentTargetRevision:   emailLayoutCoreRevision(conflict.CurrentTargetRevision),
-		AffectedHandles:         append([]string(nil), handles...),
-	}}
-}
-
-func emailLayoutCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func emailLayoutStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 var _ core.DomainPort = (*emailLayoutPort)(nil)

@@ -3,7 +3,6 @@ package work
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
@@ -30,7 +29,7 @@ func TestWorkTypedTranslationUsesBlockOwnedStableScope(t *testing.T) {
 			},
 		},
 	}
-	job := &model.TranslationJob{
+	job := &TranslationJob{
 		EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko",
 	}
 
@@ -73,7 +72,7 @@ func TestWorkTypedTranslationUsesBlockOwnedStableScope(t *testing.T) {
 
 func TestWorkTypedTranslationRejectsMismatchedSourceLocale(t *testing.T) {
 	_, err := BuildTranslationExtractionPlan(
-		&model.TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko"},
+		&TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko"},
 		&translation.SourceDocument{ContentBlockDocument: &contentv1.LocalizedRichTextDocument{
 			Locale: "fr", LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "fr"},
 		}},
@@ -130,7 +129,7 @@ func TestWorkTypedTranslationAllowsEmptyCurrentTitleWhenBodyIsTranslatable(t *te
 		},
 	}
 	plan, err := BuildTranslationExtractionPlan(
-		&model.TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "ko", TargetLocale: "en"},
+		&TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "ko", TargetLocale: "en"},
 		source,
 	)
 	require.NoError(t, err)
@@ -151,7 +150,7 @@ func TestWorkTypedTranslationRejectsAllEmptyDocument(t *testing.T) {
 		},
 	}
 	_, err := BuildTranslationExtractionPlan(
-		&model.TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko"},
+		&TranslationJob{EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko"},
 		source,
 	)
 	require.ErrorIs(t, err, translation.ErrNoTranslatableUnits)

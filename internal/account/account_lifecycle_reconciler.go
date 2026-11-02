@@ -9,46 +9,22 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/postgreslock"
-	"gorm.io/gorm"
 )
 
 // Start restores the external identity state implied by terminal cancellation
 // and recovery facts. It does not publish notifications or persist broker
 // progress; explicit requests remain the only notification trigger.
-func (s *AccountLifecycleService) Start(ctx context.Context) {
+func (s *Service) Start(ctx context.Context) {
 	reconcile := func() error {
-		return postgreslock.WithAdvisoryLeader(
-			ctx,
-			s.db,
-			accountLifecycleLeaderLockKey,
-			func(leaderCtx context.Context) error {
-				return errors.Join(
-					s.ReconcileScheduledIdentityStates(leaderCtx),
-					s.ReconcileTerminalIdentityStates(leaderCtx),
-				)
-			},
-		)
+		return s.units.Lead(ctx, LeaderLifecycle, func(leaderCtx context.Context) error {
+			return errors.Join(
+				s.ReconcileScheduledIdentityStates(leaderCtx),
+				s.ReconcileTerminalIdentityStates(leaderCtx),
+			)
+		})
 	}
 	if err := reconcile(); err != nil {
-
-		var privateBodies []string
-		pending := []error{err}
-		for len(pending) > 0 {
-			current := pending[len(pending)-1]
-			pending = pending[:len(pending)-1]
-			if upstream, ok := current.(*auth.KratosHTTPError); ok {
-				privateBodies = append(privateBodies, upstream.Body)
-			}
-			if joined, ok := current.(interface{ Unwrap() []error }); ok {
-				pending = append(pending, joined.Unwrap()...)
-			} else if next := errors.Unwrap(current); next != nil {
-				pending = append(pending, next)
-			}
-		}
-		slog.ErrorContext(ctx, "Initial account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
+		slog.ErrorContext(ctx, "Initial account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err))
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -58,22 +34,7 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := reconcile(); err != nil {
-
-				var privateBodies []string
-				pending := []error{err}
-				for len(pending) > 0 {
-					current := pending[len(pending)-1]
-					pending = pending[:len(pending)-1]
-					if upstream, ok := current.(*auth.KratosHTTPError); ok {
-						privateBodies = append(privateBodies, upstream.Body)
-					}
-					if joined, ok := current.(interface{ Unwrap() []error }); ok {
-						pending = append(pending, joined.Unwrap()...)
-					} else if next := errors.Unwrap(current); next != nil {
-						pending = append(pending, next)
-					}
-				}
-				slog.ErrorContext(ctx, "Account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
+				slog.ErrorContext(ctx, "Account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err))
 			}
 		}
 	}
@@ -82,25 +43,13 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 // ReconcileScheduledIdentityStates repairs the external deactivation and
 // session-revocation consequences of a committed deletion deadline. Starting
 // recovery does not cancel or pause that deadline; only confirmed recovery does.
-func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.Context) error {
-	var candidates []model.UserDeletionRequest
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT request.*
-		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
-		WHERE request.lifecycle_state IN ('scheduled', 'recovery_confirmation_pending')
-		  AND (
-		    identity.state = 'active'
-		    OR EXISTS (
-		      SELECT 1
-		      FROM kratos.sessions AS session
-		      WHERE session.identity_id = request.identity_id
-		        AND session.active = TRUE
-		    )
-		  )
-		ORDER BY request.updated_at ASC, request.id ASC
-		LIMIT ?
-	`, accountLifecycleReconcileBatchSize).Scan(&candidates).Error; err != nil {
+func (s *Service) ReconcileScheduledIdentityStates(ctx context.Context) error {
+	var candidates []DeletionRequest
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		candidates, err = store.ScheduledIdentityDrift(ctx, accountLifecycleReconcileBatchSize)
+		return err
+	}); err != nil {
 		return err
 	}
 	var reconcileErrors []error
@@ -113,28 +62,17 @@ func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.C
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureScheduledIdentityInactive(
+// ensureScheduledIdentityInactive deactivates the Identity of a pending
+// deletion and revokes its sessions, under its Identity fence.
+func (s *Service) ensureScheduledIdentityInactive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
 ) error {
-	return ensureScheduledIdentityInactive(ctx, s.db, s.kratosClient, requestID, identityID)
-}
-
-func ensureScheduledIdentityInactive(
-	ctx context.Context,
-	db *gorm.DB,
-	identityManager auth.IdentityManager,
-	requestID string,
-	identityID string,
-) error {
-	return identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
-		var current model.UserDeletionRequest
-		if err := tx.Where("id = ? AND identity_id = ?::uuid AND lifecycle_state IN ?", requestID, identityID, accountLifecycleDeletionPendingStates).
-			First(&current).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+	identityManager := s.identity
+	return s.units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		current, found, err := deletionRequestStep(mutationCtx, steps, requestID, identityID, accountLifecycleDeletionPendingStates)
+		if err != nil || !found {
 			return err
 		}
 		identity, err := identityManager.GetIdentity(mutationCtx, current.IdentityID)
@@ -156,18 +94,13 @@ func ensureScheduledIdentityInactive(
 // ReconcileTerminalIdentityStates activates identities whose durable deletion
 // lifecycle fact is cancelled or recovered but whose Kratos state is still
 // inactive. The cross-schema predicate keeps each pass bounded to actual drift.
-func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Context) error {
-	var candidates []model.UserDeletionRequest
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT request.*
-		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
-		WHERE request.lifecycle_state IN ('cancelled', 'recovered')
-		  AND identity.state = 'inactive'
-		  AND request.updated_at > identity.updated_at
-		ORDER BY request.updated_at ASC, request.id ASC
-		LIMIT ?
-	`, accountLifecycleReconcileBatchSize).Scan(&candidates).Error; err != nil {
+func (s *Service) ReconcileTerminalIdentityStates(ctx context.Context) error {
+	var candidates []DeletionRequest
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		candidates, err = store.TerminalIdentityDrift(ctx, accountLifecycleReconcileBatchSize)
+		return err
+	}); err != nil {
 		return err
 	}
 
@@ -182,24 +115,20 @@ func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Co
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureTerminalIdentityActive(
+func (s *Service) ensureTerminalIdentityActive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
 ) error {
-	return identitystate.WithMutation(ctx, s.db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
-		var current model.UserDeletionRequest
-		if err := tx.Where("id = ? AND identity_id = ?::uuid AND lifecycle_state IN ?", requestID, identityID, []string{
+	return s.units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		current, found, err := deletionRequestStep(mutationCtx, steps, requestID, identityID, []string{
 			accountLifecycleStateCancelled,
 			accountLifecycleStateRecovered,
-		}).
-			First(&current).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+		})
+		if err != nil || !found {
 			return err
 		}
-		identity, err := s.kratosClient.GetIdentity(mutationCtx, current.IdentityID)
+		identity, err := s.identity.GetIdentity(mutationCtx, current.IdentityID)
 		if err != nil {
 			return err
 		}
@@ -212,8 +141,23 @@ func (s *AccountLifecycleService) ensureTerminalIdentityActive(
 		if !current.UpdatedAt.After(identity.UpdatedAt) || identityMetadataBanned(identity) {
 			return nil
 		}
-		return s.kratosClient.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
+		return s.identity.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
 	})
+}
+
+// deletionRequestStep reads the Identity's request in one of states in a step
+// of its fenced flow.
+func deletionRequestStep(ctx context.Context, steps Steps, requestID, identityID string, states []string) (DeletionRequest, bool, error) {
+	var (
+		current DeletionRequest
+		found   bool
+	)
+	err := steps.Step(ctx, func(store Store) error {
+		var err error
+		current, found, err = store.DeletionRequestInStates(ctx, requestID, identityID, states)
+		return err
+	})
+	return current, found, err
 }
 
 func identityMetadataBanned(identity *auth.Identity) bool {

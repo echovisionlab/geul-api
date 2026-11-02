@@ -3,15 +3,11 @@ package release
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 type releaseObjectAction uint8
@@ -65,23 +61,21 @@ func (action trackObjectAction) can(trackID string) (policyv1.Can, error) {
 func requireReleaseGlobalAction(ctx context.Context, checker CollaborationPermissionChecker, can policyv1.Can) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.NotAuthenticated()
+		return notAuthenticated()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseGlobalAction", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseGlobalAction", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AdminRequired()
+		return adminRequired()
 	}
 	return nil
 }
@@ -89,7 +83,7 @@ func requireReleaseGlobalAction(ctx context.Context, checker CollaborationPermis
 func requireReleaseCreate(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Release.Create()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireReleaseGlobalAction(ctx, checker, can)
 }
@@ -97,7 +91,7 @@ func requireReleaseCreate(ctx context.Context, checker CollaborationPermissionCh
 func requireReleaseList(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Release.List()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireReleaseGlobalAction(ctx, checker, can)
 }
@@ -110,28 +104,25 @@ func requireReleaseAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := action.can(releaseID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID)
 	}
 	return nil
 }
@@ -144,49 +135,51 @@ func requireTrackAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := action.can(trackID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
-		return errs.NotFound("track", trackID)
+		return domainerr.ResourceNotFound("track", trackID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Permission(), "track")
+		return noPermission(can.Action().Permission(), "track")
 	}
 	return nil
 }
 
+// lockActive locks a principal's Identity through the identity fence and
+// reports whether it is still active, onboarded and unbanned
+// (identitystate.Fence.LockActivePrincipal).
+type lockActive = func(*auth.UserInfo) (bool, error)
+
 func requireActiveTrackAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	trackID string,
 	action trackObjectAction,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lock(principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !active {
-		return errs.NotFound("track", trackID)
+		return domainerr.ResourceNotFound("track", trackID)
 	}
 	return requireTrackAction(ctx, checker, trackID, action)
 }
@@ -196,41 +189,54 @@ func requireActiveTrackAction(
 // permission is checked for the requested action.
 func requireLockedReleaseAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	releaseID string,
 	action releaseObjectAction,
-) (*model.Release, error) {
-	root, err := lockReleaseForUpdate(ctx, tx, releaseID)
-	if err != nil {
-		return nil, err
+) error {
+	if _, err := store.LockRelease(ctx, releaseID, UpdateLock); err != nil {
+		return err
 	}
-	if err := requireActiveReleaseAction(ctx, tx, checker, releaseID, action); err != nil {
-		return nil, err
-	}
-	return root, nil
+	return requireActiveReleaseAction(ctx, lock, checker, releaseID, action)
 }
 
 func requireActiveReleaseAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	releaseID string,
 	action releaseObjectAction,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lock(principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !active {
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID)
 	}
 	if err := requireReleaseAction(ctx, checker, releaseID, action); err != nil {
 		return err
 	}
 	return nil
+}
+
+// releaseAccess is the Access of a Release mutation: the caller's identity
+// fence and the exact object permission, read inside the transaction. A
+// denial answers not found, as the Release RPCs always have.
+func (s *Service) releaseAccess(releaseID string, action releaseObjectAction) mutation.Access {
+	return mutation.Fenced(func(ctx context.Context, _ Store, lock lockActive) error {
+		return requireActiveReleaseAction(ctx, lock, s.spiceDB, releaseID, action)
+	})
+}
+
+// trackAccess is the Access of a Track mutation.
+func (s *Service) trackAccess(trackID string, action trackObjectAction) mutation.Access {
+	return mutation.Fenced(func(ctx context.Context, _ Store, lock lockActive) error {
+		return requireActiveTrackAction(ctx, lock, s.spiceDB, trackID, action)
+	})
 }

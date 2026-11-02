@@ -29,3 +29,29 @@ func TestGetIdentityPreservesHTTPFailureStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestListIdentitiesReadsOnlyAWellFormedTotalCount(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   int64
+	}{
+		{header: "7", want: 7},
+		{header: "12abc", want: 0},
+		{header: "-3", want: 0},
+		{header: "", want: 1},
+	} {
+		t.Run(tc.header, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.header != "" {
+					w.Header().Set("X-Total-Count", tc.header)
+				}
+				_, _ = w.Write([]byte(`[{"id":"identity-1"}]`))
+			}))
+			t.Cleanup(server.Close)
+			identities, total, err := NewKratosClient(server.URL).ListIdentities(t.Context(), 1, 10)
+			require.NoError(t, err)
+			require.Len(t, identities, 1)
+			require.Equal(t, tc.want, total)
+		})
+	}
+}

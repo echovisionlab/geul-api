@@ -9,23 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
 // ErrUploadSessionNotAbortable reports that multipart completion already owns
@@ -48,7 +43,7 @@ type Allocation struct {
 	Kind             string
 	Extension        string
 	MimeType         string
-	Disposition      commonv1.AssetDisposition
+	Disposition      Disposition
 	DownloadFilename *string
 }
 
@@ -64,23 +59,23 @@ type Binding struct {
 
 // Lifecycle coordinates public-asset and media-generation state transitions.
 type Lifecycle struct {
-	db        *gorm.DB
+	units     mutation.UnitOfWork[Store]
 	cdnDomain string
 	now       func() time.Time
 }
 
-// NewLifecycle creates a lifecycle bound to one database and CDN origin.
-func NewLifecycle(db *gorm.DB, cdnDomain string) *Lifecycle {
-	if db == nil {
-		panic("media asset lifecycle service: db is required")
+// NewLifecycle creates a lifecycle over its units of work and CDN origin.
+func NewLifecycle(units mutation.UnitOfWork[Store], cdnDomain string) *Lifecycle {
+	if units == nil {
+		panic("media asset lifecycle service: units are required")
 	}
-	return &Lifecycle{db: db, cdnDomain: cdnDomain, now: dbtime.Now}
+	return &Lifecycle{units: units, cdnDomain: cdnDomain, now: dbtime.Now}
 }
 
 func (s *Lifecycle) AllocatePublicAsset(
 	ctx context.Context,
 	input Allocation,
-) (*model.PublicAsset, *commonv1.AssetWriteTarget, error) {
+) (*Asset, *WriteTarget, error) {
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.Extension = strings.ToLower(strings.TrimSpace(input.Extension))
 	input.MimeType = canonicalMimeType(input.MimeType)
@@ -91,10 +86,10 @@ func (s *Lifecycle) AllocatePublicAsset(
 	assetID := uuid.NewString()
 	objectKey, err := mediaauth.AssetObjectKey(assetID, input.Extension)
 	if err != nil {
-		return nil, nil, errs.InvalidArgument("extension", err.Error())
+		return nil, nil, domainerr.InvalidField("extension", err.Error())
 	}
 	now := s.now().UTC()
-	asset := model.PublicAsset{
+	asset := Asset{
 		ID:               assetID,
 		SourceFileID:     normalizedOptionalString(input.SourceFileID),
 		Kind:             input.Kind,
@@ -103,26 +98,24 @@ func (s *Lifecycle) AllocatePublicAsset(
 		MimeType:         input.MimeType,
 		Disposition:      "inline",
 		DownloadFilename: normalizedOptionalString(input.DownloadFilename),
-		Status:           model.PublicAssetStatusAllocated,
+		Status:           AssetAllocated,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
-	createAsset := func(tx *gorm.DB) error {
+	createAsset := func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
 		if asset.SourceFileID != nil {
-			if err := LockAttachableFilesForUpdate(ctx, tx, []string{*asset.SourceFileID}); err != nil {
+			if err := tx.LockAttachableFiles(ctx, []string{*asset.SourceFileID}); err != nil {
 				return err
 			}
 		}
-		return tx.WithContext(ctx).Create(&asset).Error
+		return tx.InsertAsset(ctx, asset)
 	}
-	if err := s.db.WithContext(ctx).Transaction(createAsset); err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, nil, err
-		}
-		return nil, nil, errs.Internal(err)
+	if err := s.units.Transaction(ctx, false, createAsset); err != nil {
+		return nil, nil, err
 	}
-	target := &commonv1.AssetWriteTarget{
-		AssetId:          asset.ID,
+	target := &WriteTarget{
+		AssetID:          asset.ID,
 		ObjectKey:        asset.ObjectKey,
 		Extension:        asset.Extension,
 		MimeType:         asset.MimeType,
@@ -134,31 +127,31 @@ func (s *Lifecycle) AllocatePublicAsset(
 
 func validatePublicAssetAllocation(input Allocation) error {
 	if _, ok := publicAssetKinds[input.Kind]; !ok {
-		return errs.InvalidArgument("kind", "unsupported public asset kind")
+		return domainerr.InvalidField("kind", "unsupported public asset kind")
 	}
 	if input.Extension == "" || input.MimeType == "" {
-		return errs.InvalidArgument("asset", "extension and mime_type are required")
+		return domainerr.InvalidField("asset", "extension and mime_type are required")
 	}
-	if expected := model.GetExtensionFromMime(input.MimeType); expected == "bin" || expected != input.Extension {
-		return errs.InvalidArgument("extension", "does not match the verified MIME type")
+	if expected := mediamime.GetExtensionFromMime(input.MimeType); expected == "bin" || expected != input.Extension {
+		return domainerr.InvalidField("extension", "does not match the verified MIME type")
 	}
 	if reason := PublicAssetKindMediaContractViolation(input.Kind, input.Extension, input.MimeType); reason != "" {
-		return errs.InvalidArgument("asset", reason)
+		return domainerr.InvalidField("asset", reason)
 	}
 	if input.SourceFileID != nil {
 		if _, err := uuid.Parse(strings.TrimSpace(*input.SourceFileID)); err != nil {
-			return errs.InvalidArgument("source_file_id", "must be a UUID")
+			return domainerr.InvalidField("source_file_id", "must be a UUID")
 		}
 	}
 	switch input.Disposition {
-	case commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE:
+	case DispositionInline:
 		if normalizedOptionalString(input.DownloadFilename) != nil {
-			return errs.InvalidArgument("download_filename", "is not supported for public assets")
+			return domainerr.InvalidField("download_filename", "is not supported for public assets")
 		}
-	case commonv1.AssetDisposition_ASSET_DISPOSITION_ATTACHMENT:
-		return errs.InvalidArgument("disposition", "attachment public assets are not supported")
+	case DispositionAttachment:
+		return domainerr.InvalidField("disposition", "attachment public assets are not supported")
 	default:
-		return errs.InvalidArgument("disposition", "must be inline")
+		return domainerr.InvalidField("disposition", "must be inline")
 	}
 	return nil
 }
@@ -197,58 +190,47 @@ func PublicAssetKindMediaContractViolation(kind string, extension string, mimeTy
 
 func (s *Lifecycle) CompletePublicAsset(
 	ctx context.Context,
-	result *commonv1.AssetWriteResult,
-) (*model.PublicAsset, error) {
+	result *WrittenAsset,
+) (*Asset, error) {
 	if result == nil {
-		return nil, errs.Required("result")
+		return nil, domainerr.Required("result")
 	}
-	assetID := strings.TrimSpace(result.GetAssetId())
+	assetID := strings.TrimSpace(result.AssetID)
 	if _, err := uuid.Parse(assetID); err != nil {
-		return nil, errs.InvalidArgument("asset_id", "must be a UUID")
+		return nil, domainerr.InvalidField("asset_id", "must be a UUID")
 	}
-	if result.GetFileSize() <= 0 {
-		return nil, errs.InvalidArgument("file_size", "must be positive")
+	if result.FileSize <= 0 {
+		return nil, domainerr.InvalidField("file_size", "must be positive")
 	}
-	if len(result.GetSha256()) != 32 {
-		return nil, errs.InvalidArgument("sha256", "must be a 32-byte SHA-256 digest")
+	if len(result.SHA256) != 32 {
+		return nil, domainerr.InvalidField("sha256", "must be a 32-byte SHA-256 digest")
 	}
 
 	now := s.now().UTC()
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", assetID).
-			Take(&asset).Error; err != nil {
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		asset, err := tx.LockAsset(ctx, assetID)
+		if err != nil {
 			return err
 		}
-		if asset.Status == model.PublicAssetStatusReady {
+		if asset.Status == AssetReady {
 			if asset.FileSize == nil ||
-				*asset.FileSize != result.GetFileSize() ||
-				!bytes.Equal(asset.SHA256, result.GetSha256()) {
+				*asset.FileSize != result.FileSize ||
+				!bytes.Equal(asset.SHA256, result.SHA256) {
 				return fmt.Errorf("public asset completion conflicts with ready metadata")
 			}
 			return nil
 		}
-		if asset.Status != model.PublicAssetStatusAllocated {
+		if asset.Status != AssetAllocated {
 			return fmt.Errorf("public asset is not allocated")
 		}
-		return tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND status = ?", assetID, model.PublicAssetStatusAllocated).
-			Updates(structured.Fields{
-				"file_size":      result.GetFileSize(),
-				"sha256":         append([]byte(nil), result.GetSha256()...),
-				"status":         model.PublicAssetStatusReady,
-				"ready_at":       now,
-				"failure_reason": nil,
-				"failed_at":      nil,
-				"updated_at":     now,
-			}).Error
+		return tx.CompleteAsset(ctx, assetID, result.FileSize, result.SHA256, now)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("public_asset", assetID)
+		if errors.Is(err, ErrAssetNotFound) {
+			return nil, domainerr.ResourceNotFound("public_asset", assetID)
 		}
-		return nil, errs.FailedPrecondition(err.Error())
+		return nil, domainerr.Precondition(err.Error())
 	}
 	return s.loadPublicAsset(ctx, assetID)
 }
@@ -257,8 +239,9 @@ func (s *Lifecycle) BindPublicAsset(ctx context.Context, input Binding) error {
 	if err := normalizePublicAssetBindingInput(&input); err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.bindPublicAssetWithDB(ctx, tx, input)
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		return s.bindPublicAsset(ctx, tx, input)
 	})
 }
 
@@ -268,57 +251,53 @@ func normalizePublicAssetBindingInput(input *Binding) error {
 	input.OwnerID = strings.TrimSpace(input.OwnerID)
 	input.BindingKey = strings.TrimSpace(input.BindingKey)
 	if input.AssetID == "" || input.OwnerType == "" || input.OwnerID == "" || input.BindingKey == "" {
-		return errs.InvalidArgument("binding", "asset_id, owner_type, owner_id, and binding_key are required")
+		return domainerr.InvalidField("binding", "asset_id, owner_type, owner_id, and binding_key are required")
 	}
 	return nil
 }
 
-func (s *Lifecycle) bindPublicAssetWithDB(
+func (s *Lifecycle) bindPublicAsset(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	input Binding,
 ) error {
-	existing, existingFound, err := loadPublicAssetBinding(
-		ctx, tx, input.OwnerType, input.OwnerID, input.BindingKey, false,
-	)
+	existing, existingFound, err := tx.Binding(ctx, input.OwnerType, input.OwnerID, input.BindingKey)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	assetIDs := []string{input.AssetID}
 	if existingFound {
 		assetIDs = append(assetIDs, existing.AssetID)
 	}
-	assets, err := lockPublicAssetsForUpdate(ctx, tx, assetIDs)
+	assets, err := tx.LockAssets(ctx, assetIDs)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	asset, ok := assets[input.AssetID]
-	if !ok || asset.Status != model.PublicAssetStatusReady {
-		return errs.FailedPrecondition("only ready assets can be bound")
+	if !ok || asset.Status != AssetReady {
+		return domainerr.Precondition("only ready assets can be bound")
 	}
 
-	current, currentFound, err := loadPublicAssetBinding(
-		ctx, tx, input.OwnerType, input.OwnerID, input.BindingKey, true,
-	)
+	current, currentFound, err := tx.LockBinding(ctx, input.OwnerType, input.OwnerID, input.BindingKey)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if currentFound != existingFound || (currentFound && current.AssetID != existing.AssetID) {
-		return errs.FailedPrecondition("public asset binding changed concurrently; retry")
+		return domainerr.Precondition("public asset binding changed concurrently; retry")
 	}
 	return s.storePublicAssetBinding(ctx, tx, input, current, currentFound)
 }
 
 func (s *Lifecycle) storePublicAssetBinding(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	input Binding,
-	current model.PublicAssetBinding,
+	current AssetBinding,
 	currentFound bool,
 ) error {
 	now := s.now().UTC()
 	if !currentFound {
-		binding := model.PublicAssetBinding{
+		binding := AssetBinding{
 			AssetID:      input.AssetID,
 			OwnerType:    input.OwnerType,
 			OwnerID:      input.OwnerID,
@@ -327,39 +306,27 @@ func (s *Lifecycle) storePublicAssetBinding(
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
-		if err := tx.Create(&binding).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Public asset binding changed concurrently", failurecause.Attr(err), "asset_id", input.AssetID, "owner_type", input.OwnerType, "owner_id", input.OwnerID)
-				return errs.FailedPrecondition("public asset binding changed concurrently; retry")
+		if err := tx.InsertBinding(ctx, binding); err != nil {
+			if errors.Is(err, ErrBindingConflict) {
+				return domainerr.Precondition("public asset binding changed concurrently; retry").WithCause(failurecause.WithAttrs(err,
+					slog.String("asset_id", input.AssetID), slog.String("owner_type", input.OwnerType), slog.String("owner_id", input.OwnerID)))
 			}
-			return errs.Internal(err)
+			return err
 		}
 		return nil
 	}
-	result := tx.Model(&model.PublicAssetBinding{}).
-		Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ? AND asset_id = ?",
-			input.OwnerType,
-			input.OwnerID,
-			input.BindingKey,
-			current.AssetID,
-		).
-		Updates(structured.Fields{
-			"asset_id":       input.AssetID,
-			"source_file_id": normalizedOptionalString(input.SourceFileID),
-			"updated_at":     now,
-		})
-	if result.Error != nil {
-		return errs.Internal(result.Error)
+	changed, err := tx.ReplaceBinding(ctx, AssetBinding{AssetID: input.AssetID, OwnerType: input.OwnerType, OwnerID: input.OwnerID, BindingKey: input.BindingKey, SourceFileID: normalizedOptionalString(input.SourceFileID), UpdatedAt: now}, current.AssetID)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("public asset binding changed concurrently; retry")
+	if !changed {
+		return domainerr.Precondition("public asset binding changed concurrently; retry")
 	}
 	if current.AssetID == input.AssetID {
 		return nil
 	}
-	if err := transitionUnboundPublicAssetsToDeletePending(ctx, tx, []string{current.AssetID}, now); err != nil {
-		return errs.Internal(err)
+	if err := tx.MarkUnboundAssetsDeletePending(ctx, []string{current.AssetID}, now); err != nil {
+		return err
 	}
 	return nil
 }
@@ -371,26 +338,31 @@ func (s *Lifecycle) BindReadyAssetForSourceFile(
 	ownerID string,
 	bindingKey string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
+) (*Reference, error) {
 	sourceFileID = strings.TrimSpace(sourceFileID)
-	var asset *commonv1.AssetRef
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := LockAttachableFilesForUpdate(ctx, tx, []string{sourceFileID}); err != nil {
+	var asset *Reference
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		if err := tx.LockAttachableFiles(ctx, []string{sourceFileID}); err != nil {
 			return err
 		}
-		lifecycle := NewLifecycle(tx, s.cdnDomain)
+		lifecycle := s
 		var err error
-		asset, err = lifecycle.ReadyAssetRefForSourceFile(ctx, sourceFileID, expectedKind)
+		asset, err = lifecycle.readyAssetRefForSourceFile(ctx, tx, sourceFileID, expectedKind)
 		if err != nil {
 			return err
 		}
-		return lifecycle.BindPublicAsset(ctx, Binding{
-			AssetID:      asset.GetAssetId(),
+		input := Binding{
+			AssetID:      asset.AssetID,
 			OwnerType:    ownerType,
 			OwnerID:      ownerID,
 			BindingKey:   bindingKey,
 			SourceFileID: &sourceFileID,
-		})
+		}
+		if err := normalizePublicAssetBindingInput(&input); err != nil {
+			return err
+		}
+		return lifecycle.bindPublicAsset(ctx, tx, input)
 	})
 	if err != nil {
 		return nil, err
@@ -398,80 +370,69 @@ func (s *Lifecycle) BindReadyAssetForSourceFile(
 	return asset, nil
 }
 
-func (s *Lifecycle) ReadyAssetRef(ctx context.Context, assetID string) (*commonv1.AssetRef, error) {
-	asset, err := s.loadPublicAsset(ctx, strings.TrimSpace(assetID))
+func (s *Lifecycle) ReadyAssetRef(ctx context.Context, assetID string) (*Reference, error) {
+	var ref *Reference
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		ref, err = NewReferenceReader(store, s.cdnDomain).ReadyAssetRef(ctx, assetID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if asset.Status != model.PublicAssetStatusReady || asset.FileSize == nil || len(asset.SHA256) != 32 {
-		return nil, errs.FailedPrecondition("public asset is not ready")
-	}
-	return s.AssetRef(*asset)
+	return ref, nil
 }
 
-func (s *Lifecycle) ReadyAssetRefForSourceFile(
-	ctx context.Context,
-	sourceFileID string,
-	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	expectedKind = strings.TrimSpace(expectedKind)
-	if _, ok := publicAssetKinds[expectedKind]; !ok {
-		return nil, errs.InvalidArgument("kind", "unsupported public asset kind")
-	}
-	var asset model.PublicAsset
-	if err := s.db.WithContext(ctx).
-		Where(
-			"source_file_id = ? AND kind = ? AND status = ?",
-			strings.TrimSpace(sourceFileID),
-			expectedKind,
-			model.PublicAssetStatusReady,
-		).
-		Order("created_at DESC").
-		Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("public_asset_for_source_file", sourceFileID)
-		}
-		return nil, errs.Internal(err)
-	}
-	return s.AssetRef(asset)
+func (s *Lifecycle) ReadyAssetRefForSourceFile(ctx context.Context, sourceFileID, expectedKind string) (*Reference, error) {
+	var ref *Reference
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		ref, err = s.readyAssetRefForSourceFile(ctx, store, sourceFileID, expectedKind)
+		return err
+	})
+	return ref, err
+}
+func (s *Lifecycle) readyAssetRefForSourceFile(ctx context.Context, store Store, sourceFileID, expectedKind string) (*Reference, error) {
+	return NewReferenceReader(store, s.cdnDomain).ReadyAssetRefForSourceFile(ctx, sourceFileID, expectedKind)
 }
 
 func ReadyPublicAssetRefForSourceFile(
 	ctx context.Context,
-	db *gorm.DB,
+	units mutation.UnitOfWork[Store],
 	cdnDomain string,
 	sourceFileID string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return NewLifecycle(db, cdnDomain).ReadyAssetRefForSourceFile(ctx, sourceFileID, expectedKind)
+) (*Reference, error) {
+	return NewLifecycle(units, cdnDomain).ReadyAssetRefForSourceFile(ctx, sourceFileID, expectedKind)
 }
 
 // LoadReadyPublicAssetRefsForSourceFiles resolves the newest ready derivative
 // for each source File in one query.
 func LoadReadyPublicAssetRefsForSourceFiles(
 	ctx context.Context,
-	db *gorm.DB,
+	units mutation.UnitOfWork[Store],
 	cdnDomain string,
 	expectedKind string,
 	sourceFileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*Reference, error) {
 	expectedKind = strings.TrimSpace(expectedKind)
 	if _, ok := publicAssetKinds[expectedKind]; !ok {
-		return nil, errs.InvalidArgument("kind", "unsupported public asset kind")
+		return nil, domainerr.InvalidField("kind", "unsupported public asset kind")
 	}
-	sourceFileIDs = normalizedUniqueStrings(sourceFileIDs)
-	refs := make(map[string]*commonv1.AssetRef, len(sourceFileIDs))
+	sourceFileIDs = sliceutil.SortedUniqueTrimmed(sourceFileIDs)
+	refs := make(map[string]*Reference, len(sourceFileIDs))
 	if len(sourceFileIDs) == 0 {
 		return refs, nil
 	}
-	var assets []model.PublicAsset
-	if err := db.WithContext(ctx).
-		Where("source_file_id IN ? AND kind = ? AND status = ?", sourceFileIDs, expectedKind, model.PublicAssetStatusReady).
-		Order("source_file_id ASC, created_at DESC, id DESC").
-		Find(&assets).Error; err != nil {
-		return nil, errs.Internal(err)
+	var assets []Asset
+	if err := units.Read(ctx, func(store Store) error {
+		var err error
+		assets, err = store.ReadyAssetsForFiles(ctx, expectedKind, sourceFileIDs)
+		return err
+	}); err != nil {
+		return nil, err
 	}
-	lifecycle := NewLifecycle(db, cdnDomain)
+	lifecycle := NewLifecycle(units, cdnDomain)
 	for _, asset := range assets {
 		if asset.SourceFileID == nil || asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
@@ -489,65 +450,42 @@ func LoadReadyPublicAssetRefsForSourceFiles(
 }
 
 // AssetRef returns the immutable CDN reference for a ready public asset.
-func (s *Lifecycle) AssetRef(asset model.PublicAsset) (*commonv1.AssetRef, error) {
-	if asset.Kind == "attachment" || asset.Disposition != "inline" {
-		return nil, errs.FailedPrecondition("attachment public assets cannot be emitted")
-	}
-	assetPath, err := mediaauth.AssetPath(asset.ID, asset.Kind, asset.Extension)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return &commonv1.AssetRef{
-		AssetId:     asset.ID,
-		Url:         joinOriginPath(s.cdnDomain, assetPath),
-		Extension:   asset.Extension,
-		MimeType:    asset.MimeType,
-		FileSize:    *asset.FileSize,
-		Sha256:      append([]byte(nil), asset.SHA256...),
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	}, nil
+func (s *Lifecycle) AssetRef(asset Asset) (*Reference, error) {
+	return assetReference(s.cdnDomain, asset)
 }
 
 func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID string) error {
 	assetID = strings.TrimSpace(assetID)
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "status").
-			Where("id = ?", assetID).
-			Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("public_asset", assetID)
-			}
-			return errs.Internal(err)
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		asset, err := tx.LockAssetForDeletion(ctx, assetID)
+		if errors.Is(err, ErrAssetNotFound) {
+			return domainerr.ResourceNotFound("public_asset", assetID)
+		}
+		if err != nil {
+			return err
 		}
 		switch asset.Status {
-		case model.PublicAssetStatusDeletePending, model.PublicAssetStatusDeleted:
+		case AssetDeletePending, AssetDeleted:
 			return nil
-		case model.PublicAssetStatusReady, model.PublicAssetStatusFailed:
+		case AssetReady, AssetFailed:
 		default:
-			return errs.FailedPrecondition("public asset cannot be deleted from its current state")
+			return domainerr.Precondition("public asset cannot be deleted from its current state")
 		}
-		bindings, err := lockPublicAssetBindingsForAssets(ctx, tx, []string{assetID})
+		bindings, err := tx.LockAssetBindings(ctx, []string{assetID})
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if len(bindings) > 0 {
-			return errs.FailedPrecondition("public asset still has bindings")
+			return domainerr.Precondition("public asset still has bindings")
 		}
 		now := s.now().UTC()
-		result := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND status IN ?", assetID, []string{model.PublicAssetStatusReady, model.PublicAssetStatusFailed}).
-			Updates(structured.Fields{
-				"status":              model.PublicAssetStatusDeletePending,
-				"delete_requested_at": now,
-				"updated_at":          now,
-			})
-		if result.Error != nil {
-			return errs.Internal(result.Error)
+		changed, err := tx.MarkAssetDeletePending(ctx, assetID, now)
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("public asset cannot be deleted from its current state")
+		if !changed {
+			return domainerr.Precondition("public asset cannot be deleted from its current state")
 		}
 		return nil
 	})
@@ -568,34 +506,16 @@ func (s *Lifecycle) ReleasePublicAssetBindings(
 	ownerID = strings.TrimSpace(ownerID)
 	bindingPrefix = strings.TrimSpace(bindingPrefix)
 	if ownerType == "" || ownerID == "" || bindingPrefix == "" {
-		return errs.InvalidArgument("binding", "owner type, owner ID, and binding prefix are required")
+		return domainerr.InvalidField("binding", "owner type, owner ID, and binding prefix are required")
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var bindingKeys []string
-		if err := WhereBindingKeyFamily(
-			tx.Model(&model.PublicAssetBinding{}).
-				Where("owner_type = ? AND owner_id = ?", ownerType, ownerID),
-			bindingPrefix,
-		).
-			Order("binding_key ASC").
-			Pluck("binding_key", &bindingKeys).Error; err != nil {
-			return errs.Internal(err)
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		bindingKeys, err := tx.BindingKeys(ctx, ownerType, ownerID, bindingPrefix)
+		if err != nil {
+			return err
 		}
 		return releaseExactPublicAssetBindings(ctx, tx, ownerType, ownerID, bindingKeys, s.now().UTC())
 	})
-}
-
-// bindingKeyFamilyCondition matches the exact key (first argument) or any key
-// starting with the second argument, which must be repeated as the third
-// argument. substr/length are used instead of LIKE (where "_" is a wildcard)
-// or starts_with (PostgreSQL-only) so the predicate is literal and runs on
-// both PostgreSQL and the SQLite unit-test database.
-const bindingKeyFamilyCondition = "binding_key = ? OR substr(binding_key, 1, length(CAST(? AS TEXT))) = ?"
-
-// WhereBindingKeyFamily scopes a public_asset_binding query to the binding
-// family of prefix: the exact key `prefix` and every `prefix_*` key.
-func WhereBindingKeyFamily(db *gorm.DB, prefix string) *gorm.DB {
-	return db.Where(bindingKeyFamilyCondition, prefix, prefix+"_", prefix+"_")
 }
 
 func (s *Lifecycle) ReleaseExactPublicAssetBindings(
@@ -606,32 +526,30 @@ func (s *Lifecycle) ReleaseExactPublicAssetBindings(
 ) error {
 	ownerType = strings.TrimSpace(ownerType)
 	ownerID = strings.TrimSpace(ownerID)
-	bindingKeys = normalizedUniqueStrings(bindingKeys)
+	bindingKeys = sliceutil.SortedUniqueTrimmed(bindingKeys)
 	if ownerType == "" || ownerID == "" {
-		return errs.InvalidArgument("binding", "owner type and owner ID are required")
+		return domainerr.InvalidField("binding", "owner type and owner ID are required")
 	}
 	if len(bindingKeys) == 0 {
 		return nil
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
 		return releaseExactPublicAssetBindings(ctx, tx, ownerType, ownerID, bindingKeys, s.now().UTC())
 	})
 }
 
 func releaseExactPublicAssetBindings(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	ownerType string,
 	ownerID string,
 	bindingKeys []string,
 	now time.Time,
 ) error {
-	var snapshot []model.PublicAssetBinding
-	if err := tx.WithContext(ctx).
-		Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", ownerType, ownerID, bindingKeys).
-		Order("binding_key ASC").
-		Find(&snapshot).Error; err != nil {
-		return errs.Internal(err)
+	snapshot, err := tx.Bindings(ctx, ownerType, ownerID, bindingKeys)
+	if err != nil {
+		return err
 	}
 	if len(snapshot) == 0 {
 		return nil
@@ -641,145 +559,33 @@ func releaseExactPublicAssetBindings(
 	for _, binding := range snapshot {
 		assetIDs = append(assetIDs, binding.AssetID)
 	}
-	if _, err := lockPublicAssetsForUpdate(ctx, tx, assetIDs); err != nil {
-		return errs.Internal(err)
+	if _, err := tx.LockAssets(ctx, assetIDs); err != nil {
+		return err
 	}
 
-	var current []model.PublicAssetBinding
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", ownerType, ownerID, bindingKeys).
-		Order("binding_key ASC").
-		Find(&current).Error; err != nil {
-		return errs.Internal(err)
+	current, err := tx.LockBindings(ctx, ownerType, ownerID, bindingKeys)
+	if err != nil {
+		return err
 	}
 	if !samePublicAssetBindings(snapshot, current) {
-		return errs.FailedPrecondition("public asset bindings changed concurrently; retry")
+		return domainerr.Precondition("public asset bindings changed concurrently; retry")
 	}
 
 	currentBindingKeys := make([]string, 0, len(current))
 	for _, binding := range current {
 		currentBindingKeys = append(currentBindingKeys, binding.BindingKey)
 	}
-	result := tx.WithContext(ctx).
-		Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", ownerType, ownerID, currentBindingKeys).
-		Delete(&model.PublicAssetBinding{})
-	if result.Error != nil {
-		return errs.Internal(result.Error)
+	removed, err := tx.DeleteBindings(ctx, ownerType, ownerID, currentBindingKeys)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected != int64(len(current)) {
-		return errs.FailedPrecondition("public asset bindings changed concurrently; retry")
+	if removed != int64(len(current)) {
+		return domainerr.Precondition("public asset bindings changed concurrently; retry")
 	}
-	if err := transitionUnboundPublicAssetsToDeletePending(ctx, tx, assetIDs, now); err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return tx.MarkUnboundAssetsDeletePending(ctx, assetIDs, now)
 }
 
-func loadPublicAssetBinding(
-	ctx context.Context,
-	tx *gorm.DB,
-	ownerType string,
-	ownerID string,
-	bindingKey string,
-	lock bool,
-) (model.PublicAssetBinding, bool, error) {
-	var binding model.PublicAssetBinding
-	query := tx.WithContext(ctx).
-		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", ownerType, ownerID, bindingKey)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	}
-	result := query.Limit(1).Find(&binding)
-	if result.Error != nil {
-		return model.PublicAssetBinding{}, false, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return model.PublicAssetBinding{}, false, nil
-	}
-	return binding, true, nil
-}
-
-// LoadPublicAssetBindingForUpdate reads one current binding while holding its
-// row lock. A caller uses it when an enclosing domain mutation must decide
-// whether its own semantic side effect is a no-op before replacing/releasing
-// the binding.
-func LoadPublicAssetBindingForUpdate(
-	ctx context.Context,
-	tx *gorm.DB,
-	ownerType string,
-	ownerID string,
-	bindingKey string,
-) (model.PublicAssetBinding, bool, error) {
-	return loadPublicAssetBinding(ctx, tx, ownerType, ownerID, bindingKey, true)
-}
-
-func lockPublicAssetsForUpdate(
-	ctx context.Context,
-	tx *gorm.DB,
-	assetIDs []string,
-) (map[string]model.PublicAsset, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
-	if len(assetIDs) == 0 {
-		return map[string]model.PublicAsset{}, nil
-	}
-	var assets []model.PublicAsset
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "status").
-		Where("id IN ?", assetIDs).
-		Order("id ASC").
-		Find(&assets).Error; err != nil {
-		return nil, err
-	}
-	result := make(map[string]model.PublicAsset, len(assets))
-	for _, asset := range assets {
-		result[asset.ID] = asset
-	}
-	return result, nil
-}
-
-func lockPublicAssetBindingsForAssets(
-	ctx context.Context,
-	tx *gorm.DB,
-	assetIDs []string,
-) ([]model.PublicAssetBinding, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
-	if len(assetIDs) == 0 {
-		return nil, nil
-	}
-	var bindings []model.PublicAssetBinding
-	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("asset_id").
-		Where("asset_id IN ?", assetIDs).
-		Order("asset_id ASC").
-		Find(&bindings).Error
-	return bindings, err
-}
-
-func transitionUnboundPublicAssetsToDeletePending(
-	ctx context.Context,
-	tx *gorm.DB,
-	assetIDs []string,
-	now time.Time,
-) error {
-	assetIDs = normalizedUniqueStrings(assetIDs)
-	if len(assetIDs) == 0 {
-		return nil
-	}
-	return tx.WithContext(ctx).Model(&model.PublicAsset{}).
-		Where("id IN ? AND status = ?", assetIDs, model.PublicAssetStatusReady).
-		Where("source_file_id IS NULL").
-		Where("NOT EXISTS (SELECT 1 FROM public_asset_binding AS binding WHERE binding.asset_id = public_asset.id)").
-		Updates(structured.Fields{
-			"status":              model.PublicAssetStatusDeletePending,
-			"delete_requested_at": now,
-			"updated_at":          now,
-		}).Error
-}
-
-func samePublicAssetBindings(left []model.PublicAssetBinding, right []model.PublicAssetBinding) bool {
+func samePublicAssetBindings(left []AssetBinding, right []AssetBinding) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -794,100 +600,72 @@ func samePublicAssetBindings(left []model.PublicAssetBinding, right []model.Publ
 	return true
 }
 
-func normalizedUniqueStrings(values []string) []string {
-	unique := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			unique[value] = struct{}{}
-		}
-	}
-	result := make([]string, 0, len(unique))
-	for value := range unique {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func (s *Lifecycle) CompleteMediaGeneration(
 	ctx context.Context,
-	result *commonv1.MediaGenerationWriteResult,
-) (*model.MediaGeneration, error) {
+	result *WrittenGeneration,
+) (*Generation, error) {
 	if result == nil {
-		return nil, errs.Required("result")
+		return nil, domainerr.Required("result")
 	}
-	generationID := strings.TrimSpace(result.GetGenerationId())
+	generationID := strings.TrimSpace(result.GenerationID)
 	if _, err := uuid.Parse(generationID); err != nil {
-		return nil, errs.InvalidArgument("generation_id", "must be a UUID")
+		return nil, domainerr.InvalidField("generation_id", "must be a UUID")
 	}
-	if len(result.GetManifestSha256()) != 32 || result.GetObjectCount() <= 0 || result.GetTotalSize() <= 0 {
-		return nil, errs.InvalidArgument(
+	if len(result.ManifestSHA256) != 32 || result.ObjectCount <= 0 || result.TotalSize <= 0 {
+		return nil, domainerr.InvalidField(
 			"result",
 			"manifest SHA-256, positive object_count, and positive total_size are required",
 		)
 	}
 	now := s.now().UTC()
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var generation model.MediaGeneration
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ?", generationID).
-			Take(&generation).Error; err != nil {
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		generation, err := tx.LockGeneration(ctx, generationID)
+		if err != nil {
 			return err
 		}
-		if generation.Status == model.MediaGenerationStatusReady {
-			if generation.ObjectCount == nil || *generation.ObjectCount != result.GetObjectCount() ||
-				generation.TotalSize == nil || *generation.TotalSize != result.GetTotalSize() ||
-				!bytes.Equal(generation.ManifestSHA256, result.GetManifestSha256()) {
+		if generation.Status == GenerationReady {
+			if generation.ObjectCount == nil || *generation.ObjectCount != result.ObjectCount ||
+				generation.TotalSize == nil || *generation.TotalSize != result.TotalSize ||
+				!bytes.Equal(generation.ManifestSHA256, result.ManifestSHA256) {
 				return fmt.Errorf("media generation completion conflicts with ready metadata")
 			}
 			return nil
 		}
-		if generation.Status != model.MediaGenerationStatusAllocated {
+		if generation.Status != GenerationAllocated {
 			return fmt.Errorf("media generation is not allocated")
 		}
 		deleteAfter := now.Add(retiredMediaGenerationRetention)
-		if err := tx.Model(&model.MediaGeneration{}).
-			Where("file_id = ? AND status = ? AND id <> ?", generation.FileID, model.MediaGenerationStatusReady, generation.ID).
-			Updates(structured.Fields{
-				"status":       model.MediaGenerationStatusRetired,
-				"retired_at":   now,
-				"delete_after": deleteAfter,
-				"updated_at":   now,
-			}).Error; err != nil {
+		if err := tx.RetireOtherGenerations(ctx, generation.FileID, generation.ID, now, deleteAfter); err != nil {
 			return err
 		}
-		return tx.Model(&model.MediaGeneration{}).
-			Where("id = ? AND status = ?", generation.ID, model.MediaGenerationStatusAllocated).
-			Updates(structured.Fields{
-				"manifest_sha256": append([]byte(nil), result.GetManifestSha256()...),
-				"object_count":    result.GetObjectCount(),
-				"total_size":      result.GetTotalSize(),
-				"status":          model.MediaGenerationStatusReady,
-				"ready_at":        now,
-				"updated_at":      now,
-			}).Error
+		return tx.CompleteGeneration(ctx, generation.ID, result.ManifestSHA256, result.ObjectCount, result.TotalSize, now)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("media_generation", generationID)
+		if errors.Is(err, ErrGenerationNotFound) {
+			return nil, domainerr.ResourceNotFound("media_generation", generationID)
 		}
-		return nil, errs.FailedPrecondition(err.Error())
+		return nil, domainerr.Precondition(err.Error())
 	}
-	var generation model.MediaGeneration
-	if err := s.db.WithContext(ctx).Where("id = ?", generationID).Take(&generation).Error; err != nil {
-		return nil, errs.Internal(err)
+	var generation Generation
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		generation, err = store.Generation(ctx, generationID)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	return &generation, nil
 }
 
-func (s *Lifecycle) loadPublicAsset(ctx context.Context, assetID string) (*model.PublicAsset, error) {
-	var asset model.PublicAsset
-	if err := s.db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("public_asset", assetID)
-		}
-		return nil, errs.Internal(err)
+func (s *Lifecycle) loadPublicAsset(ctx context.Context, assetID string) (*Asset, error) {
+	var asset Asset
+	err := s.units.Read(ctx, func(store Store) error { var err error; asset, err = store.Asset(ctx, assetID); return err })
+	if errors.Is(err, ErrAssetNotFound) {
+		return nil, domainerr.ResourceNotFound("public_asset", assetID)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &asset, nil
 }
@@ -905,15 +683,4 @@ func normalizedOptionalString(value *string) *string {
 		return nil
 	}
 	return &normalized
-}
-
-func joinOriginPath(origin, resourcePath string) string {
-	if origin == "" {
-		return resourcePath
-	}
-	trimmedDomain := strings.TrimRight(origin, "/")
-	if strings.HasPrefix(trimmedDomain, "http://") || strings.HasPrefix(trimmedDomain, "https://") {
-		return trimmedDomain + resourcePath
-	}
-	return "https://" + trimmedDomain + resourcePath
 }

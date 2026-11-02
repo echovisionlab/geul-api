@@ -8,12 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var (
@@ -26,27 +25,12 @@ var (
 // The facade deliberately delegates to these public boundaries instead of
 // creating MCP-specific upload state, storage, verification, or authorization.
 type MCPFileRuntime interface {
-	ImportRemoteFile(context.Context, filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error)
-	InitiateMultipartUpload(
-		context.Context,
-		*connect.Request[managev1.InitiateMultipartUploadRequest],
-	) (*connect.Response[managev1.InitiateMultipartUploadResponse], error)
-	FindMultipartUploadCandidate(
-		context.Context,
-		*connect.Request[managev1.FindMultipartUploadCandidateRequest],
-	) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error)
-	CompleteMultipartUpload(
-		context.Context,
-		*connect.Request[managev1.CompleteMultipartUploadRequest],
-	) (*connect.Response[managev1.CompleteMultipartUploadResponse], error)
-	DownloadFromUrl(
-		context.Context,
-		*connect.Request[managev1.DownloadFromUrlRequest],
-	) (*connect.Response[managev1.DownloadFromUrlResponse], error)
-	GetMediaDelivery(
-		context.Context,
-		*connect.Request[managev1.GetMediaDeliveryRequest],
-	) (*connect.Response[managev1.GetMediaDeliveryResponse], error)
+	ImportRemoteFile(context.Context, filemediadomain.RemoteFileImportInput) (*filemediadomain.ImportedFile, error)
+	InitiateMultipartUpload(context.Context, filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error)
+	FindMultipartUploadCandidate(context.Context, filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error)
+	CompleteMultipartUpload(context.Context, filemediadomain.CompleteMultipartUploadCommand) (*filemediadomain.CompletedUpload, error)
+	DownloadFromURL(context.Context, filemediadomain.DownloadFromURLCommand) (*filemediadomain.ImportedFile, error)
+	GetMediaDelivery(context.Context, filemediadomain.GetMediaDeliveryQuery) (*filemediadomain.MediaDeliveryResult, error)
 }
 
 // MCPFileFacade is the compact typed file_transfer/file_read application
@@ -143,10 +127,10 @@ func (facade *MCPFileFacade) Upload(ctx context.Context, file MCPFileUploadInput
 	if err != nil {
 		return MCPVerifiedFileHandle{}, err
 	}
-	if response == nil || response.GetDelivery() == nil || response.GetFileId() == "" || response.GetDelivery().GetFileId() != response.GetFileId() {
+	if response == nil || response.Delivery == nil || response.FileID == "" || response.Delivery.FileID != response.FileID {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("attachment import did not return matching verified File delivery")
 	}
-	return mcpVerifiedFileFromDelivery(response.GetDelivery())
+	return mcpVerifiedFileFromDelivery(response.Delivery)
 }
 
 type MCPFileSessionHandle struct {
@@ -251,30 +235,28 @@ func (facade *MCPFileFacade) Status(
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	response, err := facade.files.FindMultipartUploadCandidate(ctx, connect.NewRequest(
-		&managev1.FindMultipartUploadCandidateRequest{
-			UploadType:            uploadType,
-			FileId:                pointer(handle.FileID),
-			UploadId:              pointer(handle.UploadID),
-			EntityId:              handle.TrackID,
-			EntityType:            mcpFileEntityType(handle.Kind),
-			ExpectedCurrentFileId: handle.ExpectedCurrentFileID,
-		},
-	))
+	response, err := facade.files.FindMultipartUploadCandidate(ctx, filemediadomain.FindMultipartUploadCandidateQuery{
+		UploadType:            uploadType,
+		FileID:                pointer(handle.FileID),
+		UploadID:              pointer(handle.UploadID),
+		EntityID:              handle.TrackID,
+		EntityType:            mcpFileEntityType(handle.Kind),
+		ExpectedCurrentFileID: handle.ExpectedCurrentFileID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil {
+	if response == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("status response is missing")
 	}
-	if response.Msg.GetFileId() == "" && response.Msg.GetUploadId() == "" {
+	if fileReferenceName(response.FileID) == "" && fileReferenceName(response.UploadID) == "" {
 		file, err := facade.Read(ctx, handle.FileID)
 		if err != nil {
 			return MCPFileTransferResult{}, err
 		}
 		return MCPFileTransferResult{State: MCPFileTransferReady, File: &file}, nil
 	}
-	session, err := mcpFileSessionFromCandidate(handle, response.Msg)
+	session, err := mcpFileSessionFromCandidate(handle, response)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -288,26 +270,19 @@ func (facade *MCPFileFacade) Complete(
 	if _, err := validateMCPFileSessionHandle(handle); err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	var bundleID *string
-	if handle.ClientMediaBundleID != "" {
-		bundleID = pointer(handle.ClientMediaBundleID)
-	}
-	response, err := facade.files.CompleteMultipartUpload(ctx, connect.NewRequest(
-		&managev1.CompleteMultipartUploadRequest{
-			FileId: handle.FileID, UploadId: handle.UploadID,
-			ClientMediaBundleId: bundleID,
-		},
-	))
+	response, err := facade.files.CompleteMultipartUpload(ctx, filemediadomain.CompleteMultipartUploadCommand{
+		FileID: handle.FileID, UploadID: handle.UploadID, ClientMediaBundleID: handle.ClientMediaBundleID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response == nil || response.Delivery == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("completion did not return verified File delivery")
 	}
-	if response.Msg.GetFileId() != handle.FileID {
+	if response.FileID != handle.FileID {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("completion File ID does not match the session handle")
 	}
-	file, err := mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	file, err := mcpVerifiedFileFromDelivery(response.Delivery)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -319,25 +294,23 @@ func (facade *MCPFileFacade) Read(ctx context.Context, fileID string) (MCPVerifi
 	if err != nil {
 		return MCPVerifiedFileHandle{}, err
 	}
-	response, err := facade.files.GetMediaDelivery(ctx, connect.NewRequest(
-		&managev1.GetMediaDeliveryRequest{FileId: fileID},
-	))
+	response, err := facade.files.GetMediaDelivery(ctx, filemediadomain.GetMediaDeliveryQuery{FileID: fileID})
 	if err != nil {
 		return MCPVerifiedFileHandle{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response == nil || response.Delivery == nil {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery response is missing")
 	}
-	if response.Msg.GetDelivery().GetFileId() != fileID {
+	if response.Delivery.FileID != fileID {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery ID does not match the requested handle")
 	}
-	return mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	return mcpVerifiedFileFromDelivery(response.Delivery)
 }
 
 func (facade *MCPFileFacade) beginMultipart(
 	ctx context.Context,
 	input MCPFileBeginInput,
-	uploadType managev1.UploadType,
+	uploadType filemediadomain.UploadType,
 ) (MCPFileTransferResult, error) {
 	if strings.TrimSpace(input.RemoteURL) != "" {
 		return MCPFileTransferResult{}, invalidMCPFileInput("multipart transfer must not include remote_url")
@@ -350,25 +323,23 @@ func (facade *MCPFileFacade) beginMultipart(
 	if fileName == "" || mimeType == "" || input.FileSize <= 0 {
 		return MCPFileTransferResult{}, invalidMCPFileInput("multipart transfer requires file_name, mime_type, and positive file_size")
 	}
-	response, err := facade.files.InitiateMultipartUpload(ctx, connect.NewRequest(
-		&managev1.InitiateMultipartUploadRequest{
-			UploadType:            uploadType,
-			FileSize:              input.FileSize,
-			MimeType:              mimeType,
-			FileName:              fileName,
-			FileLastModified:      input.FileLastModified,
-			EntityId:              input.TrackID,
-			EntityType:            mcpFileEntityType(input.Kind),
-			ExpectedCurrentFileId: input.ExpectedCurrentFileID,
-		},
-	))
+	response, err := facade.files.InitiateMultipartUpload(ctx, filemediadomain.InitiateMultipartUploadCommand{
+		UploadType:            uploadType,
+		FileSize:              input.FileSize,
+		MimeType:              mimeType,
+		FileName:              fileName,
+		FileLastModified:      input.FileLastModified,
+		EntityID:              input.TrackID,
+		EntityType:            mcpFileEntityType(input.Kind),
+		ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil {
+	if response == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("multipart initiation response is missing")
 	}
-	session, err := mcpFileSessionFromInitiation(input.Transport, input.Kind, response.Msg)
+	session, err := mcpFileSessionFromInitiation(input.Transport, input.Kind, response)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -380,19 +351,19 @@ func (facade *MCPFileFacade) beginMultipart(
 func (facade *MCPFileFacade) beginRemoteHTTPS(
 	ctx context.Context,
 	input MCPFileBeginInput,
-	uploadType managev1.UploadType,
+	uploadType filemediadomain.UploadType,
 ) (MCPFileTransferResult, error) {
 	if strings.TrimSpace(input.FileName) != "" || strings.TrimSpace(input.MIMEType) != "" ||
 		input.FileSize != 0 || input.FileLastModified != nil {
 		return MCPFileTransferResult{}, invalidMCPFileInput("remote HTTPS transfer must omit multipart File metadata")
 	}
-	var correlationID *string
+	var correlationID string
 	if input.CorrelationID != "" {
 		value, err := normalizeMCPFileUUID(input.CorrelationID, "correlation_id")
 		if err != nil {
 			return MCPFileTransferResult{}, err
 		}
-		correlationID = pointer(value)
+		correlationID = value
 	} else if input.Kind != MCPFileKindGeneral {
 		return MCPFileTransferResult{}, invalidMCPFileInput("correlation_id is required for durable remote File import; reuse it on retry")
 	}
@@ -400,42 +371,40 @@ func (facade *MCPFileFacade) beginRemoteHTTPS(
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	response, err := facade.files.DownloadFromUrl(ctx, connect.NewRequest(
-		&managev1.DownloadFromUrlRequest{
-			UploadType: uploadType, Url: remoteURL, EntityId: input.TrackID,
-			EntityType: mcpFileEntityType(input.Kind), ExpectedCurrentFileId: input.ExpectedCurrentFileID,
-			CorrelationId: correlationID,
-		},
-	))
+	response, err := facade.files.DownloadFromURL(ctx, filemediadomain.DownloadFromURLCommand{
+		UploadType: uploadType, URL: remoteURL, EntityID: input.TrackID,
+		EntityType: mcpFileEntityType(input.Kind), ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+		CorrelationID: correlationID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response == nil || response.Delivery == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("remote import did not return verified File delivery")
 	}
-	if response.Msg.GetFileId() == "" || response.Msg.GetDelivery().GetFileId() != response.Msg.GetFileId() {
+	if response.FileID == "" || response.Delivery.FileID != response.FileID {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("remote import returned mismatched File IDs")
 	}
-	file, err := mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	file, err := mcpVerifiedFileFromDelivery(response.Delivery)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
 	return MCPFileTransferResult{State: MCPFileTransferReady, File: &file}, nil
 }
 
-func validateMCPFileSessionHandle(handle MCPFileSessionHandle) (managev1.UploadType, error) {
+func validateMCPFileSessionHandle(handle MCPFileSessionHandle) (filemediadomain.UploadType, error) {
 	if handle.Transport != MCPFileTransportBrowserUploadPage &&
 		handle.Transport != MCPFileTransportPresignedMultipart {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("session transport must be browser_upload_page or presigned_multipart")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("session transport must be browser_upload_page or presigned_multipart")
 	}
 	if _, err := normalizeMCPFileUUID(handle.FileID, "file_id"); err != nil {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, err
+		return filemediadomain.UploadUnspecified, err
 	}
 	if strings.TrimSpace(handle.UploadID) == "" {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("upload_id is required")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("upload_id is required")
 	}
 	if err := validateMCPFileTrackTarget(handle.Kind, handle.TrackID, handle.ExpectedCurrentFileID); err != nil {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, err
+		return filemediadomain.UploadUnspecified, err
 	}
 	return mcpUploadType(handle.Kind)
 }
@@ -458,47 +427,47 @@ func validateMCPFileTrackTarget(kind MCPFileKind, trackID string, expectedCurren
 	return nil
 }
 
-func mcpFileEntityType(kind MCPFileKind) *managev1.TranscodeEntityType {
+func mcpFileEntityType(kind MCPFileKind) *filemediadomain.EntityType {
 	if kind == MCPFileKindTrackAudio {
-		return pointer(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK)
+		return pointer(filemediadomain.EntityTrack)
 	}
 	return nil
 }
 
-func mcpUploadType(kind MCPFileKind) (managev1.UploadType, error) {
+func mcpUploadType(kind MCPFileKind) (filemediadomain.UploadType, error) {
 	switch kind {
 	case MCPFileKindGeneral:
-		return managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, nil
+		return filemediadomain.UploadGeneralFile, nil
 	case MCPFileKindImage:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, nil
+		return filemediadomain.UploadEditorImage, nil
 	case MCPFileKindVideo:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, nil
+		return filemediadomain.UploadEditorVideo, nil
 	case MCPFileKindAudio:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO, nil
+		return filemediadomain.UploadEditorAudio, nil
 	case MCPFileKindTrackAudio:
-		return managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, nil
+		return filemediadomain.UploadTrackAudio, nil
 	case MCPFileKindAttachment:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, nil
+		return filemediadomain.UploadEditorAttachment, nil
 	case MCPFileKindMesh:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, nil
+		return filemediadomain.UploadEditorMesh, nil
 	default:
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("kind is unsupported")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("kind is unsupported")
 	}
 }
 
 func mcpFileSessionFromInitiation(
 	transport MCPFileTransport,
 	kind MCPFileKind,
-	response *managev1.InitiateMultipartUploadResponse,
+	response *filemediadomain.MultipartUpload,
 ) (MCPFileTransferSession, error) {
-	fileID, err := normalizeMCPFileUUID(response.GetFileId(), "runtime file_id")
+	fileID, err := normalizeMCPFileUUID(response.FileID, "runtime file_id")
 	if err != nil {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime(err.Error())
 	}
-	if strings.TrimSpace(response.GetUploadId()) == "" || response.GetTotalParts() <= 0 || response.GetChunkSize() <= 0 {
+	if strings.TrimSpace(response.UploadID) == "" || response.TotalParts <= 0 || response.ChunkSize <= 0 {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("multipart initiation identity or part shape is invalid")
 	}
-	state, err := mcpTransferState(response.GetStatus())
+	state, err := mcpTransferState(response.Status)
 	if err != nil {
 		return MCPFileTransferSession{}, err
 	}
@@ -507,104 +476,104 @@ func mcpFileSessionFromInitiation(
 			Transport: transport,
 			Kind:      kind,
 			FileID:    fileID,
-			UploadID:  response.GetUploadId(),
+			UploadID:  response.UploadID,
 		},
 		State:               state,
-		TotalParts:          response.GetTotalParts(),
-		ChunkSize:           response.GetChunkSize(),
-		UploadedPartNumbers: mcpUploadedPartNumbers(response.GetUploadedParts()),
+		TotalParts:          response.TotalParts,
+		ChunkSize:           response.ChunkSize,
+		UploadedPartNumbers: mcpUploadedPartNumbers(response.UploadedParts),
 	}, nil
 }
 
 func mcpFileSessionFromCandidate(
 	handle MCPFileSessionHandle,
-	response *managev1.FindMultipartUploadCandidateResponse,
+	response *filemediadomain.MultipartCandidate,
 ) (MCPFileTransferSession, error) {
-	if response.GetFileId() != handle.FileID || response.GetUploadId() != handle.UploadID {
+	if fileReferenceName(response.FileID) != handle.FileID || fileReferenceName(response.UploadID) != handle.UploadID {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("status response does not match the session handle")
 	}
-	handle.ClientMediaBundleID = response.GetClientMediaBundleId()
-	state, err := mcpTransferState(response.GetStatus())
+	handle.ClientMediaBundleID = fileReferenceName(response.ClientMediaBundleID)
+	state, err := mcpTransferState(response.Status)
 	if err != nil {
 		return MCPFileTransferSession{}, err
 	}
-	if response.GetTotalParts() <= 0 || response.GetChunkSize() <= 0 {
+	if response.TotalParts <= 0 || response.ChunkSize <= 0 {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("status part shape is invalid")
 	}
 	var lastActivityAt *time.Time
-	if value := response.GetLastActivityAt(); value != nil {
-		if err := value.CheckValid(); err != nil {
+	if value := response.LastActivityAt; value != nil {
+		if value.UTC().Year() < 1 || value.UTC().Year() > 9999 {
 			return MCPFileTransferSession{}, invalidMCPFileRuntime("status last_activity_at is invalid")
 		}
-		converted := value.AsTime().UTC()
+		converted := value.UTC()
 		lastActivityAt = &converted
 	}
 	return MCPFileTransferSession{
 		Handle:              handle,
 		State:               state,
-		FileName:            response.GetFileName(),
-		MIMEType:            response.GetMimeType(),
-		FileSize:            response.GetFileSize(),
-		TotalParts:          response.GetTotalParts(),
-		ChunkSize:           response.GetChunkSize(),
-		UploadedPartNumbers: mcpUploadedPartNumbers(response.GetUploadedParts()),
+		FileName:            fileReferenceName(response.FileName),
+		MIMEType:            fileReferenceName(response.MimeType),
+		FileSize:            response.FileSize,
+		TotalParts:          response.TotalParts,
+		ChunkSize:           response.ChunkSize,
+		UploadedPartNumbers: mcpUploadedPartNumbers(response.UploadedParts),
 		LastActivityAt:      lastActivityAt,
 	}, nil
 }
 
-func mcpTransferState(status managev1.UploadSessionStatus) (MCPFileTransferState, error) {
+func mcpTransferState(status filemediadomain.UploadSessionStatus) (MCPFileTransferState, error) {
 	switch status {
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED:
+	case filemediadomain.UploadSessionStatusInitiated:
 		return MCPFileTransferInitiated, nil
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING:
+	case filemediadomain.UploadSessionStatusUploading:
 		return MCPFileTransferUploading, nil
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING:
+	case filemediadomain.UploadSessionStatusFinalizing:
 		return MCPFileTransferFinalizing, nil
 	default:
 		return "", invalidMCPFileRuntime("upload session status is not active")
 	}
 }
 
-func mcpUploadedPartNumbers(parts []*managev1.UploadPartInfo) []int32 {
+func mcpUploadedPartNumbers(parts []*filemediadomain.UploadedPart) []int32 {
 	result := make([]int32, 0, len(parts))
 	for _, part := range parts {
-		if part != nil && part.GetPartNumber() > 0 {
-			result = append(result, part.GetPartNumber())
+		if part != nil && part.PartNumber > 0 {
+			result = append(result, part.PartNumber)
 		}
 	}
 	return result
 }
 
-func mcpVerifiedFileFromDelivery(delivery *commonv1.MediaDelivery) (MCPVerifiedFileHandle, error) {
+func mcpVerifiedFileFromDelivery(delivery *filemediadomain.Delivery) (MCPVerifiedFileHandle, error) {
 	if delivery == nil {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery is missing")
 	}
-	fileID, err := normalizeMCPFileUUID(delivery.GetFileId(), "runtime file_id")
+	fileID, err := normalizeMCPFileUUID(delivery.FileID, "runtime file_id")
 	if err != nil {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime(err.Error())
 	}
-	extension := strings.TrimSpace(delivery.GetExtension())
-	mimeType := strings.TrimSpace(delivery.GetMimeType())
-	if extension == "" || mimeType == "" || delivery.GetFileSize() <= 0 {
+	extension := strings.TrimSpace(delivery.Extension)
+	mimeType := strings.TrimSpace(delivery.MimeType)
+	if extension == "" || mimeType == "" || delivery.FileSize <= 0 {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery metadata is incomplete")
 	}
 	handle := MCPVerifiedFileHandle{
 		ID:                   fileID,
-		FileName:             delivery.GetFileName(),
+		FileName:             fileReferenceName(delivery.FileName),
 		Extension:            extension,
 		MIMEType:             mimeType,
-		FileSize:             delivery.GetFileSize(),
+		FileSize:             delivery.FileSize,
 		DurationSeconds:      delivery.DurationSeconds,
-		DerivativeStatus:     mcpProcessingStatus(delivery.GetProcessingStatus()),
+		DerivativeStatus:     mcpProcessingStatus(delivery.ProcessingStatus),
 		DerivativePercentage: delivery.ProcessingPercentage,
 		References:           make([]MCPFileReference, 0, 7),
 	}
 	for _, reference := range []struct {
 		kind  MCPFileReferenceKind
-		value *commonv1.ExpiringMediaRef
+		value *mediaauth.Reference
 	}{
-		{kind: MCPFileReferenceInline, value: delivery.GetInline()},
-		{kind: MCPFileReferenceDownload, value: delivery.GetDownload()},
+		{kind: MCPFileReferenceInline, value: delivery.Inline},
+		{kind: MCPFileReferenceDownload, value: delivery.Download},
 	} {
 		if reference.value == nil {
 			continue
@@ -615,14 +584,14 @@ func mcpVerifiedFileFromDelivery(delivery *commonv1.MediaDelivery) (MCPVerifiedF
 		}
 		handle.References = append(handle.References, converted)
 	}
-	if value := delivery.GetAsset(); value != nil {
+	if value := delivery.Asset; value != nil {
 		converted, err := mcpAssetReference(MCPFileReferenceAsset, value)
 		if err != nil {
 			return MCPVerifiedFileHandle{}, err
 		}
 		handle.References = append(handle.References, converted)
 	}
-	if value := delivery.GetPlayback(); value != nil {
+	if value := delivery.Playback; value != nil {
 		converted, err := mcpPlaybackReference(fileID, value)
 		if err != nil {
 			return MCPVerifiedFileHandle{}, err
@@ -631,11 +600,11 @@ func mcpVerifiedFileFromDelivery(delivery *commonv1.MediaDelivery) (MCPVerifiedF
 	}
 	for _, reference := range []struct {
 		kind  MCPFileReferenceKind
-		value *commonv1.AssetRef
+		value *mediaasset.Reference
 	}{
-		{kind: MCPFileReferenceThumbnail, value: delivery.GetThumbnail()},
-		{kind: MCPFileReferenceSpectrogram, value: delivery.GetSpectrogram()},
-		{kind: MCPFileReferenceWaveform, value: delivery.GetWaveform()},
+		{kind: MCPFileReferenceThumbnail, value: delivery.Thumbnail},
+		{kind: MCPFileReferenceSpectrogram, value: delivery.Spectrogram},
+		{kind: MCPFileReferenceWaveform, value: delivery.Waveform},
 	} {
 		if reference.value == nil {
 			continue
@@ -652,56 +621,56 @@ func mcpVerifiedFileFromDelivery(delivery *commonv1.MediaDelivery) (MCPVerifiedF
 func mcpExpiringFileReference(
 	fileID string,
 	kind MCPFileReferenceKind,
-	value *commonv1.ExpiringMediaRef,
+	value *mediaauth.Reference,
 ) (MCPFileReference, error) {
-	if value.GetFileId() != fileID {
+	if value.FileID != fileID {
 		return MCPFileReference{}, invalidMCPFileRuntime("expiring reference File ID is invalid")
 	}
-	if err := validateMCPFileReferenceURL(value.GetUrl()); err != nil {
+	if err := validateMCPFileReferenceURL(value.URL); err != nil {
 		return MCPFileReference{}, err
 	}
-	expiresAt := value.GetExpiresAt()
-	if expiresAt == nil || expiresAt.CheckValid() != nil {
+	expiresAt := value.ExpiresAt
+	if expiresAt.IsZero() || expiresAt.UTC().Year() < 1 || expiresAt.UTC().Year() > 9999 {
 		return MCPFileReference{}, invalidMCPFileRuntime("expiring reference expiry is invalid")
 	}
-	convertedExpiry := expiresAt.AsTime().UTC()
+	convertedExpiry := expiresAt.UTC()
 	return MCPFileReference{
 		Kind:      kind,
 		ID:        fileID,
-		URL:       value.GetUrl(),
-		Extension: value.GetExtension(),
-		MIMEType:  value.GetMimeType(),
-		FileName:  value.GetFileName(),
+		URL:       value.URL,
+		Extension: value.Extension,
+		MIMEType:  value.MimeType,
+		FileName:  fileReferenceName(value.FileName),
 		ExpiresAt: &convertedExpiry,
 	}, nil
 }
 
-func mcpAssetReference(kind MCPFileReferenceKind, value *commonv1.AssetRef) (MCPFileReference, error) {
-	if strings.TrimSpace(value.GetAssetId()) == "" {
+func mcpAssetReference(kind MCPFileReferenceKind, value *mediaasset.Reference) (MCPFileReference, error) {
+	if strings.TrimSpace(value.AssetID) == "" {
 		return MCPFileReference{}, invalidMCPFileRuntime("asset reference ID is missing")
 	}
-	if err := validateMCPFileReferenceURL(value.GetUrl()); err != nil {
+	if err := validateMCPFileReferenceURL(value.URL); err != nil {
 		return MCPFileReference{}, err
 	}
 	return MCPFileReference{
 		Kind:      kind,
-		ID:        value.GetAssetId(),
-		URL:       value.GetUrl(),
-		Extension: value.GetExtension(),
-		MIMEType:  value.GetMimeType(),
-		FileSize:  value.GetFileSize(),
-		FileName:  value.GetDownloadFilename(),
+		ID:        value.AssetID,
+		URL:       value.URL,
+		Extension: value.Extension,
+		MIMEType:  value.MimeType,
+		FileSize:  value.FileSize,
+		FileName:  fileReferenceName(value.DownloadFilename),
 	}, nil
 }
 
-func mcpPlaybackReference(fileID string, value *commonv1.HlsMediaRef) (MCPFileReference, error) {
-	if value.GetFileId() != fileID || strings.TrimSpace(value.GetGenerationId()) == "" {
+func mcpPlaybackReference(fileID string, value *filemediadomain.HLSReference) (MCPFileReference, error) {
+	if value.FileID != fileID || strings.TrimSpace(value.GenerationID) == "" {
 		return MCPFileReference{}, invalidMCPFileRuntime("playback reference identity is invalid")
 	}
-	if err := validateMCPFileReferenceURL(value.GetUrl()); err != nil {
+	if err := validateMCPFileReferenceURL(value.URL); err != nil {
 		return MCPFileReference{}, err
 	}
-	return MCPFileReference{Kind: MCPFileReferencePlayback, ID: value.GetGenerationId(), URL: value.GetUrl()}, nil
+	return MCPFileReference{Kind: MCPFileReferencePlayback, ID: value.GenerationID, URL: value.URL}, nil
 }
 
 func validateMCPFileReferenceURL(raw string) error {
@@ -712,13 +681,13 @@ func validateMCPFileReferenceURL(raw string) error {
 	return nil
 }
 
-func mcpProcessingStatus(status commonv1.MediaProcessingStatus) string {
+func mcpProcessingStatus(status filemediadomain.ProcessingStatus) string {
 	switch status {
-	case commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING:
+	case filemediadomain.ProcessingActive:
 		return "processing"
-	case commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY:
+	case filemediadomain.ProcessingReady:
 		return "ready"
-	case commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED:
+	case filemediadomain.ProcessingFailed:
 		return "failed"
 	default:
 		return ""
@@ -752,3 +721,10 @@ func invalidMCPFileRuntime(message string) error {
 }
 
 func pointer[T any](value T) *T { return &value }
+
+func fileReferenceName(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}

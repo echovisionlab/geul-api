@@ -3,150 +3,92 @@ package artist
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"fmt"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 var errRollbackArtistAIDocumentValidation = errors.New("rollback Artist AI document validation")
 
 // ExecuteAIDocumentMutation owns Artist's exact mutation transaction. The
 // locked lifecycle and one Edit decision are established before any document
-// projection or adapter compiler executes.
-func (s *InternalArtistService) ExecuteAIDocumentMutation(
+// projection or adapter compiler executes. Validation runs the whole
+// mutation and rolls it back.
+func (s *Service) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	artistID string,
 	locale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentMutationCompiler,
-) (_ AIDocumentMutationResult, terminalErr error) {
-	defer func() {
-		var conflict *AIDocumentRevisionConflictError
-		expected := errors.As(terminalErr, &conflict)
-		if expected {
-			if terminalErr != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr))
-			}
-		} else {
-			if terminalErr != nil {
-				level := errs.OperationLogLevel(terminalErr)
-				slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-			}
-		}
-	}()
-
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil || s.translation == nil || s.runtime == nil {
-		return AIDocumentMutationResult{}, errs.Internal(errors.New("artist AI document dependencies are not configured"))
-	}
+) (AIDocumentMutationResult, error) {
 	if compiler == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Artist AI document compiler")
+		return AIDocumentMutationResult{}, domainerr.DependencyUnavailable("Artist AI document compiler")
 	}
 	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
+		return AIDocumentMutationResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
 	canonicalArtistID, err := canonicalArtistUUID(artistID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
-		return AIDocumentMutationResult{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
+		return AIDocumentMutationResult{}, domainerr.InvalidField("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-
-	var output AIDocumentMutationResult
-	var input AIDocumentMutation
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadArtistAIDocumentRoot(ctx, tx, canonicalArtistID.String(), "UPDATE")
-		if err != nil {
-			return err
-		}
-		if _, valid := artistAIDocumentLifecycle(root.Status); !valid {
-			return errs.InternalMsg("Artist has an unsupported lifecycle status")
-		}
-		allowed, err := requireArtistAIDocumentMutationAuthority(ctx, tx, s.spiceDB, root.ID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return errs.NotFound("artist", root.ID)
-		}
-		principal := auth.GetUser(ctx)
-		if principal == nil {
-			return errs.NotFound("artist", root.ID)
-		}
-		memberID, err := canonicalArtistUUID(principal.MemberID.String())
-		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
-			return errs.NotFound("artist", root.ID)
-		}
-		state, err := s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, memberID.String(),
-		)
-		if err != nil {
-			return err
-		}
-		input, err = compiler(state)
-		if err != nil {
-			return &artistAIDocumentCompilerError{cause: err}
-		}
-		expected, err := validateCompiledArtistAIDocumentMutation(state, input, memberID)
-		if err != nil {
-			return err
-		}
-		if err := s.translation.RequireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
-			return err
-		}
-		fence := artistAuthorizedAIDocumentFence(
-			root, input.Locale, input.ExpectedSource, input.ExpectedPresence,
-		)
-		result, targetRevision, err := s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
-		if err != nil {
-			return mapArtistAIDocumentMutationError(err)
-		}
-		output = AIDocumentMutationResult{
-			Revision: result.DocumentRevision.String(), TargetRevision: targetRevision,
-			Changed: result.Changed,
-		}
-		if result.Changed {
-			if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST, root.ID, input.Locale, result.TranslationSourceChanged, "artist_ai_document_saved"); err != nil {
+	var root DocumentRoot
+	var outcome artistAIDocumentOutcome
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[artistAIDocumentOutcome, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			if root, err = loadArtistAIDocumentRoot(ctx, store, canonicalArtistID.String(), UpdateLock); err != nil {
 				return err
 			}
-			if input.Locale == input.ExpectedSource {
-				if err := s.appendAIDocumentAudit(ctx, tx, root.ID, input.Locale, memberID.String()); err != nil {
-					return err
-				}
-			} else if err := s.appendAIDocumentTargetLocaleAudit(ctx, tx, input, memberID.String()); err != nil {
-				return err
+			if _, valid := artistAIDocumentLifecycle(root.Status); !valid {
+				return errors.New("Artist has an unsupported lifecycle status")
 			}
-		}
-		if mode == AIDocumentExecutionValidate {
-			return errRollbackArtistAIDocumentValidation
-		}
-		if !output.Changed {
 			return nil
-		}
-		return publishContentUpdatedEvent(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			artistAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()),
-		)
+		},
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			allowed, err := requireArtistAIDocumentMutationAuthority(ctx, lockActive, s.spiceDB, root.ID)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return domainerr.ResourceNotFound("artist", root.ID)
+			}
+			return nil
+		}),
+		Change: func(ctx context.Context, store Store) (artistAIDocumentOutcome, error) {
+			var err error
+			outcome, err = applyAIDocumentMutation(ctx, store, root, locale, compiler)
+			return outcome, err
+		},
+		Audit: func(outcome artistAIDocumentOutcome) mutation.Audit { return outcome.audit() },
+		Outbox: func(ctx context.Context, store Store, outcome artistAIDocumentOutcome) error {
+			if mode == AIDocumentExecutionValidate {
+				return errRollbackArtistAIDocumentValidation
+			}
+			if !outcome.result.Changed {
+				return nil
+			}
+			return store.PublishContentUpdate(ctx, artistAIDocumentContentUpdate(outcome.input, outcome.result, outcome.input.ContributorMemberID.String()))
+		},
 	})
 	if errors.Is(err, errRollbackArtistAIDocumentValidation) {
-		return output, nil
+		return outcome.result, nil
 	}
 	if err != nil {
 		var compilerErr *artistAIDocumentCompilerError
@@ -155,15 +97,88 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
 		if errors.As(err, &targetConflict) {
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "artist", "operation", "ExecuteAIDocumentMutation", "artist_id", artistID, "locale", locale, failurecause.Attr(err))
-			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
-				Kind: AIDocumentTargetRevisionConflict, CurrentRevision: input.ExpectedRevision,
-				CurrentTargetRevision: artistTargetConflictRevision(targetConflict),
+			return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+				Kind:                    aidocument.ConflictTargetRevision,
+				CurrentDocumentRevision: outcome.input.ExpectedRevision,
+				CurrentTargetRevision:   artistTargetConflictRevision(targetConflict),
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", outcome.input.ExpectedRevision),
 			}
 		}
 		return AIDocumentMutationResult{}, err
 	}
-	return output, nil
+	return outcome.result, nil
+}
+
+// artistAIDocumentOutcome is an applied AI-document mutation and the Member
+// it is attributed to.
+type artistAIDocumentOutcome struct {
+	input    AIDocumentMutation
+	memberID string
+	result   AIDocumentMutationResult
+}
+
+// applyAIDocumentMutation compiles the mutation against the locked state and
+// applies it as the principal's Member.
+func applyAIDocumentMutation(
+	ctx context.Context,
+	store Store,
+	root DocumentRoot,
+	locale string,
+	compiler AIDocumentMutationCompiler,
+) (artistAIDocumentOutcome, error) {
+	principal := auth.GetUser(ctx)
+	if principal == nil {
+		return artistAIDocumentOutcome{}, domainerr.ResourceNotFound("artist", root.ID)
+	}
+	memberID, err := canonicalArtistUUID(principal.MemberID.String())
+	if err != nil {
+		return artistAIDocumentOutcome{}, domainerr.ResourceNotFound("artist", root.ID).WithCause(err)
+	}
+	state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, locale, memberID.String())
+	if err != nil {
+		return artistAIDocumentOutcome{}, err
+	}
+	outcome := artistAIDocumentOutcome{memberID: memberID.String()}
+	if outcome.input, err = compiler(state); err != nil {
+		return outcome, &artistAIDocumentCompilerError{cause: err}
+	}
+	input := outcome.input
+	expected, err := validateCompiledArtistAIDocumentMutation(state, input, memberID)
+	if err != nil {
+		return outcome, err
+	}
+	if err := store.RequireDocumentContributors(ctx, []string{memberID.String()}); err != nil {
+		return outcome, err
+	}
+	fence := artistAuthorizedAIDocumentFence(root, input.Locale, input.ExpectedSource, input.ExpectedPresence)
+	result, targetRevision, err := applyAIDocumentMode(ctx, store, input, expected, memberID, *root.DocumentID, fence)
+	if err != nil {
+		return outcome, mapArtistAIDocumentMutationError(err)
+	}
+	outcome.result = AIDocumentMutationResult{Revision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}
+	// A deleted target locale has no OG image to generate; requesting one
+	// would fail on the missing locale row.
+	if result.Changed && !input.DeleteTranslation {
+		if _, err := store.RequestOG(ctx, root.ID, input.Locale, result.TranslationSourceChanged, "artist_ai_document_saved"); err != nil {
+			return outcome, err
+		}
+	}
+	return outcome, nil
+}
+
+// audit attributes a changed locale to the Member the mutation ran as: a
+// target locale is created, updated or deleted, the source is updated.
+func (o artistAIDocumentOutcome) audit() mutation.Audit {
+	if !o.result.Changed {
+		return mutation.Unchanged()
+	}
+	operation := sharedtelemetry.AuditItemOperationUpdated
+	if o.input.Locale != o.input.ExpectedSource && o.input.CreateTranslation {
+		operation = sharedtelemetry.AuditItemOperationCreated
+	} else if o.input.Locale != o.input.ExpectedSource && o.input.DeleteTranslation {
+		operation = sharedtelemetry.AuditItemOperationDeleted
+	}
+	return artistMemberLocaleAudit(o.memberID, o.input.ArtistID, o.input.Locale, operation)
 }
 
 func validateCompiledArtistAIDocumentMutation(
@@ -178,33 +193,37 @@ func validateCompiledArtistAIDocumentMutation(
 	if input.ArtistID != state.ArtistID || input.Locale != state.Locale ||
 		input.ExpectedSource != state.SourceLocale || input.ExpectedPresence != state.LocaleExists ||
 		input.ContributorMemberID != memberID || state.ViewerMemberID != memberID.String() {
-		return uuid.Nil, errs.InvalidArgument(
+		return uuid.Nil, domainerr.InvalidField(
 			"mutation",
 			"compiled Artist identity, locale, contributor, source observation, and locale presence must match the locked state",
 		)
 	}
 	if state.Locale == state.SourceLocale {
 		if state.TargetRevision != nil {
-			return uuid.Nil, errs.FailedPrecondition("Artist source locale cannot carry a target revision")
+			return uuid.Nil, domainerr.Precondition("Artist source locale cannot carry a target revision")
 		}
 	} else if state.LocaleExists != (state.TargetRevision != nil) {
-		return uuid.Nil, errs.FailedPrecondition("Artist target locale presence and revision are inconsistent")
+		return uuid.Nil, domainerr.Precondition("Artist target locale presence and revision are inconsistent")
 	}
 	if input.ExpectedRevision != state.Revision {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision,
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.Revision,
+			Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", state.Revision),
 		}
 	}
-	if !sameArtistTargetRevision(input.ExpectedTargetRevision, state.TargetRevision) {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-			CurrentTargetRevision: cloneArtistTargetRevision(state.TargetRevision),
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.Revision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", state.Revision),
 		}
 	}
 	if input.Batch != nil {
 		if input.Batch.DocumentID != state.DocumentID || input.Batch.ExpectedRevision != expected ||
 			len(input.Batch.ContributorMemberIDs) != 1 || input.Batch.ContributorMemberIDs[0] != memberID {
-			return uuid.Nil, errs.InvalidArgument(
+			return uuid.Nil, domainerr.InvalidField(
 				"mutation",
 				"compiled Artist document, revision, and attribution must match the locked state",
 			)
@@ -213,43 +232,15 @@ func validateCompiledArtistAIDocumentMutation(
 	return expected, nil
 }
 
-func (s *InternalArtistService) appendAIDocumentAudit(ctx context.Context, tx *gorm.DB, artistID, locale, contributor string) error {
-	if s.auditWriter == nil {
-		return errs.InternalMsg("Artist AI document audit writer is not configured")
-	}
-	return appendArtistMemberTargetLocaleAudit(
-		ctx, tx, s.auditWriter, contributor, artistID, locale,
-		sharedtelemetry.AuditItemOperationUpdated,
-	)
-}
-
-func (s *InternalArtistService) appendAIDocumentTargetLocaleAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	input AIDocumentMutation,
-	memberID string,
-) error {
-	if s.auditWriter == nil {
-		return errs.InternalMsg("Artist AI document audit writer is not configured")
-	}
-	operation := sharedtelemetry.AuditItemOperationUpdated
-	if input.CreateTranslation {
-		operation = sharedtelemetry.AuditItemOperationCreated
-	} else if input.DeleteTranslation {
-		operation = sharedtelemetry.AuditItemOperationDeleted
-	}
-	return appendArtistMemberTargetLocaleAudit(ctx, tx, s.auditWriter, memberID, input.ArtistID, input.Locale, operation)
-}
-
-func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence contentblock.DomainFence) (contentblock.Result, *string, error) {
+func applyAIDocumentMode(ctx context.Context, store Store, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence ContentFence) (contentblock.Result, *string, error) {
 	if input.Locale != input.ExpectedSource {
 		if input.Batch != nil {
 			batch := *input.Batch
 			batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, false, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		if input.CreateTranslation {
@@ -257,74 +248,79 @@ func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gor
 				DocumentID: documentID, ExpectedRevision: expected,
 				ContributorMemberIDs: []uuid.UUID{memberID},
 			}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, true, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Policy: targetlocale.Policy{AllowCreate: true},
+				Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		result, err := deleteArtistTargetLocale(
-			ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, expected,
+			ctx, store, input.ArtistID, documentID, input.Locale, expected,
 			input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence,
 		)
 		return result, nil, err
 	}
 	if input.ExpectedTargetRevision != nil {
-		return contentblock.Result{}, nil, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
+		return contentblock.Result{}, nil, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
 	if input.Batch != nil {
 		batch := *input.Batch
 		if batch.DocumentID != documentID {
-			return contentblock.Result{}, nil, errs.InvalidArgument("document", "Artist content document does not match")
+			return contentblock.Result{}, nil, domainerr.InvalidField("document", "Artist content document does not match")
 		}
 		batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+		result, err := store.ApplyContentBatch(ctx, batch, fence)
 		return result, nil, err
 	}
 	if input.CreateTranslation {
-		advanced, err := s.contentBlocks.AdvanceRevision(ctx, tx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expected}, fence, func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			created, err := createArtistAIDocumentTranslation(ctx, tx, input.ArtistID, input.Locale)
+		advanced, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expected}, fence, func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			created, err := store.EnsureTargetLocale(ctx, input.ArtistID, input.Locale)
 			return contentblock.MetadataEffect{Changed: created, ChangedLocales: []string{input.Locale}}, err
 		})
 		return contentblock.Result{DocumentRevision: advanced.DocumentRevision, Changed: advanced.Changed, TranslationSourceChanged: advanced.TranslationSourceChanged}, nil, err
 	}
-	return contentblock.Result{}, nil, errs.InvalidArgument("locale", "source translation cannot be deleted")
+	return contentblock.Result{}, nil, domainerr.InvalidField("locale", "source translation cannot be deleted")
 }
 
 func artistAuthorizedAIDocumentFence(
-	root artistAIDocumentRoot,
+	root DocumentRoot,
 	locale string,
 	expectedSource string,
 	expectedPresence bool,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.DocumentID == nil || documentID != *root.DocumentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Artist content document changed; reload before saving")
+			return contentblock.DomainContext{}, domainerr.Precondition("Artist content document changed; reload before saving")
 		}
-		source, err := lockCreativeTranslationSourceContext(ctx, tx, artistContentEntity, root.ID)
+		source, err := lockCreativeTranslationSourceContext(ctx, store, root.ID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		var count int64
-		if err := tx.WithContext(ctx).Table("artist_translation").Where("entity_id = ?::uuid AND locale = ?", root.ID, locale).Count(&count).Error; err != nil {
-			return contentblock.DomainContext{}, errs.Internal(err)
+		exists, err := store.LocaleExists(ctx, root.ID, locale)
+		if err != nil {
+			return contentblock.DomainContext{}, err
 		}
-		if source.SourceLocale != expectedSource || (count != 0) != expectedPresence {
-			var current uuid.UUID
-			if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Scan(&current).Error; err != nil {
-				return contentblock.DomainContext{}, errs.Internal(err)
+		if source.SourceLocale != expectedSource || exists != expectedPresence {
+			current, err := store.CurrentContentRevision(ctx, documentID)
+			if err != nil && !errors.Is(err, ErrDocumentRowNotFound) {
+				return contentblock.DomainContext{}, err
 			}
-			return contentblock.DomainContext{}, &AIDocumentRevisionConflictError{CurrentRevision: current.String()}
+			return contentblock.DomainContext{}, &aidocument.RevisionConflict{
+				CurrentDocumentRevision: current.String(),
+				Kind:                    aidocument.ConflictDocumentRevision,
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", current.String()),
+			}
 		}
 		return source, nil
 	}
 }
 
-func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) (bool, error) {
+func requireArtistAIDocumentMutationAuthority(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error), checker Authorizer, artistID string) (bool, error) {
 	principal := auth.GetUser(ctx)
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	if !active {
 		return false, nil
@@ -335,54 +331,28 @@ func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, 
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
-		return false, errs.AuthenticationRequired()
+		return false, errAuthenticationRequired.WithCause(err)
 	}
-	allowed, err := spiceDB.Can(ctx, decision)
+	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
 }
 
-func artistAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) *managev1.ContentUpdatedEvent {
-	if !result.Changed {
-		return nil
-	}
+func artistAIDocumentContentUpdate(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) ContentUpdate {
 	exists := input.Locale == input.ExpectedSource || !input.DeleteTranslation
 	documentChanged := input.Locale == input.ExpectedSource
-	return buildArtistContentUpdatedEvent(
-		input.ArtistID,
-		[]string{"content"},
-		result.Revision,
-		[]string{contributor},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		input.Locale,
-		exists,
-		result.TargetRevision,
-		documentChanged,
-	)
-}
-
-func createArtistAIDocumentTranslation(ctx context.Context, tx *gorm.DB, artistID, locale string) (bool, error) {
-	result := tx.WithContext(ctx).Exec("INSERT INTO artist_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, NULL, now(), now()) ON CONFLICT (entity_id, locale) DO NOTHING", artistID, locale)
-	return result.RowsAffected != 0, result.Error
-}
-
-func sameArtistTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneArtistTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
+	return ContentUpdate{ArtistID: input.ArtistID, Kind: LocaleUpdate, Locale: LocaleChange{
+		Fields:               []string{"content"},
+		DocumentRevision:     result.Revision,
+		Contributors:         []string{contributor},
+		Source:               SourceAI,
+		Locale:               input.Locale,
+		LocaleDeleted:        !exists,
+		TargetRevision:       result.TargetRevision,
+		DocumentStateChanged: documentChanged,
+	}}
 }
 
 func artistTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

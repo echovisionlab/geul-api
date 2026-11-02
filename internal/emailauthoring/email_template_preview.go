@@ -3,79 +3,84 @@ package emailauthoring
 import (
 	"context"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// templateKeyRegex validates the format of template keys
-func (s *EmailTemplateService) PreviewEmailTemplate(
-	ctx context.Context,
-	req *connect.Request[managev1.PreviewEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.PreviewEmailTemplateResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "PreviewEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// PreviewEmailTemplateQuery renders an Email Template with sample data. A
+// set Subject, Document or LayoutID previews that unsaved value instead of
+// the stored one; an empty LayoutID previews without a layout.
+type PreviewEmailTemplateQuery struct {
+	ID       string
+	Locale   *string
+	Subject  *string
+	Document *contentv1.LocalizedRichTextDocument
+	LayoutID *string
+}
 
-	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
-		return nil, err
+// TemplatePreview is a rendered Email Template preview.
+type TemplatePreview struct {
+	Subject string
+	HTML    string
+}
+
+// PreviewEmailTemplate renders the template in the requested locale with
+// sample data and the site's branding variables.
+func (s *Service) PreviewEmailTemplate(ctx context.Context, query PreviewEmailTemplateQuery) (TemplatePreview, error) {
+	can, canErr := policyv1.EmailTemplate.View(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return TemplatePreview{}, err
 	}
-
-	var emailTemplate model.EmailTemplate
-	if err := s.db.WithContext(ctx).First(&emailTemplate, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("email template", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+	var emailTemplate Template
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		emailTemplate, err = findTemplate(ctx, store, query.ID)
+		return err
+	}); err != nil {
+		return TemplatePreview{}, err
 	}
-
-	// Render with sample data. Site branding variables come from site settings.
 	requestedLocale := ""
-	if req.Msg.Locale != nil {
-		requestedLocale = *req.Msg.Locale
+	if query.Locale != nil {
+		requestedLocale = *query.Locale
 	}
-
-	sampleData := s.buildEmailRenderData(ctx, requestedLocale, emailTemplateSampleData())
-
-	localizedTemplate, err := s.runtime.ResolveLocalizedTemplate(ctx, s.db, emailTemplate, requestedLocale)
+	sampleData := s.renderData(ctx, requestedLocale, emailTemplateSampleData())
+	var localizedTemplate Template
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		localizedTemplate, err = store.LocalizedTemplate(ctx, emailTemplate, requestedLocale)
+		return err
+	})
 	if err != nil {
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			return nil, errs.NotFound("email template", req.Msg.Id)
+		if mutation.IsNotFound(err) {
+			return TemplatePreview{}, domainerr.ResourceNotFound("email template", query.ID)
 		}
-		return nil, errs.Internal(err)
+		return TemplatePreview{}, err
 	}
-
-	previewSubject := resolveEmailTemplatePreviewSubject(req.Msg, localizedTemplate)
-	html, err := resolveEmailTemplatePreviewHTML(ctx, req.Msg, localizedTemplate)
+	previewSubject := resolveEmailTemplatePreviewSubject(query, localizedTemplate)
+	html, err := resolveEmailTemplatePreviewHTML(ctx, query, localizedTemplate)
 	if err != nil {
-		return nil, err
+		return TemplatePreview{}, err
 	}
-
 	// Fill any template-specific placeholders with synthetic sample values
 	// so preview can render unknown/custom variables instead of leaving braces.
 	fillMissingPreviewVariables(sampleData, previewSubject, html)
-
 	layoutHTML := ""
-	if layoutID := resolveEmailTemplatePreviewLayoutID(req.Msg, localizedTemplate); layoutID != nil {
-		layoutHTML, err = s.runtime.ResolveLayoutHTML(ctx, s.db, *layoutID, requestedLocale)
+	if layoutID := resolveEmailTemplatePreviewLayoutID(query, localizedTemplate); layoutID != nil {
+		err = s.units.Read(ctx, func(store Store) error {
+			var err error
+			layoutHTML, err = store.LocalizedLayoutHTML(ctx, *layoutID, requestedLocale)
+			return err
+		})
 		if err != nil {
-			return nil, errs.FailedPrecondition("email layout preview failed: " + err.Error())
+			return TemplatePreview{}, domainerr.Precondition("email layout preview failed: " + err.Error())
 		}
 	}
 	rendered, err := email.RenderDraftEmail(ctx, email.DraftEmail{
@@ -83,20 +88,16 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 		Variables: sampleData, Locale: requestedLocale,
 	})
 	if err != nil {
-		return nil, errs.FailedPrecondition(err.Error())
+		return TemplatePreview{}, domainerr.Precondition(err.Error())
 	}
-
-	return connect.NewResponse(&managev1.PreviewEmailTemplateResponse{
-		Subject: rendered.Subject,
-		Html:    rendered.HTML,
-	}), nil
+	return TemplatePreview{Subject: rendered.Subject, HTML: rendered.HTML}, nil
 }
 
 // Helper functions
 
 func resolveEmailTemplatePreviewSubject(
-	req *managev1.PreviewEmailTemplateRequest,
-	emailTemplate model.EmailTemplate,
+	req PreviewEmailTemplateQuery,
+	emailTemplate Template,
 ) string {
 	if req.Subject != nil {
 		return *req.Subject
@@ -107,13 +108,13 @@ func resolveEmailTemplatePreviewSubject(
 
 func resolveEmailTemplatePreviewHTML(
 	ctx context.Context,
-	req *managev1.PreviewEmailTemplateRequest,
-	emailTemplate model.EmailTemplate,
+	req PreviewEmailTemplateQuery,
+	emailTemplate Template,
 ) (string, error) {
-	if req.GetDocument() != nil {
-		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.GetDocument(), nil, sitevariable.TemplateContext())
+	if req.Document != nil {
+		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.Document, nil, sitevariable.TemplateContext())
 		if err != nil {
-			return "", errs.InvalidArgument("document", err.Error())
+			return "", domainerr.InvalidField("document", err.Error())
 		}
 		return materialized.HTML, nil
 	}
@@ -126,15 +127,15 @@ func resolveEmailTemplatePreviewHTML(
 }
 
 func resolveEmailTemplatePreviewLayoutID(
-	req *managev1.PreviewEmailTemplateRequest,
-	emailTemplate model.EmailTemplate,
+	req PreviewEmailTemplateQuery,
+	emailTemplate Template,
 ) *string {
-	if req.LayoutId != nil {
-		if *req.LayoutId == "" {
+	if req.LayoutID != nil {
+		if *req.LayoutID == "" {
 			return nil
 		}
 
-		return req.LayoutId
+		return req.LayoutID
 	}
 
 	return emailTemplate.LayoutID

@@ -2,483 +2,311 @@ package public
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 	"unicode"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-func (s *FileService) AuthorizeDownload(
-	ctx context.Context,
-	req *connect.Request[openv1.AuthorizeDownloadRequest],
-) (_ *connect.Response[openv1.AuthorizeDownloadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AuthorizeDownload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	entityID := strings.TrimSpace(req.Msg.EntityId)
-	if entityID == "" {
-		return nil, errs.Required("entity_id")
-	}
-	if _, err := uuid.Parse(entityID); err != nil {
-		return nil, errs.InvalidArgument("entity_id", "must be a valid UUID")
-	}
-	if req.Msg.EntityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_RELEASE {
-		return s.authorizeReleaseTrackDownload(ctx, entityID, req.Msg.GetTrackId())
-	}
-	selector := req.Msg.GetContentBlock()
-	if selector == nil {
-		return nil, errs.Required("content_block")
-	}
-	blockID := strings.TrimSpace(selector.GetBlockId())
-	if _, err := uuid.Parse(blockID); err != nil {
-		return nil, errs.InvalidArgument("selector.block_id", "must be a valid UUID")
-	}
-	referencePath := strings.TrimSpace(selector.GetReferencePath())
-	if referencePath == "" || len(referencePath) > 512 || strings.IndexFunc(referencePath, unicode.IsControl) >= 0 {
-		return nil, errs.InvalidArgument("selector.reference_path", "must be non-empty, control-free, and at most 512 bytes")
-	}
-	var evaluatedSource mediaasset.FileDownloadSource
-	var evaluatedStatus string
-	var evaluatedMediaAccess resolvedMediaAccess
-	var evaluatedAccess *openv1.FileDownloadAccess
-	var evaluatedFingerprint string
-	var evaluatedViewerFingerprint string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		source, ownerStatus, found, resolveErr := s.resolveContentBlockDownloadSource(
-			ctx,
-			tx,
-			req.Msg.EntityType,
-			entityID,
-			blockID,
-			referencePath,
-			false,
-		)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if !found {
-			evaluatedAccess = unavailableFileDownloadAccess()
-			return nil
-		}
-		mediaAccess, allowed, accessErr := s.resolveContentOwnerDownloadAccess(
-			ctx,
-			tx,
-			req.Msg.EntityType,
-			entityID,
-			ownerStatus,
-		)
-		if accessErr != nil {
-			return accessErr
-		}
-		if !allowed {
-			evaluatedAccess = unavailableFileDownloadAccess()
-			return nil
-		}
-		access, accessErr := s.evaluateReferencedFileDownload(ctx, tx, source)
-		if accessErr != nil {
-			return accessErr
-		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}, auth.GetUser(ctx))
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		evaluatedSource, evaluatedStatus, evaluatedMediaAccess = source, ownerStatus, mediaAccess
-		evaluatedAccess, evaluatedFingerprint = access, fingerprints[source.PolicyKey]
-		evaluatedViewerFingerprint = viewerFingerprint
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return nil, err
-	}
-	if evaluatedSource.PolicyKey == "" {
-		return connect.NewResponse(&openv1.AuthorizeDownloadResponse{Access: evaluatedAccess}), nil
-	}
-	var response *connect.Response[openv1.AuthorizeDownloadResponse]
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluatedSource.PolicyKey: evaluatedSource}
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		ownerStatus, ownerFound, ownerErr := s.lockContentDownloadOwner(ctx, tx, req.Msg.EntityType, entityID)
-		if ownerErr != nil {
-			return ownerErr
-		}
-		if !ownerFound || ownerStatus != evaluatedStatus {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		if req.Msg.EntityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE && ownerStatus == managev1.PageStatus_PAGE_STATUS_PUBLISHED.String() {
-			reason, err := pageaccess.EvaluateStored(ctx, tx, s.spiceDB, entityID)
-			if err != nil {
-				return errs.Internal(err)
-			}
-			if reason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
-				response = connect.NewResponse(unavailableFileDownloadResponse())
-				return nil
-			}
-		}
-		draftPrincipalActive, principalErr := lockDirectDraftDownloadPrincipal(ctx, tx, evaluatedMediaAccess)
-		if principalErr != nil {
-			return errs.Internal(principalErr)
-		}
-		if !draftPrincipalActive {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, auth.GetUser(ctx))
-		if lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		if fileDownloadDecisionDependsOnActiveViewer(evaluatedSource, evaluatedAccess) && !viewerActive {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		current, ownerStatus, found, resolveErr := s.resolveContentBlockDownloadSource(
-			ctx, tx, req.Msg.EntityType, entityID, blockID, referencePath, true,
-		)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if !found || ownerStatus != evaluatedStatus {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, map[string]mediaasset.FileDownloadSource{current.PolicyKey: current}, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, map[string]mediaasset.FileDownloadSource{current.PolicyKey: current}, auth.GetUser(ctx))
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		if current.PolicyKey != evaluatedSource.PolicyKey || fingerprints[current.PolicyKey] != evaluatedFingerprint ||
-			(fileDownloadDecisionDependsOnActiveViewer(evaluatedSource, evaluatedAccess) && viewerFingerprint != evaluatedViewerFingerprint) {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		response, resolveErr = s.signReferencedFileDownload(current, evaluatedMediaAccess, evaluatedAccess)
-		return resolveErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return nil, err
-	}
-	return response, nil
+// AuthorizeDownloadQuery names the File a public viewer asks to download:
+// a Release Track's original audio (EntityType release, TrackID), or a File
+// Block attachment of a document (ContentBlock).
+type AuthorizeDownloadQuery struct {
+	EntityType   MediaEntityType
+	EntityID     string
+	TrackID      string
+	ContentBlock *ContentBlockFileSelector
 }
 
-func (s *FileService) authorizeReleaseTrackDownload(
-	ctx context.Context,
-	releaseID string,
-	trackID string,
-) (*connect.Response[openv1.AuthorizeDownloadResponse], error) {
+// ContentBlockFileSelector names one File reference of a document Block.
+type ContentBlockFileSelector struct {
+	BlockID       string
+	ReferencePath string
+}
+
+// AuthorizeDownload evaluates the viewer's download access in one snapshot,
+// then locks the policy segments, the owner, the draft principal and the
+// viewer, re-reads the attachment and signs only when nothing it evaluated
+// changed.
+func (s *Service) AuthorizeDownload(ctx context.Context, query AuthorizeDownloadQuery) (*DownloadResult, error) {
+	entityID := strings.TrimSpace(query.EntityID)
+	if entityID == "" {
+		return nil, domainerr.Required("entity_id")
+	}
+	if _, err := uuid.Parse(entityID); err != nil {
+		return nil, domainerr.InvalidField("entity_id", "must be a valid UUID")
+	}
+	var target fileDownloadTarget
+	var err error
+	if query.EntityType == EntityRelease {
+		target, err = s.releaseTrackDownloadTarget(entityID, query.TrackID)
+	} else {
+		target, err = s.contentBlockDownloadTarget(query.EntityType, entityID, query.ContentBlock)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.authorizeFileDownload(ctx, target)
+}
+
+// fileDownloadTarget is how one kind of attachment resolves its source and
+// owner. The evaluate and revalidate passes are shared.
+type fileDownloadTarget struct {
+	// resolve reads the attachment's source and owner status, locking them
+	// when locked is set.
+	resolve func(ctx context.Context, tx Store, locked bool) (mediaasset.FileDownloadSource, string, bool, error)
+	// ownerAccess decides whether the viewer may see the owner in
+	// ownerStatus, and how.
+	ownerAccess func(ctx context.Context, tx Store, ownerStatus string) (resolvedMediaAccess, bool, error)
+	// lockOwner locks the owner row and reads its status.
+	lockOwner func(ctx context.Context, tx Store) (string, bool, error)
+	// ownerVisible, when set, re-checks owner visibility under the owner
+	// lock.
+	ownerVisible func(ctx context.Context, tx Store, ownerStatus string) (bool, error)
+	// samePolicyKey also requires the re-read attachment to keep the
+	// evaluated policy key.
+	samePolicyKey bool
+}
+
+func (s *Service) contentBlockDownloadTarget(entityType MediaEntityType, entityID string, selector *ContentBlockFileSelector) (fileDownloadTarget, error) {
+	if selector == nil {
+		return fileDownloadTarget{}, domainerr.Required("content_block")
+	}
+	blockID := strings.TrimSpace(selector.BlockID)
+	if _, err := uuid.Parse(blockID); err != nil {
+		return fileDownloadTarget{}, domainerr.InvalidField("selector.block_id", "must be a valid UUID")
+	}
+	referencePath := strings.TrimSpace(selector.ReferencePath)
+	if referencePath == "" || len(referencePath) > 512 || strings.IndexFunc(referencePath, unicode.IsControl) >= 0 {
+		return fileDownloadTarget{}, domainerr.InvalidField("selector.reference_path", "must be non-empty, control-free, and at most 512 bytes")
+	}
+	return fileDownloadTarget{
+		resolve: func(ctx context.Context, tx Store, locked bool) (mediaasset.FileDownloadSource, string, bool, error) {
+			return tx.ResolveContentSource(ctx, entityType, entityID, blockID, referencePath, locked)
+		},
+		ownerAccess: func(ctx context.Context, tx Store, ownerStatus string) (resolvedMediaAccess, bool, error) {
+			return s.resolveContentOwnerDownloadAccess(ctx, tx, entityType, entityID, ownerStatus)
+		},
+		lockOwner: func(ctx context.Context, tx Store) (string, bool, error) {
+			return tx.LockContentOwner(ctx, entityType, entityID)
+		},
+		ownerVisible: func(ctx context.Context, tx Store, ownerStatus string) (bool, error) {
+			if entityType != EntityPage || ownerStatus != ownerPagePublished {
+				return true, nil
+			}
+			reason, err := tx.PageAccess(ctx, s.spiceDB, entityID)
+			if err != nil {
+				return false, err
+			}
+			return reason == pageaccess.ReasonAllowed, nil
+		},
+		samePolicyKey: true,
+	}, nil
+}
+
+func (s *Service) releaseTrackDownloadTarget(releaseID, trackID string) (fileDownloadTarget, error) {
 	trackID = strings.TrimSpace(trackID)
 	if _, err := uuid.Parse(trackID); err != nil {
-		return nil, errs.InvalidArgument("track_id", "must be a valid UUID")
+		return fileDownloadTarget{}, domainerr.InvalidField("track_id", "must be a valid UUID")
 	}
-	var evaluatedSource mediaasset.FileDownloadSource
-	var evaluatedStatus string
-	var evaluatedMediaAccess resolvedMediaAccess
-	var evaluatedAccess *openv1.FileDownloadAccess
-	var evaluatedFingerprint string
-	var evaluatedViewerFingerprint string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		source, ownerStatus, found, loadErr := s.resolveReleaseTrackDownloadSource(ctx, tx, releaseID, trackID, false)
-		if loadErr != nil {
-			return loadErr
-		}
-		if !found {
-			evaluatedAccess = unavailableFileDownloadAccess()
-			return nil
-		}
-		mediaAccess := resolvedMediaAccess{}
-		if ownerStatus != managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String() {
-			allowed, viewErr := hasDraftResourceView(ctx, s.spiceDB, policyv1.Release.View, releaseID)
-			if viewErr != nil {
-				return errs.Internal(viewErr)
+	return fileDownloadTarget{
+		resolve: func(ctx context.Context, tx Store, locked bool) (mediaasset.FileDownloadSource, string, bool, error) {
+			return tx.ResolveTrackSource(ctx, releaseID, trackID, locked)
+		},
+		ownerAccess: func(ctx context.Context, _ Store, ownerStatus string) (resolvedMediaAccess, bool, error) {
+			mediaAccess := resolvedMediaAccess{}
+			if ownerStatus == ownerReleasePublished {
+				return mediaAccess, true, nil
+			}
+			allowed, err := hasDraftResourceView(ctx, s.spiceDB, policyv1.Release.View, releaseID)
+			if err != nil {
+				return mediaAccess, false, err
 			}
 			if !allowed {
-				evaluatedAccess = unavailableFileDownloadAccess()
-				return nil
+				return mediaAccess, false, nil
 			}
 			mediaAccess.directDraft = true
 			if user := auth.GetUser(ctx); user != nil {
 				mediaAccess.directDraftIdentityID = user.IdentityID.String()
 				mediaAccess.directDraftMemberID = user.MemberID.String()
 			}
-		}
-		access, evaluateErr := s.evaluateReferencedFileDownload(ctx, tx, source)
-		if evaluateErr != nil {
-			return evaluateErr
-		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}, auth.GetUser(ctx))
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		evaluatedSource, evaluatedStatus, evaluatedMediaAccess = source, ownerStatus, mediaAccess
-		evaluatedAccess, evaluatedFingerprint = access, fingerprints[source.PolicyKey]
-		evaluatedViewerFingerprint = viewerFingerprint
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+			return mediaAccess, true, nil
+		},
+		lockOwner: func(ctx context.Context, tx Store) (string, bool, error) {
+			return tx.LockReleaseOwner(ctx, releaseID)
+		},
+	}, nil
+}
+
+// fileDownloadEvaluation is what the evaluate pass decided and the facts the
+// revalidate pass must find unchanged. A zero source means the attachment is
+// unavailable.
+type fileDownloadEvaluation struct {
+	source            mediaasset.FileDownloadSource
+	ownerStatus       string
+	mediaAccess       resolvedMediaAccess
+	access            *DownloadAccess
+	fingerprint       string
+	viewerFingerprint string
+}
+
+func (s *Service) authorizeFileDownload(ctx context.Context, target fileDownloadTarget) (*DownloadResult, error) {
+	var evaluation fileDownloadEvaluation
+	err := s.units.ReadLocked(ctx, func(tx Store) error {
+		var evaluateErr error
+		evaluation, evaluateErr = s.evaluateFileDownload(ctx, tx, target)
+		return evaluateErr
+	})
 	if err != nil {
 		return nil, err
 	}
-	if evaluatedSource.PolicyKey == "" {
-		return connect.NewResponse(&openv1.AuthorizeDownloadResponse{Access: evaluatedAccess}), nil
+	if evaluation.source.PolicyKey == "" {
+		return &DownloadResult{Access: evaluation.access}, nil
 	}
-	var response *connect.Response[openv1.AuthorizeDownloadResponse]
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluatedSource.PolicyKey: evaluatedSource}
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		ownerStatus, ownerFound, ownerErr := s.lockReleaseDownloadOwner(ctx, tx, releaseID)
-		if ownerErr != nil {
-			return ownerErr
-		}
-		if !ownerFound || ownerStatus != evaluatedStatus {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		draftPrincipalActive, principalErr := lockDirectDraftDownloadPrincipal(ctx, tx, evaluatedMediaAccess)
-		if principalErr != nil {
-			return errs.Internal(principalErr)
-		}
-		if !draftPrincipalActive {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, auth.GetUser(ctx))
-		if lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		if fileDownloadDecisionDependsOnActiveViewer(evaluatedSource, evaluatedAccess) && !viewerActive {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		current, ownerStatus, found, loadErr := s.resolveReleaseTrackDownloadSource(ctx, tx, releaseID, trackID, true)
-		if loadErr != nil {
-			return loadErr
-		}
-		if !found || ownerStatus != evaluatedStatus {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, map[string]mediaasset.FileDownloadSource{current.PolicyKey: current}, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, map[string]mediaasset.FileDownloadSource{current.PolicyKey: current}, auth.GetUser(ctx))
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		if fingerprints[current.PolicyKey] != evaluatedFingerprint ||
-			(fileDownloadDecisionDependsOnActiveViewer(evaluatedSource, evaluatedAccess) && viewerFingerprint != evaluatedViewerFingerprint) {
-			response = connect.NewResponse(unavailableFileDownloadResponse())
-			return nil
-		}
-		response, loadErr = s.signReferencedFileDownload(current, evaluatedMediaAccess, evaluatedAccess)
-		return loadErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	var response *DownloadResult
+	err = s.units.ReadLocked(ctx, func(tx Store) error {
+		var revalidateErr error
+		response, revalidateErr = s.revalidateFileDownload(ctx, tx, target, evaluation)
+		return revalidateErr
+	})
 	if err != nil {
 		return nil, err
 	}
 	return response, nil
 }
 
-func (s *FileService) lockContentDownloadOwner(
-	ctx context.Context,
-	tx *gorm.DB,
-	entityType openv1.PublicMediaEntityType,
-	entityID string,
-) (string, bool, error) {
-	ownerTable, ok := contentDownloadOwnerTable(entityType)
-	if !ok {
-		return "", false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
+func (s *Service) evaluateFileDownload(ctx context.Context, tx Store, target fileDownloadTarget) (fileDownloadEvaluation, error) {
+	unavailable := fileDownloadEvaluation{access: unavailableFileDownloadAccess()}
+	source, ownerStatus, found, err := target.resolve(ctx, tx, false)
+	if err != nil || !found {
+		return unavailable, err
 	}
-	var owner struct {
-		Status string `gorm:"column:status"`
+	mediaAccess, allowed, err := target.ownerAccess(ctx, tx, ownerStatus)
+	if err != nil || !allowed {
+		return unavailable, err
 	}
-	result := tx.WithContext(ctx).Table(ownerTable).
-		Select("status").Where("id = ?", entityID).
-		Clauses(clause.Locking{Strength: "SHARE"}).Take(&owner)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return "", false, nil
+	access, err := s.evaluateReferencedFileDownload(ctx, tx, source)
+	if err != nil {
+		return fileDownloadEvaluation{}, err
 	}
-	if result.Error != nil {
-		return "", false, errs.Internal(result.Error)
+	fingerprint, viewerFingerprint, err := s.fileDownloadFingerprints(ctx, tx, source)
+	if err != nil {
+		return fileDownloadEvaluation{}, err
 	}
-	return owner.Status, true, nil
+	return fileDownloadEvaluation{
+		source: source, ownerStatus: ownerStatus, mediaAccess: mediaAccess, access: access,
+		fingerprint: fingerprint, viewerFingerprint: viewerFingerprint,
+	}, nil
 }
 
-func (s *FileService) lockReleaseDownloadOwner(
-	ctx context.Context,
-	tx *gorm.DB,
-	releaseID string,
-) (string, bool, error) {
-	var owner struct {
-		Status string `gorm:"column:status"`
+// revalidateFileDownload signs the download only when the locked owner,
+// draft principal, viewer and attachment still match the evaluation.
+func (s *Service) revalidateFileDownload(ctx context.Context, tx Store, target fileDownloadTarget, evaluation fileDownloadEvaluation) (*DownloadResult, error) {
+	evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluation.source.PolicyKey: evaluation.source}
+	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); err != nil {
+		return nil, err
 	}
-	result := tx.WithContext(ctx).Table("release").
-		Select("status").Where("id = ?", releaseID).
-		Clauses(clause.Locking{Strength: "SHARE"}).Take(&owner)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return "", false, nil
+	ownerStatus, ownerFound, err := target.lockOwner(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
-	if result.Error != nil {
-		return "", false, errs.Internal(result.Error)
+	if !ownerFound || ownerStatus != evaluation.ownerStatus {
+		return unavailableFileDownloadResponse(), nil
 	}
-	return owner.Status, true, nil
-}
-
-func contentDownloadOwnerTable(entityType openv1.PublicMediaEntityType) (string, bool) {
-	switch entityType {
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST:
-		return "post", true
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE:
-		return "page", true
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_WORK:
-		return "work", true
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PROGRAM_EVENT:
-		return "program_event", true
-	default:
-		return "", false
-	}
-}
-
-func (s *FileService) resolveContentBlockDownloadSource(
-	ctx context.Context,
-	db *gorm.DB,
-	entityType openv1.PublicMediaEntityType,
-	entityID string,
-	blockID string,
-	referencePath string,
-	lock bool,
-) (mediaasset.FileDownloadSource, string, bool, error) {
-	ownerTable, ok := contentDownloadOwnerTable(entityType)
-	if !ok {
-		return mediaasset.FileDownloadSource{}, "", false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
-	}
-
-	var owner struct {
-		Status string `gorm:"column:status"`
-	}
-	query := db.WithContext(ctx).
-		Table("content_block_attachment AS cbf").
-		Select("owner.status").
-		Joins("JOIN content_block AS cb ON cb.id = cbf.block_id").
-		Joins("JOIN "+ownerTable+" AS owner ON owner.content_document_id = cb.document_id").
-		Where("owner.id = ? AND cb.id = ? AND cb.kind = 'file' AND cbf.reference_path = ? AND cbf.selector_kind = 'active'", entityID, blockID, referencePath)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
-	}
-	result := query.Take(&owner)
-	if result.Error != nil {
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return mediaasset.FileDownloadSource{}, "", false, nil
+	if target.ownerVisible != nil {
+		visible, err := target.ownerVisible(ctx, tx, ownerStatus)
+		if err != nil {
+			return nil, err
 		}
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(result.Error)
+		if !visible {
+			return unavailableFileDownloadResponse(), nil
+		}
 	}
-	sources, err := mediaasset.LoadContentBlockDownloadSources(ctx, db, []mediaasset.ContentBlockDownloadSelector{{
-		BlockID: blockID, ReferencePath: referencePath,
-	}})
+	draftPrincipalActive, err := lockDirectDraftDownloadPrincipal(ctx, tx, evaluation.mediaAccess)
 	if err != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(err)
+		return nil, err
 	}
-	source, found := sources[mediaasset.ContentBlockDownloadPolicyKey(blockID, referencePath)]
-	return source, owner.Status, found, nil
+	if !draftPrincipalActive {
+		return unavailableFileDownloadResponse(), nil
+	}
+	viewerActive, err := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, auth.GetUser(ctx))
+	if err != nil {
+		return nil, err
+	}
+	dependsOnViewer := fileDownloadDecisionDependsOnActiveViewer(evaluation.source, evaluation.access)
+	if dependsOnViewer && !viewerActive {
+		return unavailableFileDownloadResponse(), nil
+	}
+	current, ownerStatus, found, err := target.resolve(ctx, tx, true)
+	if err != nil {
+		return nil, err
+	}
+	if !found || ownerStatus != evaluation.ownerStatus {
+		return unavailableFileDownloadResponse(), nil
+	}
+	fingerprint, viewerFingerprint, err := s.fileDownloadFingerprints(ctx, tx, current)
+	if err != nil {
+		return nil, err
+	}
+	if (target.samePolicyKey && current.PolicyKey != evaluation.source.PolicyKey) || fingerprint != evaluation.fingerprint ||
+		(dependsOnViewer && viewerFingerprint != evaluation.viewerFingerprint) {
+		return unavailableFileDownloadResponse(), nil
+	}
+	return s.signReferencedFileDownload(current, evaluation.mediaAccess, evaluation.access)
 }
 
-func (s *FileService) resolveReleaseTrackDownloadSource(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	trackID string,
-	lock bool,
-) (mediaasset.FileDownloadSource, string, bool, error) {
-	var owner struct {
-		Status string `gorm:"column:status"`
-	}
-	query := db.WithContext(ctx).
-		Table("track").
-		Select("release.status").
-		Joins("JOIN release ON release.id = track.release_id").
-		Where("track.id = ? AND release.id = ? AND track.audio_original_file_id IS NOT NULL", trackID, releaseID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
-	}
-	result := query.Take(&owner)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return mediaasset.FileDownloadSource{}, "", false, nil
-	}
-	if result.Error != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(result.Error)
-	}
-	sources, err := mediaasset.LoadTrackDownloadSources(ctx, db, []string{trackID})
+// fileDownloadFingerprints reads the policy and viewer fingerprints of one
+// attachment source.
+func (s *Service) fileDownloadFingerprints(ctx context.Context, tx Store, source mediaasset.FileDownloadSource) (string, string, error) {
+	sources := map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}
+	fingerprints, err := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources)
 	if err != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(err)
+		return "", "", err
 	}
-	source, found := sources[trackID]
-	return source, owner.Status, found, nil
+	viewerFingerprint, err := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, auth.GetUser(ctx))
+	if err != nil {
+		return "", "", err
+	}
+	return fingerprints[source.PolicyKey], viewerFingerprint, nil
 }
 
-func (s *FileService) resolveContentOwnerDownloadAccess(
+func (s *Service) resolveContentOwnerDownloadAccess(
 	ctx context.Context,
-	db *gorm.DB,
-	entityType openv1.PublicMediaEntityType,
+	store Store,
+	entityType MediaEntityType,
 	entityID string,
 	ownerStatus string,
 ) (resolvedMediaAccess, bool, error) {
 	var viewAction auth.ResourceAction
 	var publicStatuses []string
 	switch entityType {
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST:
+	case EntityPost:
 		viewAction = policyv1.Post.View
-		publicStatuses = []string{managev1.PostStatus_POST_STATUS_PUBLISHED.String(), managev1.PostStatus_POST_STATUS_ARCHIVED.String()}
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE:
+		publicStatuses = []string{ownerPostPublished, ownerPostArchived}
+	case EntityPage:
 		viewAction = policyv1.Page.View
-		publicStatuses = []string{managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()}
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_WORK:
+		publicStatuses = []string{ownerPagePublished}
+	case EntityWork:
 		viewAction = policyv1.Work.View
-		publicStatuses = []string{managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(), managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()}
-	case openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PROGRAM_EVENT:
+		publicStatuses = []string{ownerWorkPublished, ownerWorkArchived}
+	case EntityProgramEvent:
 		viewAction = policyv1.ProgramEvent.View
-		publicStatuses = []string{managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(), managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()}
+		publicStatuses = []string{ownerProgramEventPublished, ownerProgramEventArchived}
 	default:
-		return resolvedMediaAccess{}, false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
+		return resolvedMediaAccess{}, false, domainerr.InvalidField("entity_type", "unsupported Content Block owner")
 	}
 	if slices.Contains(publicStatuses, ownerStatus) {
-		if entityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE {
-			reason, err := pageaccess.EvaluateStored(ctx, db, s.spiceDB, entityID)
-			return resolvedMediaAccess{}, reason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, err
+		if entityType == EntityPage {
+			reason, err := store.PageAccess(ctx, s.spiceDB, entityID)
+			return resolvedMediaAccess{}, reason == pageaccess.ReasonAllowed, err
 		}
 		return resolvedMediaAccess{}, true, nil
 	}
@@ -498,7 +326,7 @@ func (s *FileService) resolveContentOwnerDownloadAccess(
 
 func lockDirectDraftDownloadPrincipal(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	access resolvedMediaAccess,
 ) (bool, error) {
 	if !access.directDraft {
@@ -510,26 +338,26 @@ func lockDirectDraftDownloadPrincipal(
 		Authenticated: true,
 		Onboarded:     true,
 	}
-	return identitystate.LockActivePrincipal(ctx, tx, principal)
+	return tx.LockActivePrincipal(ctx, principal)
 }
 
-func (s *FileService) evaluateReferencedFileDownload(
+func (s *Service) evaluateReferencedFileDownload(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	source mediaasset.FileDownloadSource,
-) (*openv1.FileDownloadAccess, error) {
+) (*DownloadAccess, error) {
 
 	user := auth.GetUser(ctx)
-	allowed, err := mediaasset.EvaluateFileDownloadAccess(ctx, db, s.spiceDB, source, user, s.segments)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(ctx, store, s.spiceDB, source, user)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	signInActionable := source.Audience == mediaasset.FileDownloadAudienceAuthenticated
 	if source.Audience == mediaasset.FileDownloadAudienceRestricted &&
 		(user == nil || !user.Authenticated || user.MemberID == "") {
-		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, db, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
+		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, store, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		signInActionable = presence[source.PolicyKey]
 	}
@@ -541,21 +369,21 @@ func (s *FileService) evaluateReferencedFileDownload(
 	), nil
 }
 
-func (s *FileService) signReferencedFileDownload(
+func (s *Service) signReferencedFileDownload(
 	source mediaasset.FileDownloadSource,
 	mediaAccess resolvedMediaAccess,
-	access *openv1.FileDownloadAccess,
-) (*connect.Response[openv1.AuthorizeDownloadResponse], error) {
-	response := &openv1.AuthorizeDownloadResponse{Access: access}
-	if access.GetAction() != openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-		return connect.NewResponse(response), nil
+	access *DownloadAccess,
+) (*DownloadResult, error) {
+	response := &DownloadResult{Access: access}
+	if downloadAction(access) != ActionDownload {
+		return response, nil
 	}
 
 	downloadTTL := s.effectiveDownloadTTL()
 	if mediaAccess.directDraft {
 		downloadTTL = directDraftMediaTTL(downloadTTL)
 	}
-	download, err := buildExpiringFileRef(
+	download, err := mediaauth.ExpiringReference(
 		s.mediaDomain,
 		s.mediaSecret,
 		source.FileID,
@@ -566,10 +394,10 @@ func (s *FileService) signReferencedFileDownload(
 		downloadTTL,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	response.Download = download
-	return connect.NewResponse(response), nil
+	return response, nil
 }
 
 func effectiveFileDownloadAccess(
@@ -577,20 +405,20 @@ func effectiveFileDownloadAccess(
 	user *auth.UserInfo,
 	allowed bool,
 	signInActionable bool,
-) *openv1.FileDownloadAccess {
+) *DownloadAccess {
 	if allowed {
-		return &openv1.FileDownloadAccess{
-			Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE,
-			Action:       openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD,
+		return &DownloadAccess{
+			Availability: DownloadAvailable,
+			Action:       ActionDownload,
 		}
 	}
 	if (audience == mediaasset.FileDownloadAudienceAuthenticated ||
 		audience == mediaasset.FileDownloadAudienceRestricted) &&
 		(user == nil || !user.Authenticated || user.MemberID == "") &&
 		signInActionable {
-		return &openv1.FileDownloadAccess{
-			Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE,
-			Action:       openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_SIGN_IN,
+		return &DownloadAccess{
+			Availability: DownloadAvailable,
+			Action:       ActionSignIn,
 		}
 	}
 	return unavailableFileDownloadAccess()
@@ -598,21 +426,21 @@ func effectiveFileDownloadAccess(
 
 func fileDownloadDecisionDependsOnActiveViewer(
 	source mediaasset.FileDownloadSource,
-	access *openv1.FileDownloadAccess,
+	access *DownloadAccess,
 ) bool {
-	return access.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD &&
+	return downloadAction(access) == ActionDownload &&
 		(source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted)
 }
 
-func unavailableFileDownloadAccess() *openv1.FileDownloadAccess {
-	return &openv1.FileDownloadAccess{
-		Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_UNAVAILABLE,
-		Action:       openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE,
+func unavailableFileDownloadAccess() *DownloadAccess {
+	return &DownloadAccess{
+		Availability: DownloadUnavailable,
+		Action:       ActionNone,
 	}
 }
 
-func unavailableFileDownloadResponse() *openv1.AuthorizeDownloadResponse {
-	return &openv1.AuthorizeDownloadResponse{
+func unavailableFileDownloadResponse() *DownloadResult {
+	return &DownloadResult{
 		Access: unavailableFileDownloadAccess(),
 	}
 }

@@ -3,8 +3,8 @@ package filemedia
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -13,16 +13,13 @@ import (
 	"strconv"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // HandleUploadSource downloads verified original bytes without creating a file
 // or starting ingest processing. The browser owns processing and upload.
-func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleUploadSource(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet {
@@ -32,21 +29,18 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	opts, err := parseUploadSourceQuery(r.URL.RawQuery)
 	if err != nil {
-		slog.WarnContext(r.Context(), "Invalid upload source query", failurecause.Attr(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	request, err := s.prepareRemoteImport(r.Context(), opts)
 	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		writeUploadSourceError(w, err)
 		return
 	}
 	source, err := s.openBrowserUploadSource(r.Context(), request)
 	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		writeUploadSourceError(w, err)
 		return
 	}
@@ -78,8 +72,8 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	var excess [1]byte
 	n, err := reader.Read(excess[:])
-	if n != 0 || err != io.EOF || written < request.config.MinSize || (source.response.ContentLength >= 0 && written != source.response.ContentLength) {
-		if err == nil || err == io.EOF {
+	if n != 0 || !errors.Is(err, io.EOF) || written < request.config.MinSize || (source.response.ContentLength >= 0 && written != source.response.ContentLength) {
+		if err == nil || errors.Is(err, io.EOF) {
 			err = fmt.Errorf("remote source length does not match expected bounds")
 		}
 		slog.ErrorContext(r.Context(), "Remote upload source stream incomplete", failurecause.Attr(err), "bytes_written", written, "excess_bytes", n)
@@ -104,7 +98,6 @@ func (r *uploadSourceContextReader) Read(p []byte) (int, error) {
 func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	query, err := url.ParseQuery(rawQuery)
 	if err != nil {
-		slog.Warn("Failed to parse upload source query", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid query")
 	}
 	for key, values := range query {
@@ -114,14 +107,13 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	value, err := strconv.ParseInt(query.Get("uploadType"), 10, 32)
 	if err != nil {
-		slog.Warn("Failed to parse upload source uploadType", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
-	if _, ok := managev1.UploadType_name[int32(value)]; !ok || value == 0 {
+	if ok := UploadType(value).Valid(); !ok || value == 0 {
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
 	opts := remoteFileImportOptions{
-		uploadType: managev1.UploadType(value), sourceURL: query.Get("url"),
+		uploadType: UploadType(value), sourceURL: query.Get("url"),
 		entityID: strings.TrimSpace(query.Get("entityId")), slotID: strings.TrimSpace(query.Get("slotId")),
 		checkPermission: true,
 		// Preparation validates ingest identities, but the relay never uses or
@@ -133,23 +125,21 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	if opts.entityID != "" {
 		if _, err := uuid.Parse(opts.entityID); err != nil {
-			slog.Warn("Failed to parse upload source entity ID", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityId")
 		}
 	}
 	if query.Has("entityType") {
 		value, err := strconv.ParseInt(query.Get("entityType"), 10, 32)
 		if err != nil {
-			slog.Warn("Failed to parse upload source entityType", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityType")
 		}
-		if _, ok := managev1.TranscodeEntityType_name[int32(value)]; !ok || value == 0 {
+		if ok := EntityType(value).Valid(); !ok || value == 0 {
 			return opts, fmt.Errorf("invalid entityType")
 		}
-		opts.transcodeEntityType = managev1.TranscodeEntityType(value)
+		opts.transcodeEntityType = EntityType(value)
 		opts.entityType = opts.transcodeEntityType.String()
 	}
-	if (opts.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(opts.uploadType)) && (query.Has("entityId") || query.Has("entityType")) {
+	if (opts.uploadType == UploadGeneralFile || isEditorFileIngestUploadType(opts.uploadType)) && (query.Has("entityId") || query.Has("entityType")) {
 		return opts, fmt.Errorf("File library upload must omit entityId and entityType")
 	}
 	if query.Has("expectedCurrentFileId") {
@@ -157,21 +147,4 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 		opts.expectedCurrentFileID = &expected
 	}
 	return opts, nil
-}
-
-func writeUploadSourceError(w http.ResponseWriter, err error) {
-	status := http.StatusBadGateway
-	switch connect.CodeOf(err) {
-	case connect.CodeInvalidArgument:
-		status = http.StatusBadRequest
-	case connect.CodeUnauthenticated:
-		status = http.StatusUnauthorized
-	case connect.CodePermissionDenied:
-		status = http.StatusForbidden
-	case connect.CodeNotFound:
-		status = http.StatusNotFound
-	case connect.CodeUnavailable:
-		status = http.StatusServiceUnavailable
-	}
-	http.Error(w, http.StatusText(status), status)
 }

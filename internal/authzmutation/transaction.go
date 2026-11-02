@@ -21,13 +21,20 @@ type WriteRelationships = func(
 	compensate []policyv1.RelationshipMutation,
 ) error
 
+// RelationshipWriter writes an exact relationship batch against its expected
+// pre-state and restores it. *auth.SpiceDBClient is the production writer.
+type RelationshipWriter interface {
+	ApplyRelationshipsExpecting(ctx context.Context, apply, compensate []policyv1.RelationshipMutation) (auth.ZedToken, error)
+	CompensateRelationshipsExpecting(ctx context.Context, restore, expectedCurrent []policyv1.RelationshipMutation) (auth.ZedToken, error)
+}
+
 // Execute keeps a product database transaction open while
 // its exact SpiceDB relationship change is applied. The callback must invoke
 // write exactly once and must supply the exact inverse relationship batch.
 func Execute(
 	ctx context.Context,
 	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB RelationshipWriter,
 	callback func(*gorm.DB, WriteRelationships) error,
 ) (auth.ZedToken, error) {
 	if db == nil {
@@ -73,6 +80,8 @@ func Execute(
 		defer cancel()
 		_, err := spiceDB.CompensateRelationshipsExpecting(compensationCtx, compensation, forward)
 		if err != nil {
+			// The returned error keeps the callback's classification, which
+			// can be a client outcome; drifted authority needs an operator.
 			slog.ErrorContext(compensationCtx, "Authorization rollback compensation failed", failurecause.Attr(err))
 			RecordAuthorizationRollbackCompensationFailed(compensationCtx)
 			return fmt.Errorf("compensate authorization relationships before database rollback: %w", err)
@@ -119,13 +128,8 @@ func Execute(
 		if panicValue == nil {
 			return
 		}
-		privateBody := ""
-		var upstreamError *auth.KratosHTTPError
-		if panicErr, ok := panicValue.(error); ok && errors.As(panicErr, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		cause, stack := failurecause.Panic(panicValue, privateBody)
-		slog.ErrorContext(context.WithoutCancel(ctx), "Operation failed", "reason", "authorization_mutation_panic", "failure_cause", cause, "panic_stack", stack)
+		// The re-raised panic reaches the RPC or queue boundary, which logs it
+		// once with the original stack.
 		if commitStarted {
 			RecordAuthorizationCommitUncertain(
 				context.WithoutCancel(ctx),
@@ -139,7 +143,6 @@ func Execute(
 		compensationErr := compensateWhileLocked()
 		rollbackErr := tx.Rollback().Error
 		if compensationErr != nil || rollbackErr != nil {
-			slog.ErrorContext(context.WithoutCancel(ctx), "Operation failed", "reason", "authorization_panic_rollback_failed", failurecause.Attr(errors.Join(compensationErr, rollbackErr)))
 			panic(errors.Join(
 				panicError(panicValue),
 				compensationErr,
@@ -160,6 +163,8 @@ func Execute(
 		compensationErr := compensateWhileLocked()
 		rollbackErr := tx.Rollback().Error
 		if rollbackErr != nil {
+			// Logged here for the same reason as a failed compensation: the
+			// request can still end with the callback's client error.
 			slog.ErrorContext(context.WithoutCancel(ctx), "Authorized database rollback failed", failurecause.Attr(rollbackErr))
 		}
 		if compensationErr == nil && rollbackErr == nil {
@@ -176,7 +181,6 @@ func Execute(
 	// result. Preserve the confirmed SpiceDB write and never compensate here.
 	commitStarted = true
 	if commitErr := tx.Commit().Error; commitErr != nil {
-		slog.ErrorContext(context.WithoutCancel(ctx), "Authorized database commit outcome is uncertain", failurecause.Attr(commitErr))
 		RecordAuthorizationCommitUncertain(
 			context.WithoutCancel(ctx),
 			spiceDBConfirmedAt,

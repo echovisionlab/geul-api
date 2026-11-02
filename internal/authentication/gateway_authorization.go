@@ -4,87 +4,63 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
-// GatewayAuthorizationService is the private coarse authorization boundary
-// called by Oathkeeper. It accepts only the generated account/session/role
+// GatewayAccessQuery is one Oathkeeper authorization question: may the
+// session of the account Identity pass the gateway with role.
+type GatewayAccessQuery struct {
+	AccountIdentityID string
+	SessionID         string
+	Role              policyv1.AuthorizationRole
+}
+
+// AuthorizeGatewayAccess is the private coarse authorization boundary called
+// by Oathkeeper. It accepts only the generated account/session/role
 // contract; object-level authorization remains in API handlers.
-type GatewayAuthorizationService struct {
-	intrav1connect.UnimplementedInternalGatewayAuthorizationServiceHandler
-	db      *gorm.DB
-	spicedb *auth.SpiceDBClient
-}
-
-func NewGatewayAuthorizationService(db *gorm.DB, spicedb *auth.SpiceDBClient) *GatewayAuthorizationService {
-	if db == nil || spicedb == nil {
-		panic("gateway authorization requires database and SpiceDB")
-	}
-	return &GatewayAuthorizationService{db: db, spicedb: spicedb}
-}
-
-func (s *GatewayAuthorizationService) AuthorizeGatewayAccess(
-	ctx context.Context,
-	req *connect.Request[intrav1.AuthorizeGatewayAccessRequest],
-) (*connect.Response[intrav1.AuthorizeGatewayAccessResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	identityID, err := uuidutil.ParseCanonical(req.Msg.GetAccountIdentityId(), "account_identity_id")
+func (s *Service) AuthorizeGatewayAccess(ctx context.Context, query GatewayAccessQuery) error {
+	identityID, err := uuidutil.ParseCanonical(query.AccountIdentityID, "account_identity_id")
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return domainerr.InvalidSession().WithCause(err)
 	}
-	sessionID, err := uuidutil.ParseCanonical(req.Msg.GetSessionId(), "session_id")
+	sessionID, err := uuidutil.ParseCanonical(query.SessionID, "session_id")
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return domainerr.InvalidSession().WithCause(err)
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, s.db, sessionID.String())
+	principal, err := s.sessions.Principal(ctx, sessionID.String())
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Operation failed", "reason", "gateway_session_invalid", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return domainerr.InvalidSession().WithCause(err)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("principal database")
+		return domainerr.DependencyUnavailable("principal database").WithCause(err)
 	}
 	if principal.IdentityID != auth.IdentityID(identityID.String()) || principal.Banned || !principal.Onboarded {
-		return nil, errs.InvalidSession()
+		return domainerr.InvalidSession()
 	}
-	can, ok, err := gatewayAuthorizationCan(req.Msg.GetRole())
+	can, ok, err := gatewayAuthorizationCan(query.Role)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "AuthorizeGatewayAccess", failurecause.Attr(err))
-		return nil, errs.Internal(err)
+		return err
 	}
 	if !ok {
-		return nil, errs.InvalidArgument("role", "unsupported gateway authorization role")
+		return domainerr.InvalidField("role", "unsupported gateway authorization role")
 	}
 	authorizationCtx := auth.WithUser(ctx, principal)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return domainerr.InvalidSession().WithCause(err)
 	}
-	authorized, err := s.spicedb.Can(authorizationCtx, decision)
+	authorized, err := s.spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !authorized {
-		return nil, errs.PermissionDenied(fmt.Sprintf("%s access required", req.Msg.GetRole().String()))
+		return domainerr.Denied(fmt.Sprintf("%s access required", query.Role.String()))
 	}
-	return connect.NewResponse(&intrav1.AuthorizeGatewayAccessResponse{}), nil
+	return nil
 }
 
 func gatewayAuthorizationCan(role policyv1.AuthorizationRole) (policyv1.Can, bool, error) {

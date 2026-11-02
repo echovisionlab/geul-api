@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,13 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
 const (
@@ -89,10 +88,10 @@ var remoteImportNonPublicPrefixes = []netip.Prefix{
 }
 
 type remoteFileImportOptions struct {
-	uploadType            managev1.UploadType
+	uploadType            UploadType
 	entityID              string
 	entityType            string
-	transcodeEntityType   managev1.TranscodeEntityType
+	transcodeEntityType   EntityType
 	sourceURL             string
 	fileName              string
 	actorMemberID         string
@@ -110,28 +109,26 @@ type remoteFileImportOptions struct {
 // streamed remote ingest authority. FileName is a display hint; MIME and the
 // canonical extension always come from verified bytes.
 type RemoteFileImportInput struct {
-	UploadType    managev1.UploadType
+	UploadType    UploadType
 	SourceURL     string
 	FileName      string
 	CorrelationID string
 }
 
-func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
+func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *ImportedFile, resultErr error) {
 	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Remote file import failed", failurecause.Attr(resultErr, input.FileName), "correlation_id", input.CorrelationID, "upload_type", input.UploadType.String())
-		}
+		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
-	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
-		return nil, errs.InvalidArgument("upload_type", "standalone File import requires a File library upload kind")
+
+	if input.UploadType != UploadGeneralFile && !isEditorFileIngestUploadType(input.UploadType) {
+		return nil, domainerr.InvalidField("upload_type", "standalone File import requires a File library upload kind")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if strings.TrimSpace(input.CorrelationID) == "" {
-		return nil, errs.InvalidArgument("correlation_id", "standalone File import requires a stable correlation UUID")
+		return nil, domainerr.InvalidField("correlation_id", "standalone File import requires a stable correlation UUID")
 	}
 	fileName := strings.TrimSpace(input.FileName)
 	if fileName != "" {
@@ -153,12 +150,12 @@ type remoteFileImportResult struct {
 	fileName              string
 	mimeType              string
 	size                  int64
-	inline                *commonv1.ExpiringMediaRef
-	download              *commonv1.ExpiringMediaRef
+	inline                *mediaauth.Reference
+	download              *mediaauth.Reference
 	slotID                string
 	attemptID             string
 	expectedCurrentFileID *string
-	asset                 *commonv1.AssetRef
+	asset                 *mediaasset.Reference
 }
 
 type countingReader struct {
@@ -254,6 +251,10 @@ func isInternalIP(ip net.IP) bool {
 	return false
 }
 
+// errRemoteImportHostnameUnresolved is the client text of a failed DNS lookup;
+// the resolver error it wraps is server-side diagnosis.
+var errRemoteImportHostnameUnresolved = errors.New("failed to resolve hostname")
+
 func validateRemoteImportURL(ctx context.Context, resolver remoteImportResolver, parsedURL *url.URL) (remoteImportTarget, error) {
 	if parsedURL == nil || parsedURL.Scheme != "https" {
 		return remoteImportTarget{}, fmt.Errorf("only HTTPS URLs allowed")
@@ -274,11 +275,11 @@ func validateRemoteImportURL(ctx context.Context, resolver remoteImportResolver,
 	}
 
 	ips, err := resolver.LookupIP(ctx, "ip", hostname)
-	if err != nil || len(ips) == 0 {
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to resolve remote import hostname", failurecause.Attr(err))
-		}
-		return remoteImportTarget{}, fmt.Errorf("failed to resolve hostname")
+	if err != nil {
+		return remoteImportTarget{}, fmt.Errorf("%w: %w", errRemoteImportHostnameUnresolved, err)
+	}
+	if len(ips) == 0 {
+		return remoteImportTarget{}, errRemoteImportHostnameUnresolved
 	}
 	if slices.ContainsFunc(ips, isInternalIP) {
 		return remoteImportTarget{}, fmt.Errorf("internal URLs not allowed")
@@ -324,32 +325,35 @@ func newRemoteImportHTTPClient(
 	}, transport: transport}
 }
 
-// DownloadFromUrl downloads a file from an external URL and stores it.
-func (s *FileService) DownloadFromUrl(
-	ctx context.Context,
-	req *connect.Request[managev1.DownloadFromUrlRequest],
-) (_ *connect.Response[managev1.DownloadFromUrlResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DownloadFromUrl", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+// DownloadFromURLCommand imports a remote HTTPS file as a File for an
+// upload type and its target entity.
+type DownloadFromURLCommand struct {
+	UploadType            UploadType
+	EntityID              string
+	EntityType            *EntityType
+	URL                   string
+	CorrelationID         string
+	SlotID                string
+	ExpectedCurrentFileID *string
+}
+
+// DownloadFromURL downloads a file from an external URL and stores it.
+func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCommand) (*ImportedFile, error) {
 	var entityType string
-	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
-	if req.Msg.EntityType != nil {
-		entityType = req.Msg.EntityType.String()
-		transcodeEntityType = req.Msg.GetEntityType()
+	transcodeEntityType := EntityUnspecified
+	if command.EntityType != nil {
+		entityType = command.EntityType.String()
+		transcodeEntityType = *command.EntityType
 	}
 	result, err := s.importRemoteFile(ctx, remoteFileImportOptions{
-		uploadType:            req.Msg.UploadType,
-		entityID:              req.Msg.EntityId,
+		uploadType:            command.UploadType,
+		entityID:              command.EntityID,
 		entityType:            entityType,
 		transcodeEntityType:   transcodeEntityType,
-		sourceURL:             req.Msg.Url,
-		correlationID:         req.Msg.GetCorrelationId(),
-		slotID:                req.Msg.GetSlotId(),
-		expectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
+		sourceURL:             command.URL,
+		correlationID:         command.CorrelationID,
+		slotID:                command.SlotID,
+		expectedCurrentFileID: command.ExpectedCurrentFileID,
 		emitLifecycle:         true,
 		triggerTranscoding:    true,
 		checkPermission:       true,
@@ -357,26 +361,26 @@ func (s *FileService) DownloadFromUrl(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(remoteFileImportResponse(result)), nil
+	return remoteFileImportResponse(result), nil
 }
 
-func remoteFileImportResponse(result *remoteFileImportResult) *managev1.DownloadFromUrlResponse {
-	return &managev1.DownloadFromUrlResponse{
-		FileId:                result.fileID,
+func remoteFileImportResponse(result *remoteFileImportResult) *ImportedFile {
+	return &ImportedFile{
+		FileID:                result.fileID,
 		Delivery:              mediaDeliveryFromRemoteImport(result),
-		SlotId:                optionalNonEmptyString(result.slotID),
-		IngestAttemptId:       optionalNonEmptyString(result.attemptID),
-		ExpectedCurrentFileId: result.expectedCurrentFileID,
+		SlotID:                optionalNonEmptyString(result.slotID),
+		IngestAttemptID:       optionalNonEmptyString(result.attemptID),
+		ExpectedCurrentFileID: result.expectedCurrentFileID,
 	}
 }
 
-func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *commonv1.MediaDelivery {
+func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *Delivery {
 	if result == nil {
 		return nil
 	}
 	fileName := result.fileName
-	return &commonv1.MediaDelivery{
-		FileId:    result.fileID,
+	return &Delivery{
+		FileID:    result.fileID,
 		Extension: mediaExtension(&result.mimeType),
 		MimeType:  result.mimeType,
 		FileSize:  result.size,

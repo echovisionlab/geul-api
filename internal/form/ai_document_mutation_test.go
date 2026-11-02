@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *testing.T) {
@@ -36,7 +39,7 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 		t.Run(test.name, func(t *testing.T) {
 			mutation := valid
 			test.mutate(&mutation)
-			if code := connect.CodeOf(validateCompiledFormAIDocumentMutation(state, mutation)); code != connect.CodeInvalidArgument {
+			if code := errs.Wrap(validateCompiledFormAIDocumentMutation(state, mutation)).Code(); code != connect.CodeInvalidArgument {
 				t.Fatalf("mismatch code = %s, want invalid_argument", code)
 			}
 		})
@@ -53,7 +56,7 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 		t.Run(test.name, func(t *testing.T) {
 			mutation := valid
 			test.mutate(&mutation)
-			var conflict *AIDocumentRevisionConflictError
+			var conflict *aidocument.RevisionConflict
 			if err := validateCompiledFormAIDocumentMutation(state, mutation); !errors.As(err, &conflict) ||
 				conflict.CurrentDocumentRevision != state.DocumentRevision || conflict.CurrentTargetRevision == nil ||
 				*conflict.CurrentTargetRevision != *state.TargetRevision {
@@ -64,9 +67,9 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 
 	staleTarget := valid
 	staleTarget.ExpectedTargetRevision = formTestStringPointer("50")
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	if err := validateCompiledFormAIDocumentMutation(state, staleTarget); !errors.As(err, &conflict) ||
-		conflict.Kind != AIDocumentTargetRevisionConflict || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != "51" {
+		conflict.Kind != aidocument.ConflictTargetRevision || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != "51" {
 		t.Fatalf("target mismatch error = %+v", err)
 	}
 }
@@ -75,13 +78,13 @@ func formTestStringPointer(value string) *string { return &value }
 
 func TestDeriveFormTargetRevisionBindsDocumentAndLocaleWriteFact(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 25, 0, 0, 0, 0, time.UTC)
-	row := formAIDocumentLocaleRow{UpdatedAt: updatedAt}
+	row := Locale{UpdatedAt: updatedAt}
 	base, err := deriveFormTargetRevision("document-1", row)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nextLocale, err := deriveFormTargetRevision(
-		"document-1", formAIDocumentLocaleRow{UpdatedAt: updatedAt.Add(time.Microsecond)},
+		"document-1", Locale{UpdatedAt: updatedAt.Add(time.Microsecond)},
 	)
 	if err != nil {
 		t.Fatal(err)

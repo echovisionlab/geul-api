@@ -2,36 +2,30 @@ package page
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/translation"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
 // LoadTranslationSourceDocument returns the Page-owned typed document used to
-// extract translation units.
-func LoadTranslationSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	pageID string,
-) (*translation.SourceDocument, error) {
+// extract translation units, read through store in the translation domain's
+// transaction.
+func LoadTranslationSourceDocument(ctx context.Context, store Store, pageID string) (*translation.SourceDocument, error) {
 	if store == nil {
-		return nil, errs.Internal(fmt.Errorf("page translation Content Block store is not configured"))
+		return nil, errors.New("page translation Content Block store is not configured")
 	}
-	metadata, err := loadRequiredPageSourceLocaleMetadata(ctx, db, pageID)
+	metadata, err := loadRequiredPageSourceLocaleMetadata(ctx, store, pageID)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadPageContentDocumentID(ctx, db, pageID)
+	documentID, err := loadPageContentDocumentID(ctx, store, pageID, Unlocked)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, metadata.Locale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, metadata.Locale)
 	if err != nil {
 		return nil, normalizePageContentBlockError(err)
 	}
@@ -56,45 +50,33 @@ func validatePageSourceLocaleMutations(
 	groups []contentblock.LocaleMutationGroup,
 ) error {
 	if strings.TrimSpace(pageID) == "" || strings.TrimSpace(sourceLocale) == "" {
-		return errs.Internal(fmt.Errorf("invalid Page source locale"))
+		return errors.New("invalid Page source locale")
 	}
 
 	for _, group := range groups {
 		locale := strings.TrimSpace(group.Locale)
 		if locale == "" {
-			return errs.Internal(fmt.Errorf("page target locale is empty"))
+			return errors.New("page target locale is empty")
 		}
 		if locale != sourceLocale {
-			return errs.FailedPrecondition("target Page locale documents are read-only")
+			return domainerr.Precondition("target Page locale documents are read-only")
 		}
 	}
 	return nil
 }
 
-// UpsertTranslationMetadataEntry persists Page target metadata. The Page body
+// upsertTranslationMetadataEntry persists Page target metadata. The Page body
 // remains exclusively in typed Content Blocks.
-func UpsertTranslationMetadataEntry(
+func upsertTranslationMetadataEntry(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	pageID string,
 	locale string,
 	input translation.EntryWrite,
 ) error {
 	if len(input.ContentJSON) > 0 || input.ContentHTML != nil || input.ContentText != nil {
-		return errs.FailedPrecondition("Page translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Page translation body is stored as typed Content Blocks")
 	}
 	now := input.Now.UTC()
-	if err := db.WithContext(ctx).Exec(
-		`INSERT INTO page_translation (
-			entity_id, locale, title, summary, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-			title = EXCLUDED.title,
-			summary = EXCLUDED.summary,
-			updated_at = EXCLUDED.updated_at`,
-		pageID, locale, input.Title, input.Summary, now, now,
-	).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return store.UpsertLocale(ctx, pageID, locale, input.Title, input.Summary, now)
 }

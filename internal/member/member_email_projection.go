@@ -6,36 +6,24 @@ import (
 	"strings"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/lib/pq"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // PrimaryEmail returns the exact linked Member delivery-primary projection.
 // The Identity reverse pointer is part of every read so a stale or malformed
-// pair is indistinguishable from a missing Member projection.
-func PrimaryEmail(ctx context.Context, db *gorm.DB, memberID, identityID string) (string, error) {
+// pair is indistinguishable from a missing Member projection
+// (ErrMemberNotFound).
+func PrimaryEmail(ctx context.Context, store EmailProjectionStore, memberID, identityID string) (string, error) {
 	if !memberEmailProjectionPair(memberID, identityID) {
-		return "", gorm.ErrRecordNotFound
+		return "", ErrMemberNotFound
 	}
-	var row struct {
-		Email string `gorm:"column:primary_email"`
+	email, err := store.PrimaryEmail(ctx, memberID, identityID)
+	if err != nil {
+		return "", err
 	}
-	result := db.WithContext(ctx).
-		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
-		Select("member.primary_email").
-		Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.deleted_at IS NULL AND member.primary_email IS NOT NULL", memberID, identityID).
-		Take(&row)
-	if result.Error != nil {
-		return "", result.Error
+	if strings.TrimSpace(email) == "" {
+		return "", ErrMemberNotFound
 	}
-	if result.RowsAffected != 1 || strings.TrimSpace(row.Email) == "" {
-		return "", gorm.ErrRecordNotFound
-	}
-	return strings.TrimSpace(row.Email), nil
+	return strings.TrimSpace(email), nil
 }
 
 // SyncEmailProjection locks and replaces the exact linked Member email
@@ -45,12 +33,12 @@ func PrimaryEmail(ctx context.Context, db *gorm.DB, memberID, identityID string)
 // unless primary_email is present in available_emails.
 func SyncEmailProjection(
 	ctx context.Context,
-	tx *gorm.DB,
+	store EmailProjectionStore,
 	memberID, identityID, primaryEmail string,
 	availableEmails []string,
 ) error {
 	if !memberEmailProjectionPair(memberID, identityID) {
-		return gorm.ErrRecordNotFound
+		return ErrMemberNotFound
 	}
 	primaryEmail = emailutil.NormalizeAddressForDelivery(primaryEmail)
 	if primaryEmail == "" {
@@ -68,30 +56,14 @@ func SyncEmailProjection(
 	if !primaryFound {
 		return fmt.Errorf("member primary email must be an available email")
 	}
-	var member struct {
-		ID string `gorm:"column:id"`
+	locked, err := store.LockLinkedMember(ctx, memberID, identityID)
+	if err != nil {
+		return err
 	}
-	result := tx.WithContext(ctx).
-		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
-		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "member"}}).
-		Select("member.id").
-		Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.deleted_at IS NULL", memberID, identityID).
-		Take(&member)
-	if result.Error != nil {
-		return result.Error
+	if locked != memberID {
+		return ErrMemberNotFound
 	}
-	if member.ID != memberID {
-		return gorm.ErrRecordNotFound
-	}
-	return tx.WithContext(ctx).
-		Model(&model.Member{}).
-		Where("id = ?::uuid AND account_identity_id = ?::uuid AND deleted_at IS NULL", memberID, identityID).
-		Updates(structured.Fields{
-			"primary_email":    primaryEmail,
-			"available_emails": pq.StringArray(availableEmails),
-			"updated_at":       gorm.Expr("CURRENT_TIMESTAMP"),
-		}).Error
+	return store.UpdateEmailProjection(ctx, memberID, identityID, primaryEmail, availableEmails)
 }
 
 func memberEmailProjectionPair(memberID, identityID string) bool {

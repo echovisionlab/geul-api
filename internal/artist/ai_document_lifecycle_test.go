@@ -26,7 +26,7 @@ func TestArtistAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
 		test := test
 		t.Run(test.status, func(t *testing.T) {
 			t.Parallel()
-			published, valid := artistAIDocumentLifecycle(test.status)
+			published, valid := artistAIDocumentLifecycle(Status(test.status))
 			if published != test.published || valid != test.valid {
 				t.Fatalf("artistAIDocumentLifecycle(%q) = (%t, %t), want (%t, %t)", test.status, published, valid, test.published, test.valid)
 			}

@@ -1,33 +1,60 @@
 package public
 
 import (
+	"errors"
+	"slices"
+	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
-	"gorm.io/gorm"
 )
 
-type FileService struct {
-	openv1connect.UnimplementedFileServiceHandler
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
+// Deps are the collaborators of the public File use cases.
+type Deps struct {
+	Units       mutation.UnitOfWork[Store]
+	SpiceDB     authz.AuthorizationDecisionChecker
+	CDNDomain   string
+	MediaDomain string
+	MediaSecret string
+	// DownloadTTL bounds signed download URLs; zero or more than
+	// mediaauth.DownloadTTL signs for mediaauth.DownloadTTL.
+	DownloadTTL time.Duration
+}
+
+// Service holds the public File use cases: download authorization and the
+// public media deliveries other domains' public reads hydrate.
+type Service struct {
+	units       mutation.UnitOfWork[Store]
+	spiceDB     authz.AuthorizationDecisionChecker
 	cdnDomain   string
 	mediaDomain string
 	mediaSecret string
 	downloadTTL time.Duration
-	segments    mediaasset.SegmentConfigLoader
 }
 
-type FileServiceOption func(*FileService)
-
-func WithDownloadSegmentConfigs(loader mediaasset.SegmentConfigLoader) FileServiceOption {
-	return func(service *FileService) { service.segments = loader }
+// NewService validates deps and returns the public File use cases.
+func NewService(deps Deps) (*Service, error) {
+	var missing []string
+	for name, absent := range map[string]bool{"Units": deps.Units == nil, "SpiceDB": deps.SpiceDB == nil} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return nil, errors.New("public file media dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return &Service{
+		units: deps.Units, spiceDB: deps.SpiceDB,
+		cdnDomain: deps.CDNDomain, mediaDomain: deps.MediaDomain, mediaSecret: deps.MediaSecret,
+		downloadTTL: boundedMediaTTL(deps.DownloadTTL, mediaauth.DownloadTTL, mediaauth.DownloadTTL),
+	}, nil
 }
 
-func (s *FileService) effectiveDownloadTTL() time.Duration {
+func (s *Service) effectiveDownloadTTL() time.Duration {
 	if s != nil {
 		return boundedMediaTTL(s.downloadTTL, mediaauth.DownloadTTL, mediaauth.DownloadTTL)
 	}
@@ -42,32 +69,4 @@ func boundedMediaTTL(requested, fallback, maximum time.Duration) time.Duration {
 		return maximum
 	}
 	return requested
-}
-
-func NewFileService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	cdnDomain string,
-	mediaDomain string,
-	mediaSecret string,
-	downloadTTL time.Duration,
-	options ...FileServiceOption,
-) *FileService {
-	if db == nil || spiceDB == nil {
-		panic("public file service dependencies are required")
-	}
-	service := &FileService{
-		db:          db,
-		spiceDB:     spiceDB,
-		cdnDomain:   cdnDomain,
-		mediaDomain: mediaDomain,
-		mediaSecret: mediaSecret,
-		downloadTTL: boundedMediaTTL(downloadTTL, mediaauth.DownloadTTL, mediaauth.DownloadTTL),
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
 }

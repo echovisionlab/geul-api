@@ -2,309 +2,249 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/google/uuid"
 )
 
-func (s *ProgramEventSeriesService) CreateProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// CreateProgramEventSeriesCommand creates a draft series.
+type CreateProgramEventSeriesCommand struct {
+	Title        string
+	Slug         string
+	Summary      *string
+	Description  *string
+	PosterFileID *string
+}
 
+// CreateProgramEventSeries creates the series and its authorization policy.
+func (s *Service) CreateProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (Series, error) {
 	can, err := policyv1.ProgramEventSeries.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return Series{}, err
 	}
-	title := strings.TrimSpace(req.Msg.Title)
+	series, err := s.newProgramEventSeries(ctx, command)
+	if err != nil {
+		return Series{}, err
+	}
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, store Store) (string, error) {
+			return series.ID, createProgramEventSeries(ctx, store, series)
+		},
+		Audit: func(seriesID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventSeriesCreatedAuditRecord(metadata, seriesID)
+			})
+		},
+		Relationships: func(seriesID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEventSeries.TouchPolicy, policyv1.ProgramEventSeries.DeletePolicy, seriesID)
+		},
+	}); err != nil {
+		return Series{}, err
+	}
+	return s.loadProgramEventSeries(ctx, series.ID)
+}
+
+func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*Series, error) {
+	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, errs.Required("title")
+		return nil, domainerr.Required("title")
 	}
-	slug, err := validateProgramEventSlug(req.Msg.Slug)
+	slug, err := validateProgramEventSlug(command.Slug)
 	if err != nil {
 		return nil, err
 	}
-	if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event series", "event-series", slug); err != nil {
+	if err := s.checkRoute(ctx, SeriesRoute, slug); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	posterFileID := nullableString(req.Msg.PosterFileId)
-	series := &model.ProgramEventSeries{
+	return &Series{
 		Slug:         slug,
-		Status:       managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(),
+		Status:       StatusDraft,
 		Title:        title,
-		Summary:      req.Msg.Summary,
-		Description:  req.Msg.Description,
-		PosterFileID: posterFileID,
+		Summary:      command.Summary,
+		Description:  command.Description,
+		PosterFileID: nullableString(command.PosterFileID),
 		CreatedAt:    now,
 		UpdatedAt:    now,
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event series", "event-series", slug); err != nil {
-			return err
-		}
-		if posterFileID != nil {
-			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*posterFileID}); err != nil {
-				return err
-			}
-		}
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event series", slug)
-			}
-			return errs.Internal(err)
-		}
-		if posterFileID != nil {
-			if _, err := s.runtime.BindReadyAssetForSourceFile(ctx, tx, *posterFileID, "program_event_series", series.ID, "poster", "poster"); err != nil {
-				return err
-			}
-		}
-		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventSeriesCreatedAuditRecord(metadata, series.ID)
-		}); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEventSeries.TouchPolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEventSeries.DeletePolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
-	})
-	if err != nil {
-		return nil, err
-	}
-	proto, err := s.loadProgramEventSeries(ctx, series.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	}, nil
 }
 
-func (s *ProgramEventSeriesService) GetProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.GetProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "GetProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+func createProgramEventSeries(ctx context.Context, store Store, series *Series) error {
+	if err := store.LockRoute(ctx, SeriesRoute, series.Slug); err != nil {
+		return err
+	}
+	if series.PosterFileID != nil {
+		if err := store.LockAttachableFiles(ctx, []string{*series.PosterFileID}); err != nil {
+			return err
 		}
-	}()
+	}
+	if err := store.InsertSeries(ctx, series); err != nil {
+		if errors.Is(err, ErrSlugTaken) {
+			return domainerr.Duplicate("program event series", "slug", series.Slug).WithCause(err)
+		}
+		return err
+	}
+	if series.PosterFileID == nil {
+		return nil
+	}
+	return store.BindSeriesPoster(ctx, series.ID, *series.PosterFileID)
+}
 
-	series, err := s.loadProgramEventSeriesRow(ctx, req.Msg.Id)
+// GetProgramEventSeriesQuery names the series by ID or slug.
+type GetProgramEventSeriesQuery struct {
+	IDOrSlug string
+}
+
+// GetProgramEventSeries returns one series to an administrator.
+func (s *Service) GetProgramEventSeries(ctx context.Context, query GetProgramEventSeriesQuery) (Series, error) {
+	series, err := s.loadProgramEventSeries(ctx, query.IDOrSlug)
 	if err != nil {
-		return nil, err
+		return Series{}, err
 	}
 	can, err := policyv1.ProgramEventSeries.View(series.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return Series{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return Series{}, err
 	}
-	proto, err := s.toProtoProgramEventSeries(ctx, series)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	return series, nil
 }
 
-func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListProgramEventSeriesAdminRequest],
-) (_ *connect.Response[managev1.ListProgramEventSeriesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventSeriesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// ListProgramEventSeriesQuery is one page of the administrator series list.
+type ListProgramEventSeriesQuery struct {
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
 
+// SeriesList is one page of series.
+type SeriesList struct {
+	Series     []Series
+	Pagination Pagination
+}
+
+// ListProgramEventSeriesAdmin returns one page of series to an
+// administrator. A status filter names series API statuses.
+func (s *Service) ListProgramEventSeriesAdmin(ctx context.Context, query ListProgramEventSeriesQuery) (SeriesList, error) {
 	can, err := policyv1.ProgramEventSeries.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SeriesList{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	query := s.db.WithContext(ctx).Model(&model.ProgramEventSeries{})
-	mappedFilters, err := mapProgramEventSeriesFilters(req.Msg.Filters)
+	mappedFilters, err := mapProgramEventSeriesFilters(query.Filters)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	query, err = ProgramEventSeriesFilterConfig.ApplyFilters(query, mappedFilters)
-	if err != nil {
-		return nil, err
-	}
+	page := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var series []Series
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		series, total, err = store.ListSeries(ctx, ListPage{Filters: mappedFilters, Sorts: query.Sorts, Limit: page.Limit, Offset: page.Offset})
+		return err
+	}); err != nil {
+		return SeriesList{}, err
 	}
-	query, err = programEventSeriesSortConfig.ApplySort(query, req.Msg.Sorts)
+	return SeriesList{Series: series, Pagination: Pagination{
+		Total: int32(total), Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore(total),
+	}}, nil
+}
+
+// DeleteProgramEventSeriesCommand names the series to delete.
+type DeleteProgramEventSeriesCommand struct {
+	ID string
+}
+
+// DeleteProgramEventSeries deletes the series and its policy; its events
+// leave the series.
+func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeleteProgramEventSeriesCommand) error {
+	can, err := policyv1.ProgramEventSeries.Delete(command.ID)
+	if err != nil {
+		return domainerr.InvalidField("id", "must be a canonical resource UUID")
+	}
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[[]string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := lockProgramEventSeriesForUpdate(ctx, store, command.ID)
+			return err
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, store Store) ([]string, error) {
+			return deleteProgramEventSeries(ctx, store, command.ID)
+		},
+		Audit: func(detachedEventIDs []string) mutation.Audit {
+			records := make([]mutation.Audit, 0, len(detachedEventIDs)+1)
+			for _, eventID := range detachedEventIDs {
+				records = append(records, eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+					return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, eventID, []string{"series"})
+				}))
+			}
+			return mutation.Audits(append(records, mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventSeriesDeletedAuditRecord(metadata, command.ID)
+			}))...)
+		},
+		Relationships: func([]string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEventSeries.DeletePolicy, policyv1.ProgramEventSeries.TouchPolicy, command.ID)
+		},
+	})
+	if errors.Is(err, ErrSeriesNotFound) {
+		return domainerr.ResourceNotFound("program event series", command.ID)
+	}
+	return err
+}
+
+// deleteProgramEventSeries detaches the series' events, deletes it and
+// releases its poster. It returns the detached events.
+func deleteProgramEventSeries(ctx context.Context, store Store, seriesID string) ([]string, error) {
+	affected, err := store.LockSeriesEvents(ctx, seriesID)
 	if err != nil {
 		return nil, err
 	}
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	var rows []model.ProgramEventSeries
-	if err := pagination.Apply(query).Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	result := make([]*managev1.ProgramEventSeries, 0, len(rows))
-	for i := range rows {
-		item, err := s.toProtoProgramEventSeries(ctx, &rows[i])
-		if err != nil {
+	now := time.Now().UTC()
+	detached := make([]string, 0, len(affected))
+	for _, eventID := range affected {
+		if err := store.DetachFromSeries(ctx, eventID, now); err != nil {
 			return nil, err
 		}
-		result = append(result, item)
+		detached = append(detached, eventID)
 	}
-	return connect.NewResponse(&managev1.ListProgramEventSeriesAdminResponse{
-		Series:     result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
+	deleted, err := store.DeleteSeries(ctx, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	if !deleted {
+		return nil, ErrSeriesNotFound
+	}
+	return detached, store.ReleaseSeriesPoster(ctx, seriesID)
 }
 
-func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+// loadProgramEventSeries reads the series an ID or slug names.
+func (s *Service) loadProgramEventSeries(ctx context.Context, idOrSlug string) (Series, error) {
+	var series Series
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if _, parseErr := uuid.Parse(idOrSlug); parseErr == nil {
+			series, err = store.Series(ctx, idOrSlug, NoLock)
+		} else {
+			series, err = store.SeriesBySlug(ctx, idOrSlug)
 		}
-	}()
-
-	can, err := programEventSeriesUpdateCan(req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	series, err := s.loadProgramEventSeriesForUpdate(ctx, req.Msg.Id)
-	if err != nil {
-		return nil, err
-	}
-	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg, time.Now().UTC())
-	if err != nil {
-		return nil, err
-	}
-	if err := s.applyProgramEventSeriesUpdate(ctx, &series, req.Msg, update, can); err != nil {
-		return nil, err
-	}
-	proto, err := s.loadProgramEventSeries(ctx, series.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
-}
-
-func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	can, err := policyv1.ProgramEventSeries.Delete(req.Msg.Id)
-	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(err))
-		return nil, errs.InvalidArgument("id", "must be a canonical resource UUID")
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if _, err := lockProgramEventSeriesForUpdate(tx, req.Msg.Id); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		var affectedEvents []model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("series_id = ?", req.Msg.Id).
-			Find(&affectedEvents).Error; err != nil {
-			return errs.Internal(err)
-		}
-		now := time.Now().UTC()
-		for _, event := range affectedEvents {
-			if err := tx.Model(&model.ProgramEvent{}).Where("id = ?", event.ID).
-				Updates(structured.Fields{"series_id": nil, "series_order": nil, "updated_at": now}).Error; err != nil {
-				return errs.Internal(err)
-			}
-			if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, event.ID, []string{"series"})
-			}); err != nil {
-				return err
-			}
-		}
-		result := tx.Delete(&model.ProgramEventSeries{}, "id = ?", req.Msg.Id)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "program_event_series", req.Msg.Id, "poster"); err != nil {
-			return err
-		}
-		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventSeriesDeletedAuditRecord(metadata, req.Msg.Id)
-		}); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEventSeries.DeletePolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEventSeries.TouchPolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+		return err
 	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("program event series", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+	if errors.Is(err, ErrSeriesNotFound) {
+		return Series{}, domainerr.ResourceNotFound("program event series", idOrSlug)
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return series, err
 }

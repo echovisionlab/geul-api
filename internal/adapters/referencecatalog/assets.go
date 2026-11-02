@@ -6,14 +6,18 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
+	referencecatalogpublicpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/public/postgres"
 )
 
 // Assets adapts file-owned lifecycle operations to reference catalogs.
@@ -21,22 +25,22 @@ type Assets struct {
 	cdnDomain string
 }
 
-var _ referencecatalog.Assets = Assets{}
+var _ referencecatalogpostgres.Assets = Assets{}
 
 func NewAssets(cdnDomain string) Assets {
 	return Assets{cdnDomain: cdnDomain}
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, db, fileIDs)
+	return mediaassetpostgres.NewStore(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(
 	ctx context.Context,
 	db *gorm.DB,
 	binding referencecatalog.AssetBinding,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		binding.Owner.Type,
@@ -51,7 +55,7 @@ func (a Assets) Release(
 	db *gorm.DB,
 	release referencecatalog.AssetRelease,
 ) error {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
 		ReleasePublicAssetBindings(ctx, release.Owner.Type, release.Owner.ID, release.BindingPrefix)
 }
 
@@ -59,8 +63,8 @@ func (a Assets) ReadyRef(
 	ctx context.Context,
 	db *gorm.DB,
 	source referencecatalog.AssetSource,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
 		ReadyAssetRefForSourceFile(ctx, source.FileID, source.Kind)
 }
 
@@ -69,7 +73,7 @@ type PublicAssets struct {
 	cdnDomain string
 }
 
-var _ publicreferencecatalog.AssetReader = PublicAssets{}
+var _ referencecatalogpublicpostgres.Assets = PublicAssets{}
 
 func NewPublicAssets(cdnDomain string) PublicAssets {
 	return PublicAssets{cdnDomain: cdnDomain}
@@ -79,7 +83,7 @@ func (a PublicAssets) ReadyRef(
 	ctx context.Context,
 	db *gorm.DB,
 	source referencecatalog.AssetSource,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	kinds := make([]string, 0, 1+len(source.FallbackKinds))
 	kinds = append(kinds, source.Kind)
 	kinds = append(kinds, source.FallbackKinds...)
@@ -92,19 +96,19 @@ func (a PublicAssets) ReadyRef(
 	}
 	if err := query.Order("created_at DESC, id DESC").Take(&asset).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Public catalog asset lookup failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID)
 		}
 		return nil
 	}
-	expectedExtension := model.GetExtensionFromMime(asset.MimeType)
+	expectedExtension := mediamime.GetExtensionFromMime(asset.MimeType)
 	if strings.TrimSpace(asset.ID) == "" || strings.TrimSpace(asset.Extension) == "" || strings.TrimSpace(asset.MimeType) == "" ||
 		asset.FileSize == nil || *asset.FileSize <= 0 || len(asset.SHA256) != 32 ||
 		expectedExtension == "bin" || expectedExtension != asset.Extension {
 		return nil
 	}
-	ref, err := mediaasset.NewLifecycle(db, a.cdnDomain).AssetRef(asset)
+	ref, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset))
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Public catalog asset reference failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID, "asset_id", asset.ID)
 		return nil
 	}
 	return ref

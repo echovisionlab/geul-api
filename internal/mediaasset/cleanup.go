@@ -10,12 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/transcode"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 const (
@@ -35,18 +30,22 @@ type CleanupObjectStore interface {
 }
 
 type Cleanup struct {
-	db      *gorm.DB
+	units   mutation.UnitOfWork[CleanupStore]
+	jobs    ActiveTranscodes
 	objects CleanupObjectStore
 }
 
-func NewCleanup(db *gorm.DB, objects CleanupObjectStore) *Cleanup {
-	if db == nil {
-		panic("media asset cleanup: database is required")
+func NewCleanup(units mutation.UnitOfWork[CleanupStore], objects CleanupObjectStore, jobs ActiveTranscodes) *Cleanup {
+	if units == nil {
+		panic("media asset cleanup: units are required")
 	}
 	if objects == nil {
 		panic("media asset cleanup: object store is required")
 	}
-	return &Cleanup{db: db, objects: objects}
+	if jobs == nil {
+		panic("media asset cleanup: active transcodes are required")
+	}
+	return &Cleanup{units: units, objects: objects, jobs: jobs}
 }
 
 func (s *Cleanup) CleanupDangling(ctx context.Context, now time.Time) error {
@@ -64,12 +63,11 @@ type retiredGenerationCleanupTarget struct {
 
 func (s *Cleanup) CleanupRetiredGenerations(ctx context.Context, now time.Time) error {
 	var generationIDs []string
-	if err := s.db.WithContext(ctx).
-		Model(&model.MediaGeneration{}).
-		Where("status = ? AND delete_after IS NOT NULL AND delete_after <= ?", model.MediaGenerationStatusRetired, now).
-		Order("delete_after ASC, id ASC").
-		Limit(RetiredGenerationCleanupBatchSize).
-		Pluck("id", &generationIDs).Error; err != nil {
+	if err := s.units.Read(ctx, func(store CleanupStore) error {
+		var err error
+		generationIDs, err = store.DueRetiredGenerationIDs(ctx, now)
+		return err
+	}); err != nil {
 		return fmt.Errorf("list due retired media generations: %w", err)
 	}
 
@@ -86,7 +84,7 @@ func (s *Cleanup) CleanupRetiredGenerations(ctx context.Context, now time.Time) 
 		}
 	}
 	if deleted > 0 {
-		slog.Info("Cleaned retired media generations", "count", deleted)
+		slog.InfoContext(ctx, "Cleaned retired media generations", "count", deleted)
 	}
 	return stderrors.Join(cleanupErrs...)
 }
@@ -104,8 +102,9 @@ func (s *Cleanup) cleanupRetiredGeneration(ctx context.Context, generationID str
 
 func (s *Cleanup) prepareRetiredGenerationCleanup(ctx context.Context, generationID string, now time.Time) (*retiredGenerationCleanupTarget, error) {
 	var target *retiredGenerationCleanupTarget
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		generation, eligible, err := lockDueUnreferencedRetiredGeneration(tx, generationID, now)
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[CleanupStore]) error {
+		tx := unit.Store()
+		generation, eligible, err := lockDueUnreferencedRetiredGeneration(ctx, tx, generationID, now)
 		if err != nil || !eligible {
 			return err
 		}
@@ -123,8 +122,9 @@ func (s *Cleanup) prepareRetiredGenerationCleanup(ctx context.Context, generatio
 
 func (s *Cleanup) finalizeRetiredGenerationCleanup(ctx context.Context, target retiredGenerationCleanupTarget, now time.Time) (bool, error) {
 	removed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		generation, eligible, err := lockDueUnreferencedRetiredGeneration(tx, target.ID, now)
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[CleanupStore]) error {
+		tx := unit.Store()
+		generation, eligible, err := lockDueUnreferencedRetiredGeneration(ctx, tx, target.ID, now)
 		if err != nil {
 			return err
 		}
@@ -138,11 +138,11 @@ func (s *Cleanup) finalizeRetiredGenerationCleanup(ctx context.Context, target r
 			generation.DeleteAfter == nil || !generation.DeleteAfter.UTC().Equal(target.DeleteAfter) {
 			return fmt.Errorf("media generation identity changed after prefix deletion")
 		}
-		result := tx.Where("id = ?", target.ID).Delete(&model.MediaGeneration{})
-		if result.Error != nil {
-			return fmt.Errorf("delete retired media generation row %s: %w", target.ID, result.Error)
+		deleted, err := tx.DeleteGeneration(ctx, target.ID)
+		if err != nil {
+			return fmt.Errorf("delete retired media generation row %s: %w", target.ID, err)
 		}
-		if result.RowsAffected != 1 {
+		if !deleted {
 			return fmt.Errorf("media generation row %s changed before deletion", target.ID)
 		}
 		removed = true
@@ -154,40 +154,38 @@ func (s *Cleanup) finalizeRetiredGenerationCleanup(ctx context.Context, target r
 	return removed, nil
 }
 
-func lockDueUnreferencedRetiredGeneration(tx *gorm.DB, generationID string, now time.Time) (model.MediaGeneration, bool, error) {
-	var generation model.MediaGeneration
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "file_id", "status", "object_prefix", "delete_after").
-		Where("id = ?", generationID).Take(&generation).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return model.MediaGeneration{}, false, nil
-		}
-		return model.MediaGeneration{}, false, err
+func lockDueUnreferencedRetiredGeneration(ctx context.Context, store CleanupStore, generationID string, now time.Time) (Generation, bool, error) {
+	generation, err := store.LockRetiredGeneration(ctx, generationID)
+	if stderrors.Is(err, ErrGenerationNotFound) {
+		return Generation{}, false, nil
 	}
-	if generation.Status != model.MediaGenerationStatusRetired || generation.DeleteAfter == nil || generation.DeleteAfter.After(now) {
+	if err != nil {
+		return Generation{}, false, err
+	}
+	if generation.Status != GenerationRetired || generation.DeleteAfter == nil || generation.DeleteAfter.After(now) {
 		return generation, false, nil
 	}
-	var pendingFileDeletion int64
-	if err := tx.Model(&model.File{}).
-		Where("id = ? AND delete_requested_at IS NOT NULL", generation.FileID).
-		Count(&pendingFileDeletion).Error; err != nil {
-		return model.MediaGeneration{}, false, fmt.Errorf("check media generation %s file deletion intent: %w", generation.ID, err)
+	pendingFileDeletion, err := store.FileDeletionPending(ctx, generation.FileID)
+	if err != nil {
+		return Generation{}, false, fmt.Errorf("check media generation %s file deletion intent: %w", generation.ID, err)
 	}
-	if pendingFileDeletion != 0 {
+	if pendingFileDeletion {
 		return generation, false, nil
 	}
 	expectedPrefix, err := mediaauth.MediaHLSObjectPrefix(generation.FileID, generation.ID)
-	if err != nil || generation.ObjectPrefix != expectedPrefix {
-		if err != nil {
-			slog.ErrorContext(tx.Statement.Context, "Invalid retired media generation object prefix", failurecause.Attr(err), "generation_id", generation.ID, "file_id", generation.FileID)
-		}
-		return model.MediaGeneration{}, false, fmt.Errorf("media generation %s has invalid object prefix", generation.ID)
+	if err != nil {
+		return Generation{}, false, failurecause.WithAttrs(
+			fmt.Errorf("media generation %s has invalid object prefix: %w", generation.ID, err),
+			slog.String("file_id", generation.FileID))
 	}
-	var references int64
-	if err := tx.Model(&model.FileDerivative{}).Where("media_generation_id = ?", generation.ID).Count(&references).Error; err != nil {
-		return model.MediaGeneration{}, false, fmt.Errorf("check media generation %s current derivative: %w", generation.ID, err)
+	if generation.ObjectPrefix != expectedPrefix {
+		return Generation{}, false, fmt.Errorf("media generation %s has invalid object prefix", generation.ID)
 	}
-	return generation, references == 0, nil
+	referenced, err := store.GenerationReferenced(ctx, generation.ID)
+	if err != nil {
+		return Generation{}, false, fmt.Errorf("check media generation %s current derivative: %w", generation.ID, err)
+	}
+	return generation, !referenced, nil
 }
 
 type HLSPrefixInventory struct {
@@ -223,25 +221,25 @@ func (s *Cleanup) CleanupOrphanHLSPrefixes(ctx context.Context, cutoff time.Time
 	if err != nil {
 		return fmt.Errorf("load referenced HLS generations: %w", err)
 	}
-	active, err := s.loadActiveTranscodeFileIDs(ctx, fileIDs)
+	active, err := s.jobs.ActiveFileIDs(ctx, fileIDs)
 	if err != nil {
 		return fmt.Errorf("load active transcode jobs for HLS cleanup: %w", err)
 	}
 	deletable, inconsistent := SelectOrphanHLSPrefixesForCleanup(inventory, referenced, active, cutoff)
 	for _, prefix := range inconsistent {
-		slog.Warn("Skipping HLS prefix cleanup because DB still references missing manifest",
-			"prefix", prefix.Prefix, "fileId", prefix.FileID, "generationId", prefix.GenerationID)
+		slog.WarnContext(ctx, "Skipping HLS prefix cleanup because DB still references missing manifest",
+			"prefix", prefix.Prefix, "file_id", prefix.FileID, "generation_id", prefix.GenerationID)
 	}
 	deleted := 0
 	for _, prefix := range deletable {
 		if err := s.objects.DeletePrefix(ctx, prefix.Prefix); err != nil {
-			slog.Error("Failed to delete orphan HLS prefix", "prefix", prefix.Prefix, "fileId", prefix.FileID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Failed to delete orphan HLS prefix; retrying on the next cleanup", "prefix", prefix.Prefix, "file_id", prefix.FileID, failurecause.Attr(err))
 			continue
 		}
 		deleted++
 	}
 	if deleted > 0 {
-		slog.Info("Cleaned orphan HLS prefixes", "count", deleted)
+		slog.InfoContext(ctx, "Cleaned orphan HLS prefixes", "count", deleted)
 	}
 	return nil
 }
@@ -306,36 +304,15 @@ func SelectOrphanHLSPrefixesForCleanup(
 	return deletable, inconsistent
 }
 
-func (s *Cleanup) loadReferencedHLSGenerationIDs(ctx context.Context, generationIDs []string) (map[string]struct{}, error) {
+func (s *Cleanup) loadReferencedHLSGenerationIDs(ctx context.Context, ids []string) (map[string]struct{}, error) {
 	result := make(map[string]struct{})
-	if len(generationIDs) == 0 {
+	if len(ids) == 0 {
 		return result, nil
 	}
-	var ids []string
-	if err := s.db.WithContext(ctx).Model(&model.FileDerivative{}).
-		Where("type = ? AND media_generation_id IN ?", managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String(), generationIDs).
-		Pluck("media_generation_id", &ids).Error; err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		result[id] = struct{}{}
-	}
-	return result, nil
-}
-
-func (s *Cleanup) loadActiveTranscodeFileIDs(ctx context.Context, fileIDs []string) (map[string]struct{}, error) {
-	result := make(map[string]struct{})
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-	var ids []string
-	if err := s.db.WithContext(ctx).Model(&model.TranscodeJob{}).
-		Where("file_id IN ? AND status IN ?", fileIDs, []string{transcode.StatusQueued, transcode.StatusProcessing}).
-		Pluck("file_id", &ids).Error; err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		result[id] = struct{}{}
-	}
-	return result, nil
+	err := s.units.Read(ctx, func(store CleanupStore) error {
+		var err error
+		result, err = store.ReferencedGenerationIDs(ctx, ids)
+		return err
+	})
+	return result, err
 }

@@ -103,15 +103,7 @@ func NewSitemapService(
 func (s *SitemapService) GetDocument(
 	ctx context.Context,
 	req *connect.Request[openv1.GetSitemapDocumentRequest],
-) (_ *connect.Response[openv1.GetSitemapDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitemap", "operation", "sitemap/public.GetDocument", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.GetSitemapDocumentResponse], error) {
 	kind := req.Msg.Kind
 	if kind == openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_UNSPECIFIED {
 		return nil, errs.Required("kind")
@@ -200,9 +192,8 @@ func (s *SitemapService) generateDocument(
 
 	generatedAt := time.Now().UTC()
 
-	switch kind {
-	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_INDEX:
-		content := renderSitemapIndexXML([]sitemapIndexRow{
+	if kind == openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_INDEX {
+		content, renderErr := renderSitemapIndexXML([]sitemapIndexRow{
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/pages.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/post.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/work.xml")},
@@ -211,63 +202,44 @@ func (s *SitemapService) generateDocument(
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/release.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/taxonomy.xml")},
 		})
+		if renderErr != nil {
+			return nil, renderErr
+		}
 		return &sitemapRenderedDocument{
 			Content:     content,
 			ContentType: sitemapXMLContentType,
 			GeneratedAt: generatedAt,
 		}, nil
+	}
+
+	var rows []sitemapURLRow
+	var queryErr error
+	switch kind {
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_PAGE:
-		rows, queryErr := s.buildPageRows(ctx, site)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildPageRows(ctx, site)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_POST:
-		rows, queryErr := s.buildPostRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildPostRows(ctx, site.CanonicalOrigin)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_WORK:
-		rows, queryErr := s.buildWorkRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildWorkRows(ctx, site.CanonicalOrigin)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_ARTIST:
-		rows, queryErr := s.buildArtistRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildArtistRows(ctx, site.CanonicalOrigin)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_LABEL:
-		rows, queryErr := s.buildLabelRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildLabelRows(ctx, site.CanonicalOrigin)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_RELEASE:
-		rows, queryErr := s.buildReleaseRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildReleaseRows(ctx, site.CanonicalOrigin)
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_TAXONOMY:
-		rows, queryErr := s.buildTaxonomyRows(ctx, site.CanonicalOrigin)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		content := renderURLSetXML(rows)
-		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+		rows, queryErr = s.buildTaxonomyRows(ctx, site.CanonicalOrigin)
 	default:
 		return nil, errs.InvalidArgumentMsg(fmt.Sprintf("unsupported sitemap kind: %s", kind.String()))
 	}
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	content, err := renderURLSetXML(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
 }
 
 func (s *SitemapService) loadSiteContext(ctx context.Context) (*sitemapSiteContext, error) {
@@ -465,7 +437,7 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
-func renderURLSetXML(rows []sitemapURLRow) string {
+func renderURLSetXML(rows []sitemapURLRow) (string, error) {
 	document := urlSetDocument{
 		Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9",
 		URLs:  make([]urlSetDocumentURL, 0, len(rows)),
@@ -480,12 +452,12 @@ func renderURLSetXML(rows []sitemapURLRow) string {
 
 	payload, err := xml.MarshalIndent(document, "", "  ")
 	if err != nil {
-		slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitemap", "operation", "marshal_sitemap_xml", "outcome", "failed", failurecause.Attr(err))
+		return "", fmt.Errorf("marshal sitemap XML: %w", err)
 	}
-	return xml.Header + string(payload)
+	return xml.Header + string(payload), nil
 }
 
-func renderSitemapIndexXML(rows []sitemapIndexRow) string {
+func renderSitemapIndexXML(rows []sitemapIndexRow) (string, error) {
 	document := sitemapIndexDocument{
 		Xmlns:    "http://www.sitemaps.org/schemas/sitemap/0.9",
 		Sitemaps: make([]sitemapIndexDocumentEntry, 0, len(rows)),
@@ -497,9 +469,9 @@ func renderSitemapIndexXML(rows []sitemapIndexRow) string {
 
 	payload, err := xml.MarshalIndent(document, "", "  ")
 	if err != nil {
-		slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitemap", "operation", "marshal_sitemap_xml", "outcome", "failed", failurecause.Attr(err))
+		return "", fmt.Errorf("marshal sitemap XML: %w", err)
 	}
-	return xml.Header + string(payload)
+	return xml.Header + string(payload), nil
 }
 
 func formatLastModified(value *time.Time) string {

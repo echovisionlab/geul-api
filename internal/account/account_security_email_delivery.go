@@ -3,35 +3,30 @@ package account
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
 // PublishAccountSecurityEventEmail sends a specific security notice to the active
 // identity's canonical Member primary-email projection. The worker re-checks the exact
 // Identity/Member projection before delivery, so the address is never taken
-// from a caller.
+// from a caller. read runs the Member reads.
 func PublishAccountSecurityEventEmail(
-	ctx context.Context, publisher EmailCommandPublisher, db *gorm.DB,
-	memberEmails MemberEmailProjection, identityManager auth.IdentityGetter, identityID string, eventKey email.EventKey,
+	ctx context.Context, publisher EmailPublisher, read StepFunc,
+	identityManager auth.IdentityGetter, identityID string, eventKey email.EventKey,
 	operation string, templateData map[string]string,
 ) error {
 	identityID = strings.TrimSpace(identityID)
 	operation = strings.TrimSpace(operation)
-	if db == nil || identityManager == nil || identityID == "" || eventKey == "" {
+	if read == nil || identityManager == nil || identityID == "" || eventKey == "" {
 		return fmt.Errorf("account security email database, identity, operation, and event are required")
 	}
 	if operation == "" {
 		operation = eventKey.String()
 	}
-	accountEmail, reason, err := ResolveMemberPrimaryEmailForIdentity(ctx, db, memberEmails, identityManager, identityID)
+	accountEmail, reason, err := ResolveMemberPrimaryEmailForIdentity(ctx, read, identityManager, identityID)
 	if err != nil {
 		return err
 	}
@@ -46,28 +41,27 @@ func PublishAccountSecurityEventEmail(
 		return fmt.Errorf("active Identity has no Member link")
 	}
 	referenceID := identityID
-	messageID := "account-security:" + eventKey.String() + ":" + identityID + ":" + operation
-	target, err := authorizationtarget.ActiveOnboardedMemberForIdentity(ctx, db, identityID)
-	if err != nil {
+	var target Target
+	if err := read(ctx, func(store Store) error {
+		var err error
+		target, err = store.ActiveOnboardedMemberForIdentity(ctx, identityID)
+		return err
+	}); err != nil {
 		return err
 	}
 	if target.MemberID != memberID {
 		return fmt.Errorf("active Identity is not linked to an onboarded Member")
 	}
-	job := &managev1.SendEmailEvent{
-		Recipient:        accountEmail.Email,
-		TemplateType:     eventKey.String(),
-		TemplateData:     templateData,
-		ReferenceId:      &referenceID,
-		RecipientContext: email.AccountSelectedPrimaryEmailContext(identityID),
+	job := Email{
+		Recipient:         accountEmail.Email,
+		TemplateType:      eventKey.String(),
+		TemplateData:      templateData,
+		ReferenceID:       &referenceID,
+		AccountIdentityID: identityID,
+		MessageID:         "account-security:" + eventKey.String() + ":" + identityID + ":" + operation,
 	}
-	err = email.PublishCommand(ctx, publisher, job, messageID)
-	if err != nil {
-		privateValues := []string{job.Recipient}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Account security email publish failed", "template_type", job.TemplateType, "command_id", messageID, failurecause.Attr(err, privateValues...))
+	if err := publisher.PublishEmail(ctx, job); err != nil {
+		return emailPublishFailure(err, job)
 	}
-	return err
+	return nil
 }

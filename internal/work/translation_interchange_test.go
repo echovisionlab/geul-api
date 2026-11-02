@@ -3,16 +3,14 @@ package work
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
 func TestWorkInterchangeProjectionPreservesExplicitEmptyTargets(t *testing.T) {
 	source := workInterchangeTestDocument("en", "Source title", "Source body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(&TranslationJob{
 		EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
@@ -20,7 +18,7 @@ func TestWorkInterchangeProjectionPreservesExplicitEmptyTargets(t *testing.T) {
 	explicitEmpty := ""
 	target := workInterchangeTestDocument("ko", "", "")
 	targets, err := projectWorkInterchangeTargets(
-		plan, workAIDocumentLocale{Title: &explicitEmpty}, target.ContentBlockDocument,
+		plan, LocaleMetadata{Title: &explicitEmpty}, target.ContentBlockDocument,
 		workInterchangeExplicitEmptyProjector,
 	)
 	require.NoError(t, err)
@@ -53,14 +51,14 @@ func TestWorkInterchangeReplaceEmitsDeletesForOmittedTargetBlocks(t *testing.T) 
 
 func TestValidateWorkInterchangeMutationUsesCurrentStableUnitIntersection(t *testing.T) {
 	source := workInterchangeTestDocument("en", "Current title", "Current body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(&TranslationJob{
 		EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
 	kept := plan.Units[0].UnitID
 	valid := TranslationInterchangeMutation{
 		WorkID: "work-a", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   InterchangePatch,
 		Source: source, Plan: plan,
 		Targets:     map[string]translation.UnitResult{kept: {UnitID: kept, TranslatedText: "Current"}},
 		UnitHandles: []string{kept},
@@ -80,13 +78,13 @@ func TestValidateWorkInterchangeMutationUsesCurrentStableUnitIntersection(t *tes
 
 func TestValidateWorkInterchangeMutationRejectsLocaleAndIdentityMismatch(t *testing.T) {
 	source := workInterchangeTestDocument("en", "Source title", "Source body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(&TranslationJob{
 		EntityType: "work", EntityID: "work-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
 	mutation := TranslationInterchangeMutation{
 		WorkID: "work-a", SourceLocale: "en", TargetLocale: "en",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   InterchangePatch,
 		Source: source, Plan: plan, Targets: map[string]translation.UnitResult{},
 	}
 	setWorkInterchangeTestCodec(&mutation)

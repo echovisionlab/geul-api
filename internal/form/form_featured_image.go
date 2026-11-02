@@ -1,182 +1,141 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-	"log/slog"
+	"errors"
+	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *FormService) SetFormFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.SetFormFeaturedImageResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "SetFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// SetFormFeaturedImageCommand sets an attachable File as a Form's featured
+// image.
+type SetFormFeaturedImageCommand struct {
+	FormID string
+	FileID string
+}
 
-	var (
-		current    model.Form
-		file       model.File
-		imageAsset *commonv1.AssetRef
-		ogRunID    *string
-	)
+// DeleteFormFeaturedImageCommand removes a Form's featured image.
+type DeleteFormFeaturedImageCommand struct {
+	FormID string
+}
 
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "featured_image_file_id").
-			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
-			return err
-		}
-		if err := s.requireFreshFormAction(ctx, tx, req.Msg.FormId, formActionEdit); err != nil {
-			return err
-		}
-		if err := s.assets.LockAttachableFiles(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
-		}
+// FeaturedImageChange is what a featured image change produced: the bound
+// image and the OG generation it started.
+type FeaturedImageChange struct {
+	ImageAsset        *Asset
+	OgGenerationRunID *string
+}
 
-		if err := tx.First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&model.Form{}).
-			Where("id = ?", req.Msg.FormId).
-			Updates(structured.Fields{
-				"featured_image_file_id": req.Msg.FileId,
-				"updated_at":             time.Now(),
-			}).Error; err != nil {
-			return err
-		}
-		if current.FeaturedImageFileID == nil || *current.FeaturedImageFileID != req.Msg.FileId {
-			if err := s.appendFormFeaturedImageAudit(
-				ctx,
-				tx,
-				req.Msg.FormId,
-				req.Msg.FileId,
-				sharedtelemetry.AuditCollectionOperationAdded,
-			); err != nil {
-				return err
+// formFeaturedImage is what a featured image change wrote: the File it added
+// or removed, empty when the image did not change.
+type formFeaturedImage struct {
+	changedFileID string
+	change        FeaturedImageChange
+}
+
+// featuredImageMutation locks the Form's featured image column, checks Edit
+// and runs change; the audit names the File change records.
+func (s *Service) featuredImageMutation(
+	formID string,
+	operation sharedtelemetry.AuditCollectionOperation,
+	current **string,
+	change func(context.Context, Store) (formFeaturedImage, error),
+) mutation.StoreSpec[formFeaturedImage, Store] {
+	return mutation.StoreSpec[formFeaturedImage, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			*current, err = store.LockFeaturedImage(ctx, formID)
+			return formNotFound(err, domainerr.ResourceNotFound("form", formID))
+		},
+		Access: s.freshFormAction(formID, formActionEdit),
+		Change: change,
+		Audit: func(image formFeaturedImage) mutation.Audit {
+			if image.changedFileID == "" {
+				return mutation.Unchanged()
 			}
-		}
+			return formFeaturedImageAudit(formID, image.changedFileID, operation)
+		},
+	}
+}
 
-		imageRef, err := s.assets.BindFeaturedImage(ctx, tx, file.ID, req.Msg.FormId)
-		if err != nil {
-			return err
+// SetFormFeaturedImage binds the File as the featured image and regenerates
+// every locale's OG image.
+func (s *Service) SetFormFeaturedImage(ctx context.Context, command SetFormFeaturedImageCommand) (FeaturedImageChange, error) {
+	var current *string
+	image, err := mutation.Run(ctx, s.mutations, s.featuredImageMutation(command.FormID, sharedtelemetry.AuditCollectionOperationAdded, &current,
+		func(ctx context.Context, store Store) (formFeaturedImage, error) {
+			if err := store.LockAttachableFiles(ctx, []string{command.FileID}); err != nil {
+				return formFeaturedImage{}, err
+			}
+			fileID, err := store.FileID(ctx, command.FileID)
+			if err != nil {
+				return formFeaturedImage{}, err
+			}
+			if err := store.SetFeaturedImage(ctx, command.FormID, &command.FileID, time.Now()); err != nil {
+				return formFeaturedImage{}, err
+			}
+			var image formFeaturedImage
+			if current == nil || *current != command.FileID {
+				image.changedFileID = command.FileID
+			}
+			if image.change.ImageAsset, err = store.BindFeaturedImage(ctx, command.FormID, fileID); err != nil {
+				return formFeaturedImage{}, err
+			}
+			runID, err := store.RequestOG(ctx, command.FormID, "", true, "form_featured_image_updated")
+			if err != nil {
+				return formFeaturedImage{}, err
+			}
+			image.change.OgGenerationRunID = &runID
+			return image, nil
+		},
+	))
+	if err != nil {
+		if errors.Is(err, ErrFileNotFound) {
+			return FeaturedImageChange{}, domainerr.ResourceNotFound("file", command.FileID).WithCause(err)
 		}
-		imageAsset = imageRef
-		title, err := s.og.BaseTitle(ctx, tx, req.Msg.FormId)
-		if err != nil {
-			return err
-		}
-		runID, err := s.og.Request(ctx, tx, req.Msg.FormId, title, "", true, "form_featured_image_updated")
-		if err != nil {
-			return err
-		}
-		ogRunID = &runID
+		return FeaturedImageChange{}, err
+	}
+	return image.change, nil
+}
+
+// DeleteFormFeaturedImage removes the featured image, when the Form has one,
+// and regenerates every locale's OG image. It returns the OG generation it
+// started.
+func (s *Service) DeleteFormFeaturedImage(ctx context.Context, command DeleteFormFeaturedImageCommand) (*string, error) {
+	var current *string
+	image, err := mutation.Run(ctx, s.mutations, s.featuredImageMutation(command.FormID, sharedtelemetry.AuditCollectionOperationRemoved, &current,
+		func(ctx context.Context, store Store) (formFeaturedImage, error) {
+			if current == nil {
+				return formFeaturedImage{}, nil
+			}
+			if err := store.SetFeaturedImage(ctx, command.FormID, nil, time.Now()); err != nil {
+				return formFeaturedImage{}, err
+			}
+			if err := store.ReleaseFeaturedImage(ctx, command.FormID); err != nil {
+				return formFeaturedImage{}, err
+			}
+			runID, err := store.RequestOG(ctx, command.FormID, "", true, "form_featured_image_removed")
+			if err != nil {
+				return formFeaturedImage{}, err
+			}
+			return formFeaturedImage{changedFileID: *current, change: FeaturedImageChange{OgGenerationRunID: afterMutationRun(runID)}}, nil
+		},
+	))
+	if err != nil {
+		return nil, err
+	}
+	return image.change.OgGenerationRunID, nil
+}
+
+// afterMutationRun is the run ID a mutation response names: none when no
+// generation started.
+func afterMutationRun(runID string) *string {
+	if strings.TrimSpace(runID) == "" {
 		return nil
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			var count int64
-			lookupErr := s.db.WithContext(ctx).
-				Model(&model.Form{}).
-				Where("id = ?", req.Msg.FormId).
-				Count(&count).Error
-			if lookupErr != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "resolve_missing_featured_image", "outcome", "failed", failurecause.Attr(lookupErr))
-			}
-			if lookupErr == nil && count == 0 {
-				return nil, errs.NotFound("form", req.Msg.FormId)
-			}
-			return nil, errs.NotFound("file", req.Msg.FileId)
-		}
-		return nil, errs.Wrap(err)
 	}
-
-	return connect.NewResponse(&managev1.SetFormFeaturedImageResponse{
-		ImageAsset: imageAsset, OgGenerationRunId: ogRunID,
-	}), nil
+	return &runID
 }
-
-// DeleteFormFeaturedImage removes the featured image from a form.
-func (s *FormService) DeleteFormFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.OgAssetDeleteResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "DeleteFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	var current model.Form
-	var ogRunID *string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "featured_image_file_id").
-			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
-			return err
-		}
-		if err := s.requireFreshFormAction(ctx, tx, req.Msg.FormId, formActionEdit); err != nil {
-			return err
-		}
-
-		if current.FeaturedImageFileID == nil {
-			return nil
-		}
-		previousFileID := *current.FeaturedImageFileID
-
-		if err := tx.Model(&model.Form{}).
-			Where("id = ?", req.Msg.FormId).
-			Updates(structured.Fields{
-				"featured_image_file_id": nil,
-				"updated_at":             time.Now(),
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.assets.ReleaseFeaturedImage(ctx, tx, req.Msg.FormId); err != nil {
-			return err
-		}
-		if err := s.appendFormFeaturedImageAudit(
-			ctx,
-			tx,
-			req.Msg.FormId,
-			previousFileID,
-			sharedtelemetry.AuditCollectionOperationRemoved,
-		); err != nil {
-			return err
-		}
-		var err error
-		ogRunID, err = s.og.RequestAfterMutation(ctx, tx, req.Msg.FormId, "", true, "form_featured_image_removed")
-		return err
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("form", req.Msg.FormId)
-		}
-		return nil, errs.Wrap(err)
-	}
-
-	if current.FeaturedImageFileID == nil {
-		return connect.NewResponse(&managev1.OgAssetDeleteResponse{Success: true}), nil
-	}
-
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: ogRunID}), nil
-}
-
-// SubmitForm submits a form
-// ListFormSubmissions lists submissions for a form (admin only)

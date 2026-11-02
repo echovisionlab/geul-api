@@ -4,11 +4,12 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"gorm.io/gorm"
 )
 
@@ -21,21 +22,21 @@ func NewAssets(cdnDomain string) *Assets {
 }
 
 func (*Assets) LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a *Assets) BindArtwork(
 	ctx context.Context,
 	tx *gorm.DB,
 	fileID, releaseID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx, fileID, "release", releaseID, "artwork", "artwork",
 	)
 }
 
 func (a *Assets) ReleaseArtwork(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "release", releaseID, "artwork")
 }
 
@@ -43,17 +44,17 @@ func (a *Assets) ReadyArtwork(
 	ctx context.Context,
 	db *gorm.DB,
 	fileID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, db, a.cdnDomain, fileID, "artwork")
+) (*mediaasset.Reference, error) {
+	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, fileID, "artwork")
 }
 
 func (a *Assets) ReadyAssets(
 	ctx context.Context,
 	db *gorm.DB,
 	candidateIDs ...*string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	assetIDs := normalizedAssetIDs(candidateIDs)
-	ready := make(map[string]*commonv1.AssetRef, len(assetIDs))
+	ready := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return ready, nil
 	}
@@ -65,12 +66,12 @@ func (a *Assets) ReadyAssets(
 		return nil, errs.Internal(err)
 	}
 
-	lifecycle := mediaasset.NewLifecycle(db, a.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -99,4 +100,4 @@ func normalizedAssetIDs(candidateIDs []*string) []string {
 	return ids
 }
 
-var _ releasedomain.Assets = (*Assets)(nil)
+var _ releasepostgres.Assets = (*Assets)(nil)

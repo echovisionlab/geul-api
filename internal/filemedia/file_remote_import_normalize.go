@@ -12,19 +12,20 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
 	managedRemoteImportMaxDimension   = 4096
-	managedRemoteImportFinalMaxSize   = model.ManagedRasterFinalMaxSize
+	managedRemoteImportFinalMaxSize   = domain.ManagedRasterFinalMaxSize
 	managedRemoteImportSelectionLimit = 20 * 1024 * 1024
 	managedRemoteImportStartQuality   = 100
 	managedRemoteImportMinQuality     = 56
@@ -33,19 +34,19 @@ const (
 	managedRemoteImportMinDimension   = 512
 )
 
-func isManagedRasterUploadType(uploadType managev1.UploadType) bool {
+func isManagedRasterUploadType(uploadType UploadType) bool {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
-		managev1.UploadType_UPLOAD_TYPE_ARTIST_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_WORK_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_SERIES_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER,
-		managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND:
+	case UploadUserAvatar,
+		UploadArtistImage,
+		UploadEditorImage,
+		UploadFeaturedImage,
+		UploadWorkFeaturedImage,
+		UploadSeriesFeaturedImage,
+		UploadFormFeaturedImage,
+		UploadProgramEventPoster,
+		UploadMapImage,
+		UploadReleaseArtwork,
+		UploadSiteOGBackground:
 		return true
 	default:
 		return false
@@ -61,11 +62,11 @@ func isNormalizableManagedRasterMimeType(mimeType string) bool {
 	}
 }
 
-func shouldNormalizeManagedRemoteImport(uploadType managev1.UploadType, mimeType string) bool {
+func shouldNormalizeManagedRemoteImport(uploadType UploadType, mimeType string) bool {
 	return isManagedRasterUploadType(uploadType) && isNormalizableManagedRasterMimeType(mimeType)
 }
 
-func getRemoteImportSelectionMaxSize(uploadType managev1.UploadType, fallbackMaxSize int64) int64 {
+func getRemoteImportSelectionMaxSize(uploadType UploadType, fallbackMaxSize int64) int64 {
 	if isManagedRasterUploadType(uploadType) && fallbackMaxSize > managedRemoteImportSelectionLimit {
 		return managedRemoteImportSelectionLimit
 	}
@@ -94,7 +95,7 @@ func normalizeRemoteImportStoredFileName(fileName, mimeType string) string {
 		return ""
 	}
 
-	ext := model.GetExtensionFromMime(mimeType)
+	ext := mediamime.GetExtensionFromMime(mimeType)
 	if ext == "" || ext == "bin" {
 		return trimmed
 	}
@@ -107,7 +108,7 @@ func normalizeRemoteImportStoredFileName(fileName, mimeType string) string {
 	return strings.TrimSuffix(trimmed, currentExt) + "." + ext
 }
 
-func (s *FileService) uploadRemoteImportObject(ctx context.Context, fileKey string, body io.Reader, mimeType string) error {
+func (s *Service) uploadRemoteImportObject(ctx context.Context, fileKey string, body io.Reader, mimeType string) error {
 	uploader := transfermanager.New(s.s3Client, func(options *transfermanager.Options) {
 		options.PartSizeBytes = chunkSize
 	})
@@ -125,7 +126,7 @@ func (s *FileService) uploadRemoteImportObject(ctx context.Context, fileKey stri
 	return nil
 }
 
-func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey string) {
+func (s *Service) deleteS3ObjectBestEffort(ctx context.Context, fileKey string) {
 	if fileKey == "" {
 		return
 	}
@@ -136,11 +137,11 @@ func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey stri
 		Bucket: aws.String(s.s3Bucket),
 		Key:    aws.String(fileKey),
 	}); err != nil {
-		slog.Error("Failed to delete temporary S3 object", failurecause.Attr(err), "fileKey", fileKey)
+		slog.ErrorContext(ctx, "Failed to delete temporary S3 object", failurecause.Attr(err), "fileKey", fileKey)
 	}
 }
 
-func (s *FileService) fetchManagedImageVariant(ctx context.Context, client *http.Client, variantURL string) ([]byte, string, error) {
+func (s *Service) fetchManagedImageVariant(ctx context.Context, client *http.Client, variantURL string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, variantURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to build managed image request: %w", err)
@@ -189,14 +190,15 @@ func nextManagedImageDimension(current int) int {
 	return next
 }
 
-func (s *FileService) normalizeManagedRemoteImport(ctx context.Context, fileID string, sourceMime string) ([]byte, string, error) {
-	sourceURL, err := BuildSignedMediaFileURL(
+func (s *Service) normalizeManagedRemoteImport(ctx context.Context, fileID string, sourceMime string) ([]byte, string, error) {
+	sourceURL, _, err := mediaauth.SignFileURL(
 		s.mediaDomain,
 		fileID,
 		mediaExtension(&sourceMime),
 		s.mediaSecret,
 		mediaauth.InlineTTL,
 		mediaauth.PurposeInline,
+		"",
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("sign managed image source: %w", err)

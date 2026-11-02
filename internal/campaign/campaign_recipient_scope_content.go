@@ -3,8 +3,8 @@ package campaign
 import (
 	"regexp"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 var unsubscribeLinkPlaceholderRe = regexp.MustCompile(`(?i){{\s*unsubscribe_link\s*}}`)
@@ -16,7 +16,7 @@ func validateCampaignRecipientScopeContent(scope string, snapshot CampaignDelive
 	if scope != campaignRecipientScopeAllMatchingUsers || !campaignSnapshotUsesUnsubscribeLink(snapshot) {
 		return nil
 	}
-	return errs.FailedPrecondition(
+	return domainerr.Precondition(
 		"Campaigns sent to all matching members can't include {{unsubscribe_link}}. Send to subscribers only, or remove the link.",
 	)
 }

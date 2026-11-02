@@ -1,0 +1,153 @@
+// Package postpostgres is the PostgreSQL post.Store: the post tables, and
+// the shared content, media, OG, route and translation runtimes a Post
+// transaction drives, bound to one gorm transaction.
+package postpostgres
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
+
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	"github.com/echovisionlab/geul-api/internal/post"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+)
+
+// ShareLinkCleanup removes the share links of a Post in the deleting
+// transaction. Share Link owns the rows.
+type ShareLinkCleanup interface {
+	DeleteEntityShareLinks(ctx context.Context, tx *gorm.DB, postID string) error
+}
+
+// ContentBlockMediaLoader loads persisted attachment references only after a
+// Post operation has authorized the document.
+type ContentBlockMediaLoader interface {
+	LoadContentBlockMediaReferences(context.Context, *gorm.DB, uuid.UUID) ([]*fileref.BlockMediaItem, error)
+}
+
+// ContentBlockMediaHydrator adds private delivery while Post holds the
+// authorized owner, document, and attachment witnesses in one transaction.
+type ContentBlockMediaHydrator interface {
+	HydrateAuthorizedPostBlockMediaWithDB(context.Context, *gorm.DB, string, uuid.UUID, *auth.UserInfo, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
+}
+
+// VersionRestoreSupport reads which attachments of a version document can
+// no longer be restored.
+type VersionRestoreSupport interface {
+	LoadUnavailableVersionAttachmentKinds(
+		context.Context,
+		*gorm.DB,
+		proto.Message,
+	) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
+}
+
+// Ports are the shared runtimes the Store drives in the Post transaction.
+type Ports struct {
+	ContentBlocks *contentblock.Store
+	// Signals schedules content.updated in the mutation's transaction.
+	Signals          contentsignal.Publisher
+	OG               *ogpostgres.Refresher
+	ShareLinkCleanup ShareLinkCleanup
+	MediaLoader      ContentBlockMediaLoader
+	Media            ContentBlockMediaHydrator
+	VersionRestore   VersionRestoreSupport
+	// CDNDomain builds OG asset URLs; empty serves relative paths.
+	CDNDomain string
+}
+
+func (d Ports) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"ContentBlocks": d.ContentBlocks == nil, "Signals": d.Signals == nil, "OG": d.OG == nil,
+		"ShareLinkCleanup": d.ShareLinkCleanup == nil, "MediaLoader": d.MediaLoader == nil, "Media": d.Media == nil,
+		"VersionRestore": d.VersionRestore == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("post store dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// NewUnits returns the production unit of work of the Post use cases.
+func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[post.Store], error) {
+	if db == nil {
+		return nil, errors.New("post store database is required")
+	}
+	if err := ports.validate(); err != nil {
+		return nil, err
+	}
+	return mutation.Postgres(db, func(tx *gorm.DB) post.Store { return NewStore(tx, ports) }), nil
+}
+
+// NewStore returns the Store over tx, for a port another domain drives in its
+// own transaction (translation delivery, Series membership, File access).
+// Only methods whose required ports are set are usable.
+func NewStore(tx *gorm.DB, ports Ports) post.Store {
+	return &store{tx: tx, ports: ports}
+}
+
+type store struct {
+	tx    *gorm.DB
+	ports Ports
+}
+
+var _ post.Store = (*store)(nil)
+
+// with binds the Store to tx, the transaction a shared runtime hands back
+// to a domain callback.
+func (s *store) with(tx *gorm.DB) post.Store {
+	return NewStore(tx, s.ports)
+}
+
+// notFoundError keeps the driver's not-found error readable and in the
+// chain while it answers a domain sentinel.
+type notFoundError struct {
+	error
+	sentinel error
+}
+
+func (err notFoundError) Is(target error) bool { return target == err.sentinel }
+func (err notFoundError) Unwrap() error        { return err.error }
+
+// notFound answers gorm's not-found error as sentinel.
+func notFound(err, sentinel error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return notFoundError{error: err, sentinel: sentinel}
+	}
+	return err
+}
+
+// slugTakenError is the unique violation of a new Post's slug.
+type slugTakenError struct{ error }
+
+func (err slugTakenError) Is(target error) bool { return target == post.ErrSlugTaken }
+func (err slugTakenError) Unwrap() error        { return err.error }
+
+// ProcessDueScheduledPosts publishes the due Posts in tx, the scheduler
+// job's transaction (post.ProcessDueScheduledPosts).
+func ProcessDueScheduledPosts(ctx context.Context, tx *gorm.DB, limit int) ([]string, error) {
+	return post.ProcessDueScheduledPosts(ctx, Bind(tx, Ports{}, nil), limit)
+}
+
+// Bind joins the Store and audit to the caller's transaction. A nil audit
+// keeps the joined step unaudited.
+func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) post.Joined {
+	return post.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
+}

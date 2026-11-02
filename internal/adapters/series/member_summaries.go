@@ -3,10 +3,11 @@ package series
 import (
 	"context"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/member"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 )
 
 // MemberSummaries adapts Member-owned summaries to Series manager projections.
@@ -25,20 +26,24 @@ func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
 func (a *MemberSummaries) LoadSeriesManagers(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*managev1.SeriesManager, error) {
-	summaries, err := member.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
+) (map[string]seriesdomain.ManagerSummary, error) {
+	summaries, err := memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*managev1.SeriesManager, len(summaries))
+	result := make(map[string]seriesdomain.ManagerSummary, len(summaries))
 	for memberID, summary := range summaries {
 		if summary == nil {
 			continue
 		}
-		result[memberID] = &managev1.SeriesManager{
-			MemberId:    memberID,
-			Nickname:    summary.GetNickname(),
-			AvatarAsset: summary.AvatarAsset,
+		var avatar *seriesdomain.Asset
+		if source := summary.Avatar; source != nil {
+			avatar = &seriesdomain.Asset{ID: source.ID, URL: source.URL, Extension: source.Extension, MIMEType: source.MIMEType, FileSize: source.FileSize, SHA256: source.SHA256, Disposition: seriesdomain.AssetDisposition(source.Disposition), DownloadFilename: source.DownloadFilename}
+		}
+		result[memberID] = seriesdomain.ManagerSummary{
+			MemberID: memberID,
+			Nickname: summary.Nickname,
+			Avatar:   avatar,
 		}
 	}
 	return result, nil

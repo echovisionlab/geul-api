@@ -2,249 +2,150 @@ package filemedia
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
-func (s *FileService) meshOptimizationService() *MeshOptimizationService {
-	var publisher MeshOptimizationJobPublisher
-	if meshPublisher, ok := s.publisher.(MeshOptimizationJobPublisher); ok {
-		publisher = meshPublisher
-	} else if meshPublisher, ok := s.asyncPublisher.(MeshOptimizationJobPublisher); ok {
-		publisher = meshPublisher
-	}
-	return NewMeshOptimizationService(s.db, publisher, s, s.spiceDB)
+func (s *Service) meshOptimizationService() *MeshOptimizationService {
+	return NewMeshOptimizationService(MeshOptimizationDeps{Units: s.units, FileDeleter: s, Authorizer: s.spiceDB})
 }
 
-func (s *FileService) ListMeshOptimizationCandidates(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest],
-) (_ *connect.Response[managev1.ListMeshOptimizationCandidatesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	candidates, err := s.meshOptimizationService().ListCandidates(ctx, MeshOptimizationListInput{
-		SourceFileID: strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:   req.Msg.EntityType,
-		EntityID:     strings.TrimSpace(req.Msg.EntityId),
-		Profile:      req.Msg.Profile,
-	})
+// ListMeshOptimizationCandidatesQuery lists the optimized candidates of a
+// 3D model File attached to an entity.
+type ListMeshOptimizationCandidatesQuery struct {
+	SourceFileID string
+	EntityType   EntityType
+	EntityID     string
+	Profile      MeshProfile
+}
+
+func (q ListMeshOptimizationCandidatesQuery) input() MeshOptimizationListInput {
+	return MeshOptimizationListInput{
+		SourceFileID: strings.TrimSpace(q.SourceFileID),
+		EntityType:   q.EntityType,
+		EntityID:     strings.TrimSpace(q.EntityID),
+		Profile:      q.Profile,
+	}
+}
+
+func (s *Service) ListMeshOptimizationCandidates(ctx context.Context, query ListMeshOptimizationCandidatesQuery) ([]*MeshCandidateView, error) {
+	candidates, err := s.meshOptimizationService().ListCandidates(ctx, query.input())
 	if err != nil {
 		return nil, err
 	}
-
-	response := &managev1.ListMeshOptimizationCandidatesResponse{
-		Candidates: make([]*managev1.MeshOptimizationCandidate, 0, len(candidates)),
-	}
+	projected := make([]*MeshCandidateView, 0, len(candidates))
 	for _, candidate := range candidates {
-		projected, err := s.meshOptimizationCandidateResponse(candidate)
+		response, err := s.meshOptimizationCandidateResponse(candidate)
 		if err != nil {
 			return nil, err
 		}
-		response.Candidates = append(response.Candidates, projected)
+		projected = append(projected, response)
 	}
-	return connect.NewResponse(response), nil
+	return projected, nil
 }
 
-func (s *FileService) GenerateMeshOptimizationCandidate(
-	ctx context.Context,
-	req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest],
-) (_ *connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GenerateMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+// GenerateMeshOptimizationCandidateCommand generates, or reuses, an optimized
+// candidate of a 3D model File.
+type GenerateMeshOptimizationCandidateCommand struct {
+	SourceFileID       string
+	EntityType         EntityType
+	EntityID           string
+	TargetRatioPercent int32
+	Method             MeshCompressionMethod
+	Profile            MeshProfile
+}
+
+func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command GenerateMeshOptimizationCandidateCommand) (*MeshCandidateGeneration, error) {
 	result, err := s.meshOptimizationService().GenerateCandidate(ctx, MeshOptimizationGenerateInput{
-		SourceFileID:       strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:         req.Msg.EntityType,
-		EntityID:           strings.TrimSpace(req.Msg.EntityId),
-		TargetRatioPercent: req.Msg.TargetRatioPercent,
-		Method:             meshOptimizationRequestMethod(req.Msg.Method),
-		Profile:            req.Msg.Profile,
+		SourceFileID:       strings.TrimSpace(command.SourceFileID),
+		EntityType:         command.EntityType,
+		EntityID:           strings.TrimSpace(command.EntityID),
+		TargetRatioPercent: command.TargetRatioPercent,
+		Method:             meshOptimizationRequestMethod(command.Method),
+		Profile:            command.Profile,
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	projected, err := s.meshOptimizationCandidateResponse(result.Candidate)
 	if err != nil {
 		return nil, err
 	}
-
-	return connect.NewResponse(&managev1.GenerateMeshOptimizationCandidateResponse{
+	return &MeshCandidateGeneration{
 		Candidate: projected,
 		CacheHit:  result.CacheHit,
 		Enqueued:  result.Enqueued,
-	}), nil
+	}, nil
 }
 
-func (s *FileService) UseMeshOptimizationCandidate(
-	ctx context.Context,
-	req *connect.Request[managev1.UseMeshOptimizationCandidateRequest],
-) (_ *connect.Response[managev1.UseMeshOptimizationCandidateResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UseMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(req.Msg.CandidateId))
+// UseMeshOptimizationCandidateCommand selects an optimized candidate.
+type UseMeshOptimizationCandidateCommand struct {
+	CandidateID string
+}
+
+func (s *Service) UseMeshOptimizationCandidate(ctx context.Context, command UseMeshOptimizationCandidateCommand) (*MeshCandidateView, error) {
+	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(command.CandidateID))
 	if err != nil {
 		return nil, err
 	}
-
-	projected, err := s.meshOptimizationCandidateResponse(*candidate)
-	if err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.UseMeshOptimizationCandidateResponse{
-		Candidate: projected,
-	}), nil
+	return s.meshOptimizationCandidateResponse(*candidate)
 }
 
-func (s *FileService) ClearMeshOptimizationCandidates(
-	ctx context.Context,
-	req *connect.Request[managev1.ClearMeshOptimizationCandidatesRequest],
-) (_ *connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ClearMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+// ClearMeshOptimizationCandidatesCommand discards one candidate when
+// CandidateID is set, or every candidate the list query matches.
+type ClearMeshOptimizationCandidatesCommand struct {
+	CandidateID string
+	Candidates  ListMeshOptimizationCandidatesQuery
+}
+
+func (s *Service) ClearMeshOptimizationCandidates(ctx context.Context, command ClearMeshOptimizationCandidatesCommand) error {
 	meshOptimization := s.meshOptimizationService()
-	if req.Msg.CandidateId != nil && strings.TrimSpace(*req.Msg.CandidateId) != "" {
-		if err := meshOptimization.DiscardCandidate(ctx, strings.TrimSpace(*req.Msg.CandidateId)); err != nil {
-			return nil, err
-		}
-		return connect.NewResponse(&managev1.ClearMeshOptimizationCandidatesResponse{Success: true}), nil
+	if candidateID := strings.TrimSpace(command.CandidateID); candidateID != "" {
+		return meshOptimization.DiscardCandidate(ctx, candidateID)
 	}
-
-	candidates, err := meshOptimization.ListCandidates(ctx, MeshOptimizationListInput{
-		SourceFileID: strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:   req.Msg.EntityType,
-		EntityID:     strings.TrimSpace(req.Msg.EntityId),
-		Profile:      req.Msg.Profile,
-	})
+	candidates, err := meshOptimization.ListCandidates(ctx, command.Candidates.input())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, candidate := range candidates {
 		if err := meshOptimization.DiscardCandidate(ctx, candidate.ID); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return connect.NewResponse(&managev1.ClearMeshOptimizationCandidatesResponse{Success: true}), nil
+	return nil
 }
 
-func (s *FileService) meshOptimizationCandidateResponse(
-	candidate model.MeshOptimizationCandidate,
-) (*managev1.MeshOptimizationCandidate, error) {
-	response := &managev1.MeshOptimizationCandidate{
-		Id:                 candidate.ID,
-		SourceFileId:       candidate.SourceFileID,
-		Method:             meshOptimizationResponseMethod(candidate.Method),
-		TargetRatioPercent: candidate.TargetRatioPercent,
-		Profile:            meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion),
-		Status:             meshOptimizationCandidateStatus(candidate.Status),
-		CreatedAt:          timestamppb.New(candidate.CreatedAt),
-		UpdatedAt:          timestamppb.New(candidate.UpdatedAt),
-	}
-	if candidate.EntityType != nil {
-		if value, ok := managev1.TranscodeEntityType_value[*candidate.EntityType]; ok {
-			entityType := managev1.TranscodeEntityType(value)
-			response.EntityType = &entityType
-		}
-	}
-	response.EntityId = candidate.EntityID
-	response.OriginalFileSize = cloneInt64(candidate.OriginalFileSize)
-	response.OptimizedFileSize = cloneInt64(candidate.OptimizedFileSize)
-	response.ProcessingTimeMs = cloneInt64(candidate.ProcessingTimeMs)
-	response.OriginalVertexCount = cloneInt64(candidate.OriginalVertexes)
-	response.OptimizedVertexCount = cloneInt64(candidate.OptimizedVertexes)
-	response.OriginalTriangleCount = cloneInt64(candidate.OriginalTriangles)
-	response.OptimizedTriangleCount = cloneInt64(candidate.OptimizedTriangles)
-	response.ErrorMessage = candidate.ErrorMessage
-	response.PublicAssetId = candidate.PublicAssetID
-	if candidate.SelectedAt != nil {
-		response.SelectedAt = timestamppb.New(*candidate.SelectedAt)
-	}
+func (s *Service) meshOptimizationCandidateResponse(candidate domain.MeshCandidate) (*MeshCandidateView, error) {
+	result := &MeshCandidateView{Record: candidate}
 	if meshOptimizationCandidateHasUsableOutput(candidate) {
 		outputFileID := strings.TrimSpace(*candidate.OutputFileID)
-		mimeType := "model/gltf-binary"
 		fileName := outputFileID + ".glb"
-		response.FileId = &outputFileID
-		response.FileName = &fileName
-		response.FileSize = cloneInt64(candidate.OptimizedFileSize)
-		delivery, err := s.fileURLsResponseFromStoredFile(
-			outputFileID,
-			"glb",
-			mimeType,
-			int64Value(candidate.OptimizedFileSize),
-			&fileName,
-		)
+		delivery, err := s.fileURLsResponseFromStoredFile(outputFileID, "glb", "model/gltf-binary", int64Value(candidate.OptimizedFileSize), &fileName)
 		if err != nil {
 			return nil, err
 		}
 		delivery.Delivery.FileName = &fileName
-		response.Delivery = delivery.Delivery
+		result.Delivery = delivery.Delivery
 	}
-	return response, nil
+	return result, nil
 }
 
-func meshOptimizationCandidateHasUsableOutput(candidate model.MeshOptimizationCandidate) bool {
-	return candidate.Status == model.MeshOptimizationCandidateStatusReady &&
+func meshOptimizationCandidateHasUsableOutput(candidate domain.MeshCandidate) bool {
+	return candidate.Status == domain.MeshStatusReady &&
 		candidate.OutputFileID != nil &&
 		strings.TrimSpace(*candidate.OutputFileID) != ""
 }
 
 func meshOptimizationRequestMethod(
-	method managev1.MeshOptimizationCompressionMethod,
+	method MeshCompressionMethod,
 ) string {
 	switch method {
-	case managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED,
-		managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO:
-		return model.MeshOptimizationMethodDraco
+	case MeshCompressionUnspecified,
+		MeshCompressionDraco:
+		return domain.MeshMethodDraco
 	default:
 		return ""
-	}
-}
-
-func meshOptimizationResponseMethod(method string) managev1.MeshOptimizationCompressionMethod {
-	if strings.EqualFold(strings.TrimSpace(method), model.MeshOptimizationMethodDraco) {
-		return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO
-	}
-	return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED
-}
-
-func meshOptimizationCandidateStatus(status string) managev1.MeshOptimizationCandidateStatus {
-	switch status {
-	case model.MeshOptimizationCandidateStatusPending:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PENDING
-	case model.MeshOptimizationCandidateStatusProcessing:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PROCESSING
-	case model.MeshOptimizationCandidateStatusReady:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_READY
-	case model.MeshOptimizationCandidateStatusFailed:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_FAILED
-	case model.MeshOptimizationCandidateStatusCancelled:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_CANCELLED
-	default:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_UNSPECIFIED
 	}
 }
 

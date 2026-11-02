@@ -11,11 +11,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -75,7 +77,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+			pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 			db := pg.DB
 			releaseID, documentID, trackID, fileID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 			now := time.Now().UTC()
@@ -113,8 +115,8 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 				authorizations, err := resolver.Resolve(
 					t.Context(), releaseID, testCase.status, authorization,
 					[]releasepublic.TrackDownloadAccessRequest{{TrackID: trackID, FileID: fileID}},
-					func(releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-						return &commonv1.ExpiringMediaRef{Url: "stale"}, nil
+					func(releasepublic.MediaFile) (*mediaauth.Reference, error) {
+						return &mediaauth.Reference{URL: "stale"}, nil
 					},
 				)
 				resolved <- resolveResult{authorizations: authorizations, err: err}
@@ -128,7 +130,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 			close(releasePhase)
 			got := <-resolved
 			require.NoError(t, got.err)
-			require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, got.authorizations[trackID].Access.GetAction())
+			require.Equal(t, releasepublic.DownloadActionNone, got.authorizations[trackID].Access.Action)
 			require.Nil(t, got.authorizations[trackID].Download)
 		})
 	}
@@ -170,7 +172,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+			pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 			db := pg.DB
 			releaseID, documentID, trackID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 			fileID, replacementFileID := uuid.NewString(), uuid.NewString()
@@ -205,10 +207,10 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 				authorizations, err := resolver.Resolve(
 					t.Context(), releaseID, testCase.status, authorization,
 					[]releasepublic.TrackDownloadAccessRequest{{TrackID: trackID, FileID: fileID}},
-					func(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
+					func(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
 						close(signing)
 						<-releaseSigning
-						return &commonv1.ExpiringMediaRef{Url: "signed:" + file.ID}, nil
+						return &mediaauth.Reference{URL: "signed:" + file.ID}, nil
 					},
 				)
 				resolved <- resolveResult{authorizations: authorizations, err: err}
@@ -236,8 +238,8 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 			close(releaseSigning)
 			got := <-resolved
 			require.NoError(t, got.err)
-			require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, got.authorizations[trackID].Access.GetAction())
-			require.Equal(t, "signed:"+fileID, got.authorizations[trackID].Download.GetUrl())
+			require.Equal(t, releasepublic.DownloadActionDownload, got.authorizations[trackID].Access.Action)
+			require.Equal(t, "signed:"+fileID, optional.Value(got.authorizations[trackID].Download).URL)
 			select {
 			case err := <-mutationDone:
 				require.NoError(t, err)

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -154,12 +153,7 @@ func TestRequireReleaseCollaborationChecksOnlyEdit(t *testing.T) {
 	}
 	checker := &recordingReleasePermissionChecker{allowed: true}
 
-	require.NoError(t, RequireCollaborationEdit(
-		t.Context(), checker,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE,
-		releaseID,
-		principal,
-	))
+	require.NoError(t, requireCollaborationEdit(t.Context(), checker, releaseID, principal))
 	require.Len(t, checker.calls, 1)
 	expected, err := policyv1.Release.Edit(releaseID)
 	require.NoError(t, err)

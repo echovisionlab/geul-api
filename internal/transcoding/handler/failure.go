@@ -36,7 +36,6 @@ func (p *audioProcessor) fail(
 		job,
 		apiv1.TranscodeEventType_TRANSCODE_EVENT_TYPE_AUDIO,
 		"audio",
-		"Audio job failed",
 		startedAt,
 		cause,
 	)
@@ -47,20 +46,10 @@ func (s *completionService) publishFailure(
 	command transcodeCommand,
 	eventType apiv1.TranscodeEventType,
 	mediaType string,
-	logMessage string,
 	startedAt time.Time,
 	cause error,
 ) error {
 	duration := time.Since(startedAt).Milliseconds()
-	slog.ErrorContext(ctx, logMessage,
-		"media_type", mediaType,
-		"job_id", command.GetEventId(),
-		"entity_type", command.GetEntityType().String(),
-		"entity_id", command.GetEntityId(),
-		"file_id", command.GetFileId(),
-		"duration_ms", duration,
-		failurecause.Attr(cause),
-	)
 	errorMessage := cause.Error()
 	publishErr := s.publisher.PublishComplete(ctx, &apiv1.TranscodeCompleteEvent{
 		EventId:          command.GetEventId(),
@@ -72,11 +61,19 @@ func (s *completionService) publishFailure(
 		Error:            &errorMessage,
 		ProcessingTimeMs: duration,
 	})
-	if publishErr != nil {
-		slog.ErrorContext(ctx, "Failed to publish failure event", failurecause.Attr(publishErr), "media_type", mediaType, "job_id", command.GetEventId(), "entity_type", command.GetEntityType().String(), "entity_id", command.GetEntityId(), "file_id", command.GetFileId())
-		return jobresult.Retry(fmt.Errorf("publish %s failure result: %w; job failure: %v", mediaType, publishErr, cause))
+	// The queue consumer logs the returned failure; it names the job here.
+	attrs := []slog.Attr{
+		slog.String("media_type", mediaType),
+		slog.String("job_id", command.GetEventId()),
+		slog.String("entity_type", command.GetEntityType().String()),
+		slog.String("entity_id", command.GetEntityId()),
+		slog.String("file_id", command.GetFileId()),
+		slog.Int64("duration_ms", duration),
 	}
-	return jobresult.Terminal(cause)
+	if publishErr != nil {
+		return failurecause.WithAttrs(jobresult.Retry(fmt.Errorf("publish %s failure result: %w; job failure: %v", mediaType, publishErr, cause)), attrs...)
+	}
+	return failurecause.WithAttrs(jobresult.Terminal(cause), attrs...)
 }
 
 func (p *videoProcessor) fail(
@@ -90,7 +87,6 @@ func (p *videoProcessor) fail(
 		job,
 		apiv1.TranscodeEventType_TRANSCODE_EVENT_TYPE_VIDEO,
 		"video",
-		"Video job failed",
 		startedAt,
 		cause,
 	)

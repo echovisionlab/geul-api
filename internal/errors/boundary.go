@@ -113,7 +113,7 @@ func (c *privateReceiveConn) privateValues() []string {
 func handlerPanic(ctx context.Context, procedure string, recovered any, private []string) *connect.Error {
 	cause, stack := failurecause.Panic(recovered, private...)
 	if recorder := failurecause.RecorderFrom(ctx); recorder != nil {
-		recorder.Record(cause, stack)
+		recorder.Record(failurecause.Failure{Cause: cause, Stack: stack})
 	} else {
 		slog.ErrorContext(ctx, "RPC handler panicked", "rpc_procedure", procedure, "failure_cause", cause, "panic_stack", stack)
 	}
@@ -123,26 +123,37 @@ func handlerPanic(ctx context.Context, procedure string, recovered any, private 
 func boundaryError(ctx context.Context, procedure string, err error, private []string) *connect.Error {
 	classified := Wrap(err)
 	code := classified.Code()
-	recorder := failurecause.RecorderFrom(ctx)
+	failure := failurecause.Of(classified, private...)
 	switch code {
 	case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss:
-		cause := failurecause.Message(classified, private...)
-		if recorder != nil {
-			recorder.Record(cause, "")
-		} else {
-			slog.ErrorContext(ctx, "RPC failed", "rpc_procedure", procedure, "error_code", code.String(), "failure_cause", cause)
-		}
+		recordFailure(ctx, slog.LevelError, "RPC failed", procedure, code, failure)
 		return connect.NewError(code, stderrors.New(MsgInternal))
 	}
-	if _, kept := classified.Unwrap().(*classifiedCause); kept {
-		cause := failurecause.Message(classified, private...)
-		if recorder != nil {
-			recorder.Record(cause, "")
-		} else {
-			slog.Log(ctx, OperationLogLevel(classified), "Classified RPC error", "rpc_procedure", procedure, "error_code", code.String(), "failure_cause", cause)
+	// The client message is the whole story unless classification hid
+	// operation context or the error carries identifiers.
+	if _, kept := classified.Unwrap().(*classifiedCause); kept || len(failure.Attrs) > 0 || failure.ServerFault { //nolint:errorlint // only a cause Wrap attached directly carries operation context
+		level := OperationLogLevel(classified)
+		if failure.ServerFault {
+			level = slog.LevelError
 		}
+		recordFailure(ctx, level, "Classified RPC error", procedure, code, failure)
 	}
 	return redactClientMessage(classified, private)
+}
+
+// recordFailure hands failure to the request's terminal record, or logs it
+// when no request log installed a recorder.
+func recordFailure(ctx context.Context, level slog.Level, message, procedure string, code connect.Code, failure failurecause.Failure) {
+	if recorder := failurecause.RecorderFrom(ctx); recorder != nil {
+		recorder.Record(failure)
+		return
+	}
+	attrs := append([]slog.Attr{
+		slog.String("rpc_procedure", procedure),
+		slog.String("error_code", code.String()),
+		slog.String("failure_cause", failure.Cause),
+	}, failure.Attrs...)
+	slog.LogAttrs(ctx, level, message, attrs...)
 }
 
 // redactClientMessage removes private request values from a client message.

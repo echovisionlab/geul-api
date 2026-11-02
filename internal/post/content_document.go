@@ -4,113 +4,108 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 const postContentDocumentProfile = "post"
 
-type postContentDocumentRoot struct {
-	ID                string           `gorm:"column:id"`
-	Status            model.PostStatus `gorm:"column:status"`
-	ContentDocumentID *uuid.UUID       `gorm:"column:content_document_id;type:uuid"`
-	SourceLocale      string           `gorm:"column:source_locale"`
-}
+// postEntityName names the owner in shared content document messages.
+const postEntityName = "Post"
 
-func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) (uuid.UUID, error) {
+func loadPostContentDocumentID(ctx context.Context, store interface {
+	DocumentRoot(ctx context.Context, postID string) (DocumentRoot, error)
+}, postID string) (uuid.UUID, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadPostContentDocumentID", "outcome", "failed", failurecause.Attr(err))
-		return uuid.Nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return uuid.Nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
-	var root postContentDocumentRoot
-	if err := db.WithContext(ctx).
-		Table("post").
-		Select("id", "status", "content_document_id", "source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound("post", postID)
+	root, err := store.DocumentRoot(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return uuid.Nil, domainerr.ResourceNotFound("post", postID)
 		}
-		return uuid.Nil, errs.Internal(fmt.Errorf("load Post content document: %w", err))
+		return uuid.Nil, fmt.Errorf("load Post content document: %w", err)
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return uuid.Nil, errs.FailedPrecondition("Post content document has not been populated")
+		return uuid.Nil, domainerr.Precondition("Post content document has not been populated")
 	}
 	return *root.ContentDocumentID, nil
 }
 
 func lockPostContentDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	postID string,
 	documentID uuid.UUID,
 	allowArchived bool,
-) (postContentDocumentRoot, error) {
-	var root postContentDocumentRoot
-	if err := tx.WithContext(ctx).
-		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "status", "content_document_id", "source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return postContentDocumentRoot{}, errs.NotFound("post", postID)
+) (DocumentRoot, error) {
+	root, err := store.LockDocumentRoot(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return DocumentRoot{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return postContentDocumentRoot{}, errs.Internal(err)
+		return DocumentRoot{}, err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-		return postContentDocumentRoot{}, errs.FailedPrecondition("Post content document changed; reload before saving")
+		return DocumentRoot{}, domainerr.Precondition("Post content document changed; reload before saving")
 	}
-	if !allowArchived && root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-		return postContentDocumentRoot{}, errs.FailedPrecondition("archived posts are read-only")
+	if !allowArchived && root.Status == StatusArchived {
+		return DocumentRoot{}, domainerr.Precondition("archived posts are read-only")
 	}
 	return root, nil
 }
 
+// lockedContentFence admits only documentID and answers with the domain
+// context the caller already authorized under its lock
+// (contentblock.LockedFence).
+func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext) ContentFence {
+	return func(_ context.Context, _ Store, requested uuid.UUID) (contentblock.DomainContext, error) {
+		if requested != documentID {
+			return contentblock.DomainContext{}, domainerr.Precondition(postEntityName + " content document changed; reload before saving")
+		}
+		return domain, nil
+	}
+}
+
 func postCollaborationDocumentFence(
-	spiceDB *auth.SpiceDBClient,
+	spiceDB Authorizer,
 	postID string,
 	contributorMemberIDs []string,
-) contentblock.DomainFence {
+) ContentFence {
 	contributors := append([]string(nil), contributorMemberIDs...)
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := requirePostContributorsPermission(ctx, tx, spiceDB, root.ID, root.Status, contributors); err != nil {
+		if err := requirePostContributorsPermission(ctx, store, spiceDB, root.ID, root.Status, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, postID)
+		return loadPostContentDomainContext(ctx, store, postID)
 	}
 }
 
 func postCreationDocumentFence(
 	postID string,
 	sourceLocale string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if _, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, false); err != nil {
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if _, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, false); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if strings.TrimSpace(sourceLocale) == "" {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale is invalid")
+			return contentblock.DomainContext{}, domainerr.Precondition("Post source locale is invalid")
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 	}
@@ -118,72 +113,62 @@ func postCreationDocumentFence(
 
 func authorizePostBlockBootstrap(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	documentID uuid.UUID,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID *string,
 ) (*auth.UserInfo, error) {
-	if principalMessage == nil {
-		return nil, errs.InvalidArgument("principal", "is required")
+	if sessionID == nil {
+		return nil, domainerr.InvalidField("principal", "is required")
 	}
-	root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
+	root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true)
 	if err != nil {
 		return nil, err
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		tx,
-		principalMessage.GetSessionId(),
-	)
+	principal, err := store.ResolveSessionPrincipal(ctx, *sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("resolve Post collaboration principal: %w", err))
+		return nil, fmt.Errorf("resolve Post collaboration principal: %w", err)
 	}
 	if principal == nil || principal.Banned || !principal.Onboarded {
-		return nil, errs.NoPermission("edit", "post")
+		return nil, domainerr.NoPermission("edit", "post")
 	}
 	principalContext := auth.WithUser(ctx, principal)
-	if root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if root.Status == StatusArchived {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(canErr))
-			return nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
+			return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
 		}
 		decision, decisionErr := auth.AuthorizationDecision(principalContext, can)
 		if decisionErr != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(decisionErr))
-			return nil, errs.AuthenticationRequired()
+			return nil, domainerr.AuthenticationRequired().WithCause(decisionErr)
 		}
-		allowed, checkErr := spiceDB.Can(ctx, decision)
+		allowed, checkErr := checker.Can(ctx, decision)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(checkErr))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		if !allowed {
-			return nil, errs.NoPermission("view", "post")
+			return nil, domainerr.NoPermission("view", "post")
 		}
 		return principal, nil
 	}
 	can, err := policyv1.Post.Edit(postID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(principalContext, can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
-	allowed, err := spiceDB.Can(ctx, decision)
+	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return nil, errs.NoPermission("edit", "post")
+		return nil, domainerr.NoPermission("edit", "post")
 	}
 	return principal, nil
 }
@@ -191,102 +176,78 @@ func authorizePostBlockBootstrap(
 func postLockedDocumentFence(
 	postID string,
 	allowArchived bool,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, allowArchived)
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, allowArchived)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, root.ID)
+		return loadPostContentDomainContext(ctx, store, root.ID)
 	}
 }
 
-func postSystemTranslationDocumentFence(postID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+func postSystemTranslationDocumentFence(postID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		// An accepted job may finish after archival; a deleted root is still
 		// rejected by the locked lookup.
-		if _, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true); err != nil {
+		if _, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, postID)
-	}
-}
-
-func postAuthorizedDocumentFence(
-	documentID uuid.UUID,
-	domain contentblock.DomainContext,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post content document changed; reload before saving")
-		}
-		return domain, nil
+		return loadPostContentDomainContext(ctx, store, postID)
 	}
 }
 
 func loadPostContentDomainContext(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	postID string,
 ) (contentblock.DomainContext, error) {
-	var row struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("post").
-		Select("source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale has not been initialized")
+	sourceLocale, err := store.SourceLocale(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return contentblock.DomainContext{}, domainerr.Precondition("Post source locale has not been initialized")
 		}
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, err
 	}
-	if strings.TrimSpace(row.SourceLocale) == "" {
-		return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale is invalid")
+	if strings.TrimSpace(sourceLocale) == "" {
+		return contentblock.DomainContext{}, domainerr.Precondition("Post source locale is invalid")
 	}
-	return contentblock.DomainContext{SourceLocale: row.SourceLocale}, nil
+	return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 }
 
 func parsePostContentUUID(field, value string) (uuid.UUID, error) {
 	parsed, err := uuidutil.ParseCanonical(value, field)
 	if err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "post.parsePostContentUUID", "outcome", "failed", failurecause.Attr(err))
-		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
+		return uuid.Nil, domainerr.InvalidField(field, "must be a canonical UUID").WithCause(err)
 	}
 	return parsed, nil
 }
 
 func normalizePostContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Post target locale changed since it was loaded; reload before saving", err,
-		)
+			"Post target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.NotFoundMsg("Post content document not found")
+		return domainerr.New(domainerr.NotFound, "", "Post content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Post document changed since it was loaded; reload before saving", err,
-		)
+			"Post document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("a Post Block File reference is not attachable")
+		return domainerr.Precondition("a Post Block File reference is not attachable").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("post content document: %w", err))
+		return fmt.Errorf("post content document: %w", err)
 	}
 }

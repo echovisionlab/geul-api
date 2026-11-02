@@ -5,29 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"log/slog"
 	"reflect"
 	"strings"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/translation"
+
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const translationProviderUnavailableMessage = "translation generation requires an active translation provider"
@@ -41,26 +35,32 @@ type TranslationGeneratorResolver interface {
 	HasAvailableProvider(ctx context.Context) (bool, error)
 }
 
-type dbTranslationGeneratorResolver struct {
-	db *gorm.DB
+// storeTranslationGeneratorResolver builds generators from the active
+// providers, read in one snapshot per call.
+type storeTranslationGeneratorResolver struct {
+	units mutation.UnitOfWork[JobStore]
 }
 
-func newDBTranslationGeneratorResolver(db *gorm.DB) TranslationGeneratorResolver {
-	return dbTranslationGeneratorResolver{db: db}
+func (r storeTranslationGeneratorResolver) Resolve(ctx context.Context) (translation.Generator, error) {
+	generators, err := r.ResolveAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return generators[0], nil
 }
 
-func (r dbTranslationGeneratorResolver) Resolve(ctx context.Context) (translation.Generator, error) {
-	generator, _, err := loadActiveTranslationGenerator(ctx, r.db)
-	return generator, err
-}
-
-func (r dbTranslationGeneratorResolver) ResolveAll(ctx context.Context) ([]translation.Generator, error) {
-	generators, _, err := loadActiveTranslationGenerators(ctx, r.db)
+func (r storeTranslationGeneratorResolver) ResolveAll(ctx context.Context) ([]translation.Generator, error) {
+	var generators []translation.Generator
+	err := r.units.Read(ctx, func(store JobStore) error {
+		var err error
+		generators, err = loadActiveTranslationGenerators(ctx, store)
+		return err
+	})
 	return generators, err
 }
 
-func (r dbTranslationGeneratorResolver) HasAvailableProvider(ctx context.Context) (bool, error) {
-	generators, _, err := loadActiveTranslationGenerators(ctx, r.db)
+func (r storeTranslationGeneratorResolver) HasAvailableProvider(ctx context.Context) (bool, error) {
+	generators, err := r.ResolveAll(ctx)
 	if err == nil {
 		return len(generators) > 0, nil
 	}
@@ -70,279 +70,324 @@ func (r dbTranslationGeneratorResolver) HasAvailableProvider(ctx context.Context
 	return false, err
 }
 
-func (s *TranslationService) ListTranslationProviders(
-	ctx context.Context,
-	req *connect.Request[managev1.ListTranslationProvidersRequest],
-) (_ *connect.Response[managev1.ListTranslationProvidersResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationProviders")
-		}
-	}()
+// ListTranslationProvidersQuery lists translation providers by priority.
+type ListTranslationProvidersQuery struct {
+	// Limit defaults to 20 and is capped at 100.
+	Limit  int32
+	Offset int32
+	// Filters honors only is_active = true.
+	Filters []*commonv1.FilterSpec
+}
+
+// ProviderPage is one page of translation providers.
+type ProviderPage struct {
+	Providers  []Provider
+	Pagination Pagination
+}
+
+// ListTranslationProviders lists translation providers without secrets.
+func (s *Service) ListTranslationProviders(ctx context.Context, query ListTranslationProvidersQuery) (ProviderPage, error) {
 	can, canErr := policyv1.TranslationProvider.List()
 	if err := s.requireTranslationPlatformCan(ctx, can, canErr); err != nil {
-		return nil, err
+		return ProviderPage{}, err
 	}
-
-	query := s.db.WithContext(ctx).Model(&model.TranslationProviderConfig{})
-	for _, filter := range req.Msg.Filters {
+	list := ProviderListQuery{}
+	for _, filter := range query.Filters {
 		if filter == nil {
 			continue
 		}
 		if filter.GetField() == "is_active" && filter.GetValue() == "true" {
-			query = query.Where("is_active = ?", true)
+			list.ActiveOnly = true
 		}
 	}
-
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	list.Limit, list.Offset = pagination.Limit, pagination.Offset
+	var providers []Provider
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	limit, offset := queryutil.NormalizePaginationParams(req.Msg.Pagination)
-	var providers []model.TranslationProviderConfig
-	if err := query.
-		Order("priority ASC, created_at ASC").
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Find(&providers).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	resp := &managev1.ListTranslationProvidersResponse{
-		Providers:  make([]*managev1.TranslationProvider, 0, len(providers)),
-		Pagination: (queryutil.Pagination{Limit: limit, Offset: offset}).BuildResponse(total),
-	}
-	for i := range providers {
-		resp.Providers = append(resp.Providers, toProtoTranslationProvider(&providers[i], false))
-	}
-	return connect.NewResponse(resp), nil
-}
-
-func (s *TranslationService) CreateTranslationProvider(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateTranslationProviderRequest],
-) (_ *connect.Response[managev1.CreateTranslationProviderResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, strings.TrimSpace(req.Msg.GetLlmConfig().GetApiKey()), strings.TrimSpace(req.Msg.GetDeeplConfig().GetApiKey())), "operation", "CreateTranslationProvider")
-		}
-	}()
-	providerCan, err := policyv1.TranslationProvider.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var provider *model.TranslationProviderConfig
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, providerCan); err != nil {
-			return err
-		}
-		name := strings.TrimSpace(req.Msg.Name)
-		if name == "" {
-			return errs.Required("name")
-		}
-		if len(name) > 255 {
-			return errs.InvalidArgument("name", "must be at most 255 characters")
-		}
-
-		providerType := protoToModelTranslationProviderType(req.Msg.Type)
-		if providerType == "" {
-			return errs.InvalidArgument("type", "invalid translation provider type")
-		}
-		config, err := buildTranslationProviderConfig(providerType, req.Msg.GetLlmConfig(), req.Msg.GetDeeplConfig(), nil)
-		if err != nil {
-			return errs.InvalidArgument("config", err.Error())
-		}
-
-		now := dbtime.Now()
-		provider = &model.TranslationProviderConfig{
-			Name:      name,
-			Type:      providerType,
-			IsActive:  req.Msg.IsActive,
-			Priority:  int(req.Msg.GetPriority()),
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		if err := provider.SetConfig(config); err != nil {
-			return errs.Internal(fmt.Errorf("failed to set translation provider config: %w", err))
-		}
-		if _, err := newTranslationGeneratorFromProvider(provider); err != nil {
-			return errs.InvalidArgument("config", err.Error())
-		}
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(provider).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditTranslationProviderCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewTranslationProviderCreatedAuditRecord(metadata, provider.ID)
-		})
-	}); err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.CreateTranslationProviderResponse{
-		Provider: toProtoTranslationProvider(provider, false),
-	}), nil
-}
-
-func (s *TranslationService) UpdateTranslationProvider(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateTranslationProviderRequest],
-) (_ *connect.Response[managev1.UpdateTranslationProviderResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, strings.TrimSpace(req.Msg.GetLlmConfig().GetApiKey()), strings.TrimSpace(req.Msg.GetDeeplConfig().GetApiKey())), "operation", "UpdateTranslationProvider")
-		}
-	}()
-	providerCan, err := policyv1.TranslationProvider.Update()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	providerID := strings.TrimSpace(req.Msg.Id)
-	var provider model.TranslationProviderConfig
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&provider, "id = ?", providerID).Error; err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, providerCan); err != nil {
-			return err
-		}
-
-		requestedName := provider.Name
-		requestedActive := provider.IsActive
-		requestedPriority := provider.Priority
-		if req.Msg.Name != nil {
-			name := strings.TrimSpace(*req.Msg.Name)
-			if name == "" {
-				return errs.InvalidArgument("name", "cannot be empty")
-			}
-			if len(name) > 255 {
-				return errs.InvalidArgument("name", "must be at most 255 characters")
-			}
-			requestedName = name
-		}
-		if req.Msg.IsActive != nil {
-			requestedActive = *req.Msg.IsActive
-		}
-		if req.Msg.Priority != nil {
-			requestedPriority = int(*req.Msg.Priority)
-		}
-
-		effectiveType := provider.Type
-		typeChanged := false
-		if req.Msg.Type != nil {
-			nextType := protoToModelTranslationProviderType(*req.Msg.Type)
-			if nextType == "" {
-				return errs.InvalidArgument("type", "invalid translation provider type")
-			}
-			if nextType != provider.Type {
-				typeChanged = true
-				effectiveType = nextType
-			}
-		}
-
-		configChanged := typeChanged || req.Msg.GetLlmConfig() != nil || req.Msg.GetDeeplConfig() != nil
-		var requestedConfig model.TranslationProviderConfigJSON
-		if configChanged {
-			config, err := buildTranslationProviderConfig(
-				effectiveType,
-				req.Msg.GetLlmConfig(),
-				req.Msg.GetDeeplConfig(),
-				translationProviderExistingConfig(&provider, typeChanged),
-			)
-			if err != nil {
-				return errs.InvalidArgument("config", err.Error())
-			}
-			candidate := provider
-			candidate.Type = effectiveType
-			if err := candidate.SetConfig(config); err != nil {
-				return errs.Internal(fmt.Errorf("failed to set translation provider config: %w", err))
-			}
-			if _, err := newTranslationGeneratorFromProvider(&candidate); err != nil {
-				return errs.InvalidArgument("config", err.Error())
-			}
-			requestedConfig = candidate.Config
-		}
-
-		updates := structured.Fields{}
-		changedFields := make([]string, 0, 5)
-		if req.Msg.Name != nil && provider.Name != requestedName {
-			updates["name"] = requestedName
-			provider.Name = requestedName
-			changedFields = append(changedFields, "name")
-		}
-		if req.Msg.IsActive != nil && provider.IsActive != requestedActive {
-			updates["is_active"] = requestedActive
-			provider.IsActive = requestedActive
-			changedFields = append(changedFields, "active")
-		}
-		if req.Msg.Priority != nil && provider.Priority != requestedPriority {
-			updates["priority"] = requestedPriority
-			provider.Priority = requestedPriority
-			changedFields = append(changedFields, "priority")
-		}
-		if req.Msg.Type != nil && provider.Type != effectiveType {
-			updates["type"] = effectiveType
-			provider.Type = effectiveType
-			changedFields = append(changedFields, "type")
-		}
-		if configChanged && !configJSONSemanticallyEqual(provider.Config.RawMessage, requestedConfig.RawMessage) {
-			updates["config"] = requestedConfig
-			provider.Config = requestedConfig
-			changedFields = append(changedFields, "config")
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		updates["updated_at"] = tx.NowFunc().UTC()
-		if err := tx.Model(&provider).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditTranslationProviderUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewTranslationProviderConfigUpdatedAuditRecord(metadata, provider.ID, changedFields)
-		})
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		providers, total, err = store.ListProviders(ctx, list)
+		return err
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("translation_provider", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+		return ProviderPage{}, err
 	}
+	if providers == nil {
+		providers = []Provider{}
+	}
+	return ProviderPage{Providers: providers, Pagination: paginationOf(pagination, total)}, nil
+}
 
-	return connect.NewResponse(&managev1.UpdateTranslationProviderResponse{
-		Provider: toProtoTranslationProvider(&provider, false),
-	}), nil
+// LLMConfigInput is the LLM config a command sends. An empty APIKey keeps
+// the stored key of an LLM provider; Preset is empty when unspecified.
+type LLMConfigInput struct {
+	APIKey                        string
+	Preset                        LLMPreset
+	APIBaseURL                    string
+	Model                         string
+	InputTokenPriceUSDPerMillion  *float64
+	OutputTokenPriceUSDPerMillion *float64
+	MaxContextTokens              *int32
+	MaxOutputTokens               *int32
+	SupportsJSONMode              bool
+	Temperature                   *float64
+}
+
+// DeepLConfigInput is the DeepL config a command sends; empty values keep
+// the stored ones of a DeepL provider.
+type DeepLConfigInput struct {
+	APIKey     string
+	APIBaseURL string
+}
+
+// CreateTranslationProviderCommand registers a translation provider. The
+// config of the chosen Type is required; an unknown Type is empty.
+type CreateTranslationProviderCommand struct {
+	Name        string
+	Type        ProviderType
+	IsActive    bool
+	Priority    int32
+	LLMConfig   *LLMConfigInput
+	DeepLConfig *DeepLConfigInput
+}
+
+// CreateTranslationProvider registers a provider after proving its config
+// builds a generator.
+func (s *Service) CreateTranslationProvider(ctx context.Context, command CreateTranslationProviderCommand) (_ Provider, retErr error) {
+	// The boundary redacts the API keys as sent; failures can quote them
+	// trimmed.
+	defer failurecause.AnnotatePrivate(&retErr, commandAPIKeys(command.LLMConfig, command.DeepLConfig)...)
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[Provider, Store]{
+		Access: mutation.FreshAdminCan(policyv1.TranslationProvider.Create()),
+		Change: func(ctx context.Context, store Store) (Provider, error) {
+			return createTranslationProvider(ctx, store, command)
+		},
+		Audit: func(provider Provider) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditTranslationProviderCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewTranslationProviderCreatedAuditRecord(metadata, provider.ID)
+			})
+		},
+	})
+}
+
+// commandAPIKeys are the API keys a command carries, trimmed as a failure
+// can quote them.
+func commandAPIKeys(llmConfig *LLMConfigInput, deeplConfig *DeepLConfigInput) []string {
+	var llmKey, deeplKey string
+	if llmConfig != nil {
+		llmKey = strings.TrimSpace(llmConfig.APIKey)
+	}
+	if deeplConfig != nil {
+		deeplKey = strings.TrimSpace(deeplConfig.APIKey)
+	}
+	return []string{llmKey, deeplKey}
+}
+
+func createTranslationProvider(ctx context.Context, store Store, command CreateTranslationProviderCommand) (Provider, error) {
+	name := strings.TrimSpace(command.Name)
+	if name == "" {
+		return Provider{}, domainerr.Required("name")
+	}
+	if len(name) > 255 {
+		return Provider{}, domainerr.InvalidField("name", "must be at most 255 characters")
+	}
+	providerType := knownProviderType(command.Type)
+	if providerType == "" {
+		return Provider{}, domainerr.InvalidField("type", "invalid translation provider type")
+	}
+	config, err := buildTranslationProviderConfig(ctx, providerType, command.LLMConfig, command.DeepLConfig, nil)
+	if err != nil {
+		return Provider{}, domainerr.InvalidField("config", err.Error())
+	}
+	now := dbtime.Now()
+	provider := Provider{
+		Name:      name,
+		Type:      providerType,
+		IsActive:  command.IsActive,
+		Priority:  int(command.Priority),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := provider.SetConfig(config); err != nil {
+		return Provider{}, fmt.Errorf("failed to set translation provider config: %w", err)
+	}
+	if _, err := newTranslationGeneratorFromProvider(&provider); err != nil {
+		return Provider{}, domainerr.InvalidField("config", err.Error())
+	}
+	return store.InsertProvider(ctx, provider)
+}
+
+func knownProviderType(providerType ProviderType) ProviderType {
+	switch providerType {
+	case ProviderTypeLLM, ProviderTypeDeepL:
+		return providerType
+	default:
+		return ""
+	}
+}
+
+// UpdateTranslationProviderCommand changes the set fields of a provider. A
+// config without an API key keeps the stored key of the same type.
+type UpdateTranslationProviderCommand struct {
+	ID          string
+	Name        *string
+	Type        *ProviderType
+	IsActive    *bool
+	Priority    *int32
+	LLMConfig   *LLMConfigInput
+	DeepLConfig *DeepLConfigInput
+}
+
+type providerUpdate struct {
+	provider      Provider
+	changedFields []string
+}
+
+// UpdateTranslationProvider applies the set fields and audits the fields
+// that changed.
+func (s *Service) UpdateTranslationProvider(ctx context.Context, command UpdateTranslationProviderCommand) (_ Provider, retErr error) {
+	// The boundary redacts the API keys as sent; failures can quote them
+	// trimmed.
+	defer failurecause.AnnotatePrivate(&retErr, commandAPIKeys(command.LLMConfig, command.DeepLConfig)...)
+	providerID := strings.TrimSpace(command.ID)
+	var provider Provider
+	updated, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[providerUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			provider, err = store.LockProvider(ctx, providerID)
+			return err
+		},
+		Access: mutation.FreshAdminCan(policyv1.TranslationProvider.Update()),
+		Change: func(ctx context.Context, store Store) (providerUpdate, error) {
+			return updateTranslationProvider(ctx, store, provider, command)
+		},
+		Audit: func(update providerUpdate) mutation.Audit {
+			if len(update.changedFields) == 0 {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditTranslationProviderUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewTranslationProviderConfigUpdatedAuditRecord(metadata, update.provider.ID, update.changedFields)
+			})
+		},
+	})
+	if errors.Is(err, ErrProviderNotFound) {
+		return Provider{}, domainerr.ResourceNotFound("translation_provider", command.ID)
+	}
+	if err != nil {
+		return Provider{}, err
+	}
+	return updated.provider, nil
+}
+
+func updateTranslationProvider(
+	ctx context.Context,
+	store Store,
+	provider Provider,
+	command UpdateTranslationProviderCommand,
+) (providerUpdate, error) {
+	requested, err := requestedTranslationProvider(ctx, provider, command)
+	if err != nil {
+		return providerUpdate{}, err
+	}
+	var change ProviderChange
+	changedFields := make([]string, 0, 5)
+	if command.Name != nil && provider.Name != requested.Name {
+		change.Name = &requested.Name
+		provider.Name = requested.Name
+		changedFields = append(changedFields, "name")
+	}
+	if command.IsActive != nil && provider.IsActive != requested.IsActive {
+		change.IsActive = &requested.IsActive
+		provider.IsActive = requested.IsActive
+		changedFields = append(changedFields, "active")
+	}
+	if command.Priority != nil && provider.Priority != requested.Priority {
+		change.Priority = &requested.Priority
+		provider.Priority = requested.Priority
+		changedFields = append(changedFields, "priority")
+	}
+	if command.Type != nil && provider.Type != requested.Type {
+		change.Type = &requested.Type
+		provider.Type = requested.Type
+		changedFields = append(changedFields, "type")
+	}
+	if requested.configChanged && !configJSONSemanticallyEqual(provider.Config, requested.Config) {
+		change.Config = requested.Config
+		provider.Config = requested.Config
+		changedFields = append(changedFields, "config")
+	}
+	if len(changedFields) == 0 {
+		return providerUpdate{provider: provider}, nil
+	}
+	updatedAt, err := store.UpdateProvider(ctx, provider.ID, change)
+	if err != nil {
+		return providerUpdate{}, err
+	}
+	provider.UpdatedAt = updatedAt
+	return providerUpdate{provider: provider, changedFields: changedFields}, nil
+}
+
+type requestedProvider struct {
+	Provider
+	configChanged bool
+}
+
+// requestedTranslationProvider validates the command against the stored
+// provider and returns the provider the command asks for.
+func requestedTranslationProvider(
+	ctx context.Context,
+	provider Provider,
+	command UpdateTranslationProviderCommand,
+) (requestedProvider, error) {
+	requested := requestedProvider{Provider: provider}
+	if command.Name != nil {
+		name := strings.TrimSpace(*command.Name)
+		if name == "" {
+			return requestedProvider{}, domainerr.InvalidField("name", "cannot be empty")
+		}
+		if len(name) > 255 {
+			return requestedProvider{}, domainerr.InvalidField("name", "must be at most 255 characters")
+		}
+		requested.Name = name
+	}
+	if command.IsActive != nil {
+		requested.IsActive = *command.IsActive
+	}
+	if command.Priority != nil {
+		requested.Priority = int(*command.Priority)
+	}
+	typeChanged := false
+	if command.Type != nil {
+		nextType := knownProviderType(*command.Type)
+		if nextType == "" {
+			return requestedProvider{}, domainerr.InvalidField("type", "invalid translation provider type")
+		}
+		if nextType != provider.Type {
+			typeChanged = true
+			requested.Type = nextType
+		}
+	}
+	requested.configChanged = typeChanged || command.LLMConfig != nil || command.DeepLConfig != nil
+	if !requested.configChanged {
+		return requested, nil
+	}
+	config, err := buildTranslationProviderConfig(
+		ctx, requested.Type, command.LLMConfig, command.DeepLConfig,
+		translationProviderExistingConfig(&provider, typeChanged),
+	)
+	if err != nil {
+		return requestedProvider{}, domainerr.InvalidField("config", err.Error())
+	}
+	candidate := provider
+	candidate.Type = requested.Type
+	if err := candidate.SetConfig(config); err != nil {
+		return requestedProvider{}, fmt.Errorf("failed to set translation provider config: %w", err)
+	}
+	if _, err := newTranslationGeneratorFromProvider(&candidate); err != nil {
+		return requestedProvider{}, domainerr.InvalidField("config", err.Error())
+	}
+	requested.Config = candidate.Config
+	return requested, nil
 }
 
 func configJSONSemanticallyEqual(left, right []byte) bool {
@@ -354,92 +399,60 @@ func configJSONSemanticallyEqual(left, right []byte) bool {
 	return reflect.DeepEqual(leftValue, rightValue)
 }
 
-func (s *TranslationService) DeleteTranslationProvider(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteTranslationProviderRequest],
-) (_ *connect.Response[managev1.DeleteTranslationProviderResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "DeleteTranslationProvider")
-		}
-	}()
-	providerCan, err := policyv1.TranslationProvider.Delete()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	providerID := strings.TrimSpace(req.Msg.Id)
-	var provider model.TranslationProviderConfig
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&provider, "id = ?", providerID).Error; err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, providerCan); err != nil {
-			return err
-		}
-		if err := tx.Delete(&provider).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditTranslationProviderDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewTranslationProviderDeletedAuditRecord(metadata, provider.ID)
-		})
-	}); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("translation_provider", req.Msg.Id)
-		}
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteTranslationProviderResponse{}), nil
+// DeleteTranslationProviderCommand deletes a translation provider.
+type DeleteTranslationProviderCommand struct {
+	ID string
 }
 
-func (s *TranslationService) requireTranslationPlatformCan(
+// DeleteTranslationProvider deletes a provider.
+func (s *Service) DeleteTranslationProvider(ctx context.Context, command DeleteTranslationProviderCommand) error {
+	providerID := strings.TrimSpace(command.ID)
+	var provider Provider
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			provider, err = store.LockProvider(ctx, providerID)
+			return err
+		},
+		Access: mutation.FreshAdminCan(policyv1.TranslationProvider.Delete()),
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			return struct{}{}, store.DeleteProvider(ctx, provider.ID)
+		},
+		Audit: func(struct{}) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditTranslationProviderDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewTranslationProviderDeletedAuditRecord(metadata, provider.ID)
+			})
+		},
+	})
+	if errors.Is(err, ErrProviderNotFound) {
+		return domainerr.ResourceNotFound("translation_provider", command.ID)
+	}
+	return err
+}
+
+func (s *Service) requireTranslationPlatformCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
 ) error {
 	if canErr != nil {
-		return errs.Internal(canErr)
+		return canErr
 	}
 	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
-func loadActiveTranslationGenerator(
-	ctx context.Context,
-	db *gorm.DB,
-) (translation.Generator, *model.TranslationProviderConfig, error) {
-	generators, providers, err := loadActiveTranslationGenerators(ctx, db)
-	if err != nil {
-		return nil, nil, err
-	}
-	return generators[0], providers[0], nil
-}
-
 func loadActiveTranslationGenerators(
 	ctx context.Context,
-	db *gorm.DB,
-) ([]translation.Generator, []*model.TranslationProviderConfig, error) {
-	var providers []model.TranslationProviderConfig
-	if err := db.WithContext(ctx).
-		Where("is_active = ?", true).
-		Order("priority ASC, created_at ASC").
-		Find(&providers).Error; err != nil {
-		return nil, nil, err
+	store JobStore,
+) ([]translation.Generator, error) {
+	providers, err := store.ActiveProviders(ctx)
+	if err != nil {
+		return nil, err
 	}
 	for i := range providers {
 		generator, err := newTranslationGeneratorFromProvider(&providers[i])
 		if err != nil {
-			slog.Warn(
+			slog.WarnContext(ctx,
 				"Skipping invalid active translation provider",
 				"provider_id", providers[i].ID,
 				"provider_name", providers[i].Name,
@@ -449,11 +462,10 @@ func loadActiveTranslationGenerators(
 			continue
 		}
 		generators := []translation.Generator{generator}
-		configs := []*model.TranslationProviderConfig{&providers[i]}
 		for index := i + 1; index < len(providers); index++ {
 			nextGenerator, err := newTranslationGeneratorFromProvider(&providers[index])
 			if err != nil {
-				slog.Warn(
+				slog.WarnContext(ctx,
 					"Skipping invalid active translation provider",
 					"provider_id", providers[index].ID,
 					"provider_name", providers[index].Name,
@@ -463,15 +475,14 @@ func loadActiveTranslationGenerators(
 				continue
 			}
 			generators = append(generators, nextGenerator)
-			configs = append(configs, &providers[index])
 		}
-		return generators, configs, nil
+		return generators, nil
 	}
-	return nil, nil, errTranslationProviderUnavailable
+	return nil, errTranslationProviderUnavailable
 }
 
-func hasAvailableTranslationProvider(ctx context.Context, db *gorm.DB) (bool, error) {
-	_, _, err := loadActiveTranslationGenerator(ctx, db)
+func hasAvailableTranslationProvider(ctx context.Context, store JobStore) (bool, error) {
+	_, err := loadActiveTranslationGenerators(ctx, store)
 	if err == nil {
 		return true, nil
 	}
@@ -481,13 +492,13 @@ func hasAvailableTranslationProvider(ctx context.Context, db *gorm.DB) (bool, er
 	return false, err
 }
 
-func newTranslationGeneratorFromProvider(provider *model.TranslationProviderConfig) (translation.Generator, error) {
+func newTranslationGeneratorFromProvider(provider *Provider) (translation.Generator, error) {
 	if provider == nil {
 		return nil, errTranslationProviderUnavailable
 	}
 	switch provider.Type {
-	case model.TranslationProviderTypeLLM:
-		cfg, err := provider.GetLLMConfig()
+	case ProviderTypeLLM:
+		cfg, err := provider.LLMConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -496,8 +507,8 @@ func newTranslationGeneratorFromProvider(provider *model.TranslationProviderConf
 			return nil, err
 		}
 		return translation.NewAIGenerator(textProvider), nil
-	case model.TranslationProviderTypeDeepL:
-		cfg, err := provider.GetDeepLConfig()
+	case ProviderTypeDeepL:
+		cfg, err := provider.DeepLConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -507,7 +518,7 @@ func newTranslationGeneratorFromProvider(provider *model.TranslationProviderConf
 	}
 }
 
-func newTranslationLLMTextProvider(cfg *model.LLMTranslationProviderConfig) (llm.Provider, error) {
+func newTranslationLLMTextProvider(cfg *LLMConfig) (llm.Provider, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("LLM config is required")
 	}
@@ -518,17 +529,17 @@ func newTranslationLLMTextProvider(cfg *model.LLMTranslationProviderConfig) (llm
 	modelName := strings.TrimSpace(cfg.Model)
 	preset := cfg.Preset
 	if preset == "" {
-		preset = model.TranslationLLMProviderPresetGemini
+		preset = LLMPresetGemini
 	}
 	switch preset {
-	case model.TranslationLLMProviderPresetGemini:
-		if modelName == "" && preset == model.TranslationLLMProviderPresetGemini {
+	case LLMPresetGemini:
+		if modelName == "" && preset == LLMPresetGemini {
 			modelName = defaultTranslationLLMGeminiModel
 		}
 		return llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{
 			APIKey: apiKey, Model: modelName, Temperature: float32PtrFromFloat64Ptr(cfg.Temperature),
 		})
-	case model.TranslationLLMProviderPresetOpenAICompatible:
+	case LLMPresetOpenAICompatible:
 		return llmproviders.NewOpenAICompatibleProvider(llmproviders.OpenAICompatibleConfig{
 			APIKey: apiKey, BaseURL: cfg.APIBaseURL, Model: modelName, SupportsJSONMode: cfg.SupportsJSONMode,
 			Temperature: cfg.Temperature, MaxOutputTokens: cfg.MaxOutputTokens,
@@ -547,9 +558,9 @@ func float32PtrFromFloat64Ptr(value *float64) *float32 {
 }
 
 func translationProviderExistingConfig(
-	provider *model.TranslationProviderConfig,
+	provider *Provider,
 	typeChanged bool,
-) *model.TranslationProviderConfig {
+) *Provider {
 	if typeChanged {
 		return nil
 	}
@@ -558,7 +569,7 @@ func translationProviderExistingConfig(
 
 type llmTranslationProviderValues struct {
 	apiKey           string
-	preset           model.TranslationLLMProviderPreset
+	preset           LLMPreset
 	baseURL          string
 	modelName        string
 	inputPrice       *float64
@@ -569,29 +580,30 @@ type llmTranslationProviderValues struct {
 }
 
 func resolveLLMTranslationProviderValues(
-	config *managev1.LLMTranslationProviderConfig,
-	existing *model.TranslationProviderConfig,
+	ctx context.Context,
+	config *LLMConfigInput,
+	existing *Provider,
 ) llmTranslationProviderValues {
 	values := llmTranslationProviderValues{
-		apiKey:           strings.TrimSpace(config.ApiKey),
-		preset:           protoToModelTranslationLLMProviderPreset(config.Preset),
-		baseURL:          strings.TrimSpace(config.GetApiBaseUrl()),
+		apiKey:           strings.TrimSpace(config.APIKey),
+		preset:           knownLLMPreset(config.Preset),
+		baseURL:          strings.TrimSpace(config.APIBaseURL),
 		modelName:        strings.TrimSpace(config.Model),
-		inputPrice:       config.InputTokenPriceUsdPerMillion,
-		outputPrice:      config.OutputTokenPriceUsdPerMillion,
+		inputPrice:       config.InputTokenPriceUSDPerMillion,
+		outputPrice:      config.OutputTokenPriceUSDPerMillion,
 		maxContextTokens: config.MaxContextTokens,
 		maxOutputTokens:  config.MaxOutputTokens,
 		temperature:      config.Temperature,
 	}
 	if values.preset == "" {
-		values.preset = model.TranslationLLMProviderPresetGemini
+		values.preset = LLMPresetGemini
 	}
-	if values.apiKey != "" || existing == nil || existing.Type != model.TranslationProviderTypeLLM {
+	if values.apiKey != "" || existing == nil || existing.Type != ProviderTypeLLM {
 		return values
 	}
-	current, err := existing.GetLLMConfig()
+	current, err := existing.LLMConfig()
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
+		slog.ErrorContext(ctx, "Stored translation provider config decode failed; keeping only requested values", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
 		return values
 	}
 	values.apiKey = strings.TrimSpace(current.APIKey)
@@ -601,8 +613,8 @@ func resolveLLMTranslationProviderValues(
 
 func assignMissingLLMProviderValues(
 	values *llmTranslationProviderValues,
-	requested *managev1.LLMTranslationProviderConfig,
-	current *model.LLMTranslationProviderConfig,
+	requested *LLMConfigInput,
+	current *LLMConfig,
 ) {
 	if values.modelName == "" {
 		values.modelName = strings.TrimSpace(current.Model)
@@ -610,7 +622,7 @@ func assignMissingLLMProviderValues(
 	if values.baseURL == "" {
 		values.baseURL = strings.TrimSpace(current.APIBaseURL)
 	}
-	if requested.Preset == managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_UNSPECIFIED && current.Preset != "" {
+	if requested.Preset == "" && current.Preset != "" {
 		values.preset = current.Preset
 	}
 	if values.inputPrice == nil {
@@ -634,7 +646,7 @@ func defaultLLMTranslationModel(values *llmTranslationProviderValues) error {
 	if values.modelName != "" {
 		return nil
 	}
-	if values.preset != model.TranslationLLMProviderPresetGemini {
+	if values.preset != LLMPresetGemini {
 		return fmt.Errorf("LLM model is required")
 	}
 	values.modelName = defaultTranslationLLMGeminiModel
@@ -642,24 +654,25 @@ func defaultLLMTranslationModel(values *llmTranslationProviderValues) error {
 }
 
 func buildTranslationProviderConfig(
-	providerType model.TranslationProviderType,
-	llmConfig *managev1.LLMTranslationProviderConfig,
-	deeplConfig *managev1.DeepLTranslationProviderConfig,
-	existing *model.TranslationProviderConfig,
-) (structured.Value, error) {
+	ctx context.Context,
+	providerType ProviderType,
+	llmConfig *LLMConfigInput,
+	deeplConfig *DeepLConfigInput,
+	existing *Provider,
+) (any, error) {
 	switch providerType {
-	case model.TranslationProviderTypeLLM:
+	case ProviderTypeLLM:
 		if llmConfig == nil {
 			return nil, fmt.Errorf("LLM config is required")
 		}
-		values := resolveLLMTranslationProviderValues(llmConfig, existing)
+		values := resolveLLMTranslationProviderValues(ctx, llmConfig, existing)
 		if values.apiKey == "" {
 			return nil, fmt.Errorf("LLM API key is required")
 		}
 		if err := defaultLLMTranslationModel(&values); err != nil {
 			return nil, err
 		}
-		cfg := &model.LLMTranslationProviderConfig{
+		cfg := &LLMConfig{
 			APIKey:                        values.apiKey,
 			Preset:                        values.preset,
 			APIBaseURL:                    values.baseURL,
@@ -668,44 +681,45 @@ func buildTranslationProviderConfig(
 			OutputTokenPriceUSDPerMillion: values.outputPrice,
 			MaxContextTokens:              values.maxContextTokens,
 			MaxOutputTokens:               values.maxOutputTokens,
-			SupportsJSONMode:              llmConfig.SupportsJsonMode,
+			SupportsJSONMode:              llmConfig.SupportsJSONMode,
 			Temperature:                   values.temperature,
 		}
 		if _, err := newTranslationLLMTextProvider(cfg); err != nil {
 			return nil, err
 		}
 		return cfg, nil
-	case model.TranslationProviderTypeDeepL:
+	case ProviderTypeDeepL:
 		if deeplConfig == nil {
 			return nil, fmt.Errorf("DeepL config is required")
 		}
-		apiKey := strings.TrimSpace(deeplConfig.ApiKey)
-		baseURL := strings.TrimSpace(deeplConfig.GetApiBaseUrl())
-		apiKey, baseURL = inheritDeepLProviderConfig(existing, providerType, apiKey, baseURL)
+		apiKey := strings.TrimSpace(deeplConfig.APIKey)
+		baseURL := strings.TrimSpace(deeplConfig.APIBaseURL)
+		apiKey, baseURL = inheritDeepLProviderConfig(ctx, existing, providerType, apiKey, baseURL)
 		if apiKey == "" {
 			return nil, fmt.Errorf("DeepL API key is required")
 		}
 		if baseURL == "" {
 			baseURL = translation.DefaultDeepLAPIBaseURL
 		}
-		return &model.DeepLTranslationProviderConfig{APIKey: apiKey, APIBaseURL: baseURL}, nil
+		return &DeepLConfig{APIKey: apiKey, APIBaseURL: baseURL}, nil
 	default:
 		return nil, fmt.Errorf("unknown translation provider type: %s", providerType)
 	}
 }
 
 func inheritDeepLProviderConfig(
-	existing *model.TranslationProviderConfig,
-	providerType model.TranslationProviderType,
+	ctx context.Context,
+	existing *Provider,
+	providerType ProviderType,
 	apiKey string,
 	baseURL string,
 ) (string, string) {
 	if existing == nil || existing.Type != providerType {
 		return apiKey, baseURL
 	}
-	current, err := existing.GetDeepLConfig()
+	current, err := existing.DeepLConfig()
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
+		slog.ErrorContext(ctx, "Stored translation provider config decode failed; keeping only requested values", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
 		return apiKey, baseURL
 	}
 	if apiKey == "" {
@@ -717,104 +731,13 @@ func inheritDeepLProviderConfig(
 	return apiKey, baseURL
 }
 
-func protoToModelTranslationLLMProviderPreset(
-	preset managev1.TranslationLLMProviderPreset,
-) model.TranslationLLMProviderPreset {
+// knownLLMPreset is preset when it is a stored preset, and empty for an
+// unspecified or unknown one.
+func knownLLMPreset(preset LLMPreset) LLMPreset {
 	switch preset {
-	case managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_GEMINI:
-		return model.TranslationLLMProviderPresetGemini
-	case managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_OPENAI_COMPATIBLE:
-		return model.TranslationLLMProviderPresetOpenAICompatible
+	case LLMPresetGemini, LLMPresetOpenAICompatible:
+		return preset
 	default:
 		return ""
 	}
-}
-
-func modelToProtoTranslationLLMProviderPreset(
-	preset model.TranslationLLMProviderPreset,
-) managev1.TranslationLLMProviderPreset {
-	switch preset {
-	case model.TranslationLLMProviderPresetGemini:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_GEMINI
-	case model.TranslationLLMProviderPresetOpenAICompatible:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_OPENAI_COMPATIBLE
-	default:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_UNSPECIFIED
-	}
-}
-
-func protoToModelTranslationProviderType(t managev1.TranslationProviderType) model.TranslationProviderType {
-	switch t {
-	case managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_LLM:
-		return model.TranslationProviderTypeLLM
-	case managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_DEEPL:
-		return model.TranslationProviderTypeDeepL
-	default:
-		return ""
-	}
-}
-
-func modelToProtoTranslationProviderType(t model.TranslationProviderType) managev1.TranslationProviderType {
-	switch t {
-	case model.TranslationProviderTypeLLM:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_LLM
-	case model.TranslationProviderTypeDeepL:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_DEEPL
-	default:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_UNSPECIFIED
-	}
-}
-
-func toProtoTranslationProvider(provider *model.TranslationProviderConfig, includeSecrets bool) *managev1.TranslationProvider {
-	if provider == nil {
-		return nil
-	}
-	proto := &managev1.TranslationProvider{
-		Id:       provider.ID,
-		Name:     provider.Name,
-		Type:     modelToProtoTranslationProviderType(provider.Type),
-		IsActive: provider.IsActive,
-		Priority: int32(provider.Priority),
-	}
-	proto.CreatedAt = timestamppb.New(provider.CreatedAt.UTC())
-	proto.UpdatedAt = timestamppb.New(provider.UpdatedAt.UTC())
-
-	switch provider.Type {
-	case model.TranslationProviderTypeLLM:
-		if cfg, err := provider.GetLLMConfig(); err == nil {
-			out := &managev1.LLMTranslationProviderConfig{
-				Preset:           modelToProtoTranslationLLMProviderPreset(cfg.Preset),
-				Model:            cfg.Model,
-				SupportsJsonMode: cfg.SupportsJSONMode,
-			}
-			if cfg.APIBaseURL != "" {
-				out.ApiBaseUrl = &cfg.APIBaseURL
-			}
-			out.InputTokenPriceUsdPerMillion = cfg.InputTokenPriceUSDPerMillion
-			out.OutputTokenPriceUsdPerMillion = cfg.OutputTokenPriceUSDPerMillion
-			out.MaxContextTokens = cfg.MaxContextTokens
-			out.MaxOutputTokens = cfg.MaxOutputTokens
-			out.Temperature = cfg.Temperature
-			if includeSecrets {
-				out.ApiKey = cfg.APIKey
-			}
-			proto.Config = &managev1.TranslationProvider_LlmConfig{LlmConfig: out}
-		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", provider.ID)
-		}
-	case model.TranslationProviderTypeDeepL:
-		if cfg, err := provider.GetDeepLConfig(); err == nil {
-			out := &managev1.DeepLTranslationProviderConfig{}
-			if cfg.APIBaseURL != "" {
-				out.ApiBaseUrl = &cfg.APIBaseURL
-			}
-			if includeSecrets {
-				out.ApiKey = cfg.APIKey
-			}
-			proto.Config = &managev1.TranslationProvider_DeeplConfig{DeeplConfig: out}
-		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", provider.ID)
-		}
-	}
-	return proto
 }

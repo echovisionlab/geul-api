@@ -4,16 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const menuContentDocumentProfile = "compact"
@@ -24,41 +19,34 @@ type menuContentDocumentState struct {
 	SourceLocale string
 }
 
-func loadMenuContentDocumentStateFromRoot(
+func loadMenuContentDocumentState(
 	ctx context.Context,
-	db *gorm.DB,
-	root model.Menu,
+	store Store,
+	root Root,
 	lock bool,
 ) (menuContentDocumentState, error) {
-	if db == nil {
-		return menuContentDocumentState{}, errs.Internal(errors.New("menu content document database is required"))
-	}
 	documentID, err := parseMenuContentDocumentUUID(root.ContentDocumentID, "content_document_id")
 	if err != nil {
 		return menuContentDocumentState{}, err
 	}
 	sourceLocale := strings.TrimSpace(root.SourceLocale)
 	if sourceLocale == "" {
-		return menuContentDocumentState{}, errs.FailedPrecondition("Menu source locale is not initialized")
+		return menuContentDocumentState{}, domainerr.Precondition("Menu source locale is not initialized")
 	}
 
-	query := db.WithContext(ctx).Table("content_document").
-		Select("profile, revision").Where("id = ?", documentID)
+	read := store.ContentDocument
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		read = store.LockContentDocument
 	}
-	var document struct {
-		Profile  string `gorm:"column:profile"`
-		Revision string `gorm:"column:revision"`
-	}
-	if err := query.Take(&document).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return menuContentDocumentState{}, errs.FailedPrecondition("Menu content document is missing")
+	document, err := read(ctx, documentID)
+	if err != nil {
+		if errors.Is(err, ErrContentDocumentNotFound) {
+			return menuContentDocumentState{}, domainerr.Precondition("Menu content document is missing")
 		}
-		return menuContentDocumentState{}, errs.Internal(err)
+		return menuContentDocumentState{}, err
 	}
 	if strings.TrimSpace(document.Profile) != menuContentDocumentProfile {
-		return menuContentDocumentState{}, errs.FailedPrecondition("Menu content document profile is invalid")
+		return menuContentDocumentState{}, domainerr.Precondition("Menu content document profile is invalid")
 	}
 	revision, err := parseMenuContentDocumentUUID(document.Revision, "content_document.revision")
 	if err != nil {
@@ -70,75 +58,51 @@ func loadMenuContentDocumentStateFromRoot(
 func parseMenuContentDocumentUUID(value, field string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
-	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		if err != nil {
-			slog.ErrorContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.parseMenuContentDocumentUUID", "outcome", "failed", failurecause.Attr(err))
-		}
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid Menu %s: %s", field, normalized))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid Menu %s: %s: %w", field, normalized, err)
+	}
+	if parsed == uuid.Nil || parsed.String() != normalized {
+		return uuid.Nil, fmt.Errorf("invalid Menu %s: %s", field, normalized)
 	}
 	return parsed, nil
 }
 
-func createMenuContentDocument(ctx context.Context, tx *gorm.DB, now time.Time) (uuid.UUID, error) {
-	if tx == nil {
-		return uuid.Nil, errs.Internal(errors.New("menu content document transaction is required"))
-	}
+func createMenuContentDocument(ctx context.Context, store Store, now time.Time) (uuid.UUID, error) {
 	documentID := uuid.New()
-	revision := uuid.New()
-	if err := tx.WithContext(ctx).Exec(
-		`INSERT INTO content_document (id, profile, revision, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		documentID, menuContentDocumentProfile, revision, now.UTC(), now.UTC(),
-	).Error; err != nil {
-		return uuid.Nil, errs.Internal(err)
+	if err := store.InsertContentDocument(ctx, documentID, menuContentDocumentProfile, uuid.New(), now.UTC()); err != nil {
+		return uuid.Nil, err
 	}
 	return documentID, nil
 }
 
 func advanceMenuContentDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	menuID string,
 	documentID uuid.UUID,
 	expectedRevision uuid.UUID,
 	now time.Time,
-) (uuid.UUID, error) {
-	if tx == nil || documentID == uuid.Nil || expectedRevision == uuid.Nil {
-		return uuid.Nil, errs.InvalidArgument(
+) error {
+	if documentID == uuid.Nil || expectedRevision == uuid.Nil {
+		return domainerr.InvalidField(
 			"expected_document_revision",
 			"Menu content document identity and revision are required",
 		)
 	}
-	nextRevision := uuid.New()
-	updated := tx.WithContext(ctx).Exec(
-		`UPDATE content_document
-		 SET revision = ?, updated_at = ?
-		 WHERE id = ? AND revision = ?
-		   AND EXISTS (
-			 SELECT 1 FROM menu
-			 WHERE id = ? AND content_document_id = ?
-		   )`,
-		nextRevision, now.UTC(), documentID, expectedRevision, menuID, documentID,
-	)
-	if updated.Error != nil {
-		return uuid.Nil, errs.Internal(updated.Error)
+	err := store.AdvanceContentDocument(ctx, menuID, documentID, expectedRevision, uuid.New(), now.UTC())
+	if errors.Is(err, ErrRevisionChanged) {
+		return domainerr.Precondition("Menu content document revision changed; reload before saving")
 	}
-	if updated.RowsAffected != 1 {
-		return uuid.Nil, errs.FailedPrecondition("Menu content document revision changed; reload before saving")
-	}
-	return nextRevision, nil
+	return err
 }
 
-func deleteMenuContentDocument(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) error {
-	if tx == nil || documentID == uuid.Nil {
-		return errs.InvalidArgument("content_document_id", "Menu content document is required")
+func deleteMenuContentDocument(ctx context.Context, store Store, documentID uuid.UUID) error {
+	if documentID == uuid.Nil {
+		return domainerr.InvalidField("content_document_id", "Menu content document is required")
 	}
-	result := tx.WithContext(ctx).Exec("DELETE FROM content_document WHERE id = ?", documentID)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
+	err := store.DeleteContentDocument(ctx, documentID)
+	if errors.Is(err, ErrContentDocumentNotFound) {
+		return domainerr.Precondition("Menu content document is missing")
 	}
-	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Menu content document is missing")
-	}
-	return nil
+	return err
 }

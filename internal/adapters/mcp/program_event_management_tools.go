@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -22,22 +23,24 @@ const (
 	ToolProgramEventDelete         = "program_event_delete"
 )
 
-var programEventManagementTools = []mcpserver.Tool{
-	oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with program_event_type_list and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_paragraph_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false),
-	oauthTool(ToolProgramEventSettingsGet, "Get Program Event settings", "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_open and document_read; use their exact revisions for document edits.", contentIDInputJSONSchema, programEventSettingsOutputJSONSchema, true, false),
-	oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from program_event_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventPublish, "Publish Program Event", "Publish a draft event or restore an archived event using the existing event lifecycle. Restoring an archived event preserves its original publication date.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventArchive, "Archive Program Event", "Move a published event to archived using the existing event lifecycle. This does not move the event to draft; program_event_publish restores an archived event.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventDelete, "Delete Program Event", "Permanently delete an event when permitted by the existing event service and its current lifecycle.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
+var programEventManagementTools = toolRegistry[ProgramEventManagementTools]{
+	defineTool(oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with program_event_type_list and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_paragraph_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false), (*ProgramEventManagementTools).create),
+	defineTool(oauthTool(ToolProgramEventSettingsGet, "Get Program Event settings", "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_open and document_read; use their exact revisions for document edits.", contentIDInputJSONSchema, programEventSettingsOutputJSONSchema, true, false), (*ProgramEventManagementTools).getSettings),
+	defineTool(oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from program_event_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).updateSettings),
+	defineTool(oauthTool(ToolProgramEventPublish, "Publish Program Event", "Publish a draft event or restore an archived event using the existing event lifecycle. Restoring an archived event preserves its original publication date.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolProgramEventArchive, "Archive Program Event", "Move a published event to archived using the existing event lifecycle. This does not move the event to draft; program_event_publish restores an archived event.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolProgramEventDelete, "Delete Program Event", "Permanently delete an event when permitted by the existing event service and its current lifecycle.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
 }
 
+// ProgramEventManagementApplication is the Program Event use cases the
+// management tools call; authorization and audit stay in programevent.Service.
 type ProgramEventManagementApplication interface {
-	GetProgramEvent(context.Context, *connect.Request[managev1.GetProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error)
-	CreateProgramEvent(context.Context, *connect.Request[managev1.CreateProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error)
-	UpdateProgramEvent(context.Context, *connect.Request[managev1.UpdateProgramEventRequest]) (*connect.Response[managev1.UpdateProgramEventResponse], error)
-	PublishProgramEvent(context.Context, *connect.Request[managev1.PublishProgramEventRequest]) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error)
-	ArchiveProgramEvent(context.Context, *connect.Request[managev1.ArchiveProgramEventRequest]) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error)
-	DeleteProgramEvent(context.Context, *connect.Request[managev1.DeleteProgramEventRequest]) (*connect.Response[managev1.DeleteResponse], error)
+	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (programevent.EventView, error)
+	CreateProgramEvent(context.Context, programevent.CreateProgramEventCommand) (programevent.EventView, error)
+	UpdateProgramEvent(context.Context, programevent.UpdateProgramEventCommand) (programevent.EventUpdate, error)
+	PublishProgramEvent(context.Context, programevent.PublishProgramEventCommand) (programevent.LifecycleChange, error)
+	ArchiveProgramEvent(context.Context, programevent.ArchiveProgramEventCommand) (programevent.LifecycleChange, error)
+	DeleteProgramEvent(context.Context, programevent.DeleteProgramEventCommand) error
 }
 
 type ProgramEventManagementTools struct {
@@ -51,27 +54,14 @@ func NewProgramEventManagementTools(application ProgramEventManagementApplicatio
 	return &ProgramEventManagementTools{application: application}, nil
 }
 
-func (*ProgramEventManagementTools) ToolNames() []string {
-	return toolDefinitionNames(programEventManagementTools)
-}
+func (*ProgramEventManagementTools) ToolNames() []string { return programEventManagementTools.names() }
 
 func (*ProgramEventManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(programEventManagementTools), nil
+	return programEventManagementTools.list(), nil
 }
 
 func (tools *ProgramEventManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolProgramEventCreate:
-		return tools.create(ctx, arguments)
-	case ToolProgramEventSettingsGet:
-		return tools.getSettings(ctx, arguments)
-	case ToolProgramEventSettingsUpdate:
-		return tools.updateSettings(ctx, arguments)
-	case ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventDelete:
-		return tools.mutateLifecycle(ctx, name, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return programEventManagementTools.call(tools, ctx, name, arguments)
 }
 
 type programEventCreateArguments struct {
@@ -98,9 +88,9 @@ type programEventCreateArguments struct {
 	Credits      []programEventCreditArguments  `json:"credits,omitempty"`
 }
 
-func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) create(ctx context.Context, _ string, call toolCall[programEventCreateArguments]) (mcpserver.ToolResult, error) {
 	var input programEventCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	for _, field := range []struct{ name, value string }{{"title", input.Title}, {"slug", input.Slug}, {"source_locale", input.SourceLocale}} {
@@ -115,7 +105,7 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments 
 	if err != nil {
 		return executionError(err)
 	}
-	var endsAt *timestamppb.Timestamp
+	var endsAt *time.Time
 	if input.EndsAt != nil {
 		endsAt, err = parseProgramEventTimestamp("ends_at", *input.EndsAt)
 		if err != nil {
@@ -129,40 +119,39 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments 
 	if err != nil {
 		return executionError(err)
 	}
-	if (mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE || mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID) && (input.MapPlaceID == nil || strings.TrimSpace(*input.MapPlaceID) == "") {
+	if mode.UsesMapPlace() && (input.MapPlaceID == nil || strings.TrimSpace(*input.MapPlaceID) == "") {
 		return executionError(fmt.Errorf("map_place_id is required when location_mode is %s", input.LocationMode))
 	}
-	request := connect.NewRequest(&managev1.CreateProgramEventRequest{
-		Title: input.Title, Slug: input.Slug, SourceLocale: input.SourceLocale, TypeId: input.TypeID,
+	created, err := tools.application.CreateProgramEvent(ctx, programevent.CreateProgramEventCommand{
+		Title: input.Title, Slug: input.Slug, SourceLocale: input.SourceLocale, AcceptLanguage: input.SourceLocale, TypeID: input.TypeID,
 		StartsAt: startsAt, EndsAt: endsAt, Timezone: input.Timezone, AllDay: input.AllDay,
-		LocationMode: mode, MapPlaceId: input.MapPlaceID, Summary: input.Summary,
-		SeriesId: input.SeriesID, SeriesOrder: input.SeriesOrder, PosterFileId: input.PosterFileID,
-		TicketUrl: input.TicketURL, StreamUrl: input.StreamURL, ExternalUrl: input.ExternalURL,
-		Artists: input.Artists, Labels: input.Labels, Clients: input.Clients, Credits: toProgramEventCredits(input.Credits),
+		LocationMode: mode, MapPlaceID: input.MapPlaceID, Summary: input.Summary,
+		SeriesID: input.SeriesID, SeriesOrder: input.SeriesOrder, PosterFileID: input.PosterFileID,
+		TicketURL: input.TicketURL, StreamURL: input.StreamURL, ExternalURL: input.ExternalURL,
+		Artists: programevent.ArtistRelations(input.Artists), Labels: programevent.LabelRelations(input.Labels),
+		Clients: programevent.ClientRelations(input.Clients), Credits: toProgramEventCredits(input.Credits),
 	})
-	request.Header().Set("Accept-Language", input.SourceLocale)
-	created, err := tools.application.CreateProgramEvent(ctx, request)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := programEventSettingsOutput(created.Msg)
+	output := programEventSettingsOutput(programevent.EventMessage(created))
 	output["changed"] = true
 	return contentResult(output)
 }
 
-func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.GetProgramEvent(ctx, connect.NewRequest(&managev1.GetProgramEventRequest{Id: input.DocumentID}))
+	event, err := tools.application.GetProgramEvent(ctx, programevent.GetProgramEventQuery{ID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(programEventSettingsOutput(response.Msg))
+	return contentResult(programEventSettingsOutput(programevent.EventMessage(event)))
 }
 
 type programEventSettingsArguments struct {
@@ -192,9 +181,11 @@ type programEventSettingsArguments struct {
 	Credits          *[]programEventCreditArguments  `json:"credits,omitempty"`
 }
 
-func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, _ string, call toolCall[programEventSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input programEventSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "artists", "observed_artists", "labels", "observed_labels", "clients", "observed_clients", "credits"); err != nil {
@@ -215,21 +206,21 @@ func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, ar
 	if input.Clients != nil && input.ObservedClients == nil {
 		return executionError(errors.New("observed_clients is required when updating clients"))
 	}
-	request := &managev1.UpdateProgramEventRequest{
-		Id: input.DocumentID, Slug: input.Slug, TypeId: input.TypeID, ClearEndsAt: input.ClearEndsAt,
-		Timezone: input.Timezone, AllDay: input.AllDay, MapPlaceId: input.MapPlaceID,
-		SeriesId: input.SeriesID, SeriesOrder: input.SeriesOrder, ClearSeriesOrder: input.ClearSeriesOrder,
-		PosterFileId: input.PosterFileID, TicketUrl: input.TicketURL, StreamUrl: input.StreamURL, ExternalUrl: input.ExternalURL,
+	command := programevent.UpdateProgramEventCommand{
+		ID: input.DocumentID, Slug: input.Slug, TypeID: input.TypeID, ClearEndsAt: input.ClearEndsAt,
+		Timezone: input.Timezone, AllDay: input.AllDay, MapPlaceID: input.MapPlaceID,
+		SeriesID: input.SeriesID, SeriesOrder: input.SeriesOrder, ClearSeriesOrder: input.ClearSeriesOrder,
+		PosterFileID: input.PosterFileID, TicketURL: input.TicketURL, StreamURL: input.StreamURL, ExternalURL: input.ExternalURL,
 	}
 	var err error
 	if input.StartsAt != nil {
-		request.StartsAt, err = parseProgramEventTimestamp("starts_at", *input.StartsAt)
+		command.StartsAt, err = parseProgramEventTimestamp("starts_at", *input.StartsAt)
 		if err != nil {
 			return executionError(err)
 		}
 	}
 	if input.EndsAt != nil {
-		request.EndsAt, err = parseProgramEventTimestamp("ends_at", *input.EndsAt)
+		command.EndsAt, err = parseProgramEventTimestamp("ends_at", *input.EndsAt)
 		if err != nil {
 			return executionError(err)
 		}
@@ -244,74 +235,110 @@ func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, ar
 		if err != nil {
 			return executionError(err)
 		}
-		request.LocationMode = &mode
+		command.LocationMode = &mode
 	}
-	if input.Artists != nil {
-		request.Artists, request.ReplaceArtists = *input.Artists, true
-	}
-	if input.ObservedArtists != nil {
-		request.ObservedArtists = &managev1.ProgramEventArtistsSnapshot{Artists: *input.ObservedArtists}
-	}
-	if input.Labels != nil {
-		request.Labels, request.ReplaceLabels = *input.Labels, true
-	}
-	if input.ObservedLabels != nil {
-		request.ObservedLabels = &managev1.ProgramEventLabelsSnapshot{Labels: *input.ObservedLabels}
-	}
-	if input.Clients != nil {
-		request.Clients, request.ReplaceClients = *input.Clients, true
-	}
-	if input.ObservedClients != nil {
-		request.ObservedClients = &managev1.ProgramEventClientsSnapshot{Clients: *input.ObservedClients}
+	if err := programEventRelationsEdits(&command, input); err != nil {
+		return expectedToolError(err)
 	}
 	if input.Credits != nil {
-		request.Credits, request.ReplaceCredits = toProgramEventCredits(*input.Credits), true
+		command.Credits = programevent.CreditsEdit{Replace: true, Desired: toProgramEventCredits(*input.Credits)}
 	}
-	updated, err := tools.application.UpdateProgramEvent(ctx, connect.NewRequest(request))
+	updated, err := tools.application.UpdateProgramEvent(ctx, command)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "program_event", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed, "updated_at": timestampString(updated.Msg.UpdatedAt)})
+	return contentResult(map[string]any{"document_type": "program_event", "document_id": updated.ID, "changed": updated.Changed, "updated_at": timestampString(timestamppb.New(updated.UpdatedAt))})
 }
 
-func (tools *ProgramEventManagementTools) mutateLifecycle(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+// programEventRelationsEdits sets the artist, label and client edits of
+// input on command.
+func programEventRelationsEdits(command *programevent.UpdateProgramEventCommand, input programEventSettingsArguments) error {
+	if err := setRelationsEdit(&command.Artists, "artists", input.Artists, input.ObservedArtists, programevent.ArtistRelations); err != nil {
+		return err
+	}
+	if err := setRelationsEdit(&command.Labels, "labels", input.Labels, input.ObservedLabels, programevent.LabelRelations); err != nil {
+		return err
+	}
+	return setRelationsEdit(&command.Clients, "clients", input.Clients, input.ObservedClients, programevent.ClientRelations)
+}
+
+// setRelationsEdit replaces the relations of collection with desired, merged
+// into observed. A null row is rejected as the service rejected it when it
+// received the rows.
+func setRelationsEdit[Row any](
+	edit *programevent.RelationsEdit,
+	collection string,
+	desired, observed *[]*Row,
+	convert func([]*Row) []programevent.Relation,
+) error {
+	if observed != nil {
+		rows := convert(*observed)
+		edit.Observed = &rows
+	}
+	if desired == nil {
+		return nil
+	}
+	if containsNil(desired) || containsNil(observed) {
+		return domainerr.InvalidField(collection, "relation rows must not be null")
+	}
+	edit.Replace, edit.Desired = true, convert(*desired)
+	return nil
+}
+
+func containsNil[Row any](rows *[]*Row) bool {
+	if rows == nil {
+		return false
+	}
+	for _, row := range *rows {
+		if row == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (tools *ProgramEventManagementTools) mutateLifecycle(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
 		return executionError(err)
 	}
 	if name == ToolProgramEventDelete {
-		deleted, err := tools.application.DeleteProgramEvent(ctx, connect.NewRequest(&managev1.DeleteProgramEventRequest{Id: input.DocumentID}))
-		if err != nil {
+		if err := tools.application.DeleteProgramEvent(ctx, programevent.DeleteProgramEventCommand{ID: input.DocumentID}); err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"document_type": "program_event", "document_id": input.DocumentID, "changed": deleted.Msg.Success, "deleted": deleted.Msg.Success})
+		return contentResult(map[string]any{"document_type": "program_event", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var response *connect.Response[managev1.ProgramEventLifecycleMutationResponse]
+	var change programevent.LifecycleChange
 	var err error
 	if name == ToolProgramEventPublish {
-		response, err = tools.application.PublishProgramEvent(ctx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: input.DocumentID}))
+		change, err = tools.application.PublishProgramEvent(ctx, programevent.PublishProgramEventCommand{ID: input.DocumentID})
 	} else {
-		response, err = tools.application.ArchiveProgramEvent(ctx, connect.NewRequest(&managev1.ArchiveProgramEventRequest{Id: input.DocumentID}))
+		change, err = tools.application.ArchiveProgramEvent(ctx, programevent.ArchiveProgramEventCommand{ID: input.DocumentID})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
+	var publishedAt *timestamppb.Timestamp
+	if change.PublishedAt != nil {
+		publishedAt = timestamppb.New(*change.PublishedAt)
+	}
 	return contentResult(map[string]any{
-		"document_type": "program_event", "document_id": response.Msg.Id, "changed": response.Msg.Changed,
-		"status":       contentStatus(response.Msg.Status.String(), "PROGRAM_EVENT_STATUS_"),
-		"published_at": optionalProgramEventTimestamp(response.Msg.PublishedAt), "updated_at": timestampString(response.Msg.UpdatedAt),
+		"document_type": "program_event", "document_id": change.ID, "changed": change.Changed,
+		"status":       contentStatus(string(change.Status), "PROGRAM_EVENT_STATUS_"),
+		"published_at": optionalProgramEventTimestamp(publishedAt), "updated_at": timestampString(timestamppb.New(change.UpdatedAt)),
 	})
 }
 
-func parseProgramEventTimestamp(field, value string) (*timestamppb.Timestamp, error) {
+func parseProgramEventTimestamp(field, value string) (*time.Time, error) {
 	instant, err := time.Parse(time.RFC3339, value)
 	if err != nil {
 		return nil, fmt.Errorf("%s must be an RFC 3339 instant with an explicit offset: %w", field, err)
 	}
-	return timestamppb.New(instant), nil
+	instant = timestamppb.New(instant).AsTime()
+	return &instant, nil
 }
 
 func validateProgramEventTimezone(value string) error {
@@ -324,18 +351,18 @@ func validateProgramEventTimezone(value string) error {
 	return nil
 }
 
-func parseProgramEventLocationMode(value string) (managev1.ProgramEventLocationMode, error) {
+func parseProgramEventLocationMode(value string) (programevent.LocationMode, error) {
 	switch value {
 	case "map_place":
-		return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE, nil
+		return programevent.LocationModeMapPlace, nil
 	case "online":
-		return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE, nil
+		return programevent.LocationModeOnline, nil
 	case "hybrid":
-		return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID, nil
+		return programevent.LocationModeHybrid, nil
 	case "tba":
-		return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA, nil
+		return programevent.LocationModeTBA, nil
 	default:
-		return 0, errors.New("location_mode must be map_place, online, hybrid, or tba")
+		return "", errors.New("location_mode must be map_place, online, hybrid, or tba")
 	}
 }
 
@@ -358,11 +385,11 @@ type programEventCreditArguments struct {
 	SortOrder   int32   `json:"sort_order,omitempty"`
 }
 
-func toProgramEventCredits(input []programEventCreditArguments) []*managev1.ProgramEventCredit {
-	credits := make([]*managev1.ProgramEventCredit, 0, len(input))
+func toProgramEventCredits(input []programEventCreditArguments) []programevent.Credit {
+	credits := make([]programevent.Credit, 0, len(input))
 	for _, row := range input {
-		credits = append(credits, &managev1.ProgramEventCredit{
-			Id: row.ID, ArtistId: row.ArtistID, MemberId: row.MemberID, DisplayName: row.DisplayName,
+		credits = append(credits, programevent.Credit{
+			ID: row.ID, ArtistID: row.ArtistID, MemberID: row.MemberID, DisplayName: row.DisplayName,
 			CreditRole: row.CreditRole, Description: row.Description, SortOrder: row.SortOrder,
 		})
 	}

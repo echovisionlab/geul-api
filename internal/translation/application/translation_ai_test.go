@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestAITranslationGeneratorTranslatesBundlesWithTestProvider(t *testing.T) {
@@ -66,7 +64,7 @@ func TestAITranslationGeneratorRoundTripsFormattedSemanticInline(t *testing.T) {
 func TestBuildTranslationProviderRequestUsesAvailableTextUnits(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := &Job{
 		ID:           "job-1",
 		OperationID:  "operation-1",
 		EntityType:   "series",
@@ -106,7 +104,7 @@ func TestBuildTranslationProviderRequestUsesAvailableTextUnits(t *testing.T) {
 func TestBuildTranslationProviderRequestPreservesMarkupForHTMLUnits(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := &Job{
 		ID:           "job-2",
 		OperationID:  "operation-1",
 		EntityType:   "email_layout",
@@ -137,7 +135,7 @@ func TestBuildTranslationProviderRequestPreservesMarkupForHTMLUnits(t *testing.T
 func TestBuildTranslationProviderRequestIncludesProtectedTerms(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := &Job{
 		ID:           "job-series-1",
 		OperationID:  "operation-series-1",
 		EntityType:   "series",

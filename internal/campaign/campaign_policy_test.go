@@ -3,7 +3,6 @@ package campaign
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -12,41 +11,41 @@ func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing
 	segmentID := "segment-id"
 	tests := []struct {
 		name     string
-		campaign model.Campaign
+		campaign Campaign
 		wantErr  bool
 	}{
 		{
 			name: "all",
-			campaign: model.Campaign{
-				TargetMode: model.CampaignTargetModeAll,
+			campaign: Campaign{
+				TargetMode: CampaignTargetModeAll,
 			},
 		},
 		{
 			name: "segment",
-			campaign: model.Campaign{
-				TargetMode: model.CampaignTargetModeSegment,
+			campaign: Campaign{
+				TargetMode: CampaignTargetModeSegment,
 				SegmentID:  &segmentID,
 			},
 		},
 		{
 			name: "unspecified",
-			campaign: model.Campaign{
+			campaign: Campaign{
 				SegmentID: &segmentID,
 			},
 			wantErr: true,
 		},
 		{
 			name: "all with segment",
-			campaign: model.Campaign{
-				TargetMode: model.CampaignTargetModeAll,
+			campaign: Campaign{
+				TargetMode: CampaignTargetModeAll,
 				SegmentID:  &segmentID,
 			},
 			wantErr: true,
 		},
 		{
 			name: "segment without segment",
-			campaign: model.Campaign{
-				TargetMode: model.CampaignTargetModeSegment,
+			campaign: Campaign{
+				TargetMode: CampaignTargetModeSegment,
 			},
 			wantErr: true,
 		},
@@ -63,13 +62,13 @@ func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing
 		})
 	}
 
-	_, err := campaignTargetModeFromProto(
-		managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_UNSPECIFIED,
+	_, err := campaignTargetModeValue(
+		TargetMode(0),
 	)
 	require.Error(t, err)
 	require.Equal(
 		t,
-		model.CampaignTargetModeAll,
+		CampaignTargetModeAll,
 		mustCampaignTargetModeFromProto(
 			t,
 			managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
@@ -77,7 +76,7 @@ func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing
 	)
 	require.Equal(
 		t,
-		model.CampaignTargetModeSegment,
+		CampaignTargetModeSegment,
 		mustCampaignTargetModeFromProto(
 			t,
 			managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT,
@@ -90,7 +89,7 @@ func mustCampaignTargetModeFromProto(
 	mode managev1.CampaignTargetMode,
 ) string {
 	t.Helper()
-	result, err := campaignTargetModeFromProto(mode)
+	result, err := campaignTargetModeValue(TargetMode(mode))
 	require.NoError(t, err)
 	return result
 }
@@ -149,9 +148,9 @@ func TestCampaignStatusPolicyMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.wantEdit, campaignStatusAllowsEdit(tt.status))
-			require.Equal(t, tt.wantSchedule, campaignStatusAllowsSchedule(tt.status))
-			require.Equal(t, tt.wantSendNow, campaignStatusAllowsSendNow(tt.status))
+			require.Equal(t, tt.wantEdit, campaignStatusAllowsEdit(CampaignStatus(tt.status)))
+			require.Equal(t, tt.wantSchedule, campaignStatusAllowsSchedule(CampaignStatus(tt.status)))
+			require.Equal(t, tt.wantSendNow, campaignStatusAllowsSendNow(CampaignStatus(tt.status)))
 		})
 	}
 }
@@ -159,7 +158,7 @@ func TestCampaignStatusPolicyMatrix(t *testing.T) {
 func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 	tests := []struct {
 		name           string
-		counts         campaignDeliveryCompletionCounts
+		counts         DeliveryCompletionCounts
 		target         int
 		complete       bool
 		runStatus      string
@@ -167,7 +166,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 	}{
 		{
 			name: "all sent",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total: 2,
 				Sent:  2,
 			},
@@ -178,7 +177,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "sent plus skipped",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   2,
 				Sent:    1,
 				Skipped: 1,
@@ -190,7 +189,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "sent plus blocked",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   2,
 				Sent:    1,
 				Blocked: 1,
@@ -202,7 +201,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "sent plus permanent failure",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:         2,
 				Sent:          1,
 				PermanentFail: 1,
@@ -214,7 +213,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "sent plus suppressed",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:      2,
 				Sent:       1,
 				Suppressed: 1,
@@ -226,7 +225,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "zero sent blocked",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   1,
 				Blocked: 1,
 			},
@@ -237,7 +236,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "zero sent permanent failure",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:         1,
 				PermanentFail: 1,
 			},
@@ -248,7 +247,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "zero sent suppressed",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:      1,
 				Suppressed: 1,
 			},
@@ -259,7 +258,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "pending recipient",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   2,
 				Sent:    1,
 				Pending: 1,
@@ -269,7 +268,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 		},
 		{
 			name: "fanout incomplete",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total: 1,
 				Sent:  1,
 			},
@@ -283,7 +282,7 @@ func TestCampaignDeliveryCompletionDecisionMatrix(t *testing.T) {
 			got := decideEmailDeliveryCompletion(tt.counts, tt.target, EmailDeliveryRunKindCampaign)
 			require.Equal(t, tt.complete, got.Complete)
 			require.Equal(t, tt.runStatus, got.RunStatus)
-			require.Equal(t, tt.campaignStatus, got.CampaignStatus)
+			require.Equal(t, tt.campaignStatus, string(got.CampaignStatus))
 		})
 	}
 }

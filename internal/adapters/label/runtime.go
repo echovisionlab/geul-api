@@ -4,22 +4,24 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // Runtime adapts shared File/media and OG lifecycles to Label-owned ports.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Label runtime OG refresher is required")
 	}
@@ -30,15 +32,15 @@ func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (runtime *Runtime) BindReadyAssetForSourceFile(
 	ctx context.Context,
 	tx *gorm.DB,
 	fileID, ownerType, ownerID, bindingKey, kind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
 		BindReadyAssetForSourceFile(ctx, fileID, ownerType, ownerID, bindingKey, kind)
 }
 
@@ -47,7 +49,7 @@ func (runtime *Runtime) ReleasePublicAssetBindings(
 	tx *gorm.DB,
 	ownerType, ownerID, bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -57,7 +59,7 @@ func (runtime *Runtime) ReleaseExactPublicAssetBindings(
 	ownerType, ownerID string,
 	bindingKeys []string,
 ) error {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
 		ReleaseExactPublicAssetBindings(ctx, ownerType, ownerID, bindingKeys)
 }
 
@@ -65,9 +67,9 @@ func (runtime *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	tx *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizeIDs(assetIDs)
-	refs := make(map[string]*commonv1.AssetRef, len(ids))
+) (map[string]*mediaasset.Reference, error) {
+	ids := sliceutil.UniqueTrimmed(assetIDs)
+	refs := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
 	}
@@ -85,9 +87,9 @@ func (runtime *Runtime) ResolveReadySourceFileRefs(
 	tx *gorm.DB,
 	fileIDs []string,
 	kinds ...string,
-) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizeIDs(fileIDs)
-	refs := make(map[string]*commonv1.AssetRef, len(ids))
+) (map[string]*mediaasset.Reference, error) {
+	ids := sliceutil.UniqueTrimmed(fileIDs)
+	refs := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
 	}
@@ -107,9 +109,9 @@ func (runtime *Runtime) assetRefs(
 	tx *gorm.DB,
 	assets []model.PublicAsset,
 	bySourceFile bool,
-) (map[string]*commonv1.AssetRef, error) {
-	refs := make(map[string]*commonv1.AssetRef, len(assets))
-	lifecycle := mediaasset.NewLifecycle(tx, runtime.cdnDomain)
+) (map[string]*mediaasset.Reference, error) {
+	refs := make(map[string]*mediaasset.Reference, len(assets))
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain)
 	for _, asset := range assets {
 		key := asset.ID
 		if bySourceFile {
@@ -121,7 +123,7 @@ func (runtime *Runtime) assetRefs(
 		if refs[key] != nil || asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -150,27 +152,10 @@ func (runtime *Runtime) CancelAndReleaseOGWithDB(
 	tx *gorm.DB,
 	labelID string,
 ) error {
-	if err := og.NewLifecycle(tx, runtime.cdnDomain).CancelEntityWithDB(
+	if err := ogpostgres.CancelEntity(
 		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_LABEL, labelID,
 	); err != nil {
 		return err
 	}
 	return runtime.ReleasePublicAssetBindings(ctx, tx, "label", labelID, "og")
-}
-
-func normalizeIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }

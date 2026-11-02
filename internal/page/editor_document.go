@@ -4,50 +4,48 @@ import (
 	"context"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-// GetPageEditorDocument delegates authorization and materialization to room bootstrap.
-func (s *PageService) GetPageEditorDocument(ctx context.Context, req *connect.Request[managev1.GetPageEditorDocumentRequest]) (_ *connect.Response[managev1.GetPageEditorDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPageEditorDocument", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+type GetPageEditorDocumentQuery struct {
+	PageID string
+	Locale string
+}
+
+// EditorDocument is the editor document of the caller's session: its room
+// document and the title and summary of the room locale, or of the source
+// locale while the room locale has none.
+type EditorDocument struct {
+	Room    RoomDocument
+	Title   *string
+	Summary *string
+}
+
+// GetPageEditorDocument reads the editor document of the caller's session
+// through the collaboration room bootstrap, which authorizes and
+// materializes it.
+func (s *Service) GetPageEditorDocument(ctx context.Context, query GetPageEditorDocumentQuery) (_ EditorDocument, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", query.PageID))
 
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.SessionID == "" {
-		return nil, errs.AuthenticationRequired()
+		return EditorDocument{}, domainerr.AuthenticationRequired()
 	}
-	if req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	loader := &InternalPageService{db: s.db, spiceDB: s.spiceDB, contentBlocks: s.contentBlocks, mediaHydrator: s.mediaHydrator}
-	loaded, err := loader.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
-		PageId: req.Msg.PageId, Locale: req.Msg.Locale, Principal: &intrav1.CollaborationPrincipal{SessionId: string(user.SessionID)},
-	}))
+	room, err := s.LoadPageBlockDocument(ctx, LoadPageBlockDocumentQuery{
+		PageID: query.PageID, Locale: query.Locale, SessionID: string(user.SessionID),
+	})
 	if err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("page", req.Msg.PageId)
+		if mutation.IsDenied(err) {
+			return EditorDocument{}, domainerr.ResourceNotFound("page", query.PageID)
 		}
-		return nil, err
+		return EditorDocument{}, err
 	}
-	body := loaded.Msg
-	metadata := body.LocaleMetadata
+	metadata := room.LocaleMetadata
 	if metadata == nil {
-		metadata = body.SourceMetadata
+		metadata = &room.SourceMetadata
 	}
-	return connect.NewResponse(&managev1.GetPageEditorDocumentResponse{
-		Document: body.Document, DocumentRevision: body.DocumentRevision, Locale: body.Locale,
-		LocaleExists: body.LocaleExists, TargetRevision: body.TargetRevision, SourceLocale: body.SourceMetadata.GetLocale(),
-		BlockMedia: body.BlockMedia, Editable: true, DocumentLayout: body.DocumentLayout,
-		Title: metadata.Title, Summary: metadata.Summary,
-	}), nil
+	return EditorDocument{Room: room, Title: metadata.Title, Summary: metadata.Summary}, nil
 }

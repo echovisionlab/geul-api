@@ -123,7 +123,7 @@ func (p *videoProcessor) generateVideoHLS(
 	if resolutions := videoResolutionsToFFmpeg(requested); len(resolutions) > 0 {
 		opts.Resolutions = resolutions
 	}
-	slog.Info("Generating HLS streams", "job_id", jobID, "resolutions", len(opts.Resolutions))
+	slog.InfoContext(ctx, "Generating HLS streams", "job_id", jobID, "resolutions", len(opts.Resolutions))
 	reportProgress(apiv1.TranscodeStage_TRANSCODE_STAGE_HLS_PROCESSING, 0)
 	result, err := p.generator.GenerateHLSWithProgress(
 		ctx,

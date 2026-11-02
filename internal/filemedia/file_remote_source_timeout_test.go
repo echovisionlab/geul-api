@@ -3,6 +3,7 @@ package filemedia
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestBrowserUploadSourceClientTimeouts(t *testing.T) {
-	service := &FileService{}
+	service := &Service{}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	client := service.newBrowserUploadSourceClient(ctx, cancel, browserUploadSourceIdleTimeout)
@@ -136,7 +137,7 @@ func TestBrowserUploadSourceActiveReadsHaveNoTotalLimit(t *testing.T) {
 			n, err := body.Read(buffer)
 			received = append(received, buffer[:n]...)
 			require.NoError(t, ctx.Err())
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			require.NoError(t, err)

@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,17 +24,17 @@ func withUploadIdleTimeout(next http.Handler, idle time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		controller := http.NewResponseController(w)
 		if err := controller.SetWriteDeadline(time.Time{}); err != nil {
-			slog.ErrorContext(r.Context(), "Cannot configure upload write deadline", failurecause.Attr(err))
+			failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(fmt.Errorf("configure upload write deadline: %w", err)))
 			http.Error(w, "Upload streaming unavailable", http.StatusInternalServerError)
 			return
 		}
 		if err := controller.SetReadDeadline(time.Time{}); err != nil {
-			slog.ErrorContext(r.Context(), "Cannot configure upload read deadline", failurecause.Attr(err))
+			failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(fmt.Errorf("configure upload read deadline: %w", err)))
 			http.Error(w, "Upload streaming unavailable", http.StatusInternalServerError)
 			return
 		}
 		r.Body = &uploadIdleBody{ReadCloser: r.Body, controller: controller, idle: idle}
-		next.ServeHTTP(&uploadIdleWriter{ResponseWriter: w, controller: controller, idle: idle}, r)
+		next.ServeHTTP(&uploadIdleWriter{ResponseWriter: w, ctx: r.Context(), controller: controller, idle: idle}, r)
 	})
 }
 
@@ -58,6 +59,7 @@ func (b *uploadIdleBody) Read(p []byte) (int, error) {
 
 type uploadIdleWriter struct {
 	http.ResponseWriter
+	ctx        context.Context
 	controller *http.ResponseController
 	idle       time.Duration
 }
@@ -73,7 +75,7 @@ func (w *uploadIdleWriter) Write(p []byte) (int, error) {
 
 func (w *uploadIdleWriter) Flush() {
 	if err := w.FlushError(); err != nil {
-		slog.ErrorContext(context.Background(), "Failed to flush upload response", failurecause.Attr(err))
+		slog.ErrorContext(w.ctx, "Failed to flush upload response", failurecause.Attr(err))
 	}
 }
 

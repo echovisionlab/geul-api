@@ -2,23 +2,19 @@ package sharelink
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 const (
@@ -26,210 +22,248 @@ const (
 	defaultExpiration = 7 * 24 * time.Hour
 )
 
-// CreateRecord and DeleteRecord are persistence continuations invoked by the
-// target authority inside its locked transaction. This keeps target lifecycle,
-// permission, and Audit ownership outside the generic ShareLink service.
-type CreateRecord func(context.Context, *gorm.DB, *model.ShareLink) error
-type DeleteRecord func(context.Context, *gorm.DB, model.ShareLink) error
-
-type TargetAuthority interface {
-	AuthorizeList(context.Context, managev1.ShareLinkEntityType, string) error
-	Create(context.Context, managev1.ShareLinkEntityType, string, *model.ShareLink, CreateRecord) error
-	Delete(context.Context, managev1.ShareLinkEntityType, model.ShareLink, DeleteRecord) error
+// ListShareLinksQuery lists the links of one target.
+type ListShareLinksQuery struct {
+	EntityType EntityType
+	EntityID   string
 }
 
-type Service struct {
-	managev1connect.UnimplementedShareLinkServiceHandler
-	db        *gorm.DB
-	authority TargetAuthority
+// CreateShareLinkCommand creates a link to one target.
+type CreateShareLinkCommand struct {
+	EntityType EntityType
+	EntityID   string
+	Label      *string
+	// Password, when set, must be presented with the token.
+	Password *string
+	// ExpiresAt defaults to seven days from now.
+	ExpiresAt *time.Time
 }
 
-func NewService(db *gorm.DB, authority TargetAuthority) *Service {
-	if db == nil {
-		panic("sharelink.Service: db is required")
-	}
-	if authority == nil {
-		panic("sharelink.Service: target authority is required")
-	}
-	return &Service{db: db, authority: authority}
+// DeleteShareLinkCommand deletes one link.
+type DeleteShareLinkCommand struct {
+	ID string
 }
 
-func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[managev1.ListShareLinksRequest]) (_ *connect.Response[managev1.ListShareLinksResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.ListShareLinks", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) ListShareLinks(ctx context.Context, query ListShareLinksQuery) (_ []Link, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("entity_type", string(query.EntityType)), slog.String("entity_id", query.EntityID))
 
-	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
+	if err := validateTarget(query.EntityType, query.EntityID); err != nil {
 		return nil, err
 	}
-	if err := s.authority.AuthorizeList(ctx, req.Msg.EntityType, req.Msg.EntityId); err != nil {
+	if err := s.authorizeList(ctx, query.EntityType, query.EntityID); err != nil {
 		return nil, err
 	}
-	var links []model.ShareLink
-	if err := s.db.WithContext(ctx).
-		Where("entity_type = ? AND entity_id = ?", req.Msg.EntityType.String(), req.Msg.EntityId).
-		Order("created_at DESC").Find(&links).Error; err != nil {
-		return nil, errs.Internal(err)
+	var links []Link
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		links, err = store.ListLinks(ctx, query.EntityType, query.EntityID)
+		return err
+	}); err != nil {
+		return nil, err
 	}
-	items := make([]*managev1.ShareLinkItem, len(links))
-	for i := range links {
-		items[i] = toProto(&links[i])
-	}
-	return connect.NewResponse(&managev1.ListShareLinksResponse{ShareLinks: items}), nil
+	return links, nil
 }
 
-func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[managev1.CreateShareLinkRequest]) (_ *connect.Response[managev1.CreateShareLinkResponse], returnErr error) {
-	var link *model.ShareLink
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
+// authorizeList requires that the caller may list the links of the target.
+// A missing or hidden target answers not found.
+func (s *Service) authorizeList(ctx context.Context, entityType EntityType, entityID string) error {
+	policy := targetPolicies[entityType]
+	var target Target
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		target, err = store.Target(ctx, entityType, entityID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrTargetNotFound) {
+			return domainerr.ResourceNotFound(policy.name, entityID)
 		}
-		level := errs.OperationLogLevel(returnErr)
-		private := []string{req.Msg.GetPassword()}
-		if link != nil {
-			private = append(private, link.Token)
-			if link.PasswordHash != nil {
-				private = append(private, *link.PasswordHash)
-			}
-		}
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.CreateShareLink", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr, private...))
-	}()
-
-	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
-		return nil, err
+		return err
 	}
-	link, err := build(req.Msg, dbtime.Now())
+	if err := s.authorizeRead(ctx, policy, entityID, policy.action(target, authorizationRead)); err != nil {
+		return err
+	}
+	return policy.lifecycle(target, time.Now())
+}
+
+func (s *Service) CreateShareLink(ctx context.Context, command CreateShareLinkCommand) (_ Link, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("entity_type", string(command.EntityType)), slog.String("entity_id", command.EntityID))
+
+	if err := validateTarget(command.EntityType, command.EntityID); err != nil {
+		return Link{}, err
+	}
+	link, err := newLink(command, dbtime.Now())
 	if err != nil {
-		return nil, err
+		return Link{}, err
 	}
-	if err := s.authority.Create(ctx, req.Msg.EntityType, req.Msg.EntityId, link, createRecord); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+	var target lockedTarget
+	created, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Link, Store]{
+		Access: lockTarget(command.EntityType, command.EntityID, &target),
+		Change: func(ctx context.Context, store Store) (Link, error) {
+			if target.lifecycle != nil {
+				return Link{}, target.lifecycle
+			}
+			return store.InsertLink(ctx, link)
+		},
+		Audit: func(created Link) mutation.Audit {
+			return target.audit(created.ID, sharedtelemetry.AuditItemOperationCreated)
+		},
+	})
+	if err != nil {
+		return Link{}, failurecause.WithPrivate(err, linkSecrets(link)...)
 	}
-	return connect.NewResponse(&managev1.CreateShareLinkResponse{ShareLink: toProto(link)}), nil
+	return created, nil
 }
 
-func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[managev1.DeleteShareLinkRequest]) (_ *connect.Response[managev1.DeleteShareLinkResponse], returnErr error) {
-	var link model.ShareLink
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
+func (s *Service) DeleteShareLink(ctx context.Context, command DeleteShareLinkCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("share_link_id", command.ID))
+	var link Link
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		link, err = store.Link(ctx, command.ID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrLinkNotFound) {
+			return domainerr.ResourceNotFound("share link", command.ID)
 		}
-		level := errs.OperationLogLevel(returnErr)
-		private := []string{link.Token}
-		if link.PasswordHash != nil {
-			private = append(private, *link.PasswordHash)
-		}
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.DeleteShareLink", "outcome", "failed", "share_link_id", req.Msg.GetId(), "entity_type", link.EntityType, "entity_id", link.EntityID, failurecause.Attr(returnErr, private...))
-	}()
-
-	if err := s.db.WithContext(ctx).First(&link, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("share link", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+		return err
 	}
-	value, ok := managev1.ShareLinkEntityType_value[link.EntityType]
-	if !ok || value == int32(managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_UNSPECIFIED) {
-		return nil, errs.InvalidEntityType(link.EntityType)
+	if !link.EntityType.Known() {
+		return domainerr.InvalidEntityType(string(link.EntityType))
 	}
-	if err := s.authority.Delete(ctx, managev1.ShareLinkEntityType(value), link, deleteRecord); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteShareLinkResponse{Success: true}), nil
-}
-
-func validateTarget(entityType managev1.ShareLinkEntityType, entityID string) error {
-	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_UNSPECIFIED {
-		return errs.InvalidEntityType(entityType.String())
-	}
-	if _, err := uuid.Parse(entityID); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "sharelink", "operation", "sharelink.validateTarget", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidEntityID()
+	var target lockedTarget
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Access: lockTarget(link.EntityType, link.EntityID, &target),
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			if target.lifecycle != nil {
+				return struct{}{}, target.lifecycle
+			}
+			if err := store.DeleteLink(ctx, link); err != nil {
+				if errors.Is(err, ErrLinkNotFound) {
+					return struct{}{}, domainerr.ResourceNotFound("share link", link.ID)
+				}
+				return struct{}{}, err
+			}
+			return struct{}{}, nil
+		},
+		Audit: func(struct{}) mutation.Audit {
+			return target.audit(link.ID, sharedtelemetry.AuditItemOperationDeleted)
+		},
+	})
+	if err != nil {
+		return failurecause.WithAttrs(failurecause.WithPrivate(err, linkSecrets(link)...),
+			slog.String("entity_type", string(link.EntityType)), slog.String("entity_id", link.EntityID))
 	}
 	return nil
 }
 
-func build(request *managev1.CreateShareLinkRequest, now time.Time) (*model.ShareLink, error) {
-	expiresAt, err := expiry(request, now)
-	if err != nil {
-		return nil, err
+// lockedTarget is a target locked for a link change.
+type lockedTarget struct {
+	// lifecycle rejects a target whose lifecycle forbids links.
+	lifecycle error
+	audit     func(linkID string, operation sharedtelemetry.AuditItemOperation) mutation.Audit
+}
+
+// lockTarget locks the link's target and requires the action its locked
+// lifecycle selects. A caller without it learns nothing about the target:
+// the denial answers not found, as a missing target does.
+func lockTarget(entityType EntityType, entityID string, locked *lockedTarget) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		policy := targetPolicies[entityType]
+		target, err := store.LockTarget(ctx, entityType, entityID)
+		if err != nil {
+			if errors.Is(err, ErrTargetNotFound) {
+				return domainerr.ResourceNotFound(policy.name, entityID)
+			}
+			return err
+		}
+		can, err := policy.action(target, authorizationMutation)(entityID)
+		if err != nil {
+			return domainerr.InvalidField("entity_id", err.Error())
+		}
+		*locked = lockedTarget{
+			lifecycle: policy.lifecycle(target, time.Now()),
+			audit: func(linkID string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+				return linkAudit(entityType, entityID, linkID, target.Version, operation)
+			},
+		}
+		if principal := auth.GetUser(ctx); principal != nil && principal.Authenticated && principal.Banned {
+			return domainerr.AccountBanned()
+		}
+		if err := require(can); err != nil {
+			if mutation.IsDenied(err) {
+				return domainerr.ResourceNotFound(policy.name, entityID).WithCause(err)
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func validateTarget(entityType EntityType, entityID string) error {
+	if !entityType.Known() {
+		return domainerr.InvalidEntityType(string(entityType))
 	}
-	passwordHash, err := passwordHash(request)
+	if _, err := uuid.Parse(entityID); err != nil {
+		return domainerr.InvalidEntityID()
+	}
+	return nil
+}
+
+func newLink(command CreateShareLinkCommand, now time.Time) (Link, error) {
+	expiresAt, err := expiry(command.ExpiresAt, now)
 	if err != nil {
-		return nil, err
+		return Link{}, err
+	}
+	passwordHash, err := passwordHash(command.Password)
+	if err != nil {
+		return Link{}, err
 	}
 	token, err := crypto.GenerateSecureToken()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return Link{}, err
 	}
-	return &model.ShareLink{Token: token, EntityType: request.EntityType.String(), EntityID: request.EntityId, Label: request.Label, PasswordHash: passwordHash, CreatedAt: now, ExpiresAt: &expiresAt}, nil
+	return Link{
+		Token: token, EntityType: command.EntityType, EntityID: command.EntityID, Label: command.Label,
+		PasswordHash: passwordHash, CreatedAt: now, ExpiresAt: expiresAt,
+	}, nil
 }
 
-func expiry(request *managev1.CreateShareLinkRequest, now time.Time) (time.Time, error) {
-	if request.ExpiresAt == nil {
+func expiry(requested *time.Time, now time.Time) (time.Time, error) {
+	if requested == nil {
 		return now.Add(defaultExpiration), nil
 	}
-	expiresAt := request.ExpiresAt.AsTime()
+	// The bounds hold for the value share_link stores: PostgreSQL would round
+	// sub-microsecond digits, and a requested time within a microsecond of
+	// now would then fail the table's expiry check instead of this one.
+	expiresAt := requested.Truncate(dbtime.Precision)
 	if !expiresAt.After(now) {
-		return time.Time{}, errs.InvalidArgument("expires_at", "must be in the future")
+		return time.Time{}, domainerr.InvalidField("expires_at", "must be in the future")
 	}
 	if expiresAt.After(now.Add(maxExpiration)) {
-		return time.Time{}, errs.InvalidArgument("expires_at", "cannot exceed 1 year from now")
+		return time.Time{}, domainerr.InvalidField("expires_at", "cannot exceed 1 year from now")
 	}
 	return expiresAt, nil
 }
 
-func passwordHash(request *managev1.CreateShareLinkRequest) (*string, error) {
-	if request.Password == nil {
+func passwordHash(password *string) (*string, error) {
+	if password == nil {
 		return nil, nil
 	}
-	password := request.GetPassword()
-	if password == "" {
-		return nil, errs.InvalidArgument("password", "must not be empty when provided")
+	if *password == "" {
+		return nil, domainerr.InvalidField("password", "must not be empty when provided")
 	}
-	if len(password) > 1024 {
-		return nil, errs.InvalidArgument("password", "must not exceed 1024 bytes")
+	if len(*password) > 1024 {
+		return nil, domainerr.InvalidField("password", "must not exceed 1024 bytes")
 	}
-	hash, err := crypto.NewPasswordHasher(nil).Hash(password)
+	hash, err := crypto.NewPasswordHasher(nil).Hash(*password)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &hash, nil
 }
 
-func createRecord(ctx context.Context, tx *gorm.DB, link *model.ShareLink) error {
-	return tx.WithContext(ctx).Clauses(clause.Returning{}).
-		Select("Token", "EntityType", "EntityID", "Label", "PasswordHash", "ExpiresAt", "CreatedAt").Create(link).Error
-}
-
-func deleteRecord(ctx context.Context, tx *gorm.DB, link model.ShareLink) error {
-	result := tx.WithContext(ctx).Where("id = ? AND entity_type = ? AND entity_id = ?", link.ID, link.EntityType, link.EntityID).Delete(&model.ShareLink{})
-	if result.Error != nil {
-		return result.Error
+// linkSecrets are the stored values of link that no failure log may keep.
+func linkSecrets(link Link) []string {
+	secrets := []string{link.Token}
+	if link.PasswordHash != nil {
+		secrets = append(secrets, *link.PasswordHash)
 	}
-	if result.RowsAffected == 0 {
-		return errs.NotFound("share link", link.ID)
-	}
-	return nil
-}
-
-func toProto(link *model.ShareLink) *managev1.ShareLinkItem {
-	item := &managev1.ShareLinkItem{Id: link.ID, EntityType: managev1.ShareLinkEntityType(managev1.ShareLinkEntityType_value[link.EntityType]), EntityId: link.EntityID, Token: link.Token, Url: fmt.Sprintf("/s/%s", link.Token), CreatedAt: timestamppb.New(link.CreatedAt), HasPassword: link.PasswordHash != nil}
-	if link.Label != nil {
-		item.Label = link.Label
-	}
-	if link.ExpiresAt != nil {
-		item.ExpiresAt = timestamppb.New(*link.ExpiresAt)
-	}
-	return item
+	return secrets
 }

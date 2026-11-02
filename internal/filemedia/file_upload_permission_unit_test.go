@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,7 +106,7 @@ func TestResolveUploadPermissionTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := resolveUploadPermissionTarget(tt.uploadType, tt.entityType)
+			got, err := resolveUploadPermissionTarget(UploadType(tt.uploadType), tt.entityType)
 			if tt.wantValidationErr {
 				require.Error(t, err)
 				return
@@ -122,8 +124,8 @@ func TestResolveUploadPermissionTarget(t *testing.T) {
 func TestCheckEntityPermissionAllowsIndependentEditorMesh(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{}
-	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{})
+	svc := &Service{}
+	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), UploadEditorMesh, domain.UploadSession{})
 	require.NoError(t, err)
 	require.True(t, target.authorOnly)
 	require.Empty(t, entityID)
@@ -133,12 +135,52 @@ func TestCheckPartUploadPermissionRejectsDocumentTargetForEditorMesh(t *testing.
 	t.Parallel()
 
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String()
-	svc := &FileService{}
+	svc := &Service{}
 
-	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{
-		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
-		EntityType: &entityType,
-	})
+	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), UploadEditorMesh,
+
+		domain.UploadSession{
+			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
+			EntityType: &entityType,
+		})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "omit document entity type")
+}
+
+func TestCheckEntityPermissionAllowsLibraryManagerProgramEventPosterForSeriesID(t *testing.T) {
+	t.Parallel()
+
+	admin := newUnitUser()
+	checker := (&authztest.Checker{}).For(admin.IdentityID).Allow(policyv1.File.ManageLibrary())
+	svc := &Service{spiceDB: checker.Client(t)}
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
+	target, err := resolveUploadPermissionTarget(UploadProgramEventPoster,
+
+		"")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", admin.MemberID))
+	manageLibrary, err := policyv1.File.ManageLibrary()
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{authztest.Of(admin.IdentityID, manageLibrary, nil)}, checker.Checks())
+}
+
+func TestCheckEntityPermissionRejectsProgramEventPosterWithoutLibraryManagement(t *testing.T) {
+	t.Parallel()
+
+	user := newUnitUser()
+	checker := &authztest.Checker{}
+	svc := &Service{spiceDB: checker.Client(t)}
+	ctx := auditedUserContext(context.Background(), user.AuthUserInfo())
+	target, err := resolveUploadPermissionTarget(UploadProgramEventPoster,
+
+		"")
+	require.NoError(t, err)
+
+	err = svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", user.MemberID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "admin")
+	manageLibrary, err := policyv1.File.ManageLibrary()
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{authztest.Of(user.IdentityID, manageLibrary, nil)}, checker.Checks())
 }

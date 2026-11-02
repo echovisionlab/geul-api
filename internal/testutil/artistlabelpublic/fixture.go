@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -17,47 +20,88 @@ import (
 	"gorm.io/gorm"
 
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+
+	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
+
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
+
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
+
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
+
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
+
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
+
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
+
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
-
-const artistLabelPublicCDN = "https://cdn.example.com"
 
 // ArtistLabelPublicFixture contains only the cross-domain records consumed by
 // the Artist and Label public read integration tests. Assertions stay in each
 // owning public package.
+
+const artistLabelPublicCDN = "https://cdn.example.com"
+
 type ArtistLabelPublicFixture struct {
 	DB               *gorm.DB
 	SpiceDB          *auth.SpiceDBClient
 	AdminID          string
 	Context          context.Context
 	Suffix           string
-	ArtistService    *artistpublic.ArtistService
+	ArtistService    *artistpublic.ConnectHandler
 	ArtistMedia      artistpublic.MediaProjection
-	LabelService     *labelpublic.LabelService
-	ShareLinkService *sharelinkdomain.Service
+	LabelService     *labelpublic.ConnectHandler
+	ShareLinkService *sharelinkdomain.ConnectHandler
 
 	ParentLabel          *managev1.Label
 	MainLabel            *managev1.Label
@@ -92,66 +136,72 @@ type ArtistLabelPublicFixture struct {
 func New(t *testing.T) *ArtistLabelPublicFixture {
 	t.Helper()
 
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	stack, err := runtimetest.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db := stack.Postgres.DB
 	spiceDB := stack.SpiceDBClient
 
 	adminID := uuid.NewString()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.PostIntegrationContext(adminID)
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	ctx := orytest.NewAuditContext(t, adminID, orytest.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
-	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
+	contentBlocks := contenttest.NewCreativeContentStore(t)
 	publisher := artistLabelAsyncPublisher{}
 	fileDeleter := artistLabelFileDeleter{}
-	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db))
+	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher())
 
-	manageArtist := artistdomain.NewArtistService(
-		db, spiceDB, identityManager,
-		fileDeleter, publisher,
-		artistdomain.Dependencies{
-			Translation: artistadapter.NewTranslation(),
-			Members:     artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
-			Runtime:     artistRuntime,
+	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
+	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Ports{
+		ContentBlocks: contentBlocks, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Translation:   labeladapter.NewTranslation(),
+		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher()),
+		Artists:       artistadapter.NewLabelRelations(),
+		Releases:      releaseadapter.NewLabelRelations(),
+		ProgramEvents: programeventadapter.NewLabelRelations(),
+		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	labelService, err := labeldomain.NewService(labeldomain.Deps{
+		Units: labelUnits, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
+	})
+	require.NoError(t, err)
+	manageLabel := labeldomain.NewConnectHandler(labelService)
+	manageRelease := releasedomain.NewConnectHandler(releasetest.NewService(t, releasetest.Deps{
+		DB: db, SpiceDB: spiceDB, Files: fileDeleter,
+		WaveformJobs: releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}),
+		Ports: releasepostgres.Ports{
+			ContentBlocks: contentBlocks, Publisher: publisher,
+			Assets: releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
 		},
-		artistdomain.WithArtistContentBlockStore(contentBlocks),
-	)
-	manageLabel := labeldomain.NewLabelService(
-		db, spiceDB, identityManager,
-		fileDeleter, publisher,
-		labeldomain.Dependencies{
-			Translation: labeladapter.NewTranslation(),
-			Members:     labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
-			Runtime:     labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
-		},
-		labeldomain.WithLabelContentBlockStore(contentBlocks),
-	)
-	manageRelease := releasedomain.NewReleaseService(
-		db, spiceDB, identityManager, releaseadapter.NewTrackFiles(fileDeleter),
-		releaseadapter.NewAssets(artistLabelPublicCDN), releaseadapter.NewOG(artistLabelPublicCDN),
-		releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}), publisher,
-		releasedomain.WithReleaseContentBlockStore(contentBlocks),
-	)
-	manageWork := workdomain.NewWorkService(
-		db, workFixtureRuntime(db), spiceDB, identityManager, publisher,
-		workdomain.WithWorkContentBlockStore(contentBlocks),
-		workdomain.WithWorkContentBlockMediaHydrator(artistLabelMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, artistLabelPublicCDN)),
-	)
-	shareLinks := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, nil))
+	}))
+	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
+		ContentBlocks: contentBlocks, Signals: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Runtime: workFixtureRuntime(db), Media: artistLabelMediaHydrator{},
+		ShareLinks: sharelinkadapter.EntityLinks{Type: sharelinkdomain.EntityWork},
+	})
+	require.NoError(t, err)
+	workService, err := workdomain.NewService(workdomain.Deps{
+		Units: workUnits, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: apitelemetry.NewDurableWriter(db),
+		Members: workadapter.NewMemberSummaries(db, artistLabelPublicCDN),
+	})
+	require.NoError(t, err)
+	manageWork := workdomain.NewConnectHandler(workService)
+	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
-	publicArtist := artistpublic.NewArtistService(
-		db, spiceDB, artistMedia,
-		artistpublic.WithArtistContentBlockStore(contentBlocks),
-	)
+	publicArtistUnits, err := artistpublicpostgres.NewUnits(db, contentBlocks)
+	require.NoError(t, err)
+	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{Units: publicArtistUnits, SpiceDB: spiceDB, Media: artistMedia})
+	require.NoError(t, err)
+	publicArtist := artistpublic.NewConnectHandler(publicArtistService)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
-	publicLabel := labelpublic.NewLabelService(
-		db,
-		labelpublic.Dependencies{Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime},
-	)
+	publicLabelUnits, err := labelpublicpostgres.NewUnits(db, labelRuntime, labelRuntime)
+	require.NoError(t, err)
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: publicLabelUnits, Draft: labelRuntime})
+	require.NoError(t, err)
+	publicLabel := labelpublic.NewConnectHandler(publicLabelService)
 
 	parentLabel := createPublishedArtistLabelFixtureLabel(
 		t, manageLabel, ctx, "Public Parent Label "+suffix, "public-parent-label-"+suffix, nil,
@@ -206,7 +256,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	)
 	childArtist, err := manageArtist.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
 		Name: "Public Child Artist " + suffix, Slug: stringPointer("public-child-artist-" + suffix),
-		ParentArtistId: &mainArtist.Id, Document: testutil.CreativeContentDocument("en", "Public Child Artist "+suffix),
+		ParentArtistId: &mainArtist.Id, Document: contenttest.CreativeContentDocument("en", "Public Child Artist "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageArtist.PublishArtist(ctx, connect.NewRequest(&managev1.PublishArtistRequest{Id: childArtist.Msg.Id}))
@@ -227,7 +277,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	releaseResponse, err := manageRelease.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title: "Public Artist Label Release " + suffix, Slug: stringPointer("public-artist-label-release-" + suffix),
 		Type: managev1.ReleaseType_RELEASE_TYPE_ALBUM, ReleaseDate: timestamppb.New(releaseDate),
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -256,7 +306,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		Title: "Public Artist Label Bare Release " + suffix,
 		Slug:  stringPointer("public-artist-label-bare-release-" + suffix),
 		Type:  managev1.ReleaseType_RELEASE_TYPE_SINGLE, ReleaseDate: timestamppb.New(releaseDate.AddDate(0, 1, 0)),
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Bare Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Bare Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -277,7 +327,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	draftRelease, err := manageRelease.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Public Artist Label Draft Release " + suffix,
 		Type:     managev1.ReleaseType_RELEASE_TYPE_SINGLE,
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Draft Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Draft Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -349,22 +399,22 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	}
 }
 
-func artistFixtureOGRefresher(db *gorm.DB) *og.Refresher {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), artistadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(artistadapter.NewRequests()))
+func artistFixtureOGRefresher() *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), artistadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(artistadapter.NewRequests()))
 }
 
-func labelFixtureOGRefresher(db *gorm.DB) *og.Refresher {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), labeladapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(labeladapter.NewRequests()))
+func labelFixtureOGRefresher() *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), labeladapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(labeladapter.NewRequests()))
 }
 
 func workFixtureRuntime(db *gorm.DB) *workadapter.Runtime {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), workadapter.NewProjection())
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), workadapter.NewProjection())
 	return workadapter.NewRuntime(
 		db,
 		artistLabelPublicCDN,
-		og.NewRefresher(planner, og.NewResolver(workadapter.NewRequests())),
+		ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(workadapter.NewRequests())),
 	)
 }
 
@@ -382,7 +432,6 @@ func (artistLabelAsyncPublisher) EnqueueProtobufWithExecutor(context.Context, ev
 
 type artistLabelFileDeleter struct{}
 
-func (artistLabelFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
 func (artistLabelFileDeleter) CleanupTrackUploadSessions(context.Context, string, string) error {
 	return nil
 }
@@ -406,8 +455,8 @@ type artistLabelMediaHydrator struct{}
 
 func (artistLabelMediaHydrator) HydrateAuthorizedContentBlockMedia(
 	_ context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 
@@ -417,14 +466,14 @@ func (artistLabelMediaHydrator) HydrateAuthorizedWorkBlockMediaWithDB(
 	_ string,
 	_ uuid.UUID,
 	_ *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 
 func createDraftArtistLabelFixtureArtist(
 	t *testing.T,
-	service *artistdomain.ArtistService,
+	service *artistdomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -440,7 +489,7 @@ func createDraftArtistLabelFixtureArtist(
 	website := "https://example.com/" + slug
 	response, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
 		Name: name, Slug: &slug, RealName: &realName,
-		Document: testutil.CreativeContentDocument("en", bio), CountryCode: &countryCode, Website: &website,
+		Document: contenttest.CreativeContentDocument("en", bio), CountryCode: &countryCode, Website: &website,
 		SocialLinks: map[string]string{"homepage": "https://social.example.com/" + slug},
 	}))
 	require.NoError(t, err)
@@ -449,7 +498,7 @@ func createDraftArtistLabelFixtureArtist(
 
 func createPublishedArtistLabelFixtureArtist(
 	t *testing.T,
-	service *artistdomain.ArtistService,
+	service *artistdomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -467,7 +516,7 @@ func createPublishedArtistLabelFixtureArtist(
 
 func createDraftArtistLabelFixtureLabel(
 	t *testing.T,
-	service *labeldomain.LabelService,
+	service *labeldomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -482,7 +531,7 @@ func createDraftArtistLabelFixtureLabel(
 	countryCode := "KR"
 	website := "https://example.com/" + slug
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{
-		Name: name, Slug: &slug, Document: testutil.CreativeContentDocument("en", description),
+		Name: name, Slug: &slug, Document: contenttest.CreativeContentDocument("en", description),
 		CountryCode: &countryCode, Website: &website,
 		SocialLinks:   map[string]string{"homepage": "https://social.example.com/" + slug},
 		ParentLabelId: parentLabelID,
@@ -493,7 +542,7 @@ func createDraftArtistLabelFixtureLabel(
 
 func createPublishedArtistLabelFixtureLabel(
 	t *testing.T,
-	service *labeldomain.LabelService,
+	service *labeldomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -508,6 +557,29 @@ func createPublishedArtistLabelFixtureLabel(
 	created.PublishedAt = response.Msg.PublishedAt
 	created.UpdatedAt = response.Msg.UpdatedAt
 	return created
+}
+
+// newFixtureArtistService is the Artist service of the fixture, auditing to a
+// recorder.
+func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store, publisher artistLabelAsyncPublisher) *artistdomain.Service {
+	t.Helper()
+	units, err := artistpostgres.NewUnits(db, artistpostgres.Ports{
+		ContentBlocks: store, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Translation:   artistadapter.NewTranslation(),
+		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher()),
+		Labels:        labeladapter.NewArtistLinks(),
+		Releases:      releaseadapter.NewArtistRelations(),
+		ProgramEvents: programeventadapter.NewArtistRelations(),
+		Works:         workadapter.NewArtistRelations(),
+		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	service, err := artistdomain.NewService(artistdomain.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
+	})
+	require.NoError(t, err)
+	return service
 }
 
 func linkArtistLabelFixture(
@@ -533,15 +605,7 @@ func linkArtistLabelFixture(
 		WHERE artist.id = ?::uuid
 		LIMIT 1
 	`, artistID).Scan(&state).Error)
-	_, err := artistdomain.NewInternalArtistService(
-		db, publisher, spiceDB,
-		artistdomain.Dependencies{
-			Translation: artistadapter.NewTranslation(),
-			Runtime:     artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
-		},
-		artistdomain.WithInternalArtistContentBlockStore(store),
-		artistdomain.WithInternalArtistCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-	).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
+	_, err := artistdomain.NewInternalConnectHandler(newFixtureArtistService(t, db, spiceDB, store, publisher)).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
 		ArtistId: artistID, ExpectedRevision: state.Revision, Locale: "en",
 		ContributorMemberIds: []string{state.Contributor},
 		Update: &intrav1.ArtistDocumentMetadataUpdate{
@@ -565,7 +629,7 @@ func stringPointer(value string) *string { return &value }
 func seedArtistLabelFixtureFile(t *testing.T, db *gorm.DB, fileName, mimeType, assetKind string) string {
 	t.Helper()
 	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
+	extension := mediamime.GetExtensionFromMime(mimeType)
 	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
 	now := time.Now().UTC()
 	require.NoError(t, db.Create(&model.File{

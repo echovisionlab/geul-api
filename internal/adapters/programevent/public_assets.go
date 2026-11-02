@@ -6,10 +6,14 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
 )
 
@@ -31,10 +35,10 @@ func (a *PublicAssets) ResolveReadyAssetForSourceFile(
 	ctx context.Context,
 	fileID string,
 	kinds ...string,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	refs, err := a.ResolveReadyAssetsForSourceFiles(ctx, []string{fileID}, kinds...)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve Program Event public asset", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Program Event public asset resolution failed; serving without the asset", failurecause.Attr(err), "file_id", fileID)
 		return nil
 	}
 	return refs[strings.TrimSpace(fileID)]
@@ -44,9 +48,9 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 	ctx context.Context,
 	fileIDs []string,
 	kinds ...string,
-) (map[string]*commonv1.AssetRef, error) {
-	ids := uniqueNonEmptyIDs(fileIDs)
-	result := make(map[string]*commonv1.AssetRef, len(ids))
+) (map[string]*mediaasset.Reference, error) {
+	ids := sliceutil.UniqueTrimmed(fileIDs)
+	result := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
@@ -59,7 +63,7 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 	if err := query.Order("created_at DESC, id DESC").Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(a.db, a.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(a.db), a.cdnDomain)
 	for _, asset := range assets {
 		if asset.SourceFileID == nil || result[*asset.SourceFileID] != nil {
 			continue
@@ -70,31 +74,14 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 		if asset.FileSize == nil || *asset.FileSize <= 0 || len(asset.SHA256) != 32 {
 			return nil, errors.New("ready Program Event asset integrity metadata is incomplete")
 		}
-		if expected := model.GetExtensionFromMime(asset.MimeType); expected == "bin" || expected != asset.Extension {
+		if expected := mediamime.GetExtensionFromMime(asset.MimeType); expected == "bin" || expected != asset.Extension {
 			return nil, errors.New("ready Program Event asset extension does not match MIME type")
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
 		result[*asset.SourceFileID] = ref
 	}
 	return result, nil
-}
-
-func uniqueNonEmptyIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }

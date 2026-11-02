@@ -1,0 +1,2 @@
+# Connect or internal/errors imports outside connect_handler*.go in
+# pipelineDomains. Lower with -update.

@@ -8,14 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -31,15 +24,15 @@ var (
 // It stores derivative files (thumbnails, HLS manifests, audio sidecars) in the file_derivative table.
 func (h *Handlers) HandleTranscodeComplete(ctx context.Context, body []byte) (resultErr error) {
 	event, err := parseTranscodeCompleteEvent(body)
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err != nil {
 		return err
 	}
-	logTranscodeComplete(event)
+	logTranscodeComplete(ctx, event)
 
 	skipped, err := h.skipUnavailableTranscodeSource(ctx, event)
 	if err != nil || skipped {
@@ -59,46 +52,34 @@ func (h *Handlers) failTrackedTranscodeJob(
 		return false, nil
 	}
 	ownerStateApplied := event.GetEntityType() != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, tx, event.GetFileId())
+	err := h.transaction(ctx, func(store Store) error {
+		acceptsResults, err := store.LockFileAcceptingResults(ctx, event.GetFileId())
 		if err != nil {
 			return err
 		}
 		if !acceptsResults {
 			return errProcessingSourceUnavailable
 		}
-		job, err := h.trackedTranscodeJobByIdentityDB(ctx, tx, event, true)
+		job, err := trackedTranscodeJobByIdentity(ctx, store, event, true)
 		if err != nil {
 			return err
 		}
 		if job == nil || !transcodeJobAcceptsCompletion(job.Status) {
 			return errTranscodeAllocationUnavailable
 		}
-		now := time.Now().UTC()
 		errText := "transcode failed"
 		if event.Error != nil && strings.TrimSpace(*event.Error) != "" {
 			errText = strings.TrimSpace(*event.Error)
 		}
-		result := tx.WithContext(ctx).
-			Model(&model.TranscodeJob{}).
-			Where("event_id = ? AND status IN ?", job.EventID, []string{
-				transcodestate.StatusQueued,
-				transcodestate.StatusProcessing,
-			}).
-			Updates(structured.Fields{
-				"status":       transcodestate.StatusFailedTerminal,
-				"last_error":   errText,
-				"completed_at": now,
-				"updated_at":   now,
-			})
-		if result.Error != nil {
-			return result.Error
+		failed, err := store.FailActiveTranscodeJob(ctx, job.EventID, errText, time.Now().UTC())
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
+		if !failed {
 			return errTranscodeAllocationUnavailable
 		}
 		if event.GetEntityType() == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-			ownerStateApplied, err = h.finalizeTrackTranscodeStateWithDB(ctx, tx, event)
+			ownerStateApplied, err = finalizeTrackTranscodeState(ctx, store, event)
 			return err
 		}
 		return nil
@@ -126,33 +107,19 @@ func (h *Handlers) fileAcceptsProcessingResults(ctx context.Context, fileID stri
 	if strings.TrimSpace(fileID) == "" {
 		return false, nil
 	}
-
-	var count int64
-	if err := h.db.WithContext(ctx).
-		Model(&model.File{}).
-		Where("id = ? AND delete_requested_at IS NULL", fileID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	var accepts bool
+	err := h.read(ctx, func(store Store) (err error) {
+		accepts, err = store.FileAcceptsResults(ctx, fileID)
+		return err
+	})
+	return accepts, err
 }
 
-func lockFileAcceptingProcessingResults(ctx context.Context, tx *gorm.DB, fileID string) (bool, error) {
-	if tx == nil || strings.TrimSpace(fileID) == "" {
+func lockFileAcceptingProcessingResults(ctx context.Context, store Store, fileID string) (bool, error) {
+	if strings.TrimSpace(fileID) == "" {
 		return false, nil
 	}
-	var file model.File
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id").
-		Where("id = ? AND delete_requested_at IS NULL", strings.TrimSpace(fileID)).
-		Take(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return store.LockFileAcceptingResults(ctx, strings.TrimSpace(fileID))
 }
 
 func (h *Handlers) finishDeletedFileTranscodeJob(
@@ -162,26 +129,26 @@ func (h *Handlers) finishDeletedFileTranscodeJob(
 	if event == nil || strings.TrimSpace(event.GetFileId()) == "" || strings.TrimSpace(event.GetEventId()) == "" {
 		return nil
 	}
-	return h.db.WithContext(ctx).
-		Where("event_id = ? AND file_id = ?", event.GetEventId(), event.GetFileId()).
-		Delete(&model.TranscodeJob{}).Error
+	return h.transaction(ctx, func(store Store) error {
+		return store.DeleteTranscodeJob(ctx, event.GetEventId(), event.GetFileId())
+	})
 }
 
 func (h *Handlers) retireStaleTranscodeOutputs(ctx context.Context, event *managev1.TranscodeCompleteEvent) error {
 	if event == nil || event.Outputs == nil {
 		return nil
 	}
-	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, tx, event.GetFileId())
+	return h.transaction(ctx, func(store Store) error {
+		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, store, event.GetFileId())
 		if err != nil || !acceptsResults {
 			return err
 		}
-		tracked, err := h.trackedTranscodeAllocationForCompletionDB(ctx, tx, event, true)
+		tracked, err := trackedTranscodeAllocationForCompletion(ctx, store, event, true)
 		if err != nil {
 			return err
 		}
 		if tracked == nil {
-			slog.Warn("Skipped stale transcode output retirement without matching allocation",
+			slog.WarnContext(ctx, "Skipped stale transcode output retirement without matching allocation",
 				"fileId", event.FileId,
 				"entityType", event.EntityType.String(),
 				"entityId", event.EntityId,
@@ -190,28 +157,18 @@ func (h *Handlers) retireStaleTranscodeOutputs(ctx context.Context, event *manag
 		}
 		now := time.Now().UTC()
 		if transcodeJobAcceptsCompletion(tracked.Status) {
-			if err := tx.Model(&model.TranscodeJob{}).
-				Where("event_id = ? AND status IN ?", tracked.EventID, []string{
-					transcodestate.StatusQueued,
-					transcodestate.StatusProcessing,
-				}).
-				Updates(structured.Fields{
-					"status":       transcodestate.StatusCancelled,
-					"last_error":   "stale completion no longer owns the entity projection",
-					"updated_at":   now,
-					"completed_at": now,
-				}).Error; err != nil {
+			if err := store.CancelActiveTranscodeJob(ctx, tracked.EventID, "stale completion no longer owns the entity projection", now); err != nil {
 				return err
 			}
 		}
 		for _, target := range collectStaleTranscodeOutputTargets(event.Outputs) {
 			if target.derivativeType == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS {
-				if err := retireStaleMediaGeneration(ctx, tx, event.GetFileId(), event.Outputs.GetHls(), now); err != nil {
+				if err := retireStaleMediaGeneration(ctx, store, event.GetFileId(), event.Outputs.GetHls(), now); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := markStalePublicAssetDeletePending(ctx, tx, event.GetFileId(), target.id, now); err != nil {
+			if err := markStalePublicAssetDeletePending(ctx, store, event.GetFileId(), target.id, now); err != nil {
 				return err
 			}
 		}
@@ -219,20 +176,13 @@ func (h *Handlers) retireStaleTranscodeOutputs(ctx context.Context, event *manag
 	})
 }
 
-func (h *Handlers) trackedTranscodeAllocationForCompletion(
+func trackedTranscodeAllocationForCompletion(
 	ctx context.Context,
-	event *managev1.TranscodeCompleteEvent,
-) (*model.TranscodeJob, error) {
-	return h.trackedTranscodeAllocationForCompletionDB(ctx, h.db, event, false)
-}
-
-func (h *Handlers) trackedTranscodeAllocationForCompletionDB(
-	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 	lock bool,
-) (*model.TranscodeJob, error) {
-	job, err := h.trackedTranscodeJobByIdentityDB(ctx, db, event, lock)
+) (*transcodestate.Job, error) {
+	job, err := trackedTranscodeJobByIdentity(ctx, store, event, lock)
 	if err != nil || job == nil {
 		return job, err
 	}
@@ -246,12 +196,12 @@ func (h *Handlers) trackedTranscodeAllocationForCompletionDB(
 	return job, nil
 }
 
-func (h *Handlers) trackedTranscodeJobByIdentityDB(
+func trackedTranscodeJobByIdentity(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 	lock bool,
-) (*model.TranscodeJob, error) {
+) (*transcodestate.Job, error) {
 	var queueName string
 	switch event.GetEventType() {
 	case managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_AUDIO:
@@ -261,22 +211,10 @@ func (h *Handlers) trackedTranscodeJobByIdentityDB(
 	default:
 		return nil, nil
 	}
-	var job model.TranscodeJob
-	query := db.WithContext(ctx)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	}
-	if err := query.
-		Select("event_id", "status", "payload").
-		Where("event_id = ? AND queue_name = ? AND entity_type = ? AND entity_id = ? AND file_id = ?",
-			event.GetEventId(), queueName, event.GetEntityType().String(), event.GetEntityId(), event.GetFileId()).
-		Take(&job).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &job, nil
+	return store.TranscodeJob(ctx, transcodestate.CompletionIdentity{
+		EventID: event.GetEventId(), QueueName: queueName, EntityType: event.GetEntityType().String(),
+		EntityID: event.GetEntityId(), FileID: event.GetFileId(),
+	}, lock)
 }
 
 func transcodeJobAcceptsCompletion(status string) bool {
@@ -329,7 +267,7 @@ func collectStaleTranscodeOutputTargets(
 
 func retireStaleMediaGeneration(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	fileID string,
 	result *commonv1.MediaGenerationWriteResult,
 	now time.Time,
@@ -337,140 +275,90 @@ func retireStaleMediaGeneration(
 	if result == nil {
 		return fmt.Errorf("stale media generation result is required")
 	}
-	generationID := strings.TrimSpace(result.GetGenerationId())
-	var generation model.MediaGeneration
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", generationID).Take(&generation).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
+	generation, found, err := store.LockMediaGeneration(ctx, strings.TrimSpace(result.GetGenerationId()))
+	if err != nil || !found {
 		return err
 	}
 	if generation.FileID != fileID || generation.Kind != "hls" {
 		return fmt.Errorf("stale media generation does not belong to source file")
 	}
-	var derivativeCount int64
-	if err := tx.WithContext(ctx).Model(&model.FileDerivative{}).
-		Where("media_generation_id = ?", generation.ID).Count(&derivativeCount).Error; err != nil {
+	derivativeCount, err := store.GenerationDerivativeCount(ctx, generation.ID)
+	if err != nil {
 		return err
 	}
-	if derivativeCount != 0 {
+	if derivativeCount != 0 || generation.Status == GenerationRetired {
 		return nil
 	}
-	if generation.Status == model.MediaGenerationStatusRetired {
-		return nil
+	if generation.Status != GenerationAllocated {
+		result = nil
 	}
-	updates := structured.Fields{
-		"status":       model.MediaGenerationStatusRetired,
-		"retired_at":   now,
-		"delete_after": now.Add(7 * time.Hour),
-		"updated_at":   now,
-	}
-	if generation.Status == model.MediaGenerationStatusAllocated {
-		updates["manifest_sha256"] = append([]byte(nil), result.GetManifestSha256()...)
-		updates["object_count"] = result.GetObjectCount()
-		updates["total_size"] = result.GetTotalSize()
-		updates["ready_at"] = now
-	}
-	return tx.WithContext(ctx).Model(&model.MediaGeneration{}).
-		Where("id = ? AND status IN ?", generation.ID, []string{
-			model.MediaGenerationStatusAllocated,
-			model.MediaGenerationStatusReady,
-		}).
-		Updates(updates).Error
+	return store.RetireMediaGeneration(ctx, generation.ID, result, now)
 }
 
 func markStalePublicAssetDeletePending(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	fileID string,
 	assetID string,
 	now time.Time,
 ) error {
-	var asset model.PublicAsset
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", assetID).Take(&asset).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
+	asset, found, err := store.LockAsset(ctx, assetID)
+	if err != nil || !found {
 		return err
 	}
 	if asset.SourceFileID == nil || *asset.SourceFileID != fileID {
 		return fmt.Errorf("stale public asset does not belong to source file")
 	}
-	var derivativeCount int64
-	if err := tx.WithContext(ctx).Model(&model.FileDerivative{}).
-		Where("asset_id = ?", asset.ID).Count(&derivativeCount).Error; err != nil {
+	derivativeCount, err := store.AssetDerivativeCount(ctx, asset.ID)
+	if err != nil {
 		return err
 	}
-	var bindingCount int64
-	if err := tx.WithContext(ctx).Model(&model.PublicAssetBinding{}).
-		Where("asset_id = ?", asset.ID).Count(&bindingCount).Error; err != nil {
+	bindingCount, err := store.AssetBindingCount(ctx, asset.ID)
+	if err != nil {
 		return err
 	}
 	if derivativeCount != 0 || bindingCount != 0 ||
-		asset.Status == model.PublicAssetStatusDeletePending || asset.Status == model.PublicAssetStatusDeleted {
+		asset.Status == AssetDeletePending || asset.Status == AssetDeleted {
 		return nil
 	}
-	return tx.WithContext(ctx).Model(&model.PublicAsset{}).
-		Where("id = ? AND status IN ?", asset.ID, []string{
-			model.PublicAssetStatusAllocated,
-			model.PublicAssetStatusReady,
-			model.PublicAssetStatusFailed,
-		}).
-		Updates(structured.Fields{
-			"status":              model.PublicAssetStatusDeletePending,
-			"delete_requested_at": now,
-			"updated_at":          now,
-		}).Error
+	return store.MarkAssetDeletePending(ctx, asset.ID, now)
 }
 
 func (h *Handlers) persistFileDurationSeconds(ctx context.Context, fileID string, durationSeconds int32) error {
 	if durationSeconds < 0 {
 		return nil
 	}
-	return h.db.WithContext(ctx).
-		Model(&model.File{}).
-		Where("id = ?", fileID).
-		Update("duration_seconds", int(durationSeconds)).
-		Error
+	return h.transaction(ctx, func(store Store) error {
+		return store.SetFileDuration(ctx, fileID, int(durationSeconds))
+	})
 }
 
-func (h *Handlers) finalizeTrackTranscodeStateWithDB(
+func finalizeTrackTranscodeState(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 ) (bool, error) {
 	if event.EntityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
 		return false, nil
 	}
 
-	status, err := h.determineTrackAudioProcessingStatusWithDB(ctx, db, event.FileId)
+	status, err := determineTrackAudioProcessingStatus(ctx, store, event.FileId)
 	if err != nil {
 		return false, err
 	}
 
-	updates := structured.Fields{
-		"processing_status": status,
-	}
+	var duration *int
 	if event.Success && event.Outputs != nil && event.Outputs.DurationSeconds != nil {
-		updates["duration_seconds"] = int(*event.Outputs.DurationSeconds)
+		duration = new(int(*event.Outputs.DurationSeconds))
 	}
-
-	result := db.WithContext(ctx).
-		Model(&model.Track{}).
-		Where("id = ? AND audio_original_file_id = ?", event.EntityId, event.FileId).
-		Updates(updates)
-	if result.Error != nil {
-		return false, result.Error
+	applied, err := store.UpdateTrackProcessing(ctx, event.EntityId, event.FileId, status, duration)
+	if err != nil {
+		return false, err
 	}
-
-	if result.RowsAffected == 0 {
-		slog.Debug("Skipped stale track transcode completion", "trackId", event.EntityId, "fileId", event.FileId)
-		return false, nil
+	if !applied {
+		slog.DebugContext(ctx, "Skipped stale track transcode completion", "trackId", event.EntityId, "fileId", event.FileId)
 	}
-
-	return true, nil
+	return applied, nil
 }
 
 func (h *Handlers) publishWaveformGenerate(
@@ -492,29 +380,20 @@ func (h *Handlers) publishWaveformGenerate(
 		return nil
 	}
 
-	var source model.File
-	if err := h.db.WithContext(ctx).
-		Select("id", "extension", "mime_type").
-		Where("id = ? AND delete_requested_at IS NULL", event.FileId).
-		Take(&source).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		return fmt.Errorf("lookup waveform source: %w", err)
-	}
-	sourceTarget, err := filemedia.CanonicalMediaObjectTargetForFile(source)
-	if err != nil {
-		return fmt.Errorf("build waveform source target: %w", err)
+	var sourceTarget *commonv1.MediaObjectTarget
+	var found bool
+	if err := h.read(ctx, func(store Store) (err error) {
+		sourceTarget, found, err = store.WaveformSource(ctx, event.FileId)
+		return err
+	}); err != nil || !found {
+		return err
 	}
 	fileID := strings.TrimSpace(event.FileId)
-	_, outputTarget, err := mediaasset.NewLifecycle(h.db, "").AllocatePublicAsset(ctx, mediaasset.Allocation{
-		SourceFileID: &fileID,
-		Kind:         "waveform",
-		Extension:    "json",
-		MimeType:     "application/json",
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
-	if err != nil {
+	var outputTarget *commonv1.AssetWriteTarget
+	if err := h.transaction(ctx, func(store Store) (err error) {
+		outputTarget, err = store.AllocateWaveformOutput(ctx, fileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("allocate waveform output: %w", err)
 	}
 
@@ -533,7 +412,7 @@ func (h *Handlers) publishWaveformGenerate(
 
 	if err := h.publisher.PublishWaveformGenerate(ctx, job); err != nil {
 		if markErr := h.markWaveformJobFailed(ctx, job.EventId, err.Error()); markErr != nil {
-			slog.Error("Failed to mark waveform job publish failure", "eventId", job.EventId, failurecause.Attr(markErr))
+			return errors.Join(err, fmt.Errorf("mark waveform job %s publish failure: %w", job.EventId, markErr))
 		}
 		return err
 	}

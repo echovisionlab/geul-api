@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 type AccountCredentialKind string
@@ -44,36 +43,34 @@ type AccountCredentialHookInput struct {
 }
 
 type accountCredentialHookIdentityManager interface {
-	auth.IdentityManager
+	auth.IdentityGetter
+	auth.IdentitySessionRevoker
 }
 
 // AccountCredentialHookLifecycle owns the policy-before-commit and
 // completion-after-commit boundary for Kratos settings mutations.
 type AccountCredentialHookLifecycle struct {
-	db           *gorm.DB
-	identity     accountCredentialHookIdentityManager
-	auditWriter  domainaudit.Appender
-	publisher    EmailCommandPublisher
-	memberEmails MemberEmailProjection
+	units       Units
+	identity    accountCredentialHookIdentityManager
+	auditWriter domainaudit.Appender
+	publisher   EmailPublisher
 }
 
 func NewAccountCredentialHookLifecycle(
-	db *gorm.DB,
+	units Units,
 	identity accountCredentialHookIdentityManager,
 	auditWriter domainaudit.Appender,
-	publisher EmailCommandPublisher,
-	memberEmails MemberEmailProjection,
+	publisher EmailPublisher,
 ) *AccountCredentialHookLifecycle {
-	if db == nil || identity == nil || auditWriter == nil || publisher == nil {
-		panic("account credential hook database, identity, audit writer, and publisher are required")
+	if units == nil || identity == nil || auditWriter == nil || publisher == nil {
+		panic("account credential hook units, identity, audit writer, and publisher are required")
 	}
-	if memberEmails == nil {
-		panic("account credential hook member email projection is required")
-	}
-	return &AccountCredentialHookLifecycle{
-		db: db, identity: identity, auditWriter: auditWriter, publisher: publisher,
-		memberEmails: memberEmails,
-	}
+	return &AccountCredentialHookLifecycle{units: units, identity: identity, auditWriter: auditWriter, publisher: publisher}
+}
+
+// read runs one read of the hook in a transaction of its own.
+func (s *AccountCredentialHookLifecycle) read(ctx context.Context, work func(Store) error) error {
+	return s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error { return work(tx.Store()) })
 }
 
 func (s *AccountCredentialHookLifecycle) Validate(
@@ -82,20 +79,20 @@ func (s *AccountCredentialHookLifecycle) Validate(
 ) (err error) {
 	defer func() {
 		if err != nil {
-			logCredentialHookFailure(ctx, "validate", input, err)
+			err = annotateCredentialHookFailure("validate", input, err)
 		}
 	}()
 	if err := validateAccountCredentialHookInput(input, true, false); err != nil {
 		return err
 	}
-	mutation, changed, err := accountCredentialMutationFromSnapshots(input)
+	transition, changed, err := accountCredentialMutationFromSnapshots(input)
 	if err != nil {
 		return err
 	}
 	if !auth.NewCredentialInventory(input.Credentials).HasRecoverableAuthenticationMethod() {
 		return ErrAccountCredentialUnrecoverable
 	}
-	if input.Kind != AccountCredentialOIDC || !changed || mutation.event != email.EventSocialLoginRemoved {
+	if input.Kind != AccountCredentialOIDC || !changed || transition.event != email.EventSocialLoginRemoved {
 		return nil
 	}
 	identity, err := loadIdentityAuthenticationCredentials(ctx, s.identity, input.IdentityID)
@@ -108,9 +105,9 @@ func (s *AccountCredentialHookLifecycle) Validate(
 	// The webhook carries inventory, never provider tokens or claims. Load
 	// provider proof through the existing confidential identity port and remove
 	// only the provider identified by the validated transition.
-	proposedIdentity := identityWithoutOIDCProvider(identity, mutation.provider, mutation.subject)
+	proposedIdentity := identityWithoutOIDCProvider(identity, transition.provider, transition.subject)
 	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, proposedIdentity.Credentials)
-	return NewAccountEmailService(s.db, s.identity, s.memberEmails).
+	return newAccountEmailService(s.identity, s.read).
 		EnsureMemberPrimaryEmailUsable(ctx, input.IdentityID, proposedIdentity, providerCandidates)
 }
 
@@ -120,12 +117,18 @@ func (s *AccountCredentialHookLifecycle) Complete(
 ) (err error) {
 	defer func() {
 		if err != nil {
-			logCredentialHookFailure(ctx, "complete", input, err)
+			err = annotateCredentialHookFailure("complete", input, err)
 		}
 	}()
 	if err := validateAccountCredentialHookInput(input, true, true); err != nil {
 		return err
 	}
+	return s.units.Fenced(ctx, input.IdentityID, func(ctx context.Context, steps Steps) error {
+		return s.complete(ctx, steps, input)
+	})
+}
+
+func (s *AccountCredentialHookLifecycle) complete(ctx context.Context, steps Steps, input AccountCredentialHookInput) error {
 	committed, err := loadIdentityAuthenticationCredentials(ctx, s.identity, input.IdentityID)
 	if err != nil {
 		return err
@@ -134,7 +137,7 @@ func (s *AccountCredentialHookLifecycle) Complete(
 		return ErrAccountCredentialCommittedMismatch
 	}
 
-	mutation, changed, err := accountCredentialMutationFromSnapshots(input)
+	transition, changed, err := accountCredentialMutationFromSnapshots(input)
 	if err != nil || !changed {
 		return err
 	}
@@ -150,28 +153,31 @@ func (s *AccountCredentialHookLifecycle) Complete(
 		AuditID: input.AuditID, OccurredAt: time.Now().UTC(),
 		Correlation: sharedtelemetry.CorrelationFromContext(ctx), RecordActor: actor,
 	}
-	record, err := mutation.buildAudit(metadata, memberID)
+	record, err := transition.buildAudit(metadata, memberID)
 	if err != nil {
 		return err
 	}
 
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockActiveCredentialMutationMember(ctx, tx, memberID, input.IdentityID); err != nil {
+	// One transaction locks the pair, converges the Member email projection
+	// and appends the audit record that makes a replay idempotent.
+	if err := steps.Step(ctx, func(store Store) error {
+		if err := store.LockActivePairForCredentialMutation(ctx, memberID, input.IdentityID); err != nil {
 			return err
 		}
 		if input.Kind == AccountCredentialOIDC {
 			providerCandidates := ResolveAccountEmailProviderCandidates(ctx, committed.Credentials)
-			if _, err := NewAccountEmailService(tx, s.identity, s.memberEmails).
+			inTransaction := func(_ context.Context, work func(Store) error) error { return work(store) }
+			if _, err := newAccountEmailService(s.identity, inTransaction).
 				SyncMemberEmailProjection(ctx, input.IdentityID, committed, providerCandidates); err != nil {
 				return err
 			}
 		}
-		return s.auditWriter.AppendDomainAuditInTransaction(ctx, tx, record)
+		return store.AppendAuditRecord(ctx, s.auditWriter, record)
 	}); err != nil {
 		return err
 	}
 
-	if mutation.event == email.EventSocialLoginRemoved {
+	if transition.event == email.EventSocialLoginRemoved {
 		if err := s.identity.DeleteIdentitySessions(ctx, input.IdentityID); err != nil {
 			return err
 		}
@@ -179,13 +185,12 @@ func (s *AccountCredentialHookLifecycle) Complete(
 	return PublishAccountSecurityEventEmail(
 		ctx,
 		s.publisher,
-		s.db,
-		s.memberEmails,
+		steps.Step,
 		s.identity,
 		input.IdentityID,
-		mutation.event,
+		transition.event,
 		input.AuditID,
-		mutation.emailData,
+		transition.emailData,
 	)
 }
 
@@ -224,19 +229,19 @@ type accountCredentialMutation struct {
 	emailData  map[string]string
 }
 
-func (mutation accountCredentialMutation) buildAudit(
+func (transition accountCredentialMutation) buildAudit(
 	metadata sharedtelemetry.AuditMetadata,
 	memberID string,
 ) (sharedtelemetry.AuditRecord, error) {
-	switch mutation.event {
+	switch transition.event {
 	case email.EventSocialLoginAdded:
-		return sharedtelemetry.NewAccountSocialLoginAddedAuditRecord(metadata, memberID, mutation.provider, mutation.subject)
+		return sharedtelemetry.NewAccountSocialLoginAddedAuditRecord(metadata, memberID, transition.provider, transition.subject)
 	case email.EventSocialLoginRemoved:
-		return sharedtelemetry.NewAccountSocialLoginRemovedAuditRecord(metadata, memberID, mutation.provider, mutation.subject)
+		return sharedtelemetry.NewAccountSocialLoginRemovedAuditRecord(metadata, memberID, transition.provider, transition.subject)
 	case email.EventPasskeyAdded:
-		return sharedtelemetry.NewAccountPasskeyAddedAuditRecord(metadata, memberID, mutation.passkeyIDs)
+		return sharedtelemetry.NewAccountPasskeyAddedAuditRecord(metadata, memberID, transition.passkeyIDs)
 	case email.EventPasskeyRemoved:
-		return sharedtelemetry.NewAccountPasskeyRemovedAuditRecord(metadata, memberID, mutation.passkeyIDs)
+		return sharedtelemetry.NewAccountPasskeyRemovedAuditRecord(metadata, memberID, transition.passkeyIDs)
 	default:
 		return sharedtelemetry.AuditRecord{}, ErrAccountCredentialMutationShape
 	}
@@ -365,20 +370,11 @@ func stringSetDiff(before, after []string) (added, removed []string) {
 	return added, removed
 }
 
-func lockActiveCredentialMutationMember(
-	ctx context.Context,
-	tx *gorm.DB,
-	memberID string,
-	identityID string,
-) error {
-	return authorizationtarget.LockActivePairForCredentialMutation(ctx, tx, memberID, identityID)
-}
-
-// Keep diagnostics useful after telemetry redaction without logging identities,
-// credential contents, or arbitrary upstream error messages.
-func logCredentialHookFailure(ctx context.Context, stage string, input AccountCredentialHookInput, err error) {
+// annotateCredentialHookFailure attaches the diagnosis the hook endpoint's
+// failure record needs after telemetry redaction, and marks provider subjects,
+// tokens, and email data private so no record keeps them.
+func annotateCredentialHookFailure(stage string, input AccountCredentialHookInput, err error) error {
 	code := "credential_hook_failed"
-	level := slog.LevelError
 	switch {
 	case errors.Is(err, ErrAccountCredentialSnapshotMissing):
 		code = "credential_snapshot_missing"
@@ -387,30 +383,25 @@ func logCredentialHookFailure(ctx context.Context, stage string, input AccountCr
 	case errors.Is(err, ErrAccountCredentialMutationShape):
 		code = "credential_mutation_invalid"
 	case errors.Is(err, ErrAccountCredentialUnrecoverable):
-		code, level = "recoverable_auth_method", slog.LevelWarn
+		code = "recoverable_auth_method"
 	case errors.Is(err, ErrMemberPrimaryEmailUnavailable):
-		code, level = "canonical_email_provider_required", slog.LevelWarn
+		code = "canonical_email_provider_required"
 	}
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(err, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
-	privateValues := []string{privateBody}
+	var privateValues []string
 	for _, credentials := range []map[string]auth.Credential{input.PreviousCredentials, input.Credentials} {
 		for _, provider := range auth.NewCredentialInventory(credentials).OIDCProviders() {
 			privateValues = append(privateValues, provider.Subject, provider.InitialAccessToken)
 			privateValues = append(privateValues, provider.NicknameCandidates()...)
 		}
 	}
-	if mutation, changed, mutationErr := accountCredentialMutationFromSnapshots(input); mutationErr == nil && changed {
-		for _, value := range mutation.emailData {
+	if transition, changed, mutationErr := accountCredentialMutationFromSnapshots(input); mutationErr == nil && changed {
+		for _, value := range transition.emailData {
 			privateValues = append(privateValues, value)
 		}
 	}
-	slog.LogAttrs(ctx, level, "Settings credential hook failed",
+	return failurecause.WithAttrs(
+		failurecause.WithPrivate(err, privateValues...),
 		slog.String("error_code", code),
-		slog.String("failure_cause", failurecause.Message(err, privateValues...)),
 		slog.String("stage", stage),
 		slog.String("credential_type", string(input.Kind)),
 		slog.Bool("proposed_snapshot_present", input.CredentialSnapshotPresent && input.Credentials != nil),

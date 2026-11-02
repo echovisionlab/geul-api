@@ -1,136 +1,128 @@
 //go:build integration
 
-package series
+package series_test
 
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
+	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/stretchr/testify/require"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	"github.com/echovisionlab/geul-api/internal/series"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB { return testutil.NewIntegrationDB(t) }
-func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
-	return testutil.NewConcurrentPostIntegrationDB(t)
-}
-func integrationTestUUID() string { return testutil.IntegrationUUID() }
-func integrationMemberID(identityID string) string {
-	return testutil.PostIntegrationMemberID(identityID)
-}
-
-type recordingSeriesFileDeleter struct {
-	deletedIDs []string
+// integrationDeps are the parts of a Series service an integration test
+// chooses; the rest are the production adapters over db.
+type integrationDeps struct {
+	spiceDB    series.Authorizer
+	client     *auth.SpiceDBClient
+	fence      identitystate.Fence
+	postAccess seriespostgres.PostAccess
 }
 
-type seriesTestMenuTargets struct{}
+// newIntegrationService serves the Series use cases over the PostgreSQL
+// store and the production Post, media, OG and Menu adapters.
+func newIntegrationService(t *testing.T, db *gorm.DB, deps integrationDeps) *series.Service {
+	t.Helper()
+	runtime := seriesadapter.NewRuntime(db, "", newOGRefresher(db))
+	if deps.client == nil {
+		deps.client = &auth.SpiceDBClient{}
+	}
+	if deps.postAccess == nil {
+		deps.postAccess = seriesadapter.PostAccess{}
+	}
+	if deps.fence == nil {
+		deps.fence = identitystate.PostgresFence{}
+	}
+	units, err := seriespostgres.NewUnits(db, seriespostgres.Collaborators{
+		Media: runtime, MenuTargets: menuadapter.NewTargetLifecycle(&audittest.Recorder{}), Posts: postadapter.SeriesMembership{},
+		PostAccess: deps.postAccess, SpiceDB: deps.client, Checkpoints: unreachableCheckpoints{},
+	})
+	require.NoError(t, err)
+	locales, err := seriespostgres.NewLocales(db)
+	require.NoError(t, err)
+	service, err := series.NewService(series.Deps{
+		Units: units, SpiceDB: deps.spiceDB, Fence: deps.fence, Audit: &audittest.Recorder{},
+		Media: runtime, Reads: runtime, Members: seriesadapter.NewMemberSummaries(db, ""), Locales: locales,
+	})
+	require.NoError(t, err)
+	return service
+}
 
-func (seriesTestMenuTargets) UpdateSlug(context.Context, *gorm.DB, string, string, string, string) error {
+type unreachableCheckpoints struct{}
+
+func (unreachableCheckpoints) RequireCurrentContributors(context.Context, *gorm.DB, intrav1.CollaborationResourceType, string, []string) error {
+	return errors.New("collaboration checkpoints are not part of this test")
+}
+
+// allowedPostEdits stands in for the Post edit decision, which needs SpiceDB
+// and Kratos rows.
+type allowedPostEdits struct{}
+
+func (allowedPostEdits) RequireLockedEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error {
 	return nil
 }
-func (seriesTestMenuTargets) Remove(context.Context, *gorm.DB, string, string, string) error {
-	return nil
-}
 
-type seriesTestPostAccess struct{}
+type renderConfig struct{}
 
-func (seriesTestPostAccess) PostSourceTitleSQL() string {
-	return "COALESCE((SELECT translation.title FROM post_translation AS translation WHERE translation.entity_id = post.id AND translation.locale = post.source_locale LIMIT 1), '')"
-}
-func (seriesTestPostAccess) RequireLockedEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error {
-	return nil
-}
-
-type seriesTestMemberSummaries struct{}
-
-func (seriesTestMemberSummaries) LoadSeriesManagers(context.Context, []string) (map[string]*managev1.SeriesManager, error) {
-	return map[string]*managev1.SeriesManager{}, nil
-}
-
-type seriesTestRenderConfig struct{}
-
-func (seriesTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string, error) {
+func (renderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string, error) {
 	payload := []byte(`{"site_title":"","primary_color":"#b02d23"}`)
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, seriesTestRenderConfig{}, seriesadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(seriesadapter.NewRequests()))
+func newOGRefresher(db *gorm.DB) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner("https://cdn.example.com", renderConfig{}, seriesadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(seriesadapter.NewRequests()))
 }
 
-type ogAssetSnapshotForTest struct {
-	AssetID   string `json:"asset_id"`
-	URL       string `json:"url"`
-	Extension string `json:"extension"`
-	MimeType  string `json:"mime_type"`
-}
-
-type ogEntitySnapshotForTest struct {
-	Locale        *string                 `json:"locale,omitempty"`
-	FeaturedImage *ogAssetSnapshotForTest `json:"featured_image,omitempty"`
-}
-
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
+// seedSeriesRow stores a Series, its compact content document and its
+// English source copy.
+func seedSeriesRow(t *testing.T, db *gorm.DB, title, slug string, status model.SeriesStatus) string {
 	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
+	id := orytest.IntegrationUUID()
+	now := time.Now().UTC()
+	contentDocumentID := orytest.IntegrationUUID()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO content_document (id, profile, revision, created_at, updated_at)
+			VALUES (?::uuid, 'compact', ?::uuid, ?, ?)`, contentDocumentID, orytest.IntegrationUUID(), now, now).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO series (id, slug, status, source_locale, content_document_id, created_at, updated_at)
+			VALUES (?::uuid, ?, ?, 'en', ?::uuid, ?, ?)`, id, slug, status, contentDocumentID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO series_translation (entity_id, locale, title, created_at, updated_at)
+			VALUES (?::uuid, 'en', ?, ?, ?)`, id, title, now, now).Error
+	}))
+	return id
 }
 
-func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
+// seedImageFile stores a File with a ready image asset.
+func seedImageFile(t *testing.T, db *gorm.DB, key string) string {
 	t.Helper()
-	var count int64
-	require.NoError(t, db.Table("file").Where("id = ?", fileID).Count(&count).Error)
-	require.EqualValues(t, 1, count)
-}
-
-func seriesIntegrationMenuTargets() menudomain.TargetLifecycle {
-	return menudomain.NewTargetLifecycle(nil)
-}
-
-func seedSeriesActor(t *testing.T, db *gorm.DB, identityID, nickname string) {
-	t.Helper()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, nickname)
-}
-
-func seedSeriesPost(t *testing.T, db *gorm.DB, authorMemberID string) string {
-	t.Helper()
-	postID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
-	require.NoError(t, db.Exec(`INSERT INTO post_author (post_id, member_id, created_at) VALUES (?::uuid, ?::uuid, NOW())`, postID, authorMemberID).Error)
-	return postID
-}
-
-func grantSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postID, identityID string) {
-	t.Helper()
-	actor, err := policyv1.NewAccountIdentityActor(identityID)
-	require.NoError(t, err)
-	policy, err := policyv1.Post.TouchPolicy(postID)
-	require.NoError(t, err)
-	author, err := policyv1.Post.TouchAuthor(postID, actor)
-	require.NoError(t, err)
-	_, err = service.spiceDB.ApplyRelationships(t.Context(), policy, author)
-	require.NoError(t, err)
-}
-
-func seedImageBindingUploadedFileFixture(t *testing.T, db *gorm.DB, key string) string {
-	t.Helper()
-	fileID := integrationTestUUID()
-	assetID := integrationTestUUID()
+	fileID := orytest.IntegrationUUID()
+	assetID := orytest.IntegrationUUID()
 	digest := sha256.Sum256([]byte(key))
 	objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
 	require.NoError(t, err)
@@ -143,23 +135,14 @@ func seedImageBindingUploadedFileFixture(t *testing.T, db *gorm.DB, key string) 
 	require.NoError(t, db.Create(&model.PublicAsset{
 		ID: assetID, SourceFileID: &fileID, Kind: "image", ObjectKey: objectKey,
 		Extension: "webp", MimeType: "image/webp", FileSize: &fileSize, SHA256: digest[:],
-		Disposition: "inline",
-		Status:      model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now,
+		Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now,
 	}).Error)
 	return fileID
 }
 
-// requireLockWaiters waits until want sessions of the test's own database are
-// blocked on a lock, so concurrent operations queue in a known order.
-func requireLockWaiters(t *testing.T, db *gorm.DB, want int) {
+func requireCount(t *testing.T, db *gorm.DB, want int64, table, where string, args ...any) {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		var waiting int
-		err := db.Raw(`
-			SELECT count(*)
-			FROM pg_stat_activity
-			WHERE datname = current_database()
-			  AND wait_event_type = 'Lock'`).Scan(&waiting).Error
-		return err == nil && waiting >= want
-	}, 10*time.Second, 10*time.Millisecond)
+	var count int64
+	require.NoError(t, db.Table(table).Where(where, args...).Count(&count).Error)
+	require.Equal(t, want, count, "%s where %s", table, where)
 }

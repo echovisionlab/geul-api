@@ -10,10 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const legalNoticeLeadTime = 7 * 24 * time.Hour
@@ -50,27 +46,33 @@ func automaticLegalNoticePreviewToken(previewURL string) (string, bool) {
 	return token, true
 }
 
-func legalNoticePreviewReference(run model.CampaignDeliveryRun) (string, string, string, bool) {
+// noticePreviewPolicy returns the kind and version an update notice run
+// previews; any other run previews nothing.
+func noticePreviewPolicy(run NoticeRun) (*policyKind, string, bool) {
 	eventKey := strings.TrimSpace(ptrStringValue(run.TemplateEventKey))
-	switch eventKey {
-	case "privacy_update":
-		return "privacy_history", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(), strings.TrimSpace(ptrStringValue(run.PrivacyID)), true
-	case "terms_update":
-		return "terms_history", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String(), strings.TrimSpace(ptrStringValue(run.TermsID)), true
-	default:
-		return "", "", "", false
+	for _, kind := range policyKinds {
+		if eventKey != kind.updateEvent.String() {
+			continue
+		}
+		reference := run.TermsID
+		if kind.kind == Privacy {
+			reference = run.PrivacyID
+		}
+		return kind, strings.TrimSpace(ptrStringValue(reference)), true
 	}
+	return nil, "", false
 }
 
 // PrepareAutomaticNoticePreviewShareLink materializes the bounded share link
-// from a sealed legal-notice run immediately before Campaign dispatch.
+// from a sealed legal-notice run immediately before Campaign dispatch, in
+// the dispatch transaction store is bound to.
 func PrepareAutomaticNoticePreviewShareLink(
 	ctx context.Context,
-	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
+	store Store,
+	run NoticeRun,
 	now time.Time,
 ) error {
-	tableName, entityType, entityID, relevant := legalNoticePreviewReference(run)
+	kind, entityID, relevant := noticePreviewPolicy(run)
 	if !relevant {
 		return nil
 	}
@@ -89,91 +91,35 @@ func PrepareAutomaticNoticePreviewShareLink(
 		return fmt.Errorf("legal update delivery run has an invalid automatic preview_url")
 	}
 
-	var policy struct {
-		Status        string     `gorm:"column:status"`
-		EffectiveFrom *time.Time `gorm:"column:effective_from"`
-	}
-	result := tx.WithContext(ctx).
-		Table(tableName).
-		Select("status", "effective_from").
-		Where("id = ?", entityID).
-		Take(&policy)
-	if result.Error != nil {
-		return result.Error
+	policy, err := store.ScheduleState(ctx, kind.kind, entityID)
+	if err != nil {
+		return err
 	}
 	if policy.EffectiveFrom == nil || !policy.EffectiveFrom.After(now) {
 		return fmt.Errorf("legal update preview is no longer available before its effective time")
 	}
-	expectedStatus := managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String()
-	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String() {
-		expectedStatus = managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String()
-	}
-	if policy.Status != expectedStatus {
+	if policy.Status != kind.scheduled {
 		return fmt.Errorf("legal update preview policy is no longer scheduled")
 	}
 
-	createdAt := now.UTC()
-	expiresAt := policy.EffectiveFrom.UTC()
-	link := model.ShareLink{
-		Token:      token,
-		EntityType: entityType,
-		EntityID:   entityID,
-		ExpiresAt:  &expiresAt,
-		CreatedAt:  createdAt,
-	}
-	if err := tx.WithContext(ctx).
-		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "token"}}, DoNothing: true}).
-		Create(&link).Error; err != nil {
-		return err
-	}
-
-	var persisted model.ShareLink
-	if err := tx.WithContext(ctx).Where("token = ?", token).Take(&persisted).Error; err != nil {
-		return err
-	}
-	if persisted.EntityType != entityType || persisted.EntityID != entityID ||
-		persisted.PasswordHash != nil || persisted.ExpiresAt == nil ||
-		!persisted.ExpiresAt.Equal(expiresAt) {
-		return fmt.Errorf("automatic legal preview token is already bound to a different share link")
-	}
-	return nil
+	return store.CreateAutomaticPreview(ctx, AutomaticPreview{
+		Token: token, EntityType: kind.shareLinkEntityType, EntityID: entityID,
+		CreatedAt: now.UTC(), ExpiresAt: policy.EffectiveFrom.UTC(),
+	})
 }
 
-func deleteAutomaticLegalNoticePreviewShareLinks(
-	ctx context.Context,
-	tx *gorm.DB,
-	referenceType string,
-	referenceID string,
-) error {
-	var referenceColumn string
-	var eventKey string
-	var entityType string
-	switch referenceType {
-	case EmailDeliveryReferenceTypePrivacy:
-		referenceColumn = "privacy_id"
-		eventKey = "privacy_update"
-		entityType = managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String()
-	case EmailDeliveryReferenceTypeTerms:
-		referenceColumn = "terms_id"
-		eventKey = "terms_update"
-		entityType = managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String()
-	default:
-		return fmt.Errorf("unsupported legal notice reference type %q", referenceType)
-	}
-
-	var runs []model.CampaignDeliveryRun
-	if err := tx.WithContext(ctx).
-		Select("id", "run_kind", "template_event_key", "template_data", "privacy_id", "terms_id").
-		Where(referenceColumn+" = ? AND template_event_key = ?", referenceID, eventKey).
-		Order("id ASC").
-		Find(&runs).Error; err != nil {
+// deleteAutomaticNoticePreviewLinks revokes the preview links the version's
+// update notices mailed out.
+func deleteAutomaticNoticePreviewLinks(ctx context.Context, store Store, kind *policyKind, policyID string) error {
+	runs, err := store.UpdateNoticeRuns(ctx, kind.kind, policyID)
+	if err != nil {
 		return err
 	}
 	for i := range runs {
-		data, err := decodeEmailDeliveryTemplateData(runs[i].RunKind, eventKey, runs[i].TemplateData)
+		data, err := decodeEmailDeliveryTemplateData(runs[i].RunKind, kind.updateEvent.String(), runs[i].TemplateData)
 		if err != nil || data.PreviewURL == nil {
 			if err != nil {
-				slog.ErrorContext(ctx, "Failed to decode legal notice data during preview revocation", "failure_cause", failurecause.Message(err), "run_id", runs[i].ID)
+				slog.ErrorContext(ctx, "Legal notice run data is invalid; skipping its preview revocation", "domain", "legal", "operation", "revoke_notice_preview", "outcome", "failed", "run_id", runs[i].ID, failurecause.Attr(err))
 			}
 			continue
 		}
@@ -181,9 +127,7 @@ func deleteAutomaticLegalNoticePreviewShareLinks(
 		if !ok {
 			continue
 		}
-		if err := tx.WithContext(ctx).
-			Where("token = ? AND entity_type = ? AND entity_id = ? AND password_hash IS NULL", token, entityType, referenceID).
-			Delete(&model.ShareLink{}).Error; err != nil {
+		if err := store.DeleteAutomaticPreview(ctx, token, kind.shareLinkEntityType, policyID); err != nil {
 			return err
 		}
 	}

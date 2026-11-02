@@ -4,10 +4,13 @@ package campaign
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -16,7 +19,7 @@ import (
 // the narrow immutable target facts required by Campaign delivery.
 type AudienceTargets struct{}
 
-var _ campaigndomain.CampaignAudienceTargetPort = AudienceTargets{}
+var _ campaignpostgres.CampaignAudienceTargetPort = AudienceTargets{}
 
 func NewAudienceTargets() AudienceTargets { return AudienceTargets{} }
 
@@ -27,21 +30,22 @@ func (AudienceTargets) LockTarget(
 ) (campaigndomain.CampaignAudienceTarget, error) {
 	var segment model.AudienceSegment
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&segment, "id = ?", segmentID).Error; err != nil {
 		return campaigndomain.CampaignAudienceTarget{}, err
 	}
 	target := campaigndomain.CampaignAudienceTarget{
 		Archived:    segment.ArchivedAt != nil,
-		SegmentType: segment.SegmentType,
+		SegmentType: campaigndomain.AudienceSegmentType(segment.SegmentType),
 	}
 	if target.Archived {
 		return target, nil
 	}
-	if err := audience.LoadSegmentConfig(ctx, tx, &segment); err != nil {
+	if err := audiencepostgres.LoadSegmentConfig(ctx, tx, &segment); err != nil {
 		return campaigndomain.CampaignAudienceTarget{}, err
 	}
-	target.Valid = audience.ValidateSegmentConfigForType(segment.SegmentType, segment.Config) == nil
+	config := audiencepostgres.SegmentOf(segment).Config
+	target.Valid = audience.ValidateConfig(audience.SegmentType(segment.SegmentType), config) == nil
 	target.CreatedAfter = segment.CreatedAfter
 	target.CreatedBefore = segment.CreatedBefore
 	target.MemberTagIDs = append([]string(nil), segment.Config.MemberTagIDs...)

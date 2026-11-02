@@ -10,6 +10,9 @@ import (
 	"image/png"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/glebarez/sqlite"
@@ -176,8 +179,6 @@ func faviconTestICO(t *testing.T, sizes ...int) []byte {
 	return data
 }
 
-var _ TransactionalAsyncPublisher = noopAsyncPublisher{}
-
 func newServiceUnitDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -222,4 +223,18 @@ func newServiceUnitDB(t *testing.T) *gorm.DB {
 		)
 	`).Error)
 	return db
+}
+
+func (c *capturingAsyncPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(c).PublishIngest(ctx, event)
+}
+func (c *capturingAsyncPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(c).PublishProcessing(ctx, event)
+}
+
+func (p noopAsyncPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p noopAsyncPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
 }

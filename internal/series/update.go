@@ -2,174 +2,158 @@ package series
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 type seriesUpdatePlan struct {
-	fields   structured.Fields
-	nextSlug *string
-	now      time.Time
+	nextSlug   *string
+	nextStatus *Status
+	now        time.Time
 }
 
-func (s *SeriesService) UpdateSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateSeriesRequest],
-) (_ *connect.Response[managev1.Series], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "UpdateSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	plan, err := buildSeriesUpdatePlan(req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	series, err := s.applySeriesUpdate(ctx, req.Msg, plan)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.overlaySeriesSourceLocaleDocument(ctx, &series); err != nil {
-		return nil, err
-	}
-	ogAsset, err := s.media.ReadyAsset(ctx, series.OgAssetID)
-	if err != nil {
-		return nil, err
-	}
-	response := s.toProtoSeries(&series, ogAsset)
-	s.setSeriesFeaturedImageAsset(ctx, response)
-	return connect.NewResponse(response), nil
+// UpdateSeriesCommand edits a Series. A nil field is left alone; setting
+// Status publishes or unpublishes it.
+type UpdateSeriesCommand struct {
+	ID          string
+	Slug        *string
+	Status      *string
+	Title       *string
+	Description *string
 }
 
-func buildSeriesUpdatePlan(request *managev1.UpdateSeriesRequest) (seriesUpdatePlan, error) {
-	plan := seriesUpdatePlan{now: time.Now().UTC(), fields: structured.Fields{}}
-	if request.Slug != nil {
-		normalized, err := validateSeriesSlug(*request.Slug)
+func (s *Service) UpdateSeries(ctx context.Context, command UpdateSeriesCommand) (Detail, error) {
+	plan, err := buildSeriesUpdatePlan(command)
+	if err != nil {
+		return Detail{}, err
+	}
+	var audits seriesAudits
+	series, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Series, Store]{
+		Access: lockedSeries(command.ID, seriesUpdateAction(command)),
+		Change: func(ctx context.Context, store Store) (Series, error) {
+			return applySeriesUpdate(ctx, store, command, plan, &audits)
+		},
+		Audit: func(Series) mutation.Audit { return audits.audit() },
+	})
+	if err != nil {
+		return Detail{}, err
+	}
+	if err := s.units.Read(ctx, func(store Store) error { return overlaySourceCopy(ctx, store, &series) }); err != nil {
+		return Detail{}, err
+	}
+	return s.detail(ctx, series)
+}
+
+func buildSeriesUpdatePlan(command UpdateSeriesCommand) (seriesUpdatePlan, error) {
+	plan := seriesUpdatePlan{now: time.Now().UTC()}
+	if command.Slug != nil {
+		normalized, err := validateSeriesSlug(*command.Slug)
 		if err != nil {
 			return seriesUpdatePlan{}, err
 		}
 		plan.nextSlug = &normalized
-		plan.fields["slug"] = normalized
 	}
-	if request.Status != nil {
-		if err := validateSeriesStatus(*request.Status); err != nil {
+	if command.Status != nil {
+		status, err := validateSeriesStatus(*command.Status)
+		if err != nil {
 			return seriesUpdatePlan{}, err
 		}
-		plan.fields["status"] = *request.Status
+		plan.nextStatus = &status
 	}
 	return plan, nil
 }
 
-func (s *SeriesService) applySeriesUpdate(
+func applySeriesUpdate(
 	ctx context.Context,
-	request *managev1.UpdateSeriesRequest,
+	store Store,
+	command UpdateSeriesCommand,
 	plan seriesUpdatePlan,
-) (model.Series, error) {
-	var series model.Series
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, request.Id, seriesUpdateAction(request)); err != nil {
-			return err
-		}
-		if err := loadSeriesForUpdate(tx, request.Id, &series); err != nil {
-			return err
-		}
-		oldSlug := series.Slug
-		if err := validateSeriesUpdateSlug(ctx, tx, request.Id, plan.nextSlug); err != nil {
-			return err
-		}
-		previousStatus := series.Status
-		metadataFields, lifecycleChanged := seriesAuditChanges(series, plan)
-		if err := applySeriesFields(tx, &series, plan, metadataFields, lifecycleChanged); err != nil {
-			return err
-		}
-		nextSlug := plan.nextSlug
-		if !containsSeriesAuditField(metadataFields, "slug") {
-			nextSlug = nil
-		}
-		if err := s.updateSeriesMenuSlug(ctx, tx, series.ID, oldSlug, nextSlug); err != nil {
-			return err
-		}
-		sourceChanged, err := s.updateSeriesSourceDocument(ctx, tx, series.ID, request, plan.now)
+	audits *seriesAudits,
+) (Series, error) {
+	series, err := loadSeries(ctx, store, command.ID)
+	if err != nil {
+		return Series{}, err
+	}
+	previousStatus := series.Status
+	metadataFields, lifecycleChanged, err := writeSeriesRoot(ctx, store, series, plan)
+	if err != nil {
+		return Series{}, err
+	}
+	sourceChanged, err := updateSeriesSourceDocument(ctx, store, series.ID, command, plan.now)
+	if err != nil {
+		return Series{}, err
+	}
+	if !sourceChanged && (len(metadataFields) != 0 || lifecycleChanged) {
+		contentDocument, err := loadSeriesContentDocumentState(ctx, store, series.ID, false)
 		if err != nil {
-			return err
+			return Series{}, err
 		}
-		if !sourceChanged && (len(metadataFields) != 0 || lifecycleChanged) {
-			contentDocument, err := loadSeriesContentDocumentState(ctx, tx, series.ID, false)
-			if err != nil {
-				return err
-			}
-			if _, err := advanceSeriesContentDocument(
-				ctx, tx, series.ID, contentDocument.ID, contentDocument.Revision, plan.now,
-			); err != nil {
-				return err
-			}
+		if _, err := advanceSeriesContentDocument(ctx, store, series.ID, contentDocument.ID, contentDocument.Revision, plan.now); err != nil {
+			return Series{}, err
 		}
-		if err := s.appendPostSeriesSourceMetadataAudit(ctx, tx, series.ID, appendSourceCopyAuditField(metadataFields, sourceChanged)); err != nil {
-			return err
-		}
-		if lifecycleChanged {
-			if err := s.appendPostSeriesLifecycleAudit(ctx, tx, series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(plan.fields["status"].(string))); err != nil {
-				return err
-			}
-		}
-		if err := tx.First(&series, "id = ?", request.Id).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return nil
-	})
-	return series, err
+	}
+	audits.sourceMetadata(series.ID, appendSourceCopyAuditField(metadataFields, sourceChanged))
+	if lifecycleChanged {
+		audits.lifecycle(series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(*plan.nextStatus))
+	}
+	return store.Series(ctx, command.ID)
 }
 
-func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
-	if request != nil && request.Status != nil {
+// writeSeriesRoot writes the requested slug and status to the locked series
+// and moves Menu targets to a changed slug. It returns the changed metadata
+// audit fields and whether the status changed.
+func writeSeriesRoot(
+	ctx context.Context,
+	store Store,
+	series Series,
+	plan seriesUpdatePlan,
+) ([]string, bool, error) {
+	oldSlug := series.Slug
+	if err := validateSeriesUpdateSlug(ctx, store, series.ID, plan.nextSlug); err != nil {
+		return nil, false, err
+	}
+	metadataFields, lifecycleChanged := seriesAuditChanges(series, plan)
+	if err := applySeriesFields(ctx, store, series.ID, plan, metadataFields, lifecycleChanged); err != nil {
+		return nil, false, err
+	}
+	nextSlug := plan.nextSlug
+	if !containsSeriesAuditField(metadataFields, "slug") {
+		nextSlug = nil
+	}
+	if err := updateSeriesMenuSlug(ctx, store, series.ID, oldSlug, nextSlug); err != nil {
+		return nil, false, err
+	}
+	return metadataFields, lifecycleChanged, nil
+}
+
+func seriesUpdateAction(command UpdateSeriesCommand) seriesAction {
+	if command.Status != nil {
 		return policyv1.PostSeries.Publish
 	}
 	return policyv1.PostSeries.Edit
 }
 
-func loadSeriesForUpdate(tx *gorm.DB, seriesID string, series *model.Series) error {
-	err := tx.First(series, "id = ?", seriesID).Error
-	if err == gorm.ErrRecordNotFound {
-		return errs.NotFound("series", seriesID)
-	}
-	if err != nil {
-		return errs.Internal(err)
-	}
-	return nil
-}
-
-func validateSeriesUpdateSlug(ctx context.Context, tx *gorm.DB, seriesID string, slug *string) error {
+func validateSeriesUpdateSlug(ctx context.Context, store Store, seriesID string, slug *string) error {
 	if slug == nil {
 		return nil
 	}
-	if err := ensureSlugAvailable(ctx, tx, &model.Series{}, "series", *slug, seriesID); err != nil {
+	if err := ensureSlugAvailable(ctx, store, *slug, seriesID); err != nil {
 		return err
 	}
-	return routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "series", "series", *slug)
+	return store.EnsureRouteAvailable(ctx, *slug, true)
 }
 
-func seriesAuditChanges(series model.Series, plan seriesUpdatePlan) ([]string, bool) {
+func seriesAuditChanges(series Series, plan seriesUpdatePlan) ([]string, bool) {
 	fields := make([]string, 0, 1)
 	if plan.nextSlug != nil && *plan.nextSlug != series.Slug {
 		fields = append(fields, "slug")
 	}
-	status, statusPresent := plan.fields["status"].(string)
-	return fields, statusPresent && status != series.Status
+	return fields, plan.nextStatus != nil && *plan.nextStatus != series.Status
 }
 
 func containsSeriesAuditField(fields []string, expected string) bool {
@@ -188,80 +172,74 @@ func appendSourceCopyAuditField(fields []string, sourceChanged bool) []string {
 	return append(fields, "source_copy")
 }
 
-func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan, metadataFields []string, lifecycleChanged bool) error {
-	updates := structured.Fields{}
+func applySeriesFields(ctx context.Context, store Store, seriesID string, plan seriesUpdatePlan, metadataFields []string, lifecycleChanged bool) error {
+	var slug *string
 	if containsSeriesAuditField(metadataFields, "slug") {
-		updates["slug"] = *plan.nextSlug
+		slug = plan.nextSlug
 	}
+	var status *Status
 	if lifecycleChanged {
-		updates["status"] = plan.fields["status"]
+		status = plan.nextStatus
 	}
-	if len(updates) == 0 {
+	if slug == nil && status == nil {
 		return nil
 	}
-	updates["updated_at"] = plan.now
-	err := tx.Model(series).Updates(updates).Error
-	if dberrors.IsUniqueViolation(err) && plan.nextSlug != nil {
-		if err != nil {
-			slog.WarnContext(tx.Statement.Context, "Operation failed", "domain", "series", "operation", "applySeriesFields", failurecause.Attr(err))
-		}
-		return errs.SlugAlreadyExists("series", *plan.nextSlug)
+	err := store.UpdateSeriesRoot(ctx, seriesID, slug, status, plan.now)
+	if errors.Is(err, ErrSlugTaken) && plan.nextSlug != nil {
+		return domainerr.Duplicate("series", "slug", *plan.nextSlug).WithCause(err)
 	}
-	if err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return err
 }
 
-func (s *SeriesService) updateSeriesMenuSlug(ctx context.Context, tx *gorm.DB, seriesID, oldSlug string, nextSlug *string) error {
+func updateSeriesMenuSlug(ctx context.Context, store Store, seriesID, oldSlug string, nextSlug *string) error {
 	if nextSlug == nil || strings.TrimSpace(*nextSlug) == oldSlug {
 		return nil
 	}
-	return s.menuTargets.UpdateSlug(ctx, tx, "series", seriesID, oldSlug, *nextSlug)
+	return store.RenameMenuTargets(ctx, seriesID, oldSlug, *nextSlug)
 }
 
-func (s *SeriesService) updateSeriesSourceDocument(
+func updateSeriesSourceDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	seriesID string,
-	request *managev1.UpdateSeriesRequest,
+	command UpdateSeriesCommand,
 	now time.Time,
 ) (bool, error) {
-	if request.Title == nil && request.Description == nil {
+	if command.Title == nil && command.Description == nil {
 		return false, nil
 	}
-	current, err := LoadRequiredSourceLocaleDocument(ctx, tx, seriesID)
+	current, err := loadRequiredSourceCopy(ctx, store, seriesID)
 	if err != nil {
 		return false, err
 	}
-	contentDocument, err := loadSeriesContentDocumentState(ctx, tx, seriesID, false)
+	contentDocument, err := loadSeriesContentDocumentState(ctx, store, seriesID, false)
 	if err != nil {
 		return false, err
 	}
-	title, err := resolveSeriesUpdateTitle(current.Title, request.Title)
+	title, err := resolveSeriesUpdateTitle(current.Title, command.Title)
 	if err != nil {
 		return false, err
 	}
-	description := resolveSeriesUpdateDescription(current.Summary, request.Description)
-	if nullableStringEqual(title, current.Title) && nullableStringEqual(description, current.Summary) {
+	description := resolveSeriesUpdateDescription(current.Summary, command.Description)
+	if equalOptionalString(title, current.Title) && equalOptionalString(description, current.Summary) {
 		return false, nil
 	}
-	if err := SaveSourceLocaleDocument(
-		ctx, tx, seriesID, contentDocument.SourceLocale,
+	if err := saveSourceCopy(
+		ctx, store, seriesID, contentDocument.SourceLocale,
 		title, description, now.UTC(),
 	); err != nil {
 		return false, err
 	}
 	if _, err := advanceSeriesContentDocument(
-		ctx, tx, seriesID, contentDocument.ID, contentDocument.Revision, now.UTC(),
+		ctx, store, seriesID, contentDocument.ID, contentDocument.Revision, now.UTC(),
 	); err != nil {
 		return false, err
 	}
-	if request.Title == nil {
+	if command.Title == nil {
 		return true, nil
 	}
-	_, err = s.ogRefresh.RequestCurrent(
-		ctx, tx, seriesID, contentDocument.SourceLocale, false, "series_title_updated",
+	_, err = store.RequestOG(
+		ctx, seriesID, contentDocument.SourceLocale, false, "series_title_updated",
 	)
 	return true, err
 }
@@ -272,7 +250,7 @@ func resolveSeriesUpdateTitle(current, requested *string) (*string, error) {
 	}
 	value := strings.TrimSpace(*requested)
 	if value == "" {
-		return nil, errs.Required("title")
+		return nil, domainerr.Required("title")
 	}
 	return &value, nil
 }

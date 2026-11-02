@@ -4,19 +4,18 @@ import (
 	"context"
 
 	"gorm.io/gorm"
+
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 )
 
-type policyAuthority interface {
-	RequireLockedView(context.Context, *gorm.DB, string) error
-	RequireLockedEdit(context.Context, *gorm.DB, string) error
-}
-
-// PolicyAccess delegates relation policy authorization to the Page owner.
+// PolicyAccess delegates relation policy authorization to the Page owner,
+// in the caller's transaction.
 type PolicyAccess struct {
-	authority policyAuthority
+	authority *pagedomain.PolicyAuthority
 }
 
-func NewPolicyAccess(authority policyAuthority) *PolicyAccess {
+func NewPolicyAccess(authority *pagedomain.PolicyAuthority) *PolicyAccess {
 	if authority == nil {
 		panic("Page policy authority is required")
 	}
@@ -24,9 +23,9 @@ func NewPolicyAccess(authority policyAuthority) *PolicyAccess {
 }
 
 func (a *PolicyAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, pageID string) error {
-	return a.authority.RequireLockedView(ctx, tx, pageID)
+	return a.authority.RequireLockedView(ctx, pagepostgres.NewStore(tx, pagepostgres.Ports{}), pageID)
 }
 
 func (a *PolicyAccess) RequireLockedEdit(ctx context.Context, tx *gorm.DB, pageID string) error {
-	return a.authority.RequireLockedEdit(ctx, tx, pageID)
+	return a.authority.RequireLockedEdit(ctx, pagepostgres.NewStore(tx, pagepostgres.Ports{}), pageID)
 }

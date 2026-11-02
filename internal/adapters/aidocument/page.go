@@ -6,15 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -34,20 +32,13 @@ type pagePort struct {
 }
 
 type pageDocumentAPI interface {
-	Load(context.Context, string, string) (pagedomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		pagedomain.AIDocumentExecutionMode,
-		pagedomain.AIDocumentMutationCompiler,
-	) (pagedomain.AIDocumentMutationResult, error)
+	LoadAIDocument(context.Context, pagedomain.LoadAIDocumentQuery) (pagedomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, pagedomain.ExecuteAIDocumentMutationCommand) (pagedomain.AIDocumentMutationResult, error)
 }
 
-func NewPageRegistration(internal *pagedomain.InternalPageService) (DomainRegistration, error) {
-	application, err := pagedomain.NewAIDocumentService(internal)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewPageRegistration(application *pagedomain.Service) (DomainRegistration, error) {
+	if application == nil {
+		return DomainRegistration{}, errors.New("page AI document port is required")
 	}
 	codec, err := NewPageCodec()
 	if err != nil {
@@ -79,7 +70,7 @@ func (p *pagePort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validatePageIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.application.Load(ctx, string(identity.Reference), string(locale))
+	state, err := p.application.LoadAIDocument(ctx, pagedomain.LoadAIDocumentQuery{PageID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -112,86 +103,46 @@ func (p *pagePort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Page")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			if err := run.rejectIssues(p.codec.validateRichOperations(current.Nodes, run.command.Operations)); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+	return executeExactMutation(request, exactMutationSpec[pagedomain.AIDocumentState, pagedomain.AIDocumentMutation, pagedomain.AIDocumentMutationResult]{
+		Domain:       "Page",
+		ValidateOnly: mode == pagedomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error)) (pagedomain.AIDocumentMutationResult, error) {
+			return p.application.ExecuteAIDocumentMutation(ctx, pagedomain.ExecuteAIDocumentMutationCommand{
+				PageID:  string(identity.Reference),
+				Locale:  string(request.Locale),
+				Mode:    mode,
+				Compile: compiler,
+			})
+		},
+		Project: func(state pagedomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state pagedomain.AIDocumentState, current core.Document, command core.ValidatedApply) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
+			if issues := p.codec.validateRichOperations(current.Nodes, command.Operations); len(issues) != 0 {
+				return pagedomain.AIDocumentMutation{}, issues, nil
 			}
 			contributor, err := canonicalPageContributor(state.ViewerMemberID)
 			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+				return pagedomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, contributor, current, run.command.Operations)
+			mutation, issues, err := p.compile(ctx, state, contributor, current, command.Operations)
 			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+				return pagedomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == pagedomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *pagedomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == pagedomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult pagedomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
-				CurrentTargetRevision: pageCoreTargetRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := pageDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == pagedomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == pagedomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   pageCoreTargetRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: pageOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+		DomainIssue: pageDomainIssue,
+	})
 }
 
 func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, state pagedomain.AIDocumentState) (core.Document, error) {
@@ -200,7 +151,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		return core.Document{}, fmt.Errorf("project Page AI document: %w", err)
 	}
 	metadata := core.Node{ID: pageMetadataBlockID, Kind: pageMetadataBlockKind}
-	layout, err := state.Page.DocumentLayout.Proto()
+	layout, err := pagedomain.DocumentLayoutMessage(state.Page.DocumentLayout)
 	if err != nil {
 		return core.Document{}, fmt.Errorf("project Page document layout: %w", err)
 	}
@@ -218,7 +169,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision),
-		TargetRevision: pageCoreTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale, LocaleExists: state.LocaleExists,
 		Catalog: p.catalog, Nodes: append([]core.Node{metadata}, nodes...),
 	}, nil
@@ -232,14 +183,14 @@ func canonicalPageContributor(memberID string) (uuid.UUID, error) {
 	return contributor, nil
 }
 
-func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UUID, loaded core.Document, operations []core.Operation) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
+func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState, contributor uuid.UUID, loaded core.Document, operations []core.Operation) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
 	expected, err := uuid.Parse(string(loaded.DocumentRevision))
 	if err != nil || expected == uuid.Nil || expected.String() != string(loaded.DocumentRevision) {
 		return pagedomain.AIDocumentMutation{}, nil, errors.New("page AI document revision is not a canonical UUID")
 	}
 	mutation := pagedomain.AIDocumentMutation{
 		PageID: string(loaded.Identity.Reference), Locale: string(loaded.Locale), ExpectedRevision: expected,
-		ExpectedTargetRevision: pageDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ObservedSourceLocale:   string(loaded.SourceLocale), ObservedLocaleExists: loaded.LocaleExists,
 		ContributorMemberID: contributor.String(),
 		Batch:               contentblock.Batch{DocumentID: state.Snapshot.Document.ID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{contributor}},
@@ -257,25 +208,11 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 		mutation.DeleteTranslation = true
 		return mutation, nil, nil
 	}
-	contentOperations := make([]core.Operation, 0, len(operations))
-	contentIndexes := make([]int, 0, len(operations))
-	for index, operation := range operations {
-		if handled, issue := compilePageDocumentLayoutOperation(&mutation.Metadata, state.Page.DocumentLayout, loaded.Role(), operation, index); handled {
-			if issue != nil {
-				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
-			}
-			continue
-		}
-		if handled, issue := compilePageMetadataOperation(&mutation.Metadata, operation, index); handled {
-			if issue != nil {
-				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
-			}
-			continue
-		}
-		contentOperations = append(contentOperations, operation)
-		contentIndexes = append(contentIndexes, index)
+	contentOperations, contentIndexes, issues := compilePageMetadataOperations(&mutation.Metadata, state.Page.DocumentLayout, loaded.Role(), operations)
+	if len(issues) != 0 {
+		return pagedomain.AIDocumentMutation{}, issues, nil
 	}
-	batch, issues, err := p.codec.Compile(state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
+	batch, issues, err := p.codec.Compile(ctx, state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
 	for index := range issues {
 		if issues[index].Operation >= 0 && issues[index].Operation < len(contentIndexes) {
 			issues[index].Operation = contentIndexes[issues[index].Operation]
@@ -292,7 +229,29 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 	return mutation, nil, nil
 }
 
-func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current model.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
+func compilePageMetadataOperations(patch *pagedomain.AIDocumentMetadataPatch, layout pagedomain.DocumentLayout, role core.LocaleRole, operations []core.Operation) ([]core.Operation, []int, []core.OperationIssue) {
+	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
+	for index, operation := range operations {
+		if handled, issue := compilePageDocumentLayoutOperation(patch, layout, role, operation, index); handled {
+			if issue != nil {
+				return nil, nil, []core.OperationIssue{*issue}
+			}
+			continue
+		}
+		if handled, issue := compilePageMetadataOperation(patch, operation, index); handled {
+			if issue != nil {
+				return nil, nil, []core.OperationIssue{*issue}
+			}
+			continue
+		}
+		contentOperations = append(contentOperations, operation)
+		contentIndexes = append(contentIndexes, index)
+	}
+	return contentOperations, contentIndexes, nil
+}
+
+func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current pagedomain.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
 	var target core.FieldTarget
 	var value core.Value
 	switch operation.Kind {
@@ -329,7 +288,7 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		if patch.SetDocumentLayout {
 			current = patch.DocumentLayout
 		}
-		currentLayout, err := current.Proto()
+		currentLayout, err := pagedomain.DocumentLayoutMessage(current)
 		if err != nil {
 			return issue(core.IssueInvalidOperation, "current Page document layout is invalid; set the whole layout")
 		}
@@ -363,28 +322,12 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 	if len(target.Path) == 0 && !hideTableOfContentsSet {
 		return issue(core.IssueInvalidOperation, "Page document layout replacement requires hideTableOfContents")
 	}
-	layout, err := model.DocumentLayoutFromProto(next)
+	layout, err := pagedomain.DocumentLayoutFromMessage(next)
 	if err != nil {
 		return issue(core.IssueInvalidOperation, err.Error())
 	}
 	patch.SetDocumentLayout, patch.DocumentLayout = true, layout
 	return true, nil
-}
-
-func pageCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func pageDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func compilePageMetadataOperation(patch *pagedomain.AIDocumentMetadataPatch, operation core.Operation, index int) (bool, *core.OperationIssue) {
@@ -405,7 +348,7 @@ func compilePageMetadataOperation(patch *pagedomain.AIDocumentMetadataPatch, ope
 		return false, nil
 	}
 	if operation.Kind == core.OperationUnsetField {
-		return true, &core.OperationIssue{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(pageOperationHandles(operation), ":"), Message: "Page locale values use explicit empty and cannot be unset"}
+		return true, &core.OperationIssue{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(operationIssuePath(operation), ":"), Message: "Page locale values use explicit empty and cannot be unset"}
 	}
 	if value == nil || value.Kind != core.ValueKindText {
 		return true, &core.OperationIssue{Operation: index, Code: core.IssueValueKindMismatch, Message: "Page metadata value must be text"}
@@ -460,33 +403,11 @@ func pageDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
-	slog.Warn("Page document operation rejected", failurecause.Attr(err), "operation_index", index)
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
-}
-
-func pageOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationAttachFile:
-		return []string{string(operation.AttachFile.Target.Block), string(operation.AttachFile.Target.Field), string(operation.AttachFile.File)}
-	case core.OperationDetachFile:
-		return []string{string(operation.DetachFile.Target.Block), string(operation.DetachFile.Target.Field)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
+	message := err.Error()
+	if classified, ok := errs.Classified(err); ok {
+		message = classified.Error()
 	}
+	return &core.OperationIssue{Operation: index, Code: code, Message: message}
 }
 
 var _ core.DomainPort = (*pagePort)(nil)

@@ -364,7 +364,7 @@ func (c *SpiceDBClient) writeIdempotentRelationships(ctx context.Context, reques
 		if !ambiguousRelationshipWriteError(err) {
 			return ZedToken{}, err
 		}
-		slog.WarnContext(ctx, "Operation failed", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
+		slog.WarnContext(ctx, "Retrying ambiguous SpiceDB relationship write", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
 		if waitErr := waitForRelationshipWriteRetry(ctx, attempt); waitErr != nil {
 			return ZedToken{}, &relationshipWriteOutcomeUncertainError{err: errors.Join(lastErr, waitErr)}
 		}
@@ -392,7 +392,7 @@ func (c *SpiceDBClient) writeExpectedRelationships(
 		if !ambiguous && !hadAmbiguity && !inspectInitialRestoreFailure {
 			return ZedToken{}, err
 		}
-		slog.WarnContext(ctx, "Operation failed", "reason", "relationship_write_inspection", failurecause.Attr(err), "attempt", attempt+1)
+		slog.WarnContext(ctx, "Inspecting SpiceDB relationship state after failed write", "reason", "relationship_write_inspection", failurecause.Attr(err), "attempt", attempt+1)
 		hadAmbiguity = hadAmbiguity || ambiguous
 		lastErr = errors.Join(lastErr, err)
 
@@ -422,7 +422,7 @@ func (c *SpiceDBClient) writeExpectedRelationships(
 			}
 			return ZedToken{}, &relationshipWriteOutcomeUncertainError{err: lastErr}
 		}
-		slog.WarnContext(ctx, "Operation failed", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
+		slog.WarnContext(ctx, "Retrying ambiguous SpiceDB relationship write", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
 		if waitErr := waitForRelationshipWriteRetry(ctx, attempt); waitErr != nil {
 			return ZedToken{}, &relationshipWriteOutcomeUncertainError{err: errors.Join(lastErr, waitErr)}
 		}
@@ -448,7 +448,7 @@ func (c *SpiceDBClient) inspectExpectedRelationshipStateBounded(
 			return state, readAt, nil
 		}
 		lastErr = err
-		slog.WarnContext(ctx, "Operation failed", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
+		slog.WarnContext(ctx, "Retrying SpiceDB relationship state inspection", "reason", "relationship_operation_retry", failurecause.Attr(lastErr), "attempt", attempt+1)
 		if waitErr := waitForRelationshipWriteRetry(ctx, attempt); waitErr != nil {
 			return expectedRelationshipConflictingState, ZedToken{}, errors.Join(lastErr, waitErr)
 		}
@@ -563,7 +563,7 @@ func (c *SpiceDBClient) relationshipExistsAtExactSnapshot(ctx context.Context, k
 		return false, err
 	}
 	response, err := stream.Recv()
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return false, nil
 	}
 	if err != nil {
@@ -653,7 +653,7 @@ func (c *SpiceDBClient) DeleteAllAccountIdentityRelationships(ctx context.Contex
 		return ZedToken{}, fmt.Errorf("verify deleted account identity relationships: %w", err)
 	}
 	item, err := stream.Recv()
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return token, nil
 	}
 	if err != nil {

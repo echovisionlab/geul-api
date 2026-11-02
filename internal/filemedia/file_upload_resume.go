@@ -4,21 +4,19 @@ import (
 	"context"
 	"fmt"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
 type multipartResumeSelection struct {
-	activeSessions []model.UploadSession
-	session        *model.UploadSession
-	response       *managev1.InitiateMultipartUploadResponse
+	activeSessions []domain.UploadSession
+	session        *domain.UploadSession
+	response       *MultipartUpload
 }
 
-func (s *FileService) selectMultipartResumeCandidate(
+func (s *Service) selectMultipartResumeCandidate(
 	ctx context.Context,
-	_ managev1.TranscodeEntityType,
-	uploadType managev1.UploadType,
+	_ EntityType,
+	uploadType UploadType,
 	entityID string,
 	storedEntityType *string,
 	identity fileIngestProjectionIdentity,
@@ -33,9 +31,9 @@ func (s *FileService) selectMultipartResumeCandidate(
 	)
 }
 
-func (s *FileService) selectUnserializedMultipartResumeCandidate(
+func (s *Service) selectUnserializedMultipartResumeCandidate(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	entityID string,
 	entityType *string,
 	identity fileIngestProjectionIdentity,
@@ -48,9 +46,7 @@ func (s *FileService) selectUnserializedMultipartResumeCandidate(
 		ctx, uploadType, entityID, entityType, identity,
 	)
 	if err != nil {
-		return multipartResumeSelection{}, errs.Internal(
-			fmt.Errorf("failed to find active upload sessions: %w", err),
-		)
+		return multipartResumeSelection{}, fmt.Errorf("failed to find active upload sessions: %w", err)
 	}
 	selection := multipartResumeSelection{activeSessions: activeSessions}
 	for i := range activeSessions {
@@ -69,18 +65,14 @@ func (s *FileService) selectUnserializedMultipartResumeCandidate(
 	return selection, nil
 }
 
-func (s *FileService) buildMultipartResumeResponse(
+func (s *Service) buildMultipartResumeResponse(
 	ctx context.Context,
-	session model.UploadSession,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+	session domain.UploadSession,
+) (*MultipartUpload, error) {
 	uploadedParts, err := s.loadUploadPartInfos(ctx, session.UploadID)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to load uploaded parts: %w", err))
+		return nil, fmt.Errorf("failed to load uploaded parts: %w", err)
 	}
 	s.refreshUploadSessionActivity(ctx, session.UploadID)
-	response, err := multipartInitiateResponseFromSession(session, uploadedParts, true)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return response, nil
+	return multipartInitiateResponseFromSession(session, uploadedParts, true), nil
 }

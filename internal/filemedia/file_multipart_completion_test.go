@@ -7,38 +7,37 @@ import (
 	"github.com/stretchr/testify/require"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestValidateMultipartCompletionVerifiedMimeRequiresDetectedMime(t *testing.T) {
 	t.Parallel()
 
-	_, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		model.UploadSession{
+	_, err := validateMultipartCompletionVerifiedMime(UploadEditorImage,
+
+		domain.UploadSession{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
 		},
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE],
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String()],
 	)
 
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.Contains(t, err.Error(), errs.MsgMimeNotVerified)
 }
 
 func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t *testing.T) {
 	t.Parallel()
 
-	cfg := model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_LOGO]
+	cfg := domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String()]
 	emailSlotID := siteLogoSlotEmailLight
 	regularSlotID := "logo"
 	svgMime := "image/svg+xml"
 
-	_, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		model.UploadSession{
+	_, err := validateMultipartCompletionVerifiedMime(UploadSiteLogo,
+
+		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,
 			RequestedMime: svgMime,
@@ -47,12 +46,12 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 		cfg,
 	)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "email logo uploads must be PNG")
 
-	verifiedMime, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		model.UploadSession{
+	verifiedMime, err := validateMultipartCompletionVerifiedMime(UploadSiteLogo,
+
+		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,
 			RequestedMime: svgMime,
@@ -67,7 +66,7 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 func TestBuildManagedFileKeyUsesCanonicalMediaKeyForEveryLogoSlot(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{}
+	svc := &Service{}
 	fileID := "11111111-1111-4111-8111-111111111111"
 
 	emailKey, err := svc.buildManagedFileKey(fileID, siteEmailLogoStableMime)
@@ -85,7 +84,7 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 	detectedMime := "image/png"
 	slotID := siteLogoSlotEmailLight
 	attemptID := "attempt-1"
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		FileID:       "file-1",
 		FileName:     "email-logo.png",
 		FileSize:     512,
@@ -93,13 +92,5 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 		SlotID:       &slotID,
 		AttemptID:    &attemptID,
 	}
-	require.Equal(t, structured.Fields{
-		"extension":         "png",
-		"id":                "file-1",
-		"file_name":         "email-logo",
-		"mime_type":         "image/png",
-		"file_size":         int64(512),
-		"ingest_slot_id":    siteLogoSlotEmailLight,
-		"ingest_attempt_id": "attempt-1",
-	}, completedMultipartFileRecord(session))
+	require.Equal(t, File{ID: "file-1", FileName: "email-logo", MimeType: "image/png", FileSize: 512, Extension: "png", IngestSlotID: &slotID, IngestAttemptID: &attemptID}, completedMultipartFileRecord(session).file())
 }

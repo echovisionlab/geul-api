@@ -4,21 +4,19 @@ import (
 	"context"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/proto"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 )
 
 type featuredImageIdentity[T any] func(T) (entityID string, fileID *string)
-type featuredImageDeliveryResolver func(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+type featuredImageDeliveryResolver func(context.Context, []string) (map[string]*fileref.Delivery, error)
 
 func loadFeaturedImageDeliveries[T any](
 	ctx context.Context,
 	entities []T,
 	identity featuredImageIdentity[T],
 	resolve featuredImageDeliveryResolver,
-) (map[string]*commonv1.MediaDelivery, error) {
-	result := make(map[string]*commonv1.MediaDelivery, len(entities))
+) (map[string]*fileref.Delivery, error) {
+	result := make(map[string]*fileref.Delivery, len(entities))
 	fileIDs := make([]string, 0, len(entities))
 	entityIDsByFileID := make(map[string][]string, len(entities))
 	for _, entity := range entities {
@@ -52,23 +50,23 @@ func loadFeaturedImageDeliveries[T any](
 	return result, nil
 }
 
-func postPublicDisplayOnly(delivery *commonv1.MediaDelivery) *commonv1.MediaDelivery {
+func postPublicDisplayOnly(delivery *fileref.Delivery) *fileref.Delivery {
 	if delivery == nil {
 		return nil
 	}
-	result := proto.Clone(delivery).(*commonv1.MediaDelivery)
+	result := delivery.Clone()
 	result.Inline = nil
 	result.Download = nil
 	return result
 }
 
-func (s *PostService) loadPostPublicFeaturedImageDeliveries(
+func (s *Service) loadPostPublicFeaturedImageDeliveries(
 	ctx context.Context,
-	posts []model.Post,
-) (map[string]*commonv1.MediaDelivery, error) {
-	deliveries, err := loadFeaturedImageDeliveries(ctx, posts, func(post model.Post) (string, *string) {
-		return post.ID, post.FeaturedImageFileID
-	}, s.fileService.ResolvePublicDisplayMedia)
+	posts []Post,
+) (map[string]*fileref.Delivery, error) {
+	deliveries, err := loadFeaturedImageDeliveries(ctx, posts, func(listed Post) (string, *string) {
+		return listed.ID, listed.FeaturedImageFileID
+	}, s.fileService.ResolveDisplayMedia)
 	if err != nil {
 		return nil, err
 	}
@@ -78,17 +76,17 @@ func (s *PostService) loadPostPublicFeaturedImageDeliveries(
 	return deliveries, nil
 }
 
-func (s *PostService) resolveAuthorizedPostFeaturedImage(
+func (s *Service) resolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
-	post *model.Post,
-) (*commonv1.MediaDelivery, error) {
+	stored *Post,
+) (*fileref.Delivery, error) {
 	expectedFileID := ""
-	if post != nil && post.FeaturedImageFileID != nil {
-		expectedFileID = strings.TrimSpace(*post.FeaturedImageFileID)
+	if stored != nil && stored.FeaturedImageFileID != nil {
+		expectedFileID = strings.TrimSpace(*stored.FeaturedImageFileID)
 	}
 	postID := ""
-	if post != nil {
-		postID = post.ID
+	if stored != nil {
+		postID = stored.ID
 	}
 	return s.fileService.ResolveAuthorizedPostFeaturedImage(ctx, postID, expectedFileID)
 }

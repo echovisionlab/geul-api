@@ -4,41 +4,46 @@ import (
 	"encoding/json"
 	"time"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/lib/pq"
 )
 
-// PostStatus represents the status of a post
+// PostStatus is the stored lifecycle state of a Post. The values are the
+// strings post.status already holds.
 type PostStatus string
+
+const (
+	PostStatusDraft     PostStatus = "POST_STATUS_DRAFT"
+	PostStatusScheduled PostStatus = "POST_STATUS_SCHEDULED"
+	PostStatusPublished PostStatus = "POST_STATUS_PUBLISHED"
+	PostStatusArchived  PostStatus = "POST_STATUS_ARCHIVED"
+)
 
 // Post represents a blog post (Domain Object)
 // Maps to: schema migrations - post table
 type Post struct {
-	ID                    string                             `gorm:"column:id;primaryKey"`
-	ContentDocumentID     *string                            `gorm:"column:content_document_id;type:uuid"`
-	SourceLocale          string                             `gorm:"column:source_locale;type:text;not null;default:en"`
-	ContentDocument       *contentv1.RichTextDocument        `gorm:"-"`
-	ContentRevision       string                             `gorm:"-"`
-	ContentCanonicalHash  string                             `gorm:"-"`
-	BlockMedia            []*contentv1.ContentBlockMediaItem `gorm:"-"`
-	Title                 string                             `gorm:"-"`
-	Slug                  *string                            `gorm:"column:slug"`
-	ConfigurationRevision string                             `gorm:"column:configuration_revision;type:uuid;not null;default:gen_random_uuid()"`
-	Summary               *string                            `gorm:"-"`
-	DocumentLayout        DocumentLayout                     `gorm:"column:document_layout;type:jsonb;not null"`
-	Status                PostStatus                         `gorm:"column:status"`
-	CommentsEnabled       bool                               `gorm:"column:comments_enabled"`
-	SeriesID              *string                            `gorm:"column:series_id"`
-	SeriesOrder           *int32                             `gorm:"column:series_order"`
-	MapPlaceID            *string                            `gorm:"column:map_place_id"`
-	FeaturedImageFileID   *string                            `gorm:"column:featured_image_file_id;type:uuid"`
-	OgAssetID             *string                            `gorm:"column:og_asset_id;type:uuid"`
-	SourceLocaleOgAssetID *string                            `gorm:"-"`
-	PublishedAt           *time.Time                         `gorm:"column:published_at"`
-	ScheduledAt           *time.Time                         `gorm:"column:scheduled_at"`
-	ScheduledTimeZone     *string                            `gorm:"column:scheduled_time_zone"`
-	CreatedAt             time.Time                          `gorm:"column:created_at"`
-	UpdatedAt             time.Time                          `gorm:"column:updated_at"`
+	ID                    string         `gorm:"column:id;primaryKey"`
+	ContentDocumentID     *string        `gorm:"column:content_document_id;type:uuid"`
+	SourceLocale          string         `gorm:"column:source_locale;type:text;not null;default:en"`
+	ContentRevision       string         `gorm:"-"`
+	ContentCanonicalHash  string         `gorm:"-"`
+	Title                 string         `gorm:"-"`
+	Slug                  *string        `gorm:"column:slug"`
+	ConfigurationRevision string         `gorm:"column:configuration_revision;type:uuid;not null;default:gen_random_uuid()"`
+	Summary               *string        `gorm:"-"`
+	DocumentLayout        DocumentLayout `gorm:"column:document_layout;type:jsonb;not null"`
+	Status                PostStatus     `gorm:"column:status"`
+	CommentsEnabled       bool           `gorm:"column:comments_enabled"`
+	SeriesID              *string        `gorm:"column:series_id"`
+	SeriesOrder           *int32         `gorm:"column:series_order"`
+	MapPlaceID            *string        `gorm:"column:map_place_id"`
+	FeaturedImageFileID   *string        `gorm:"column:featured_image_file_id;type:uuid"`
+	OgAssetID             *string        `gorm:"column:og_asset_id;type:uuid"`
+	SourceLocaleOgAssetID *string        `gorm:"-"`
+	PublishedAt           *time.Time     `gorm:"column:published_at"`
+	ScheduledAt           *time.Time     `gorm:"column:scheduled_at"`
+	ScheduledTimeZone     *string        `gorm:"column:scheduled_time_zone"`
+	CreatedAt             time.Time      `gorm:"column:created_at"`
+	UpdatedAt             time.Time      `gorm:"column:updated_at"`
 
 	// Relations (loaded with Preload)
 	Categories    []Category `gorm:"many2many:post_category;"`
@@ -82,21 +87,30 @@ func (Tag) TableName() string {
 	return "tag"
 }
 
+// SeriesStatus is the stored lifecycle state of a Post series. The values
+// are the strings the series table already holds.
+type SeriesStatus string
+
+const (
+	SeriesStatusDraft     SeriesStatus = "SERIES_STATUS_DRAFT"
+	SeriesStatusPublished SeriesStatus = "SERIES_STATUS_PUBLISHED"
+)
+
 // Series represents a post series
 // Maps to: schema migrations - series table
 // Note: Series membership is managed by SpiceDB, not series_member table.
 type Series struct {
-	ID                  string     `gorm:"column:id;primaryKey"`
-	ContentDocumentID   string     `gorm:"column:content_document_id;type:uuid"`
-	Title               string     `gorm:"-"`
-	Slug                string     `gorm:"column:slug"` // NOT NULL in schema
-	Description         *string    `gorm:"-"`
-	Status              string     `gorm:"column:status"` // draft, published
-	SourceLocale        string     `gorm:"column:source_locale"`
-	FeaturedImageFileID *string    `gorm:"column:featured_image_file_id;type:uuid"`
-	OgAssetID           *string    `gorm:"-"`
-	CreatedAt           time.Time  `gorm:"column:created_at"`
-	UpdatedAt           *time.Time `gorm:"column:updated_at"`
+	ID                  string       `gorm:"column:id;primaryKey"`
+	ContentDocumentID   string       `gorm:"column:content_document_id;type:uuid"`
+	Title               string       `gorm:"-"`
+	Slug                string       `gorm:"column:slug"` // NOT NULL in schema
+	Description         *string      `gorm:"-"`
+	Status              SeriesStatus `gorm:"column:status"`
+	SourceLocale        string       `gorm:"column:source_locale"`
+	FeaturedImageFileID *string      `gorm:"column:featured_image_file_id;type:uuid"`
+	OgAssetID           *string      `gorm:"-"`
+	CreatedAt           time.Time    `gorm:"column:created_at"`
+	UpdatedAt           *time.Time   `gorm:"column:updated_at"`
 }
 
 type SeriesTranslation struct {

@@ -3,14 +3,16 @@ package runtime
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // ManageFiles is the shared File capability used by Page after authorization.
 type ManageFiles interface {
-	DeleteFileByID(context.Context, string) error
-	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
+	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*filemediadomain.Delivery, error)
 }
 
 // Files adapts the shared File service to Page-owned manage ports.
@@ -23,19 +25,13 @@ func NewFiles(files ManageFiles) *Files {
 	return &Files{files: files}
 }
 
-func (a *Files) DeleteFileByID(ctx context.Context, fileID string) error {
-	return a.files.DeleteFileByID(ctx, fileID)
-}
-
 func (a *Files) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
-	return a.files.ResolveAuthorizedPageFeaturedImage(ctx, pageID, expectedFileID)
+) (*fileref.Delivery, error) {
+	value, err := a.files.ResolveAuthorizedPageFeaturedImage(ctx, pageID, expectedFileID)
+	return value, err
 }
 
-var (
-	_ pagedomain.FileDeleter          = (*Files)(nil)
-	_ pagedomain.FileDeliveryResolver = (*Files)(nil)
-)
+var _ pagedomain.FileDeliveryResolver = (*Files)(nil)

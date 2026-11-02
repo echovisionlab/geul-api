@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 // Check local inputs before creating any containers or logical database leases.
@@ -23,13 +23,13 @@ func requireSuiteAssets(repoRoot, schemaRoot string, bands []integrationBand) er
 	}
 	requireFile(filepath.Join(schemaRoot, "schema.sql"), "set --schema-root to the reviewed geul-schema checkout")
 	if integrationBandsNeedBackend(bands) {
-		identity := testutil.AppIntegrationSiblingPath(repoRoot, "geul-identity")
+		identity := pgtest.AppIntegrationSiblingPath(repoRoot, "geul-identity")
 		requireFile(filepath.Join(identity, "go.mod"), "prepare the sibling geul-identity checkout")
-		requireFile(testutil.AppIntegrationSpiceDBSchemaPath(repoRoot), "prepare Identity's canonical config/spicedb/schema.generated.zed artifact")
+		requireFile(pgtest.AppIntegrationSpiceDBSchemaPath(repoRoot), "prepare Identity's canonical config/spicedb/schema.generated.zed artifact")
 		for _, asset := range []string{"kratos/kratos.yml", "kratos/identity.schema.json", "oathkeeper/oathkeeper.yml", "oathkeeper/rules.yml"} {
 			requireFile(filepath.Join(identity, "config", filepath.FromSlash(asset)), "prepare the sibling geul-identity checkout")
 		}
-		collab := testutil.AppIntegrationSiblingPath(repoRoot, "geul-editor-collab")
+		collab := pgtest.AppIntegrationSiblingPath(repoRoot, "geul-editor-collab")
 		requireFile(filepath.Join(collab, "package.json"), "prepare the sibling geul-editor-collab checkout")
 		requireFile(filepath.Join(collab, "tsconfig.local-dependencies.json"), "prepare collaboration's local source configuration")
 		// These paths are relative to collaboration's tsconfig, not the API checkout.

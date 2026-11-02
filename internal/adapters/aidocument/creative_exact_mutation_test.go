@@ -25,8 +25,7 @@ type exactReleaseDocumentAPI struct {
 
 func (a *exactReleaseDocumentAPI) LoadAIDocumentState(
 	context.Context,
-	string,
-	string,
+	releasedomain.AIDocumentStateQuery,
 ) (releasedomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
@@ -34,20 +33,17 @@ func (a *exactReleaseDocumentAPI) LoadAIDocumentState(
 
 func (a *exactReleaseDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
-	releaseID string,
-	locale string,
-	_ releasedomain.AIDocumentExecutionMode,
-	compiler releasedomain.AIDocumentMutationCompiler,
+	command releasedomain.ExecuteAIDocumentMutationCommand,
 ) (releasedomain.AIDocumentMutationResult, error) {
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return releasedomain.AIDocumentMutationResult{}, a.authorizeErr
 	}
-	if releaseID != a.state.ReleaseID || locale != a.state.Locale {
+	if command.ReleaseID != a.state.ReleaseID || command.Locale != a.state.Locale {
 		return releasedomain.AIDocumentMutationResult{}, errors.New("unexpected Release identity or locale")
 	}
 	a.compilerCalls++
-	mutation, err := compiler(a.state)
+	mutation, err := command.Compiler(a.state)
 	if err != nil {
 		return releasedomain.AIDocumentMutationResult{}, err
 	}

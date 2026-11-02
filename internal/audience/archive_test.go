@@ -31,15 +31,15 @@ func TestDownloadPolicyArchiveAuditUsesExactOwningRelation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			plan := downloadPolicyArchivePlan{
-				domain:   test.domain,
-				ownerID:  "owner-1",
-				itemID:   "item-1",
-				fileID:   "file-1",
-				audience: string(sharedtelemetry.AuditStateRestricted),
+			policy := DownloadPolicy{
+				Owner:    test.domain,
+				OwnerID:  "owner-1",
+				ItemID:   "item-1",
+				FileID:   "file-1",
+				Audience: string(sharedtelemetry.AuditStateRestricted),
 			}
 			action, build, err := downloadPolicyArchiveAudit(
-				plan,
+				policy,
 				[]string{"segment-1", "segment-2"},
 				[]string{"segment-2"},
 			)
@@ -60,6 +60,6 @@ func TestDownloadPolicyArchiveAuditUsesExactOwningRelation(t *testing.T) {
 }
 
 func TestDownloadPolicyArchiveAuditRejectsUnsupportedOwner(t *testing.T) {
-	_, _, err := downloadPolicyArchiveAudit(downloadPolicyArchivePlan{domain: "file"}, nil, nil)
+	_, _, err := downloadPolicyArchiveAudit(DownloadPolicy{Owner: "file"}, nil, nil)
 	require.Error(t, err)
 }

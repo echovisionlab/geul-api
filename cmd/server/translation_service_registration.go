@@ -4,19 +4,23 @@ import (
 	"fmt"
 	"log/slog"
 
+	contentsignaladapter "github.com/echovisionlab/geul-api/internal/adapters/contentsignal"
+
 	"connectrpc.com/connect"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/menu"
-	"github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/programevent"
+	"github.com/echovisionlab/geul-api/internal/mq"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	translationcore "github.com/echovisionlab/geul-api/internal/translation"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -27,16 +31,13 @@ type translationServiceRegistration struct {
 	dependencies             serviceRegistrationDependencies
 	handlerOptions           []connect.HandlerOption
 	domainRegistry           *translationadapter.DomainRegistry
-	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
-	menuService              *menu.MenuService
+	emailAuthoringReferences emailauthoringpostgres.DeliveryReferences
 	legalDocuments           *legal.AIDocumentService
-	internalFormService      *formdomain.InternalFormService
-	programEventService      *programevent.ProgramEventService
-	seriesService            *series.SeriesService
-	fileService              *filemedia.FileService
+	seriesService            *series.Service
+	fileService              *filemedia.Service
 }
 
-func (r translationServiceRegistration) register() (*translationapplication.TranslationService, error) {
+func (r translationServiceRegistration) register() (*translationapplication.Service, error) {
 	deps := r.dependencies
 	mux := deps.mux
 	cfg := deps.cfg
@@ -48,13 +49,63 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 	ogDeps := deps.og
 	handlerOpts := r.handlerOptions
 	translationRegistry := r.domainRegistry
-	emailAuthoringReferences := r.emailAuthoringReferences
-	menuService := r.menuService
-	legalAIDocumentService := r.legalDocuments
-	internalFormService := r.internalFormService
-	programEventService := r.programEventService
-	seriesService := r.seriesService
 	fileService := r.fileService
+	translationInterchangeRegistry, err := r.newInterchangeRegistry()
+	if err != nil {
+		return nil, err
+	}
+	translationXLIFFFiles, err := filemediaadapter.NewTranslationXLIFFFiles(fileService)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Translation XLIFF File runtime: %w", err)
+	}
+	translationPorts := translationStorePorts(translationRegistry, contentBlockStore, ogDeps, spicedbClient, workerPublisher, cfg.CDNURL)
+	translationPorts.Interchange = translationInterchangeRegistry
+	translationUnits, err := translationpostgres.NewUnits(db, translationPorts)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Translation store: %w", err)
+	}
+	translationService, err := translationapplication.NewService(translationapplication.Deps{
+		Units: translationUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Plans: translationRegistry, XLIFFFiles: translationXLIFFFiles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Translation service: %w", err)
+	}
+	translationPath, translationHandler := managev1connect.NewTranslationServiceHandler(
+		translationapplication.NewConnectHandler(translationService), handlerOpts...,
+	)
+	mux.Handle(translationPath, translationHandler)
+	slog.Info("Registered service", "path", translationPath)
+
+	return translationService, nil
+}
+
+// translationStorePorts are the Translation Store's domain registry and
+// shared runtimes; the use cases also need the interchange registry, which
+// the content domains' services complete later than the job runner starts.
+func translationStorePorts(
+	registry *translationadapter.DomainRegistry,
+	contentBlocks *contentblock.Store,
+	ogDeps *ogDependencies,
+	spiceDB *auth.SpiceDBClient,
+	publisher *mq.Publisher,
+	cdnDomain string,
+) translationpostgres.Ports {
+	return translationpostgres.Ports{
+		Domains: registry, ContentBlocks: contentBlocks, OGPlanner: ogDeps.planner, OGRefresher: ogDeps.refresher,
+		SpiceDB: spiceDB, Signals: contentsignaladapter.NewPublisher(publisher), Queue: publisher, CDNDomain: cdnDomain,
+	}
+}
+
+func (r translationServiceRegistration) newInterchangeRegistry() (*translationadapter.InterchangeRegistry, error) {
+	telemetryWriter := r.dependencies.telemetryWriter
+	emailAuthoringReferences := r.emailAuthoringReferences
+	legalAIDocumentService := r.legalDocuments
+	seriesService := r.seriesService
+	postInterchange, err := postpostgres.NewTranslationInterchange(telemetryWriter)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Post translation interchange: %w", err)
+	}
 	translationInterchangeRegistrations := []translationadapter.InterchangeDomainRegistration{
 		{
 			Domain: translationcore.KindPage,
@@ -64,7 +115,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 		},
 		{
 			Domain: translationcore.KindPost,
-			Port:   translationadapter.NewPostInterchange(post.NewTranslationInterchange(telemetryWriter)),
+			Port:   translationadapter.NewPostInterchange(postInterchange),
 		},
 		{
 			Domain: translationcore.KindWork,
@@ -90,7 +141,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 		},
 		{
 			Domain: translationcore.KindMenu,
-			Port:   translationadapter.NewMenuInterchange(menuService),
+			Port:   translationadapter.NewMenuInterchange(telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindEmailTemplate,
@@ -106,11 +157,11 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 		},
 		{
 			Domain: translationcore.KindPrivacy,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
+			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService, telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindTerms,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
+			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService, telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindCampaign,
@@ -120,37 +171,20 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 		},
 		{
 			Domain: translationcore.KindForm,
-			Port:   translationadapter.NewFormInterchange(internalFormService),
+			Port:   translationadapter.NewFormInterchange(telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindProgramEvent,
-			Port:   translationadapter.NewProgramEventInterchange(programEventService),
+			Port:   translationadapter.NewProgramEventInterchange(telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindPostSeries,
 			Port:   translationadapter.NewPostSeriesInterchange(seriesService),
 		},
 	}
-	translationInterchangeRegistry, err := translationadapter.NewInterchangeRegistry(
-		translationInterchangeRegistrations...,
-	)
+	registry, err := translationadapter.NewInterchangeRegistry(translationInterchangeRegistrations...)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Translation interchange registry: %w", err)
 	}
-	translationXLIFFFiles, err := filemediaadapter.NewTranslationXLIFFFiles(fileService)
-	if err != nil {
-		return nil, fmt.Errorf("initialize Translation XLIFF File runtime: %w", err)
-	}
-	translationService := translationapplication.NewAuditedTranslationService(
-		db, workerPublisher, cfg.CDNURL, telemetryWriter, spicedbClient, ogDeps.planner, ogDeps.refresher,
-		translationapplication.WithTranslationServiceContentBlockStore(contentBlockStore),
-		translationapplication.WithTranslationServiceDomainRegistry(translationRegistry),
-		translationapplication.WithTranslationServiceXLIFFFiles(translationXLIFFFiles),
-		translationapplication.WithTranslationServiceInterchangeDomains(translationInterchangeRegistry),
-	)
-	translationPath, translationHandler := managev1connect.NewTranslationServiceHandler(translationService, handlerOpts...)
-	mux.Handle(translationPath, translationHandler)
-	slog.Info("Registered service", "path", translationPath)
-
-	return translationService, nil
+	return registry, nil
 }

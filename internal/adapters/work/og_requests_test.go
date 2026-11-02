@@ -3,14 +3,17 @@ package work
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -24,15 +27,10 @@ func TestOGResolverMapsMissingWorkToNotFound(t *testing.T) {
 		)
 	`).Error)
 	missingID := uuid.NewString()
-	_, err = og.NewResolver(NewRequests()).Resolve(t.Context(), db, &managev1.RegenerateOgImageRequest{
-		EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-		EntityId:   &missingID,
-		Selection: &managev1.OgTargetSelection{Target: &managev1.OgTargetSelection_Primary{
-			Primary: &managev1.OgPrimaryTarget{},
-		}},
-	})
+	store := ogpostgres.NewStore(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(NewRequests())})
+	_, err = og.ResolveRequests(t.Context(), store, "work", missingID, og.Selection{Kind: og.SelectionPrimary})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }
 
 func TestOGRequestsResolveExistingTargetValue(t *testing.T) {

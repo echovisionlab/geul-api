@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	managev1connect "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const fileManagerTestID = "11111111-1111-4111-8111-111111111111"
@@ -186,9 +185,9 @@ func TestFileManagerAllowsHundredIDsWithoutChangingSelection(t *testing.T) {
 
 func TestFileManagerDeletionPreservesAcceptedAndRejectedImpact(t *testing.T) {
 	blockID, title, link := fileManagerTestFolderID, "Referenced page", "/pages/reference"
-	impact := &managev1.FileDeletionImpact{FileId: fileManagerTestFolderID, TotalUsageCount: 8, HasMoreUsages: true,
-		DomainCounts: []*managev1.FileUsageDomainCount{{Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE, Count: 8}},
-		FirstUsages:  []*managev1.FileUsage{{Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE, EntityId: fileManagerTestID, ReferencePath: "props.file", BlockId: &blockID, Count: 2, Title: &title, Link: &link}}}
+	impact := &filemedia.DeletionImpact{FileID: fileManagerTestFolderID, TotalUsageCount: 8, HasMoreUsages: true,
+		DomainCounts: []*filemedia.UsageDomainCount{{Domain: filemedia.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE), Count: 8}},
+		FirstUsages:  []*filemedia.UsageView{{Domain: filemedia.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE), EntityID: fileManagerTestID, ReferencePath: "props.file", BlockID: &blockID, Count: 2, Title: &title, Link: &link}}}
 	manager := &recordingFileManager{impact: impact, accepted: []string{fileManagerTestID}}
 	tools, err := NewFileManagerTools(manager)
 	require.NoError(t, err)
@@ -276,12 +275,11 @@ func TestFileManagerPreservesNativeErrors(t *testing.T) {
 }
 
 type recordingFileManager struct {
-	managev1connect.UnimplementedFileServiceHandler
 	ctx      context.Context
 	request  proto.Message
 	calls    []string
 	err      error
-	impact   *managev1.FileDeletionImpact
+	impact   *filemedia.DeletionImpact
 	accepted []string
 }
 
@@ -290,83 +288,100 @@ func (manager *recordingFileManager) record(ctx context.Context, name string, re
 	manager.request = request
 	manager.calls = append(manager.calls, name)
 }
-func fileManagerNativeFile() *managev1.FileManagerFile {
+func fileManagerNativeFile() *filemedia.LibraryFile {
 	duration := int32(12)
-	at := timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
-	return &managev1.FileManagerFile{Id: fileManagerTestID, FileName: "Actual name", Extension: "wav", MimeType: "audio/wav", FileSize: 42, DurationSeconds: &duration, UsageCount: 3, CreatedAt: at, UpdatedAt: at}
+	at := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	return &filemedia.LibraryFile{ID: fileManagerTestID, FileName: "Actual name", Extension: "wav", MimeType: "audio/wav", FileSize: 42, DurationSeconds: &duration, UsageCount: 3, CreatedAt: &at, UpdatedAt: &at}
 }
-func fileManagerNativeFolder() *managev1.FileFolder {
-	return &managev1.FileFolder{Id: fileManagerTestFolderID, Name: "Actual folder"}
+func fileManagerFolderView() *filemedia.FolderView {
+	return &filemedia.FolderView{ID: fileManagerTestFolderID, Name: "Actual folder"}
 }
 
-func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, request *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
-	manager.record(ctx, ToolFileDeletionImpactGet, request.Msg)
+// The fake records each use-case call as the request a Connect client would
+// have sent, so the assertions read the native field names.
+func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, query filemedia.GetFileDeletionImpactQuery) ([]*filemedia.DeletionImpact, error) {
+	manager.record(ctx, ToolFileDeletionImpactGet, &managev1.GetFileDeletionImpactRequest{FileIds: query.FileIDs})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	impacts := []*managev1.FileDeletionImpact{}
+	impacts := []*filemedia.DeletionImpact{}
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
-	return connect.NewResponse(&managev1.GetFileDeletionImpactResponse{Impacts: impacts}), nil
+	return impacts, nil
 }
 
-func (manager *recordingFileManager) DeleteFiles(ctx context.Context, request *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
-	manager.record(ctx, ToolFileDelete, request.Msg)
+func (manager *recordingFileManager) DeleteFiles(ctx context.Context, command filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error) {
+	manager.record(ctx, ToolFileDelete, &managev1.DeleteFilesRequest{FileIds: command.FileIDs})
 	if manager.err != nil {
-		return nil, manager.err
+		return filemedia.FileDeletionOutcome{}, manager.err
 	}
-	impacts := []*managev1.FileDeletionImpact{}
+	impacts := []*filemedia.DeletionImpact{}
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
-	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: manager.accepted, RejectedFiles: impacts}), nil
+	return filemedia.FileDeletionOutcome{AcceptedFileIDs: manager.accepted, RejectedFiles: impacts}, nil
 }
 
-func (manager *recordingFileManager) RenameFile(ctx context.Context, request *connect.Request[managev1.RenameFileRequest]) (*connect.Response[managev1.RenameFileResponse], error) {
-	manager.record(ctx, ToolFileRename, request.Msg)
+func (manager *recordingFileManager) RenameFile(ctx context.Context, command filemedia.RenameFileCommand) (*filemedia.LibraryFile, error) {
+	manager.record(ctx, ToolFileRename, &managev1.RenameFileRequest{FileId: command.FileID, FileName: command.FileName})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.RenameFileResponse{File: fileManagerNativeFile()}), nil
+	return fileManagerNativeFile(), nil
 }
 
-func (manager *recordingFileManager) MoveFiles(ctx context.Context, request *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
-	manager.record(ctx, ToolFileMove, request.Msg)
+func (manager *recordingFileManager) MoveFiles(ctx context.Context, command filemedia.MoveFilesCommand) ([]*filemedia.LibraryFile, error) {
+	manager.record(ctx, ToolFileMove, &managev1.MoveFilesRequest{FileIds: command.FileIDs, FolderId: optionalFileManagerID(command.FolderID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.MoveFilesResponse{Files: []*managev1.FileManagerFile{fileManagerNativeFile()}}), nil
+	return []*filemedia.LibraryFile{fileManagerNativeFile()}, nil
 }
 
-func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, request *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderCreate, request.Msg)
+func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, command filemedia.CreateFileFolderCommand) (*filemedia.FolderView, error) {
+	manager.record(ctx, ToolFileFolderCreate, &managev1.CreateFileFolderRequest{ParentId: optionalFileManagerID(command.ParentID), Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.CreateFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerFolderView(), nil
 }
 
-func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, request *connect.Request[managev1.RenameFileFolderRequest]) (*connect.Response[managev1.RenameFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderRename, request.Msg)
+func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, command filemedia.RenameFileFolderCommand) (*filemedia.FolderView, error) {
+	manager.record(ctx, ToolFileFolderRename, &managev1.RenameFileFolderRequest{FolderId: command.FolderID, Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerFolderView(), nil
 }
 
-func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, request *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderMove, request.Msg)
+func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, command filemedia.MoveFileFolderCommand) (*filemedia.FolderView, error) {
+	manager.record(ctx, ToolFileFolderMove, &managev1.MoveFileFolderRequest{FolderId: command.FolderID, ParentId: optionalFileManagerID(command.ParentID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.MoveFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerFolderView(), nil
 }
 
-func (manager *recordingFileManager) DeleteFileFolder(ctx context.Context, request *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderDelete, request.Msg)
+func (manager *recordingFileManager) DeleteFileFolder(ctx context.Context, command filemedia.DeleteFileFolderCommand) ([]string, error) {
+	manager.record(ctx, ToolFileFolderDelete, &managev1.DeleteFileFolderRequest{FolderId: command.FolderID})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.DeleteFileFolderResponse{AcceptedFileIds: manager.accepted}), nil
+	return manager.accepted, nil
+}
+
+func optionalFileManagerID(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func TestFileManagerFolderProjectionKeepsTimestampPrecisionAndPresence(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 2, 12, 3, 4, 123456789, time.FixedZone("KST", 9*60*60))
+	actual := projectFileManagerFolder(&filemedia.FolderView{ID: "folder", Name: "Folder", ParentID: new(""), CreatedAt: &at, UpdatedAt: &at})
+	require.Equal(t, fileManagerFolder{ID: "folder", Name: "Folder", ParentID: new(""), CreatedAt: "2026-11-02T03:03:04Z", UpdatedAt: "2026-11-02T03:03:04Z"}, actual)
+	require.Equal(t, fileManagerFolder{ID: "root", Name: "Root"}, projectFileManagerFolder(&filemedia.FolderView{ID: "root", Name: "Root"}))
 }

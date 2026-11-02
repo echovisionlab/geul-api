@@ -7,32 +7,28 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 const DanglingAssetRetention = 24 * time.Hour
 
 type Cleanup struct {
-	db *gorm.DB
+	units mutation.UnitOfWork[Store]
 }
 
-func NewCleanup(db *gorm.DB) *Cleanup {
-	if db == nil {
-		panic("favicon cleanup: database is required")
+func NewCleanup(units mutation.UnitOfWork[Store]) *Cleanup {
+	if units == nil {
+		panic("favicon cleanup: units are required")
 	}
-	return &Cleanup{db: db}
+	return &Cleanup{units: units}
 }
 
 func (s *Cleanup) MarkDanglingReadyAssets(ctx context.Context, cutoff, now time.Time) error {
 	var assetIDs []string
-	if err := s.db.WithContext(ctx).Model(&model.PublicAsset{}).
-		Where("kind = ? AND status = ? AND created_at < ?", "favicon", model.PublicAssetStatusReady, cutoff).
-		Where("NOT EXISTS (SELECT 1 FROM public_asset_binding pab WHERE pab.asset_id = public_asset.id)").
-		Order("created_at ASC, id ASC").Pluck("id", &assetIDs).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		assetIDs, err = store.DanglingReadyAssetIDs(ctx, cutoff)
+		return err
+	}); err != nil {
 		return fmt.Errorf("list dangling favicon assets: %w", err)
 	}
 	marked := 0
@@ -48,11 +44,13 @@ func (s *Cleanup) MarkDanglingReadyAssets(ctx context.Context, cutoff, now time.
 		}
 	}
 	if marked > 0 {
-		slog.Info("Marked dangling favicon assets for deletion", "count", marked)
+		slog.InfoContext(ctx, "Marked dangling favicon assets for deletion", "count", marked)
 	}
 	return stderrors.Join(cleanupErrs...)
 }
 
+// MarkDanglingReadyAsset marks one favicon asset nothing binds for deletion
+// once it is older than cutoff; afterLock runs once the asset is locked.
 func (s *Cleanup) MarkDanglingReadyAsset(
 	ctx context.Context,
 	assetID string,
@@ -60,36 +58,24 @@ func (s *Cleanup) MarkDanglingReadyAsset(
 	afterLock func(),
 ) (bool, error) {
 	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "kind", "status", "created_at").Where("id = ?", assetID).Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
+	err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		asset, found, err := store.LockAsset(ctx, assetID)
+		if err != nil || !found {
 			return err
 		}
-		if asset.Kind != "favicon" || asset.Status != model.PublicAssetStatusReady || !asset.CreatedAt.Before(cutoff) {
+		if asset.Kind != "favicon" || asset.Status != AssetReady || !asset.CreatedAt.Before(cutoff) {
 			return nil
 		}
 		if afterLock != nil {
 			afterLock()
 		}
-		var bindings int64
-		if err := tx.Model(&model.PublicAssetBinding{}).Where("asset_id = ?", asset.ID).Count(&bindings).Error; err != nil {
+		bound, err := store.AssetBound(ctx, asset.ID)
+		if err != nil || bound {
 			return err
 		}
-		if bindings != 0 {
-			return nil
-		}
-		result := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND status = ?", asset.ID, model.PublicAssetStatusReady).
-			Updates(structured.Fields{"status": model.PublicAssetStatusDeletePending, "delete_requested_at": now, "updated_at": now})
-		if result.Error != nil {
-			return result.Error
-		}
-		changed = result.RowsAffected == 1
-		return nil
+		changed, err = store.MarkAssetDeletePending(ctx, asset.ID, now)
+		return err
 	})
 	if err != nil {
 		return false, fmt.Errorf("mark dangling favicon asset %s for deletion: %w", assetID, err)

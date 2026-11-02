@@ -2,15 +2,12 @@ package menu
 
 import (
 	"context"
-	"log/slog"
-
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
+	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -27,83 +24,89 @@ func checkMenuPermission(
 	action menuAction,
 	principal *auth.UserInfo,
 ) error {
-	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	can, err := action(menuID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
-		return errs.NotFound("menu", menuID)
+		return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "menu")
+		return domainerr.NoPermission(can.Action().Name(), "menu")
 	}
 	return nil
 }
 
-func (s *MenuService) requireExistingMenuPermission(
+func (s *Service) requireExistingMenuPermission(
 	ctx context.Context,
 	menuID string,
 	action menuAction,
 ) error {
 	err := checkMenuPermission(ctx, s.permissions, menuID, action, auth.GetUser(ctx))
-	if connect.CodeOf(err) == connect.CodePermissionDenied {
-		return errs.NotFound("menu", menuID)
+	if mutation.IsDenied(err) {
+		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	return err
 }
 
-func (s *MenuService) requireMenuPermissionOrNotFound(
+func (s *Service) requireMenuPermissionOrNotFound(
 	ctx context.Context,
 	menuID string,
 	action menuAction,
 ) error {
 	err := checkMenuPermission(ctx, s.permissions, menuID, action, auth.GetUser(ctx))
-	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied {
+	if err == nil || !mutation.IsDenied(err) {
 		return err
 	}
-	var count int64
-	if dbErr := s.db.WithContext(ctx).Table("menu").Where("id = ?", menuID).Count(&count).Error; dbErr != nil {
-		return errs.Internal(dbErr)
+	var exists bool
+	if readErr := s.units.Read(ctx, func(store Store) (readErr error) {
+		exists, readErr = store.MenuExists(ctx, menuID)
+		return readErr
+	}); readErr != nil {
+		return readErr
 	}
-	if count == 0 {
-		return errs.NotFound("menu", menuID)
+	if !exists {
+		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	return err
 }
 
+// requireFreshMenuPermission is the in-transaction Menu authority: an
+// inactive principal finds no Menu, and an active one needs action, read
+// with the principal fence require applies.
 func requireFreshMenuPermission(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker menuPermissionChecker,
+	require mutation.Require,
 	menuID string,
 	action menuAction,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	if principal.MemberID == "" || principal.IdentityID == "" {
+		// The fence finds a principal without a Member or Identity inactive.
+		return domainerr.ResourceNotFound("menu", menuID)
+	}
+	can, err := action(menuID)
 	if err != nil {
-		return errs.Internal(err)
+		return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
 	}
-	if !active {
-		return errs.NotFound("menu", menuID)
+	if err := require(can); err != nil {
+		if errors.Is(err, identitystate.ErrInactivePrincipal) {
+			return domainerr.ResourceNotFound("menu", menuID)
+		}
+		return err
 	}
-	return checkMenuPermission(ctx, checker, menuID, action, principal)
+	return nil
 }
 
 func requireMenuGlobalCan(
@@ -112,60 +115,48 @@ func requireMenuGlobalCan(
 	can policyv1.Can,
 ) error {
 	principal := auth.GetUser(ctx)
-	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.requireMenuGlobalCan", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.requireMenuGlobalCan", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Permission(), "platform")
+		return domainerr.NoPermission(can.Action().Permission(), "platform")
 	}
 	return nil
 }
 
-func requireFreshMenuGlobalCan(
-	ctx context.Context,
-	tx *gorm.DB,
-	checker menuPermissionChecker,
-	can policyv1.Can,
-) error {
-	return identitystate.RequireFreshAdminCan(ctx, tx, checker, can)
-}
-
 func requireMenuPermissionAndLock(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker menuPermissionChecker,
+	store Store,
+	require mutation.Require,
 	menuID string,
 	action menuAction,
 ) error {
-	if _, err := lockMenuForUpdate(ctx, tx, menuID); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFound("menu", menuID)
+	if _, err := store.LockMenu(ctx, menuID); err != nil {
+		if errors.Is(err, ErrMenuNotFound) {
+			return domainerr.ResourceNotFound("menu", menuID)
 		}
-		return errs.Internal(err)
+		return err
 	}
-	return requireFreshMenuPermission(ctx, tx, checker, menuID, action)
+	return requireFreshMenuPermission(ctx, require, menuID, action)
 }
 
-// RequireViewAndLockWithDB is the translation read boundary for one Menu.
-func RequireViewAndLockWithDB(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
-	return requireMenuPermissionAndLock(ctx, tx, spiceDB, menuID, policyv1.Menu.View)
+// RequireViewAndLock is the translation read boundary for one Menu, in the
+// translation pipeline's transaction store is bound to: require runs the
+// fresh check there.
+func RequireViewAndLock(ctx context.Context, store Store, require mutation.Require, menuID string) error {
+	return requireMenuPermissionAndLock(ctx, store, require, menuID, policyv1.Menu.View)
 }
 
-// RequireEditAndLockWithDB is the translation source/target mutation boundary
-// for one Menu.
-func RequireEditAndLockWithDB(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
-	return requireMenuPermissionAndLock(ctx, tx, spiceDB, menuID, policyv1.Menu.Edit)
+// RequireEditAndLock is the translation source/target mutation boundary for
+// one Menu.
+func RequireEditAndLock(ctx context.Context, store Store, require mutation.Require, menuID string) error {
+	return requireMenuPermissionAndLock(ctx, store, require, menuID, policyv1.Menu.Edit)
 }

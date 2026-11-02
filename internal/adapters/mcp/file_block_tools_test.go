@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	fileauthority "github.com/echovisionlab/geul-api/internal/filemedia"
@@ -316,7 +319,7 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	}
 
 	manager.policy = testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED)
-	manager.policy.AudienceSegments = []*managev1.AudienceSegmentSummary{{Id: fileBlockSegmentID, Name: "Members"}}
+	manager.policy.AudienceSegments = []*filemediadomain.PolicySegment{{ID: fileBlockSegmentID, Name: "Members"}}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
 		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"],
@@ -431,7 +434,7 @@ func TestDocumentFileDownloadPolicyRejectsMissingOrInvalidObservedBaseline(t *te
 }
 
 func TestDocumentFileDownloadPolicySatisfiesRealServiceInputContract(t *testing.T) {
-	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.FileService{})
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.Service{})
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
 		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
@@ -450,10 +453,10 @@ func TestFileUsageListReturnsExactPaginatedUsages(t *testing.T) {
 	title := "Post title"
 	blockType := "file"
 	link := "/admin/posts/" + fileBlockTestDocumentID
-	manager := &recordingFileBlockManagement{usages: &managev1.ListFileUsagesResponse{
-		Usages: []*managev1.FileUsage{{
-			Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST, EntityId: fileBlockTestDocumentID,
-			ReferencePath: "file", BlockId: stringPointerForFileBlockTest(fileBlockTestBlockID), Count: 1,
+	manager := &recordingFileBlockManagement{usages: &fileauthority.FileUsagePage{
+		Usages: []*fileauthority.UsageView{{
+			Domain: fileauthority.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST), EntityID: fileBlockTestDocumentID,
+			ReferencePath: "file", BlockID: stringPointerForFileBlockTest(fileBlockTestBlockID), Count: 1,
 			BlockType: &blockType, Title: &title, Link: &link,
 		}},
 		NextPageToken: &next, Total: 2,
@@ -505,13 +508,13 @@ func fileBlockMutationArguments(t *testing.T, suffix string) mcpserver.ToolArgum
 	}`)
 }
 
-func testFileBlockPolicy(audience managev1.FileDownloadAudience) *managev1.FileDownloadPolicy {
+func testFileBlockPolicy(audience managev1.FileDownloadAudience) *fileauthority.DownloadPolicy {
 	blockID := fileBlockTestBlockID
 	referencePath := "file"
-	return &managev1.FileDownloadPolicy{
-		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
-		EntityId:   fileBlockTestDocumentID, BlockId: &blockID, ReferencePath: &referencePath,
-		FileId: fileBlockTestFileID, Audience: audience,
+	return &fileauthority.DownloadPolicy{
+		EntityType: int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST),
+		EntityID:   fileBlockTestDocumentID, BlockID: &blockID, ReferencePath: &referencePath,
+		FileID: fileBlockTestFileID, Audience: mediaasset.FileDownloadAudience(strings.ToLower(strings.TrimPrefix(audience.String(), "FILE_DOWNLOAD_AUDIENCE_"))),
 	}
 }
 
@@ -521,25 +524,51 @@ type recordingFileBlockManagement struct {
 	getRequest    *connect.Request[managev1.GetFileDownloadPolicyRequest]
 	updateRequest *connect.Request[managev1.UpdateFileDownloadPolicyRequest]
 	usageRequest  *connect.Request[managev1.ListFileUsagesRequest]
-	policy        *managev1.FileDownloadPolicy
-	usages        *managev1.ListFileUsagesResponse
+	policy        *fileauthority.DownloadPolicy
+	usages        *fileauthority.FileUsagePage
 	err           error
 }
 
-func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, request *connect.Request[managev1.GetFileDownloadPolicyRequest]) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
-	manager.getRequest = request
-	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{Policy: manager.policy}), manager.err
+// The fake records each use-case call as the request a Connect client would
+// have sent, so the assertions read the native field names.
+func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, query fileauthority.GetFileDownloadPolicyQuery) (*fileauthority.DownloadPolicy, error) {
+	manager.getRequest = connect.NewRequest(&managev1.GetFileDownloadPolicyRequest{
+		EntityType: managev1.TranscodeEntityType(query.Target.EntityType), EntityId: query.Target.EntityID,
+		BlockId: query.Target.BlockID, ReferencePath: query.Target.ReferencePath,
+	})
+	return manager.policy, manager.err
 }
 
-func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, request *connect.Request[managev1.UpdateFileDownloadPolicyRequest]) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
-	manager.updateRequest = request
-	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{Policy: manager.policy}), manager.err
-}
-
-func (manager *recordingFileBlockManagement) ListFileUsages(_ context.Context, request *connect.Request[managev1.ListFileUsagesRequest]) (*connect.Response[managev1.ListFileUsagesResponse], error) {
-	manager.usageRequest = request
-	if manager.usages == nil {
-		manager.usages = &managev1.ListFileUsagesResponse{}
+func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, command fileauthority.UpdateFileDownloadPolicyCommand) (*fileauthority.DownloadPolicy, error) {
+	request := &managev1.UpdateFileDownloadPolicyRequest{
+		EntityType: managev1.TranscodeEntityType(command.Target.EntityType), EntityId: command.Target.EntityID,
+		BlockId: command.Target.BlockID, ReferencePath: command.Target.ReferencePath,
+		ExpectedFileId: command.ExpectedFileID, Audience: managev1.FileDownloadAudience(command.Policy.Audience), AudienceSegmentIds: command.Policy.AudienceSegmentIDs,
 	}
-	return connect.NewResponse(manager.usages), manager.err
+	if observed := command.Observed; observed != nil {
+		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Audience: managev1.FileDownloadAudience(observed.Audience), AudienceSegmentIds: observed.AudienceSegmentIDs}
+	}
+	manager.updateRequest = connect.NewRequest(request)
+	return manager.policy, manager.err
+}
+
+func (manager *recordingFileBlockManagement) ListFileUsages(_ context.Context, query fileauthority.ListFileUsagesQuery) (fileauthority.FileUsagePage, error) {
+	request := &managev1.ListFileUsagesRequest{FileId: query.FileID, PageSize: query.PageSize}
+	if query.PageToken != "" {
+		request.PageToken = &query.PageToken
+	}
+	manager.usageRequest = connect.NewRequest(request)
+	if manager.usages == nil {
+		manager.usages = &fileauthority.FileUsagePage{}
+	}
+	return fileauthority.FileUsagePage{Usages: manager.usages.Usages, NextPageToken: manager.usages.NextPageToken, Total: manager.usages.Total}, manager.err
+}
+
+func TestFileUsageListStillRejectsUnknownDomainValues(t *testing.T) {
+	manager := &recordingFileBlockManagement{usages: &fileauthority.FileUsagePage{Usages: []*fileauthority.UsageView{{Domain: 999, EntityID: fileBlockTestDocumentID, ReferencePath: "file", Count: 1}}}}
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileUsageList, toolArguments(t, `{"file_id":"`+fileBlockTestFileID+`"}`))
+	if err == nil || !strings.Contains(err.Error(), `unsupported domain "999"`) || result.Content != nil {
+		t.Fatalf("unknown usage domain: result=%+v, error=%v", result, err)
+	}
 }

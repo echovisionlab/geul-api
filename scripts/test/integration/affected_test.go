@@ -105,7 +105,7 @@ func TestPackagesImportingAnyFollowsTestBinaryDependencies(t *testing.T) {
 func TestBandsForPackagesKeepsCatalogOrderAndSemantics(t *testing.T) {
 	t.Parallel()
 
-	bands := bandsForPackages([]string{"./internal/testutil", "./internal/post", "./internal/member", "./internal/email"})
+	bands := bandsForPackages([]string{"./internal/testutil/pgtest", "./internal/post", "./internal/member", "./internal/email/emailtest"})
 	if len(bands) != 3 {
 		t.Fatalf("bands = %#v, want db, ory and serial", bands)
 	}
@@ -113,9 +113,9 @@ func TestBandsForPackagesKeepsCatalogOrderAndSemantics(t *testing.T) {
 		name     string
 		packages []string
 	}{
-		{name: "db", packages: []string{"./internal/email"}},
+		{name: "db", packages: []string{"./internal/email/emailtest"}},
 		{name: "ory", packages: []string{"./internal/member", "./internal/post"}},
-		{name: "serial", packages: []string{"./internal/testutil"}},
+		{name: "serial", packages: []string{"./internal/testutil/pgtest"}},
 	} {
 		catalogBand, _ := bandByName(want.name)
 		band := bands[index]

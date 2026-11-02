@@ -4,20 +4,18 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/member"
 )
 
 const ToolMemberTagList = "member_tag_list"
 
-var memberTagTools = []mcpserver.Tool{
-	oauthTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false),
+var memberTagTools = toolRegistry[MemberTagTools]{
+	defineTool(oauthTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false), (*MemberTagTools).list),
 }
 
 type MemberTagReader interface {
-	ListMemberTagsAdmin(context.Context, *connect.Request[managev1.ListMemberTagsAdminRequest]) (*connect.Response[managev1.ListMemberTagsAdminResponse], error)
+	ListMemberTags(context.Context, member.ListMemberTagsQuery) (member.TagPage, error)
 }
 
 type MemberTagTools struct{ reader MemberTagReader }
@@ -29,25 +27,24 @@ func NewMemberTagTools(reader MemberTagReader) (*MemberTagTools, error) {
 	return &MemberTagTools{reader: reader}, nil
 }
 
-func (*MemberTagTools) ToolNames() []string { return toolDefinitionNames(memberTagTools) }
+func (*MemberTagTools) ToolNames() []string { return memberTagTools.names() }
 
 func (*MemberTagTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(memberTagTools), nil
+	return memberTagTools.list(), nil
 }
 
 func (tools *MemberTagTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolMemberTagList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return memberTagTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *MemberTagTools) list(ctx context.Context, name string, call toolCall[memberTagListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
 		return executionError(err)
 	}
-	var input struct {
-		Query  string `json:"query"`
-		Limit  *int32 `json:"limit"`
-		Offset int32  `json:"offset"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+	var input memberTagListArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	limit := int32(50)
@@ -60,21 +57,26 @@ func (tools *MemberTagTools) CallTool(ctx context.Context, _ mcpserver.Principal
 	if input.Offset < 0 {
 		return executionError(errors.New("offset must be between 0 and 2147483647"))
 	}
-	response, err := tools.reader.ListMemberTagsAdmin(ctx, connect.NewRequest(&managev1.ListMemberTagsAdminRequest{
-		Pagination: &commonv1.PaginationRequest{Limit: limit, Offset: input.Offset},
-		Filters:    discoverySearchFilters(input.Query),
-	}))
+	page, err := tools.reader.ListMemberTags(ctx, member.ListMemberTagsQuery{
+		Limit: limit, Offset: input.Offset, Filters: discoverySearchFilters(input.Query),
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	items := make([]map[string]any, 0, len(response.Msg.Tags))
-	for _, tag := range response.Msg.Tags {
-		items = append(items, map[string]any{"id": tag.Id, "name": tag.Name, "member_count": tag.MemberCount})
+	items := make([]map[string]any, 0, len(page.Tags))
+	for _, tag := range page.Tags {
+		items = append(items, map[string]any{"id": tag.ID, "name": tag.Name, "member_count": tag.MemberCount})
 	}
-	pagination := response.Msg.Pagination
+	pagination := member.PaginationMessage(page.Pagination)
 	output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": pagination.GetLimit(), "offset": pagination.GetOffset(), "has_more": pagination.GetHasMore()}
 	if pagination.GetHasMore() {
 		output["next_offset"] = int64(pagination.GetOffset()) + int64(pagination.GetLimit())
 	}
 	return contentResult(output)
+}
+
+type memberTagListArguments = struct {
+	Query  string `json:"query"`
+	Limit  *int32 `json:"limit"`
+	Offset int32  `json:"offset"`
 }

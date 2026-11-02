@@ -7,11 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 const (
@@ -19,77 +15,50 @@ const (
 	TerminalAssetRetention = 24 * time.Hour
 )
 
+// Cleanup marks OG assets no generation or entity still uses for deletion.
 type Cleanup struct {
-	db *gorm.DB
+	units mutation.UnitOfWork[Store]
 }
 
-func NewCleanup(db *gorm.DB) *Cleanup {
-	if db == nil {
-		panic("OG cleanup: database is required")
+// NewCleanup returns the OG asset cleanup; an asset any entity row still
+// points at is never marked for deletion.
+func NewCleanup(units mutation.UnitOfWork[Store]) *Cleanup {
+	if units == nil {
+		panic("OG cleanup: units are required")
 	}
-	return &Cleanup{db: db}
-}
-
-func (s *Cleanup) MarkExpiredAssets(ctx context.Context, now time.Time) error {
-	unboundErr := s.MarkUnboundReadyAssets(ctx, now.Add(-UnboundAssetRetention), now)
-	terminalErr := s.MarkExpiredTerminalGenerationAssets(ctx, now.Add(-TerminalAssetRetention), now)
-	return stderrors.Join(unboundErr, terminalErr)
+	return &Cleanup{units: units}
 }
 
 func (s *Cleanup) MarkUnboundReadyAssets(ctx context.Context, cutoff, now time.Time) error {
 	var assetIDs []string
-	if err := s.db.WithContext(ctx).Model(&model.PublicAsset{}).
-		Where("kind = ? AND status = ? AND ready_at < ?", "og", model.PublicAssetStatusReady, cutoff).
-		Where("NOT EXISTS (SELECT 1 FROM public_asset_binding pab WHERE pab.asset_id = public_asset.id)").
-		Order("ready_at ASC, id ASC").Pluck("id", &assetIDs).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		assetIDs, err = store.UnboundReadyAssetIDs(ctx, cutoff)
+		return err
+	}); err != nil {
 		return fmt.Errorf("list unbound OG assets: %w", err)
 	}
 	return markAssets(ctx, assetIDs, func(ctx context.Context, assetID string) (bool, error) {
-		return s.MarkUnboundReadyAsset(ctx, assetID, cutoff, now, nil)
+		return s.markUnboundReadyAsset(ctx, assetID, cutoff, now)
 	}, "Marked unbound OG assets for deletion")
 }
 
-func (s *Cleanup) MarkUnboundReadyAsset(
-	ctx context.Context,
-	assetID string,
-	cutoff, now time.Time,
-	afterLock func(),
-) (bool, error) {
+func (s *Cleanup) markUnboundReadyAsset(ctx context.Context, assetID string, cutoff, now time.Time) (bool, error) {
 	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "kind", "status", "ready_at").Where("id = ?", assetID).Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
+	err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		asset, found, err := store.LockAsset(ctx, assetID)
+		if err != nil || !found {
 			return err
 		}
-		if asset.Kind != "og" || asset.Status != model.PublicAssetStatusReady || asset.ReadyAt == nil || !asset.ReadyAt.Before(cutoff) {
+		if asset.Kind != assetKindOG || asset.Status != AssetReady || asset.ReadyAt == nil || !asset.ReadyAt.Before(cutoff) {
 			return nil
 		}
-		if afterLock != nil {
-			afterLock()
-		}
-		var bindings int64
-		if err := tx.Model(&model.PublicAssetBinding{}).Where("asset_id = ?", asset.ID).Count(&bindings).Error; err != nil {
+		retained, err := assetRetained(ctx, store, asset)
+		if err != nil || retained {
 			return err
 		}
-		if bindings != 0 {
-			return nil
-		}
-		protected, err := s.IsPublicAssetProtected(ctx, tx, asset)
-		if err != nil || protected {
-			return err
-		}
-		result := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND kind = ? AND status = ? AND ready_at < ?", asset.ID, "og", model.PublicAssetStatusReady, cutoff).
-			Updates(structured.Fields{"status": model.PublicAssetStatusDeletePending, "delete_requested_at": now, "updated_at": now})
-		if result.Error != nil {
-			return result.Error
-		}
-		changed = result.RowsAffected == 1
-		return nil
+		changed, err = store.MarkUnboundAssetDeletePending(ctx, asset.ID, cutoff, now)
+		return err
 	})
 	if err != nil {
 		return false, fmt.Errorf("mark unbound OG asset %s for deletion: %w", assetID, err)
@@ -99,77 +68,47 @@ func (s *Cleanup) MarkUnboundReadyAsset(
 
 func (s *Cleanup) MarkExpiredTerminalGenerationAssets(ctx context.Context, cutoff, now time.Time) error {
 	var assetIDs []string
-	if err := s.db.WithContext(ctx).Table("public_asset").Select("public_asset.id").
-		Joins("JOIN og_generation ON og_generation.id = public_asset.id").
-		Where("public_asset.kind = ?", "og").
-		Where("public_asset.status IN ?", []string{model.PublicAssetStatusAllocated, model.PublicAssetStatusFailed}).
-		Where("public_asset.created_at < ?", cutoff).
-		Where("og_generation.status IN ?", []string{
-			model.OgGenerationStatusFailed, model.OgGenerationStatusSuperseded, model.OgGenerationStatusCancelled,
-		}).Order("public_asset.created_at ASC, public_asset.id ASC").Pluck("public_asset.id", &assetIDs).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		assetIDs, err = store.ExpiredTerminalAssetIDs(ctx, cutoff)
+		return err
+	}); err != nil {
 		return fmt.Errorf("list expired terminal OG generation assets: %w", err)
 	}
 	return markAssets(ctx, assetIDs, func(ctx context.Context, assetID string) (bool, error) {
-		return s.MarkExpiredTerminalGenerationAsset(ctx, assetID, cutoff, now, nil)
+		return s.markExpiredTerminalGenerationAsset(ctx, assetID, cutoff, now)
 	}, "Marked terminal OG generation assets for deletion")
 }
 
-func (s *Cleanup) MarkExpiredTerminalGenerationAsset(
-	ctx context.Context,
-	assetID string,
-	cutoff, now time.Time,
-	afterLock func(),
-) (bool, error) {
+func (s *Cleanup) markExpiredTerminalGenerationAsset(ctx context.Context, assetID string, cutoff, now time.Time) (bool, error) {
 	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "kind", "status", "created_at").Where("id = ?", assetID).Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
+	err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		asset, found, err := store.LockAsset(ctx, assetID)
+		if err != nil || !found {
 			return err
 		}
-		if asset.Kind != "og" || !asset.CreatedAt.Before(cutoff) ||
-			(asset.Status != model.PublicAssetStatusAllocated && asset.Status != model.PublicAssetStatusFailed) {
+		if asset.Kind != assetKindOG || !asset.CreatedAt.Before(cutoff) ||
+			(asset.Status != AssetAllocated && asset.Status != AssetFailed) {
 			return nil
 		}
-		if afterLock != nil {
-			afterLock()
+		generation, err := store.Generation(ctx, asset.ID)
+		if stderrors.Is(err, ErrGenerationNotFound) {
+			return nil
 		}
-		var generation model.OgGeneration
-		if err := tx.Select("id", "status").First(&generation, "id = ?", asset.ID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
+		if err != nil {
 			return err
 		}
 		switch generation.Status {
-		case model.OgGenerationStatusFailed, model.OgGenerationStatusSuperseded, model.OgGenerationStatusCancelled:
+		case StatusFailed, StatusSuperseded, StatusCancelled:
 		default:
 			return nil
 		}
-		var bindings int64
-		if err := tx.Model(&model.PublicAssetBinding{}).Where("asset_id = ?", asset.ID).Count(&bindings).Error; err != nil {
+		retained, err := assetRetained(ctx, store, asset)
+		if err != nil || retained {
 			return err
 		}
-		if bindings != 0 {
-			return nil
-		}
-		protected, err := s.IsPublicAssetProtected(ctx, tx, asset)
-		if err != nil || protected {
-			return err
-		}
-		result := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND kind = ? AND status IN ? AND created_at < ?", asset.ID, "og", []string{
-				model.PublicAssetStatusAllocated, model.PublicAssetStatusFailed,
-			}, cutoff).
-			Updates(structured.Fields{"status": model.PublicAssetStatusDeletePending, "delete_requested_at": now, "updated_at": now})
-		if result.Error != nil {
-			return result.Error
-		}
-		changed = result.RowsAffected == 1
-		return nil
+		changed, err = store.MarkTerminalAssetDeletePending(ctx, asset.ID, cutoff, now)
+		return err
 	})
 	if err != nil {
 		return false, fmt.Errorf("mark terminal OG generation asset %s for deletion: %w", assetID, err)
@@ -177,33 +116,22 @@ func (s *Cleanup) MarkExpiredTerminalGenerationAsset(
 	return changed, nil
 }
 
-func (s *Cleanup) IsPublicAssetProtected(ctx context.Context, tx *gorm.DB, asset model.PublicAsset) (bool, error) {
-	if asset.Kind != "og" {
+// assetRetained reports whether a binding or an entity row still uses asset.
+func assetRetained(ctx context.Context, store Store, asset Asset) (bool, error) {
+	bound, err := store.AssetBound(ctx, asset.ID)
+	if err != nil || bound {
+		return bound, err
+	}
+	return AssetProtected(ctx, store, asset)
+}
+
+// AssetProtected reports whether an entity row still points at an OG asset,
+// which keeps it from deletion while no binding holds it.
+func AssetProtected(ctx context.Context, store Store, asset Asset) (bool, error) {
+	if asset.Kind != assetKindOG {
 		return false, nil
 	}
-	const query = `
-		SELECT EXISTS (
-			SELECT 1 FROM post WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM page WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM form WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM label WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM release WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM series_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM post_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM page_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM form_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM work_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM artist_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM site_settings WHERE site_og_asset_id = ?
-		) AS referenced`
-	var referenced bool
-	if err := tx.WithContext(ctx).Raw(query,
-		asset.ID, asset.ID, asset.ID, asset.ID, asset.ID, asset.ID,
-		asset.ID, asset.ID, asset.ID, asset.ID, asset.ID, asset.ID,
-	).Scan(&referenced).Error; err != nil {
-		return false, err
-	}
-	return referenced, nil
+	return store.AssetReferenced(ctx, asset.ID)
 }
 
 func markAssets(
@@ -225,7 +153,7 @@ func markAssets(
 		}
 	}
 	if marked > 0 {
-		slog.Info(message, "count", marked)
+		slog.InfoContext(ctx, message, "count", marked)
 	}
 	return stderrors.Join(cleanupErrs...)
 }

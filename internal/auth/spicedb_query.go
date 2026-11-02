@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -197,7 +198,7 @@ func (c *SpiceDBClient) readDirectGlobalRole(
 	var roles []policyv1.RoleID
 	for {
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
@@ -243,7 +244,7 @@ func (c *SpiceDBClient) LookupGlobalSubjects(
 	var subjects []AccountIdentitySubject
 	for {
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			return subjects, nil
 		}
 		if recvErr != nil {
@@ -314,7 +315,7 @@ func (c *SpiceDBClient) LookupResources(
 	var resourceIDs []string
 	for {
 		item, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			return resourceIDs, nil
 		}
 		if recvErr != nil {

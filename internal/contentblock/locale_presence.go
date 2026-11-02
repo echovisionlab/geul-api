@@ -2,14 +2,11 @@ package contentblock
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -190,9 +187,6 @@ func validateRichTextLocaleValueTarget(
 	blockID := value.GetBlockHandle()
 	parsed, err := uuid.Parse(blockID)
 	if err != nil || parsed.String() != blockID {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.validateRichTextLocaleValueTarget", "outcome", "failed", failurecause.Attr(err))
-		}
 		return nil, "", fmt.Errorf("block handle must be a canonical UUID")
 	}
 	upsert := upserts[blockID]
@@ -474,14 +468,10 @@ func tableIdentity(object map[string]json.RawMessage, field string) (string, err
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.tableIdentity", "outcome", "failed", failurecause.Attr(err))
 		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed.String() != value {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.tableIdentity", "outcome", "failed", failurecause.Attr(err))
-		}
 		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
 	return value, nil
@@ -548,9 +538,6 @@ func requiredJSONString(object map[string]json.RawMessage, field string) (string
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.requiredJSONString", "outcome", "failed", failurecause.Attr(err))
-		}
 		return "", fmt.Errorf("%s must be a nonblank string", field)
 	}
 	return value, nil

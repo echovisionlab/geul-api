@@ -31,20 +31,17 @@ type exactProgramEventDocumentAPI struct {
 
 func (a *exactProgramEventDocumentAPI) LoadAIDocumentState(
 	context.Context,
-	string,
-	string,
+	programeventdomain.AIDocumentStateQuery,
 ) (programeventdomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
 }
 
-func (a *exactProgramEventDocumentAPI) ExecuteAIDocumentCommand(
+func (a *exactProgramEventDocumentAPI) ExecuteAIDocument(
 	_ context.Context,
-	eventID string,
-	locale string,
-	_ programeventdomain.AIDocumentExecutionMode,
-	compiler programeventdomain.AIDocumentCommandCompiler,
+	execution programeventdomain.ExecuteAIDocumentCommand,
 ) (programeventdomain.AIDocumentResult, error) {
+	eventID, locale, compiler := execution.EventID, execution.Locale, execution.Compiler
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return programeventdomain.AIDocumentResult{}, a.authorizeErr
@@ -185,7 +182,7 @@ func TestProgramEventSemanticChangesExcludeNoOpFields(t *testing.T) {
 }
 
 func TestProgramEventExactMutationPathDoesNotEnterPublicLoad(t *testing.T) {
-	registration, err := NewProgramEventRegistration(&programeventdomain.ProgramEventService{})
+	registration, err := NewProgramEventRegistration(&programeventdomain.Service{})
 	require.NoError(t, err)
 	port := registration.Port.(*programEventPort)
 	eventID, documentID, revision, nextRevision, contributor :=
@@ -224,7 +221,7 @@ func TestProgramEventExactMutationPathDoesNotEnterPublicLoad(t *testing.T) {
 }
 
 func TestProgramEventExactMutationAuthorizesBeforeCompiler(t *testing.T) {
-	registration, err := NewProgramEventRegistration(&programeventdomain.ProgramEventService{})
+	registration, err := NewProgramEventRegistration(&programeventdomain.Service{})
 	require.NoError(t, err)
 	port := registration.Port.(*programEventPort)
 	eventID := uuid.New()

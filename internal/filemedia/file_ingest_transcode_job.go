@@ -7,16 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var fileIngestFinalizerNamespace = uuid.MustParse("ed84d962-d876-5d52-973c-9b5b4bdaf357")
@@ -30,162 +26,145 @@ func stableFileIngestFinalizerID(fileID string, purpose string) string {
 
 func newStableFileIngestAudioTranscodeJob(
 	ctx context.Context,
-	db *gorm.DB,
-	file model.File,
-	entityType managev1.TranscodeEntityType,
+	store Store,
+	file File,
+	entityType EntityType,
 	entityID string,
-) (*managev1.TranscodeAudioEvent, bool, error) {
-	source, err := CanonicalMediaObjectTargetForFile(file)
+) (*domain.IngestTranscodeCommand, bool, error) {
+	source, err := domain.CanonicalObjectTarget(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
-		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
+		return nil, false, domainerr.Precondition("source file metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
 	}
-	hls, spectrogram, shouldPublish, err := ensureStableFileIngestAudioOutputs(ctx, db, file.ID)
+	hls, spectrogram, shouldPublish, err := ensureStableFileIngestAudioOutputs(ctx, store, file.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	return &managev1.TranscodeAudioEvent{
-		EventId:           stableFileIngestFinalizerID(file.ID, "transcode-audio"),
-		EntityType:        entityType,
-		EntityId:          strings.TrimSpace(entityID),
-		FileId:            file.ID,
-		Source:            source,
-		HlsOutput:         hls,
-		SpectrogramOutput: spectrogram,
+	return &domain.IngestTranscodeCommand{Kind: domain.IngestTranscodeAudio,
+		EventID:        stableFileIngestFinalizerID(file.ID, "transcode-audio"),
+		EntityType:     int32(entityType),
+		EntityID:       strings.TrimSpace(entityID),
+		FileID:         file.ID,
+		Source:         source,
+		HLSOutput:      hls,
+		ArtifactOutput: spectrogram,
 	}, shouldPublish, nil
 }
 
 func newStableFileIngestVideoTranscodeJob(
 	ctx context.Context,
-	db *gorm.DB,
-	file model.File,
-	entityType managev1.TranscodeEntityType,
+	store Store,
+	file File,
+	entityType EntityType,
 	entityID string,
-) (*managev1.TranscodeVideoEvent, bool, error) {
-	source, err := CanonicalMediaObjectTargetForFile(file)
+) (*domain.IngestTranscodeCommand, bool, error) {
+	source, err := domain.CanonicalObjectTarget(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
-		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
+		return nil, false, domainerr.Precondition("source file metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
 	}
-	hls, thumbnail, shouldPublish, err := ensureStableFileIngestVideoOutputs(ctx, db, file.ID)
+	hls, thumbnail, shouldPublish, err := ensureStableFileIngestVideoOutputs(ctx, store, file.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	return &managev1.TranscodeVideoEvent{
-		EventId:         stableFileIngestFinalizerID(file.ID, "transcode-video"),
-		EntityType:      entityType,
-		EntityId:        strings.TrimSpace(entityID),
-		FileId:          file.ID,
-		Source:          source,
-		HlsOutput:       hls,
-		ThumbnailOutput: thumbnail,
+	return &domain.IngestTranscodeCommand{Kind: domain.IngestTranscodeVideo,
+		EventID:        stableFileIngestFinalizerID(file.ID, "transcode-video"),
+		EntityType:     int32(entityType),
+		EntityID:       strings.TrimSpace(entityID),
+		FileID:         file.ID,
+		Source:         source,
+		HLSOutput:      hls,
+		ArtifactOutput: thumbnail,
 	}, shouldPublish, nil
 }
 
 func ensureStableFileIngestAudioOutputs(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	fileID string,
-) (*commonv1.MediaGenerationWriteTarget, *commonv1.AssetWriteTarget, bool, error) {
-	return ensureStableFileIngestOutputs(ctx, db, fileID, "spectrogram", "png", "image/png")
+) (*domain.GenerationTarget, *mediaasset.WriteTarget, bool, error) {
+	return ensureStableFileIngestOutputs(ctx, store, fileID, "spectrogram", "png", "image/png")
 }
 
 func ensureStableFileIngestVideoOutputs(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	fileID string,
-) (*commonv1.MediaGenerationWriteTarget, *commonv1.AssetWriteTarget, bool, error) {
-	return ensureStableFileIngestOutputs(ctx, db, fileID, "thumbnail", "webp", "image/webp")
+) (*domain.GenerationTarget, *mediaasset.WriteTarget, bool, error) {
+	return ensureStableFileIngestOutputs(ctx, store, fileID, "thumbnail", "webp", "image/webp")
 }
 
 func ensureStableFileIngestOutputs(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	fileID string,
 	assetPurpose string,
 	assetExtension string,
 	assetMime string,
-) (*commonv1.MediaGenerationWriteTarget, *commonv1.AssetWriteTarget, bool, error) {
-	var hls *commonv1.MediaGenerationWriteTarget
-	var asset *commonv1.AssetWriteTarget
-	var hlsAllocated, assetAllocated bool
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{fileID}); err != nil {
-			return err
-		}
-		var err error
-		hls, hlsAllocated, err = ensureStableFileIngestMediaGeneration(ctx, tx, fileID)
-		if err != nil {
-			return err
-		}
-		asset, assetAllocated, err = ensureStableFileIngestPublicAsset(
-			ctx,
-			tx,
-			fileID,
-			assetPurpose,
-			assetExtension,
-			assetMime,
-		)
-		return err
-	})
+) (*domain.GenerationTarget, *mediaasset.WriteTarget, bool, error) {
+	if err := store.LockIngestFile(ctx, fileID); err != nil {
+		return nil, nil, false, err
+	}
+	hls, hlsAllocated, err := ensureStableFileIngestMediaGeneration(ctx, store, fileID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	asset, assetAllocated, err := ensureStableFileIngestPublicAsset(ctx, store, fileID, assetPurpose, assetExtension, assetMime)
 	return hls, asset, hlsAllocated && assetAllocated, err
 }
 
 func ensureStableFileIngestMediaGeneration(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	fileID string,
-) (*commonv1.MediaGenerationWriteTarget, bool, error) {
+) (*domain.GenerationTarget, bool, error) {
 	generationID := stableFileIngestFinalizerID(fileID, "hls")
 	objectPrefix, err := mediaauth.MediaHLSObjectPrefix(fileID, generationID)
 	if err != nil {
-		return nil, false, errs.InvalidArgument("file_id", err.Error())
+		return nil, false, domainerr.InvalidField("file_id", err.Error())
 	}
 	now := time.Now().UTC()
-	row := model.MediaGeneration{
+	row := mediaasset.Generation{
 		ID:           generationID,
 		FileID:       fileID,
 		Kind:         "hls",
 		ObjectPrefix: objectPrefix,
 		ManifestName: "master.m3u8",
-		Status:       model.MediaGenerationStatusAllocated,
+		Status:       mediaasset.GenerationAllocated,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+	row, err = store.EnsureIngestGeneration(ctx, row)
+	if err != nil {
+		return nil, false, err
 	}
-	if err := db.WithContext(ctx).Where("id = ?", generationID).Take(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
-	}
+
 	if row.FileID != fileID || row.Kind != "hls" || row.ObjectPrefix != objectPrefix || row.ManifestName != "master.m3u8" {
-		return nil, false, errs.FailedPrecondition("stable media generation allocation conflicts with existing domain state")
+		return nil, false, domainerr.Precondition("stable media generation allocation conflicts with existing domain state")
 	}
 	if row.Status == "" {
-		return nil, false, errs.FailedPrecondition("stable media generation status is missing")
+		return nil, false, domainerr.Precondition("stable media generation status is missing")
 	}
-	return &commonv1.MediaGenerationWriteTarget{
-		GenerationId: row.ID,
-		FileId:       row.FileID,
+	return &domain.GenerationTarget{
+		GenerationID: row.ID,
+		FileID:       row.FileID,
 		ObjectPrefix: row.ObjectPrefix,
-	}, row.Status == model.MediaGenerationStatusAllocated, nil
+	}, row.Status == mediaasset.GenerationAllocated, nil
 }
 
 func ensureStableFileIngestPublicAsset(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	fileID string,
 	kind string,
 	extension string,
 	mimeType string,
-) (*commonv1.AssetWriteTarget, bool, error) {
+) (*mediaasset.WriteTarget, bool, error) {
 	assetID := stableFileIngestFinalizerID(fileID, kind)
 	objectKey, err := mediaauth.AssetObjectKey(assetID, extension)
 	if err != nil {
-		return nil, false, errs.InvalidArgument("extension", err.Error())
+		return nil, false, domainerr.InvalidField("extension", err.Error())
 	}
 	now := time.Now().UTC()
-	row := model.PublicAsset{
+	row := mediaasset.Asset{
 		ID:           assetID,
 		SourceFileID: &fileID,
 		Kind:         kind,
@@ -193,29 +172,28 @@ func ensureStableFileIngestPublicAsset(
 		Extension:    extension,
 		MimeType:     mimeType,
 		Disposition:  "inline",
-		Status:       model.PublicAssetStatusAllocated,
+		Status:       mediaasset.AssetAllocated,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+	row, err = store.EnsureIngestAsset(ctx, row)
+	if err != nil {
+		return nil, false, err
 	}
-	if err := db.WithContext(ctx).Where("id = ?", assetID).Take(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
-	}
+
 	if row.SourceFileID == nil || *row.SourceFileID != fileID ||
 		row.Kind != kind || row.ObjectKey != objectKey || row.Extension != extension ||
 		row.MimeType != mimeType || row.Disposition != "inline" {
-		return nil, false, errs.FailedPrecondition("stable public asset allocation conflicts with existing domain state")
+		return nil, false, domainerr.Precondition("stable public asset allocation conflicts with existing domain state")
 	}
 	if row.Status == "" {
-		return nil, false, errs.FailedPrecondition("stable public asset status is missing")
+		return nil, false, domainerr.Precondition("stable public asset status is missing")
 	}
-	return &commonv1.AssetWriteTarget{
-		AssetId:     row.ID,
+	return &mediaasset.WriteTarget{
+		AssetID:     row.ID,
 		ObjectKey:   row.ObjectKey,
 		Extension:   row.Extension,
 		MimeType:    row.MimeType,
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	}, row.Status == model.PublicAssetStatusAllocated, nil
+		Disposition: mediaasset.DispositionInline,
+	}, row.Status == mediaasset.AssetAllocated, nil
 }

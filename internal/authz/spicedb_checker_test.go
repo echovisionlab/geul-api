@@ -60,7 +60,7 @@ func newCheckerTestDB(t *testing.T, postID string) (*gorm.DB, *atomic.Int64) {
 
 func TestSpiceDBResourceCheckerRejectsUnauthenticatedWithoutAuthorizationCall(t *testing.T) {
 	fake := &fakeAuthorizationDecisionChecker{allowed: true}
-	checker := newSpiceDBResourceChecker(fake, nil, "posts")
+	checker := NewSpiceDBResourceChecker(fake, nil, "posts")
 	can, err := policyv1.Post.Edit("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 	require.NoError(t, err)
 	err = checker.Check(context.Background(), can)
@@ -75,7 +75,7 @@ func TestSpiceDBResourceCheckerRejectsInvalidCanAndActorBeforeAuthorizationCall(
 	t.Run("invalid Can", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 
 		require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(checker.Check(authenticatedCheckerContext(), policyv1.Can{})))
 		require.Empty(t, fake.calls)
@@ -85,7 +85,7 @@ func TestSpiceDBResourceCheckerRejectsInvalidCanAndActorBeforeAuthorizationCall(
 	t.Run("invalid account identity", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 			IdentityID:    auth.IdentityID("not-a-uuid"),
 			MemberID:      auth.MemberID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
@@ -105,7 +105,7 @@ func TestSpiceDBResourceCheckerUsesCompleteDecisionAndAuthenticatedAccountIdenti
 	const postID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 	ctx := authenticatedCheckerContext()
 	fake := &fakeAuthorizationDecisionChecker{allowed: true}
-	checker := newSpiceDBResourceChecker(fake, nil, "posts")
+	checker := NewSpiceDBResourceChecker(fake, nil, "posts")
 	can, err := policyv1.Post.Edit(postID)
 	require.NoError(t, err)
 
@@ -132,7 +132,7 @@ func TestSpiceDBResourceCheckerSupportsGeneratedPostActionsThroughExactPath(t *t
 	for index, action := range actions {
 		t.Run(fmt.Sprintf("action_%d", index), func(t *testing.T) {
 			fake := &fakeAuthorizationDecisionChecker{allowed: true}
-			checker := newSpiceDBResourceChecker(fake, nil, "posts")
+			checker := NewSpiceDBResourceChecker(fake, nil, "posts")
 			can, err := action(postID)
 			require.NoError(t, err)
 
@@ -150,7 +150,7 @@ func TestSpiceDBResourceCheckerMapsDeniedAndDependencyFailures(t *testing.T) {
 	t.Run("denied", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -162,7 +162,7 @@ func TestSpiceDBResourceCheckerMapsDeniedAndDependencyFailures(t *testing.T) {
 	t.Run("dependency failure", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{err: errors.New("unavailable")}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -174,7 +174,7 @@ func TestSpiceDBResourceCheckerMapsDeniedAndDependencyFailures(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -191,7 +191,7 @@ func TestSpiceDBResourceCheckerCheckOrNotFoundQueriesOnlyToMaskDenial(t *testing
 	t.Run("missing resource becomes not found", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, "")
 		fake := &fakeAuthorizationDecisionChecker{}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -203,7 +203,7 @@ func TestSpiceDBResourceCheckerCheckOrNotFoundQueriesOnlyToMaskDenial(t *testing
 	t.Run("existing resource preserves denied", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -215,7 +215,7 @@ func TestSpiceDBResourceCheckerCheckOrNotFoundQueriesOnlyToMaskDenial(t *testing
 	t.Run("allowed skips existence query", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -227,7 +227,7 @@ func TestSpiceDBResourceCheckerCheckOrNotFoundQueriesOnlyToMaskDenial(t *testing
 	t.Run("dependency failure skips existence query", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{err: errors.New("unavailable")}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.EditArchived(postID)
 		require.NoError(t, err)
 
@@ -243,7 +243,7 @@ func TestSpiceDBResourceCheckerViewPreservesExistenceMaskingWithoutDatabase(t *t
 	t.Run("allowed", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.View(postID)
 		require.NoError(t, err)
 
@@ -255,7 +255,7 @@ func TestSpiceDBResourceCheckerViewPreservesExistenceMaskingWithoutDatabase(t *t
 	t.Run("unauthenticated", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{allowed: true}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.View(postID)
 		require.NoError(t, err)
 
@@ -267,7 +267,7 @@ func TestSpiceDBResourceCheckerViewPreservesExistenceMaskingWithoutDatabase(t *t
 	t.Run("denied", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.View(postID)
 		require.NoError(t, err)
 
@@ -279,7 +279,7 @@ func TestSpiceDBResourceCheckerViewPreservesExistenceMaskingWithoutDatabase(t *t
 	t.Run("dependency failure", func(t *testing.T) {
 		db, queryCount := newCheckerTestDB(t, postID)
 		fake := &fakeAuthorizationDecisionChecker{err: errors.New("unavailable")}
-		checker := newSpiceDBResourceChecker(fake, db, "posts")
+		checker := NewSpiceDBResourceChecker(fake, db, "posts")
 		can, err := policyv1.Post.View(postID)
 		require.NoError(t, err)
 

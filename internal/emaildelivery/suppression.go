@@ -2,14 +2,11 @@ package emaildelivery
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -23,130 +20,111 @@ const (
 	EmailSuppressionSourceSESCallback = "ses_callback"
 )
 
-func GetActiveEmailSuppression(ctx context.Context, db *gorm.DB, email string) (*model.EmailSuppression, error) {
+// FindActiveSuppression returns the active suppression of email, or nil
+// when deliveries to it are not suppressed.
+func FindActiveSuppression(ctx context.Context, store Store, email string) (*Suppression, error) {
 	normalized := emailutil.NormalizeAddressForDelivery(email)
 	if normalized == "" {
 		return nil, nil
 	}
-
-	var suppression model.EmailSuppression
-	err := db.WithContext(ctx).
-		Where("LOWER(email) = ? AND released_at IS NULL", normalized).
-		First(&suppression).Error
+	suppression, err := store.ActiveSuppression(ctx, normalized)
 	if err == nil {
 		return &suppression, nil
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, ErrSuppressionNotFound) {
 		return nil, nil
 	}
 	return nil, err
 }
 
-func LookupActiveEmailSuppressionsByEmail(ctx context.Context, db *gorm.DB, emails []string) (map[string]model.EmailSuppression, error) {
+// LookupActiveSuppressions returns the active suppressions of emails by
+// normalized address.
+func LookupActiveSuppressions(ctx context.Context, store Store, emails []string) (map[string]Suppression, error) {
 	normalizedEmails := normalizeEmailSuppressionList(emails)
 	if len(normalizedEmails) == 0 {
-		return map[string]model.EmailSuppression{}, nil
+		return map[string]Suppression{}, nil
 	}
 
-	var rows []model.EmailSuppression
-	if err := db.WithContext(ctx).
-		Where("LOWER(email) IN ? AND released_at IS NULL", normalizedEmails).
-		Find(&rows).Error; err != nil {
+	rows, err := store.ActiveSuppressions(ctx, normalizedEmails)
+	if err != nil {
 		return nil, err
 	}
 
-	result := make(map[string]model.EmailSuppression, len(rows))
+	result := make(map[string]Suppression, len(rows))
 	for _, row := range rows {
 		result[emailutil.NormalizeAddressForDelivery(row.Email)] = row
 	}
 	return result, nil
 }
 
-func SuppressEmailAddress(
-	ctx context.Context,
-	db *gorm.DB,
-	email string,
-	reason string,
-	source string,
-	referenceID *string,
-	message string,
-) error {
-	normalized := emailutil.NormalizeAddressForDelivery(email)
+// SuppressAddress records a delivery suppression of request.Email. store is
+// bound to the caller's transaction, which must be one: the active
+// suppression is locked before it is replaced. An SES callback replay and a
+// weaker SES reason leave the active suppression unchanged.
+func SuppressAddress(ctx context.Context, store Store, request SuppressionRequest) error {
+	normalized := emailutil.NormalizeAddressForDelivery(request.Email)
 	if normalized == "" {
 		return nil
 	}
+	reason, source := request.Reason, request.Source
 	if reason == "" {
 		reason = EmailSuppressionReasonInvalidRecipient
 	}
 	if source == "" {
 		source = EmailSuppressionSourceEmailWorker
 	}
+	var referenceID *string
+	if value := strings.TrimSpace(request.ReferenceID); value != "" {
+		referenceID = &value
+	}
 
 	now := time.Now()
 	var lastError *string
-	if strings.TrimSpace(message) != "" {
-		value := strings.TrimSpace(message)
+	if strings.TrimSpace(request.ErrorType) != "" {
+		value := strings.TrimSpace(request.ErrorType)
 		lastError = &value
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if source == EmailSuppressionSourceSESCallback &&
-			referenceID != nil && strings.TrimSpace(*referenceID) != "" {
-			var replayCount int64
-			if err := tx.Model(&model.EmailSuppression{}).
-				Where(
-					"LOWER(email) = ? AND source = ? AND reason = ? AND reference_id = ?",
-					normalized,
-					source,
-					reason,
-					strings.TrimSpace(*referenceID),
-				).
-				Count(&replayCount).Error; err != nil {
-				return err
-			}
-			if replayCount > 0 {
-				return nil
-			}
-		}
-
-		var existing model.EmailSuppression
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("LOWER(email) = ? AND released_at IS NULL", normalized).
-			First(&existing).Error
-		if err == nil {
-			if source == EmailSuppressionSourceSESCallback &&
-				!shouldApplySESSuppression(existing, reason) {
-				return nil
-			}
-			if existing.Reason == reason &&
-				existing.Source == source &&
-				stringPointerEqual(existing.ReferenceID, referenceID) {
-				return nil
-			}
-			return tx.Model(&existing).Updates(structured.Fields{
-				"reason":        reason,
-				"source":        source,
-				"reference_id":  referenceID,
-				"last_error":    lastError,
-				"suppressed_at": now,
-			}).Error
-		}
-		if err != gorm.ErrRecordNotFound {
+	if source == EmailSuppressionSourceSESCallback && referenceID != nil {
+		replayed, err := store.SuppressionRecorded(ctx, normalized, source, reason, *referenceID)
+		if err != nil {
 			return err
 		}
+		if replayed {
+			return nil
+		}
+	}
 
-		return tx.Create(&model.EmailSuppression{
-			Email:        normalized,
-			Reason:       reason,
-			Source:       source,
-			ReferenceID:  referenceID,
-			LastError:    lastError,
-			SuppressedAt: now,
-		}).Error
+	existing, err := store.LockActiveSuppression(ctx, normalized)
+	if err == nil {
+		if source == EmailSuppressionSourceSESCallback &&
+			!shouldApplySESSuppression(existing, reason) {
+			return nil
+		}
+		if existing.Reason == reason &&
+			existing.Source == source &&
+			stringPointerEqual(existing.ReferenceID, referenceID) {
+			return nil
+		}
+		return store.ReplaceSuppression(ctx, existing.ID, Suppression{
+			Reason: reason, Source: source, ReferenceID: referenceID, LastError: lastError, SuppressedAt: now,
+		})
+	}
+	if !errors.Is(err, ErrSuppressionNotFound) {
+		return err
+	}
+
+	return store.InsertSuppression(ctx, Suppression{
+		Email:        normalized,
+		Reason:       reason,
+		Source:       source,
+		ReferenceID:  referenceID,
+		LastError:    lastError,
+		SuppressedAt: now,
 	})
 }
 
-func shouldApplySESSuppression(existing model.EmailSuppression, incomingReason string) bool {
+func shouldApplySESSuppression(existing Suppression, incomingReason string) bool {
 	if existing.Source == EmailSuppressionSourceAdmin ||
 		existing.Reason == EmailSuppressionReasonManual {
 		return false

@@ -1,0 +1,2 @@
+# connect.NewRequest calls per MCP adapter file. The MCP adapter calls use
+# cases directly; lower with -update, never add a line.

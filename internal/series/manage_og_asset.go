@@ -1,15 +1,8 @@
 package series
 
-import (
-	"strings"
+import "strings"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-)
-
-func manageOgAssetFromReadyMap(
-	ready map[string]*commonv1.AssetRef,
-	candidateIDs ...*string,
-) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*Asset, candidateIDs ...*string) *Asset {
 	for _, candidateID := range candidateIDs {
 		if candidateID == nil {
 			continue

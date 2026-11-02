@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -41,7 +41,7 @@ func TestRequireLabelPermissionChecksExactActionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	require.NoError(t, requireLabelPermission(ctx, checker, labelID, policyv1.Label.Publish))
+	require.NoError(t, labelEntity.RequirePermission(ctx, checker, labelID, policyv1.Label.Publish))
 	require.Len(t, checker.calls, 1)
 	require.Equal(t, "label", checker.calls[0].Resource().Type())
 	require.Equal(t, labelID, checker.calls[0].Resource().ID())
@@ -57,10 +57,10 @@ func TestRequireLabelGlobalActionsUseDomainCatalog(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		actionName string
-		require    func(context.Context, labelPermissionChecker) error
+		require    func(context.Context, entityparticipant.PermissionChecker) error
 	}{
-		{name: "create", actionName: "label.create", require: requireLabelCreate},
-		{name: "list", actionName: "label.list", require: requireLabelList},
+		{name: "create", actionName: "label.create", require: labelEntity.RequireCreate},
+		{name: "list", actionName: "label.list", require: labelEntity.RequireList},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			admin, err := policyv1.Platform.IsAdmin()
@@ -100,15 +100,9 @@ func TestLabelAllowedActionsChecksEachGeneratedPermissionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	actions, err := labelAllowedActions(ctx, checker, labelID, managev1.LabelStatus_LABEL_STATUS_DRAFT.String())
+	actions, err := labelAllowedActions(ctx, checker, labelID, StatusDraft)
 	require.NoError(t, err)
-	require.Equal(t, []managev1.LabelAction{
-		managev1.LabelAction_LABEL_ACTION_EDIT,
-		managev1.LabelAction_LABEL_ACTION_MANAGE_SHARE_LINKS,
-		managev1.LabelAction_LABEL_ACTION_DELETE,
-		managev1.LabelAction_LABEL_ACTION_MANAGE_PARTICIPANTS,
-		managev1.LabelAction_LABEL_ACTION_PUBLISH,
-	}, actions)
+	require.Equal(t, []Action{ActionEdit, ActionManageShareLinks, ActionDelete, ActionManageParticipants, ActionPublish}, actions)
 	expectedPermissions := make([]string, 0, len(allowedActions)+1)
 	for _, action := range allowedActions {
 		can, err := action(labelID)

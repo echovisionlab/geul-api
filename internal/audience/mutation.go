@@ -3,308 +3,286 @@ package audience
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"fmt"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *AudienceService) CreateSegment(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateSegmentRequest],
-) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "CreateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	can, err := policyv1.AudienceSegment.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
-	}
-	if req.Msg.Name == "" {
-		return nil, errs.Required("name")
-	}
-	if req.Msg.SegmentType == managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED {
-		return nil, errs.InvalidArgumentMsg("segment type is required")
-	}
-	segmentType := req.Msg.SegmentType.String()
-	config, err := toModelSegmentConfig(req.Msg.Config)
-	if err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
-	}
-	segment := model.AudienceSegment{Name: req.Msg.Name, Description: req.Msg.Description, SegmentType: segmentType}
-	if err := applySegmentConfig(&segment, config); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
-	}
-	if err := ValidateSegmentConfigForType(segmentType, config); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := tx.Omit("ID", "Config").Clauses(clause.Returning{}).Create(&segment).Error; err != nil {
-			return err
-		}
-		if err := replaceSegmentRelations(tx, s.memberReferences, segment.ID, config); err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.AudienceSegment.TouchPolicy(segment.ID)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.AudienceSegment.DeletePolicy(segment.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{policyTouch},
-			[]policyv1.RelationshipMutation{policyDelete},
-		); err != nil {
-			return err
-		}
-		return domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditAudienceSegmentCreated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewAudienceSegmentCreatedAuditRecord(metadata, segment.ID)
-			},
-		)
-	})
-	if err != nil {
-		if isForeignKeyViolation(err) {
-			return nil, errs.InvalidArgumentMsg("one or more audience references do not exist")
-		}
-		return nil, errs.Wrap(err)
-	}
-	return connect.NewResponse(toProtoSegment(&segment)), nil
+// CreateSegmentCommand creates an audience segment.
+type CreateSegmentCommand struct {
+	Name        string
+	Description *string
+	SegmentType SegmentType
+	Config      *SegmentConfigInput
 }
 
-func (s *AudienceService) EstimateSegmentCount(
-	ctx context.Context,
-	req *connect.Request[managev1.EstimateSegmentCountRequest],
-) (rpcResponse *connect.Response[managev1.EstimateSegmentCountResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "EstimateSegmentCount", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+// CreateSegment validates the segment, stores it with its filter relations
+// and grants its policy relationship.
+func (s *Service) CreateSegment(ctx context.Context, command CreateSegmentCommand) (SegmentView, error) {
 	can, err := policyv1.AudienceSegment.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SegmentView{}, err
 	}
-	if err := requireAudienceAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
+		return SegmentView{}, err
 	}
-	segmentType := req.Msg.SegmentType.String()
-	if segmentType == "" {
-		return nil, errs.InvalidArgumentMsg("invalid segment type")
+	if command.Name == "" {
+		return SegmentView{}, domainerr.Required("name")
 	}
-	segment := &model.AudienceSegment{SegmentType: segmentType}
-	config, err := toModelSegmentConfig(req.Msg.Config)
+	if command.SegmentType == segmentTypeUnspecified {
+		return SegmentView{}, invalidSegment("segment type is required")
+	}
+	config, err := normalizeSegmentConfig(command.Config)
 	if err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return SegmentView{}, invalidSegment(err.Error())
 	}
-	if err := ValidateSegmentConfigForType(segmentType, config); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+	if err := requireCreatedWindow(config); err != nil {
+		return SegmentView{}, invalidSegment(err.Error())
 	}
-	if err := applySegmentConfig(segment, config); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+	if err := ValidateConfig(command.SegmentType, config); err != nil {
+		return SegmentView{}, invalidSegment(err.Error())
 	}
-	count, err := s.estimateCount(ctx, segment)
+	created, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Segment, Store]{
+		Access: freshAdmin(can),
+		Change: func(ctx context.Context, store Store) (Segment, error) {
+			segment, err := store.InsertSegment(ctx, Segment{
+				Name: command.Name, Description: command.Description, Type: command.SegmentType, Config: config,
+			})
+			if err != nil {
+				return segment, err
+			}
+			return segment, replaceConfig(ctx, store, segment.ID, config)
+		},
+		Audit: func(segment Segment) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditAudienceSegmentCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewAudienceSegmentCreatedAuditRecord(metadata, segment.ID)
+			})
+		},
+		Relationships: func(segment Segment) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			policyTouch, err := policyv1.AudienceSegment.TouchPolicy(segment.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			policyDelete, err := policyv1.AudienceSegment.DeletePolicy(segment.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete}, nil
+		},
+	})
 	if err != nil {
-		return nil, errs.Wrap(err)
+		if errors.Is(err, ErrUnknownReference) {
+			return SegmentView{}, invalidSegment("one or more audience references do not exist")
+		}
+		return SegmentView{}, err
 	}
-	return connect.NewResponse(&managev1.EstimateSegmentCountResponse{Count: count}), nil
+	return SegmentView{Segment: created}, nil
+}
+
+// requireCreatedWindow rejects a Member creation window that ends before it
+// starts.
+func requireCreatedWindow(config Config) error {
+	if config.CreatedAfter != nil && config.CreatedBefore != nil && config.CreatedAfter.After(*config.CreatedBefore) {
+		return fmt.Errorf("created_after must not be later than created_before")
+	}
+	return nil
+}
+
+// EstimateSegmentCountQuery estimates the recipients of an unsaved segment.
+type EstimateSegmentCountQuery struct {
+	SegmentType SegmentType
+	Config      *SegmentConfigInput
+}
+
+// EstimateSegmentCount returns the recipients the segment would select now.
+func (s *Service) EstimateSegmentCount(ctx context.Context, query EstimateSegmentCountQuery) (int32, error) {
+	can, err := policyv1.AudienceSegment.Create()
+	if err != nil {
+		return 0, err
+	}
+	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
+		return 0, err
+	}
+	config, err := normalizeSegmentConfig(query.Config)
+	if err != nil {
+		return 0, invalidSegment(err.Error())
+	}
+	if err := ValidateConfig(query.SegmentType, config); err != nil {
+		return 0, invalidSegment(err.Error())
+	}
+	return s.estimateCount(ctx, Segment{Type: query.SegmentType, Config: config})
+}
+
+// UpdateSegmentCommand changes a segment. A type or filter change needs the
+// type and filter the editor observed, so a concurrent edit of another
+// filter leaf survives.
+type UpdateSegmentCommand struct {
+	ID          string
+	Name        *string
+	Description *string
+	SegmentType *SegmentType
+	Config      *SegmentConfigInput
+	Observed    *ObservedSegment
+}
+
+// ObservedSegment is the segment type and filter an editor read.
+type ObservedSegment struct {
+	SegmentType SegmentType
+	// Config is required; nil means the editor sent no observed filter.
+	Config *SegmentConfigInput
 }
 
 type segmentUpdatePlan struct {
-	request         *managev1.UpdateSegmentRequest
-	requestedConfig *model.AudienceSegmentConfig
+	command         UpdateSegmentCommand
+	requestedConfig *Config
 	observed        *segmentConfigBaseline
 }
 
 type segmentConfigBaseline struct {
-	segmentType string
-	config      model.AudienceSegmentConfig
+	segmentType SegmentType
+	config      Config
 }
 
-func buildSegmentUpdatePlan(request *managev1.UpdateSegmentRequest) (segmentUpdatePlan, error) {
-	plan := segmentUpdatePlan{request: request}
-	if request.SegmentType != nil && *request.SegmentType == managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED {
-		return plan, errs.InvalidArgumentMsg("segment type is required")
+func buildSegmentUpdatePlan(command UpdateSegmentCommand) (segmentUpdatePlan, error) {
+	plan := segmentUpdatePlan{command: command}
+	if command.SegmentType != nil && *command.SegmentType == segmentTypeUnspecified {
+		return plan, invalidSegment("segment type is required")
 	}
-	if (request.SegmentType != nil || request.Config != nil) && request.Observed == nil {
-		return plan, errs.InvalidArgument("observed", "segment type and config are required when updating segment type or config")
+	if (command.SegmentType != nil || command.Config != nil) && command.Observed == nil {
+		return plan, domainerr.InvalidField("observed", "segment type and config are required when updating segment type or config")
 	}
-	if request.Observed != nil {
-		if request.Observed.SegmentType == managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED || request.Observed.Config == nil {
-			return plan, errs.InvalidArgumentMsg("observed segment type and config are required")
+	if command.Observed != nil {
+		if command.Observed.SegmentType == segmentTypeUnspecified || command.Observed.Config == nil {
+			return plan, invalidSegment("observed segment type and config are required")
 		}
-		observedConfig, err := toModelSegmentConfig(request.Observed.Config)
+		observedConfig, err := normalizeSegmentConfig(command.Observed.Config)
 		if err != nil {
-			return plan, errs.InvalidArgumentMsg("observed config is invalid")
+			return plan, invalidSegment("observed config is invalid")
 		}
-		observedType := request.Observed.SegmentType.String()
-		if err := ValidateSegmentConfigForType(observedType, observedConfig); err != nil {
-			return plan, errs.InvalidArgumentMsg("observed config is invalid for its segment type")
+		if err := ValidateConfig(command.Observed.SegmentType, observedConfig); err != nil {
+			return plan, invalidSegment("observed config is invalid for its segment type")
 		}
-		plan.observed = &segmentConfigBaseline{segmentType: observedType, config: observedConfig}
+		plan.observed = &segmentConfigBaseline{segmentType: command.Observed.SegmentType, config: observedConfig}
 	}
-	if request.Config == nil {
-		if plan.observed != nil && request.SegmentType != nil &&
-			(*request.SegmentType).String() != plan.observed.segmentType {
+	if command.Config == nil {
+		if plan.observed != nil && command.SegmentType != nil && *command.SegmentType != plan.observed.segmentType {
 			// An intentional type switch resets the coupled filter config even if
 			// the caller omitted config, so relation-backed filters are cleared too.
-			plan.requestedConfig = &model.AudienceSegmentConfig{}
+			plan.requestedConfig = &Config{}
 		}
 		return plan, nil
 	}
-	config, err := toModelSegmentConfig(request.Config)
+	config, err := normalizeSegmentConfig(command.Config)
 	if err != nil {
-		return plan, errs.InvalidArgumentMsg(err.Error())
+		return plan, invalidSegment(err.Error())
 	}
 	plan.requestedConfig = &config
 	return plan, nil
 }
 
-func (s *AudienceService) UpdateSegment(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateSegmentRequest],
-) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "UpdateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
+// UpdateSegment applies the change to a segment no scheduled or sending
+// delivery uses and returns the stored segment.
+func (s *Service) UpdateSegment(ctx context.Context, command UpdateSegmentCommand) (SegmentView, error) {
+	can, err := policyv1.AudienceSegment.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SegmentView{}, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return SegmentView{}, err
 	}
-	plan, err := buildSegmentUpdatePlan(req.Msg)
+	plan, err := buildSegmentUpdatePlan(command)
 	if err != nil {
-		return nil, err
+		return SegmentView{}, err
 	}
-	segment, err := s.applySegmentUpdate(ctx, req.Msg.Id, plan, can)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(toProtoSegment(segment)), nil
-}
-
-func (s *AudienceService) applySegmentUpdate(
-	ctx context.Context,
-	segmentID string,
-	plan segmentUpdatePlan,
-	can policyv1.Can,
-) (*model.AudienceSegment, error) {
-	var segment model.AudienceSegment
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockSegmentForUpdate(ctx, tx, segmentID, &segment); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := LoadSegmentConfig(ctx, tx, &segment); err != nil {
-			return errs.Internal(err)
-		}
-		if err := ensureSegmentMutableForActiveDelivery(tx, segment.ID); err != nil {
-			return err
-		}
-		nextType, nextConfig, err := plan.nextState(segment)
-		if err != nil {
-			return err
-		}
-		if err := ensureAudienceAccessTypeCompatible(tx, segment, nextType); err != nil {
-			return err
-		}
-		changedFields, err := applySegmentUpdates(tx, s.memberReferences, &segment, plan, nextType, nextConfig)
-		if err != nil {
-			return err
-		}
-		if len(changedFields) > 0 {
-			if err := domainaudit.AppendOptionalRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditAudienceSegmentUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewAudienceSegmentConfigUpdatedAuditRecord(
-						metadata,
-						segment.ID,
-						changedFields,
-					)
-				},
-			); err != nil {
-				return err
+	var segment Segment
+	updated, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[segmentUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			segment, err = store.LockSegment(ctx, command.ID)
+			return segmentNotFound(err)
+		},
+		Access: freshAdmin(can),
+		Change: func(ctx context.Context, store Store) (segmentUpdate, error) {
+			return plan.apply(ctx, store, segment)
+		},
+		Audit: func(update segmentUpdate) mutation.Audit {
+			if len(update.changedFields) == 0 {
+				return mutation.Unchanged()
 			}
-		}
-		return loadSegmentForResponse(ctx, tx, segmentID, &segment)
+			return mutation.RequestAudit(sharedtelemetry.AuditAudienceSegmentUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewAudienceSegmentConfigUpdatedAuditRecord(metadata, command.ID, update.changedFields)
+			})
+		},
 	})
-	return &segment, err
-}
-
-func lockSegmentForUpdate(ctx context.Context, tx *gorm.DB, segmentID string, segment *model.AudienceSegment) error {
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		First(segment, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFoundMsg("segment not found")
-		}
-		return errs.Internal(err)
+	if err != nil {
+		return SegmentView{}, err
 	}
-	return nil
+	return updated.view, nil
 }
 
-func (plan segmentUpdatePlan) nextState(segment model.AudienceSegment) (string, model.AudienceSegmentConfig, error) {
-	nextType := segment.SegmentType
+// segmentUpdate is an applied segment change and the fields it changed.
+type segmentUpdate struct {
+	view          SegmentView
+	changedFields []string
+}
+
+// apply changes the locked segment and reads it back.
+func (plan segmentUpdatePlan) apply(ctx context.Context, store Store, segment Segment) (segmentUpdate, error) {
+	if err := ensureSegmentMutableForActiveDelivery(ctx, store, segment.ID); err != nil {
+		return segmentUpdate{}, err
+	}
+	nextType, nextConfig, err := plan.nextState(segment)
+	if err != nil {
+		return segmentUpdate{}, err
+	}
+	if err := ensureAudienceAccessTypeCompatible(ctx, store, segment, nextType); err != nil {
+		return segmentUpdate{}, err
+	}
+	change, changedFields, configChanged := buildSegmentChange(segment, plan, nextType, nextConfig)
+	if change.changed() {
+		change.UpdatedAt = time.Now().UTC()
+		if err := store.UpdateSegment(ctx, segment.ID, change); err != nil {
+			return segmentUpdate{}, err
+		}
+	}
+	if configChanged {
+		if err := replaceConfig(ctx, store, segment.ID, nextConfig); err != nil {
+			if errors.Is(err, ErrUnknownReference) {
+				return segmentUpdate{}, invalidSegment("one or more audience references do not exist")
+			}
+			return segmentUpdate{}, err
+		}
+	}
+	view, err := segmentView(ctx, store, segment.ID)
+	if err != nil {
+		return segmentUpdate{}, err
+	}
+	return segmentUpdate{view: view, changedFields: changedFields}, nil
+}
+
+// invalidSegment rejects a segment request with message.
+func invalidSegment(message string) error {
+	return domainerr.New(domainerr.Invalid, "", message)
+}
+
+func (plan segmentUpdatePlan) nextState(segment Segment) (SegmentType, Config, error) {
+	nextType := segment.Type
 	nextConfig := segment.Config
 	if plan.observed != nil {
-		typeChangedFromBaseline := plan.request.SegmentType != nil &&
-			(*plan.request.SegmentType).String() != plan.observed.segmentType
+		typeChangedFromBaseline := plan.command.SegmentType != nil &&
+			*plan.command.SegmentType != plan.observed.segmentType
 		if typeChangedFromBaseline {
-			nextType = (*plan.request.SegmentType).String()
+			nextType = *plan.command.SegmentType
 			if plan.requestedConfig != nil {
 				nextConfig = *plan.requestedConfig
 			} else {
-				nextConfig = model.AudienceSegmentConfig{}
+				nextConfig = Config{}
 			}
 		} else if plan.requestedConfig != nil {
 			// The editor did not change type. Preserve a concurrent type switch and
@@ -312,22 +290,20 @@ func (plan segmentUpdatePlan) nextState(segment model.AudienceSegment) (string, 
 			nextConfig = mergeSegmentConfig(segment.Config, plan.observed.config, *plan.requestedConfig)
 		}
 	}
-	if err := ValidateSegmentConfigForType(nextType, nextConfig); err != nil {
-		return "", nextConfig, errs.InvalidArgumentMsg(err.Error())
+	if err := ValidateConfig(nextType, nextConfig); err != nil {
+		return "", nextConfig, invalidSegment(err.Error())
 	}
 	return nextType, nextConfig, nil
 }
 
-func mergeSegmentConfig(current, observed, desired model.AudienceSegmentConfig) model.AudienceSegmentConfig {
-	merged := model.AudienceSegmentConfig{
+func mergeSegmentConfig(current, observed, desired Config) Config {
+	return Config{
 		MemberTagIDs:     mergeObservedStringSet(current.MemberTagIDs, observed.MemberTagIDs, desired.MemberTagIDs),
 		AccountRoles:     mergeObservedStringSet(current.AccountRoles, observed.AccountRoles, desired.AccountRoles),
 		ExcludeMemberIDs: mergeObservedStringSet(current.ExcludeMemberIDs, observed.ExcludeMemberIDs, desired.ExcludeMemberIDs),
 		CreatedAfter:     mergeObservedTime(current.CreatedAfter, observed.CreatedAfter, desired.CreatedAfter),
 		CreatedBefore:    mergeObservedTime(current.CreatedBefore, observed.CreatedBefore, desired.CreatedBefore),
-	}
-	sortSegmentConfig(&merged)
-	return merged
+	}.sorted()
 }
 
 func mergeObservedStringSet(current, observed, desired []string) []string {
@@ -370,86 +346,48 @@ func mergeObservedTime(current, observed, desired *time.Time) *time.Time {
 	return &value
 }
 
-func ensureAudienceAccessTypeCompatible(tx *gorm.DB, segment model.AudienceSegment, nextType string) error {
-	if !authenticatedAccessSegmentType(segment.SegmentType) || authenticatedAccessSegmentType(nextType) {
+func ensureAudienceAccessTypeCompatible(ctx context.Context, store Store, segment Segment, nextType SegmentType) error {
+	if !authenticatedAccessSegmentType(segment.Type) || authenticatedAccessSegmentType(nextType) {
 		return nil
 	}
-	var attachmentReferenceCount int64
-	if err := tx.Model(&model.ContentBlockAttachmentDownloadAudienceSegment{}).
-		Where("audience_segment_id = ?", segment.ID).
-		Count(&attachmentReferenceCount).Error; err != nil {
-		return errs.Internal(err)
+	granting, err := store.GrantsDownloadAccess(ctx, segment.ID)
+	if err != nil || !granting {
+		return err
 	}
-	var trackReferenceCount int64
-	if err := tx.Model(&model.TrackDownloadAudienceSegment{}).
-		Where("audience_segment_id = ?", segment.ID).
-		Count(&trackReferenceCount).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if attachmentReferenceCount == 0 && trackReferenceCount == 0 {
-		return nil
-	}
-	return errs.FailedPrecondition("audience segment grants download access and cannot change to this type")
+	return domainerr.Precondition("audience segment grants download access and cannot change to this type")
 }
 
-func applySegmentUpdates(
-	tx *gorm.DB,
-	memberReferences MemberReferences,
-	segment *model.AudienceSegment,
+func buildSegmentChange(
+	segment Segment,
 	plan segmentUpdatePlan,
-	nextType string,
-	nextConfig model.AudienceSegmentConfig,
-) ([]string, error) {
-	updates, changedFields, configChanged := buildSegmentUpdates(segment, plan, nextType, nextConfig)
-	if len(updates) > 0 {
-		updates["updated_at"] = time.Now().UTC()
-		if err := tx.Model(segment).Updates(updates).Error; err != nil {
-			return nil, errs.Internal(err)
-		}
-	}
-	if !configChanged {
-		return changedFields, nil
-	}
-	if err := replaceSegmentRelations(tx, memberReferences, segment.ID, nextConfig); err != nil {
-		if isForeignKeyViolation(err) {
-			return nil, errs.InvalidArgumentMsg("one or more audience references do not exist")
-		}
-		return nil, errs.Internal(err)
-	}
-	return changedFields, nil
-}
-
-func buildSegmentUpdates(
-	segment *model.AudienceSegment,
-	plan segmentUpdatePlan,
-	nextType string,
-	nextConfig model.AudienceSegmentConfig,
-) (structured.Fields, []string, bool) {
-	updates := structured.Fields{}
+	nextType SegmentType,
+	nextConfig Config,
+) (SegmentChange, []string, bool) {
+	var change SegmentChange
 	changedFields := make([]string, 0, 8)
-	if plan.request.Name != nil && *plan.request.Name != segment.Name {
-		updates["name"] = *plan.request.Name
+	if plan.command.Name != nil && *plan.command.Name != segment.Name {
+		change.Name = plan.command.Name
 		changedFields = append(changedFields, "name")
 	}
-	if plan.request.Description != nil && !equalOptionalString(*plan.request.Description, segment.Description) {
-		updates["description"] = *plan.request.Description
+	if plan.command.Description != nil && !equalOptionalString(*plan.command.Description, segment.Description) {
+		change.Description = plan.command.Description
 		changedFields = append(changedFields, "description")
 	}
-	if plan.request.SegmentType != nil && nextType != segment.SegmentType {
-		updates["segment_type"] = nextType
+	if plan.command.SegmentType != nil && nextType != segment.Type {
+		change.Type = &nextType
 		changedFields = append(changedFields, "segment_type")
 	}
 	if plan.requestedConfig == nil {
-		return updates, changedFields, false
+		return change, changedFields, false
 	}
 	configChanged := false
 	if !equalTime(nextConfig.CreatedAfter, segment.Config.CreatedAfter) {
-		updates["created_after"] = nextConfig.CreatedAfter
+		change.SetCreatedAfter, change.CreatedAfter = true, nextConfig.CreatedAfter
 		changedFields = append(changedFields, "created_after")
 		configChanged = true
 	}
 	if !equalTime(nextConfig.CreatedBefore, segment.Config.CreatedBefore) {
-		updates["created_before"] = nextConfig.CreatedBefore
+		change.SetCreatedBefore, change.CreatedBefore = true, nextConfig.CreatedBefore
 		changedFields = append(changedFields, "created_before")
 		configChanged = true
 	}
@@ -465,36 +403,16 @@ func buildSegmentUpdates(
 		changedFields = append(changedFields, "exclude_member_ids")
 		configChanged = true
 	}
-	return updates, changedFields, configChanged
+	return change, changedFields, configChanged
 }
 
 func equalOptionalString(next string, current *string) bool {
 	return current != nil && next == *current
 }
+
 func equalTime(left, right *time.Time) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
 	return left.Equal(*right)
-}
-
-func isForeignKeyViolation(err error) bool {
-	if errors.Is(err, gorm.ErrForeignKeyViolated) {
-		return true
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-		return true
-	}
-	const sqliteConstraintForeignKey, sqliteConstraintTrigger = 787, 1811
-	var sqliteErr interface {
-		error
-		Code() int
-	}
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
-	return sqliteErr.Code() == sqliteConstraintForeignKey ||
-		(sqliteErr.Code() == sqliteConstraintTrigger &&
-			strings.Contains(strings.ToLower(sqliteErr.Error()), "foreign key constraint failed"))
 }

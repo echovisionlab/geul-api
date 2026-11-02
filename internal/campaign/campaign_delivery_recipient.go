@@ -8,19 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
 type CampaignDeliveryRecipientJob struct {
-	Recipient model.CampaignDeliveryRecipient
-	Run       model.CampaignDeliveryRun
+	Recipient DeliveryRecipient
+	Run       DeliveryRun
 }
 
 const CampaignDeliveryRecipientClaimLease = 10 * time.Minute
@@ -50,81 +44,66 @@ func campaignDeliveryRecipientStatusFinalizesRun(status string) bool {
 	return campaignDeliveryRecipientTerminalStatus(status)
 }
 
+// MaterializeCampaignDeliveryRun freezes a sending run's recipients in tx,
+// the delivery worker's transaction.
 func MaterializeCampaignDeliveryRun(
 	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	joined Joined,
 	runID string,
 ) error {
 	if strings.TrimSpace(runID) == "" {
-		return errs.Required("run_id")
+		return domainerr.Required("run_id")
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, runID, "")
-		if err != nil {
-			return err
-		}
-		run := locked.Run
-		if run.Status != CampaignDeliveryRunStatusSending {
-			return nil
-		}
-		target, err := loadCampaignDeliveryTarget(ctx, tx, run)
-		if err != nil {
-			return err
-		}
-		frozenSelection, err := campaignDeliveryTargetRecipientSelection(target)
-		if err != nil {
-			return err
-		}
+	tx := joined.Store
+	locked, _, err := tx.LockDeliveryRun(ctx, runID, false)
+	if err != nil {
+		return err
+	}
+	run := locked.Run
+	if run.Status != CampaignDeliveryRunStatusSending {
+		return nil
+	}
+	target, err := loadCampaignDeliveryTarget(ctx, tx, run)
+	if err != nil {
+		return err
+	}
 
-		if err := materializeCampaignDeliveryRecipients(ctx, tx, spiceDB, run, frozenSelection); err != nil {
-			return err
-		}
+	if err := tx.MaterializeRecipients(ctx, run, target); err != nil {
+		return err
+	}
 
-		var total int64
-		if err := tx.Model(&model.CampaignDeliveryRecipient{}).
-			Where("run_id = ?", runID).
-			Count(&total).Error; err != nil {
-			return err
-		}
-		return tx.Model(&model.CampaignDeliveryRun{}).
-			Where("id = ?", runID).
-			Update("target_count", int(total)).Error
-	})
+	total, err := tx.RecipientCount(ctx, runID)
+	if err != nil {
+		return err
+	}
+	return tx.SetTargetCount(ctx, runID, int(total))
 }
 
 func ListPendingCampaignDeliveryRecipients(
 	ctx context.Context,
-	db *gorm.DB,
+	joined Joined,
 	runID string,
 	afterID string,
 	limit int,
 ) ([]CampaignDeliveryRecipientJob, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
-		return nil, errs.Required("run_id")
+		return nil, domainerr.Required("run_id")
 	}
 	if limit <= 0 {
 		limit = 100
 	}
 
-	var run model.CampaignDeliveryRun
-	if err := db.WithContext(ctx).First(&run, "id = ?", runID).Error; err != nil {
+	run, err := joined.Store.FindRun(ctx, runID)
+	if err != nil {
 		return nil, err
 	}
-	query := db.WithContext(ctx).
-		Where("run_id = ? AND status = ?", runID, CampaignDeliveryRecipientStatusPending).
-		Where("(delivery_claim_id IS NULL OR delivery_claim_expires_at <= ?)", time.Now().UTC()).
-		Order("id ASC").
-		Limit(limit)
-	if afterID = strings.TrimSpace(afterID); afterID != "" {
-		query = query.Where("id > ?", afterID)
-	}
-	var recipients []model.CampaignDeliveryRecipient
-	if err := query.Find(&recipients).Error; err != nil {
+	recipients, err := joined.Store.PendingRecipients(ctx, runID, strings.TrimSpace(afterID), limit, time.Now().UTC())
+	if err != nil {
 		return nil, err
 	}
+
 	jobs := make([]CampaignDeliveryRecipientJob, 0, len(recipients))
 	for _, recipient := range recipients {
 		jobs = append(jobs, CampaignDeliveryRecipientJob{Recipient: recipient, Run: run})
@@ -132,110 +111,32 @@ func ListPendingCampaignDeliveryRecipients(
 	return jobs, nil
 }
 
-func HasPendingCampaignDeliveryRecipients(ctx context.Context, db *gorm.DB, runID string) (bool, error) {
-	var count int64
-	if err := db.WithContext(ctx).
-		Model(&model.CampaignDeliveryRecipient{}).
-		Where("run_id = ? AND status = ?", strings.TrimSpace(runID), CampaignDeliveryRecipientStatusPending).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-func materializeCampaignDeliveryRecipients(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	run model.CampaignDeliveryRun,
-	selection *bulkEmailRecipientSelection,
-) error {
-	if err := resolveBulkEmailRecipientSelectionPermissions(ctx, spiceDB, selection); err != nil {
-		return err
-	}
-	candidates, err := buildBulkEmailRecipientCandidates(selection)
-	if err != nil {
-		return err
-	}
-	return execCampaignRecipientMaterialization(ctx, tx, run, candidates.SQL, candidates.Args...)
-}
-
-func execCampaignRecipientMaterialization(
-	ctx context.Context,
-	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
-	candidatesSQL string,
-	args ...structured.Value) error {
-	runID := strings.TrimSpace(run.ID)
-	if runID == "" {
-		return fmt.Errorf("email delivery run id is required")
-	}
-
-	sql := fmt.Sprintf(`
-		WITH candidates AS (
-			%s
-		),
-		ranked AS (
-			SELECT
-				*,
-				ROW_NUMBER() OVER (
-					PARTITION BY LOWER(TRIM(email))
-					ORDER BY priority ASC, sort_at ASC, LOWER(TRIM(email)) ASC
-				) AS rn
-			FROM candidates
-			WHERE email IS NOT NULL
-				AND TRIM(email) <> ''
-		)
-		INSERT INTO email_delivery_recipient (
-			run_id,
-			recipient_email,
-			normalized_recipient_email,
-			member_id,
-			identity_id,
-			locale,
-			recipient_context_type,
-			status
-		)
-		SELECT
-			?,
-			TRIM(email),
-			LOWER(TRIM(email)),
-			member_id,
-			identity_id,
-			NULLIF(locale, ''),
-			context_kind,
-			?
-		FROM ranked
-		WHERE rn = 1
-		ON CONFLICT (run_id, normalized_recipient_email) DO NOTHING
-	`, candidatesSQL)
-
-	execArgs := make(structured.Values, 0, len(args)+2)
-	execArgs = append(execArgs, args...)
-	execArgs = append(execArgs, runID, CampaignDeliveryRecipientStatusPending)
-	return tx.WithContext(ctx).Exec(sql, execArgs...).Error
+func HasPendingCampaignDeliveryRecipients(ctx context.Context, joined Joined, runID string) (bool, error) {
+	return joined.Store.HasPendingRecipients(ctx, strings.TrimSpace(runID))
 }
 
 func CampaignDeliveryRecipientNeedsDelivery(
 	ctx context.Context,
-	db *gorm.DB,
+	joined Joined,
 	recipientID string,
 ) (bool, error) {
 	recipientID = strings.TrimSpace(recipientID)
 	if recipientID == "" {
 		return true, nil
 	}
-	var recipient model.CampaignDeliveryRecipient
-	if err := db.WithContext(ctx).Select("status").First(&recipient, "id = ?", recipientID).Error; err != nil {
+
+	status, err := joined.Store.RecipientStatus(ctx, recipientID)
+	if err != nil {
 		return false, err
 	}
-	if recipient.Status == CampaignDeliveryRecipientStatusPending {
+
+	if status == CampaignDeliveryRecipientStatusPending {
 		return true, nil
 	}
-	if campaignDeliveryRecipientTerminalStatus(recipient.Status) {
+	if campaignDeliveryRecipientTerminalStatus(status) {
 		return false, nil
 	}
-	return false, fmt.Errorf("campaign delivery recipient has unsupported status %q", recipient.Status)
+	return false, fmt.Errorf("campaign delivery recipient has unsupported status %q", status)
 }
 
 // ClaimCampaignDeliveryRecipient atomically reserves a pending recipient for
@@ -243,7 +144,7 @@ func CampaignDeliveryRecipientNeedsDelivery(
 // fences terminal writes and releases from an earlier owner.
 func ClaimCampaignDeliveryRecipient(
 	ctx context.Context,
-	db *gorm.DB,
+	joined Joined,
 	recipientID string,
 	claimID string,
 ) (bool, error) {
@@ -255,61 +156,49 @@ func ClaimCampaignDeliveryRecipient(
 	if _, err := uuid.Parse(claimID); err != nil {
 		return false, fmt.Errorf("campaign delivery claim id must be a UUID: %w", err)
 	}
-	claimed := false
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var identity model.CampaignDeliveryRecipient
-		if err := tx.Select("id", "run_id").First(&identity, "id = ?", recipientID).Error; err != nil {
-			return err
-		}
-		locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, identity.RunID, "")
-		if err != nil {
-			return err
-		}
-		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "run_id", "status", "delivery_claim_id", "delivery_claim_expires_at").
-			First(&recipient, "id = ?", recipientID).Error; err != nil {
-			return err
-		}
-		if recipient.RunID != locked.Run.ID {
-			return fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
-		}
-		// Start the lease only after all ordered locks have been acquired. A
-		// worker may otherwise wait behind a slow transaction and receive a
-		// claim whose lease is already partly or fully consumed at commit.
-		now := time.Now().UTC()
-		expiresAt := now.Add(CampaignDeliveryRecipientClaimLease)
-		if campaignDeliveryRecipientTerminalStatus(recipient.Status) {
-			return nil
-		}
-		if recipient.Status != CampaignDeliveryRecipientStatusPending {
-			return fmt.Errorf("campaign delivery recipient has unsupported status %q", recipient.Status)
-		}
-		if recipient.DeliveryClaimID != nil && recipient.DeliveryClaimExpiresAt != nil &&
-			recipient.DeliveryClaimExpiresAt.After(now) {
-			return nil
-		}
-		result := tx.Model(&model.CampaignDeliveryRecipient{}).
-			Where("id = ? AND run_id = ? AND status = ? AND (delivery_claim_id IS NULL OR delivery_claim_expires_at <= ?)",
-				recipient.ID, locked.Run.ID, CampaignDeliveryRecipientStatusPending, now).
-			Updates(structured.Fields{
-				"delivery_claim_id":         claimID,
-				"delivery_claim_expires_at": expiresAt,
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		claimed = result.RowsAffected == 1
-		return nil
-	})
-	return claimed, err
+	tx := joined.Store
+
+	identity, err := tx.RecipientIdentity(ctx, recipientID)
+	if err != nil {
+		return false, err
+	}
+
+	locked, _, err := tx.LockDeliveryRun(ctx, identity.RunID, false)
+	if err != nil {
+		return false, err
+	}
+
+	recipient, err := tx.LockClaimRecipient(ctx, recipientID)
+	if err != nil {
+		return false, err
+	}
+
+	if recipient.RunID != locked.Run.ID {
+		return false, fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
+	}
+	// Start the lease only after all ordered locks have been acquired. A
+	// worker may otherwise wait behind a slow transaction and receive a
+	// claim whose lease is already partly or fully consumed at commit.
+	now := time.Now().UTC()
+	expiresAt := now.Add(CampaignDeliveryRecipientClaimLease)
+	if campaignDeliveryRecipientTerminalStatus(recipient.Status) {
+		return false, nil
+	}
+	if recipient.Status != CampaignDeliveryRecipientStatusPending {
+		return false, fmt.Errorf("campaign delivery recipient has unsupported status %q", recipient.Status)
+	}
+	if recipient.DeliveryClaimID != nil && recipient.DeliveryClaimExpiresAt != nil &&
+		recipient.DeliveryClaimExpiresAt.After(now) {
+		return false, nil
+	}
+	return tx.ClaimRecipient(ctx, recipient, claimID, now, expiresAt)
 }
 
 // ReleaseCampaignDeliveryRecipientClaim releases only the exact claim owner.
 // A stale worker cannot clear a newer worker's lease.
 func ReleaseCampaignDeliveryRecipientClaim(
 	ctx context.Context,
-	db *gorm.DB,
+	joined Joined,
 	recipientID string,
 	claimID string,
 ) error {
@@ -321,42 +210,37 @@ func ReleaseCampaignDeliveryRecipientClaim(
 	if _, err := uuid.Parse(claimID); err != nil {
 		return fmt.Errorf("campaign delivery claim id must be a UUID: %w", err)
 	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var identity model.CampaignDeliveryRecipient
-		if err := tx.Select("id", "run_id").First(&identity, "id = ?", recipientID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
-		}
-		locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, identity.RunID, "")
-		if err != nil {
-			return err
-		}
-		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "run_id", "status", "delivery_claim_id").
-			First(&recipient, "id = ?", recipientID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
-		}
-		if recipient.RunID != locked.Run.ID {
-			return fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
-		}
-		if recipient.Status != CampaignDeliveryRecipientStatusPending ||
-			recipient.DeliveryClaimID == nil || *recipient.DeliveryClaimID != claimID {
+	tx := joined.Store
+
+	identity, err := tx.RecipientIdentity(ctx, recipientID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
-		return tx.Model(&model.CampaignDeliveryRecipient{}).
-			Where("id = ? AND run_id = ? AND status = ? AND delivery_claim_id = ?",
-				recipient.ID, locked.Run.ID, CampaignDeliveryRecipientStatusPending, claimID).
-			Updates(structured.Fields{
-				"delivery_claim_id":         nil,
-				"delivery_claim_expires_at": nil,
-			}).Error
-	})
+		return err
+	}
+
+	locked, _, err := tx.LockDeliveryRun(ctx, identity.RunID, false)
+	if err != nil {
+		return err
+	}
+
+	recipient, err := tx.LockReleaseRecipient(ctx, recipientID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	if recipient.RunID != locked.Run.ID {
+		return fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
+	}
+	if recipient.Status != CampaignDeliveryRecipientStatusPending ||
+		recipient.DeliveryClaimID == nil || *recipient.DeliveryClaimID != claimID {
+		return nil
+	}
+	return tx.ReleaseRecipientClaim(ctx, recipient, claimID)
 }
 
 // MarkCampaignDeliveryRecipientResultWithAudit finalizes the authoritative
@@ -364,8 +248,7 @@ func ReleaseCampaignDeliveryRecipientClaim(
 // backend Audit record; per-recipient outcomes deliberately never do.
 func MarkCampaignDeliveryRecipientResultWithAudit(
 	ctx context.Context,
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
+	joined Joined,
 	recipientID string,
 	status string,
 	providerMessageID string,
@@ -373,7 +256,7 @@ func MarkCampaignDeliveryRecipientResultWithAudit(
 	metrics CampaignDeliveryMetrics,
 ) error {
 	return markCampaignDeliveryRecipientResultWithAudit(
-		ctx, db, auditWriter, recipientID, "", status, providerMessageID, errorType, metrics, false,
+		ctx, joined, recipientID, "", status, providerMessageID, errorType, metrics, false,
 	)
 }
 
@@ -382,8 +265,7 @@ func MarkCampaignDeliveryRecipientResultWithAudit(
 // current and unexpired.
 func MarkClaimedCampaignDeliveryRecipientResultWithAudit(
 	ctx context.Context,
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
+	joined Joined,
 	recipientID string,
 	claimID string,
 	status string,
@@ -399,14 +281,88 @@ func MarkClaimedCampaignDeliveryRecipientResultWithAudit(
 		return fmt.Errorf("campaign delivery claim id must be a UUID: %w", err)
 	}
 	return markCampaignDeliveryRecipientResultWithAudit(
-		ctx, db, auditWriter, recipientID, claimID, status, providerMessageID, errorType, metrics, true,
+		ctx, joined, recipientID, claimID, status, providerMessageID, errorType, metrics, true,
 	)
+}
+
+// recipientResult is one terminal result a delivery worker reports.
+type recipientResult struct {
+	recipientID       string
+	claimID           string
+	status            string
+	providerMessageID string
+	errorType         string
+	requireClaim      bool
+}
+
+// validate rejects a result that is not terminal or whose provider message
+// does not match its outcome.
+func (r recipientResult) validate() error {
+	if !campaignDeliveryRecipientStatusFinalizesRun(r.status) {
+		return fmt.Errorf("campaign delivery result status %q is not terminal", r.status)
+	}
+	accepted := r.status == CampaignDeliveryRecipientStatusSent || r.status == CampaignDeliveryRecipientStatusDelivered
+	if accepted && r.providerMessageID == "" {
+		return fmt.Errorf("accepted campaign delivery requires provider message id")
+	}
+	if !accepted && r.providerMessageID != "" {
+		return fmt.Errorf("failed campaign delivery cannot carry provider message id")
+	}
+	return nil
+}
+
+// requireWritable reports whether the locked recipient still takes this
+// result: a terminal recipient keeps its result, and the delivery claim
+// must be this worker's live lease, or for an unclaimed result absent or
+// expired.
+func (r recipientResult) requireWritable(recipient DeliveryRecipient, now time.Time) (bool, error) {
+	if campaignDeliveryRecipientTerminalStatus(recipient.Status) {
+		return false, nil
+	}
+	if recipient.Status != CampaignDeliveryRecipientStatusPending {
+		return false, fmt.Errorf("campaign delivery recipient is not pending")
+	}
+	claimLive := recipient.DeliveryClaimID != nil && recipient.DeliveryClaimExpiresAt != nil && recipient.DeliveryClaimExpiresAt.After(now)
+	if r.requireClaim && (!claimLive || *recipient.DeliveryClaimID != r.claimID) {
+		return false, ErrCampaignDeliveryClaimLost
+	}
+	if !r.requireClaim && claimLive {
+		return false, ErrCampaignDeliveryRecipientClaimed
+	}
+	return true, nil
+}
+
+// store writes the result over the still-pending recipient of the locked
+// run, under the same claim condition requireWritable checked.
+func (r recipientResult) store(ctx context.Context, tx Store, runID string, now time.Time) error {
+
+	return tx.StoreRecipientResult(ctx, RecipientResult{RecipientID: r.recipientID, ClaimID: r.claimID, Status: r.status, ProviderMessageID: r.providerMessageID, ErrorType: r.errorType, RequireClaim: r.requireClaim}, runID, now)
+}
+
+// lockResultRecipient locks the recipient's run and then the recipient.
+func lockResultRecipient(ctx context.Context, tx Store, recipientID string) (LockedDeliveryRun, DeliveryRecipient, error) {
+
+	identity, err := tx.RecipientIdentity(ctx, recipientID)
+	if err != nil {
+		return LockedDeliveryRun{}, DeliveryRecipient{}, err
+	}
+	locked, _, err := tx.LockDeliveryRun(ctx, identity.RunID, false)
+	if err != nil {
+		return LockedDeliveryRun{}, DeliveryRecipient{}, err
+	}
+	recipient, err := tx.LockResultRecipient(ctx, recipientID)
+	if err != nil {
+		return LockedDeliveryRun{}, DeliveryRecipient{}, err
+	}
+	if recipient.RunID != locked.Run.ID {
+		return LockedDeliveryRun{}, DeliveryRecipient{}, fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
+	}
+	return locked, recipient, nil
 }
 
 func markCampaignDeliveryRecipientResultWithAudit(
 	ctx context.Context,
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
+	joined Joined,
 	recipientID string,
 	claimID string,
 	status string,
@@ -415,126 +371,48 @@ func markCampaignDeliveryRecipientResultWithAudit(
 	metrics CampaignDeliveryMetrics,
 	requireClaim bool,
 ) error {
-	recipientID = strings.TrimSpace(recipientID)
-	if recipientID == "" {
+	result := recipientResult{
+		recipientID: strings.TrimSpace(recipientID), claimID: claimID, status: status,
+		providerMessageID: strings.TrimSpace(providerMessageID), errorType: strings.TrimSpace(errorType),
+		requireClaim: requireClaim,
+	}
+	if result.recipientID == "" {
 		return nil
 	}
-	providerMessageID = strings.TrimSpace(providerMessageID)
-	errorType = strings.TrimSpace(errorType)
-	if !campaignDeliveryRecipientStatusFinalizesRun(status) {
-		return fmt.Errorf("campaign delivery result status %q is not terminal", status)
+	if err := result.validate(); err != nil {
+		return err
 	}
-	if (status == CampaignDeliveryRecipientStatusSent || status == CampaignDeliveryRecipientStatusDelivered) && providerMessageID == "" {
-		return fmt.Errorf("accepted campaign delivery requires provider message id")
+	tx := joined.Store
+	locked, recipient, err := lockResultRecipient(ctx, tx, result.recipientID)
+	if err != nil {
+		return err
 	}
-	if status != CampaignDeliveryRecipientStatusSent && status != CampaignDeliveryRecipientStatusDelivered && providerMessageID != "" {
-		return fmt.Errorf("failed campaign delivery cannot carry provider message id")
+	now := time.Now().UTC()
+	writable, err := result.requireWritable(recipient, now)
+	if err != nil || !writable {
+		return err
 	}
+	if err := result.store(ctx, tx, locked.Run.ID, now); err != nil {
+		return err
+	}
+	return finalizeLockedEmailDeliveryRun(ctx, joined, &locked, metrics)
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var identity model.CampaignDeliveryRecipient
-		if err := tx.Select("id", "run_id").First(&identity, "id = ?", recipientID).Error; err != nil {
-			return err
-		}
-		locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, identity.RunID, "")
-		if err != nil {
-			return err
-		}
-		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "run_id", "status", "provider_message_id", "error_type", "terminal_at", "delivery_claim_id", "delivery_claim_expires_at").
-			First(&recipient, "id = ?", recipientID).Error; err != nil {
-			return err
-		}
-		if recipient.RunID != locked.Run.ID {
-			return fmt.Errorf("campaign delivery recipient relationship changed while acquiring locks")
-		}
-		if campaignDeliveryRecipientTerminalStatus(recipient.Status) {
-			return nil
-		}
-		if recipient.Status != CampaignDeliveryRecipientStatusPending {
-			return fmt.Errorf("campaign delivery recipient is not pending")
-		}
-		now := time.Now().UTC()
-		if requireClaim {
-			if recipient.DeliveryClaimID == nil || *recipient.DeliveryClaimID != claimID ||
-				recipient.DeliveryClaimExpiresAt == nil || !recipient.DeliveryClaimExpiresAt.After(now) {
-				return ErrCampaignDeliveryClaimLost
-			}
-		} else if recipient.DeliveryClaimID != nil && recipient.DeliveryClaimExpiresAt != nil &&
-			recipient.DeliveryClaimExpiresAt.After(now) {
-			return ErrCampaignDeliveryRecipientClaimed
-		}
-		updates := structured.Fields{
-			"status":                    status,
-			"provider_message_id":       nullableTrimmedString(providerMessageID),
-			"error_type":                nullableTrimmedString(errorType),
-			"terminal_at":               now,
-			"delivery_claim_id":         nil,
-			"delivery_claim_expires_at": nil,
-		}
-		query := tx.Model(&model.CampaignDeliveryRecipient{}).
-			Where("id = ? AND run_id = ? AND status = ?", recipient.ID, locked.Run.ID, CampaignDeliveryRecipientStatusPending)
-		if requireClaim {
-			query = query.Where("delivery_claim_id = ? AND delivery_claim_expires_at > ?", claimID, now)
-		} else {
-			query = query.Where("(delivery_claim_id IS NULL OR delivery_claim_expires_at <= ?)", now)
-		}
-		result := query.Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
-		return finalizeLockedEmailDeliveryRun(
-			ctx,
-			tx,
-			&locked,
-			auditWriter,
-			metrics,
-		)
-	})
 }
 
 func finalizeLockedEmailDeliveryRun(
 	ctx context.Context,
-	tx *gorm.DB,
-	locked *lockedEmailDeliveryRun,
-	auditWriter domainaudit.Appender,
+	joined Joined,
+	locked *LockedDeliveryRun,
 	metrics CampaignDeliveryMetrics,
 ) error {
+	tx := joined.Store
 	run := &locked.Run
 	if run.Status != CampaignDeliveryRunStatusSending {
 		return nil
 	}
 
-	var counts campaignDeliveryCompletionCounts
-	if err := tx.Model(&model.CampaignDeliveryRecipient{}).
-		Select(`
-				COUNT(*) AS total,
-				COUNT(*) FILTER (WHERE status = ?) AS pending,
-				COUNT(*) FILTER (WHERE status = ?) AS sent,
-				COUNT(*) FILTER (WHERE status = ?) AS delivered,
-				COUNT(*) FILTER (WHERE status = ?) AS skipped,
-				COUNT(*) FILTER (WHERE status = ?) AS permanent_fail,
-				COUNT(*) FILTER (WHERE status = ?) AS blocked,
-				COUNT(*) FILTER (WHERE status = ?) AS suppressed,
-				COUNT(*) FILTER (WHERE status = ?) AS bounced,
-				COUNT(*) FILTER (WHERE status = ?) AS complained
-			`,
-			CampaignDeliveryRecipientStatusPending,
-			CampaignDeliveryRecipientStatusSent,
-			CampaignDeliveryRecipientStatusDelivered,
-			CampaignDeliveryRecipientStatusSkipped,
-			CampaignDeliveryRecipientStatusPermanentFailed,
-			CampaignDeliveryRecipientStatusBlocked,
-			CampaignDeliveryRecipientStatusSuppressed,
-			CampaignDeliveryRecipientStatusBounced,
-			CampaignDeliveryRecipientStatusComplained,
-		).
-		Where("run_id = ?", run.ID).
-		Scan(&counts).Error; err != nil {
+	counts, err := tx.CompletionCounts(ctx, run.ID)
+	if err != nil {
 		return err
 	}
 
@@ -546,7 +424,7 @@ func finalizeLockedEmailDeliveryRun(
 
 	decision := decideEmailDeliveryCompletion(counts, run.TargetCount, run.RunKind)
 	if !decision.Complete {
-		return tx.Save(run).Error
+		return tx.SaveRun(ctx, run)
 	}
 
 	now := time.Now()
@@ -555,7 +433,7 @@ func finalizeLockedEmailDeliveryRun(
 	if metrics != nil {
 		metrics.RecordRunDuration(ctx, *run, now)
 	}
-	if err := tx.Save(run).Error; err != nil {
+	if err := tx.SaveRun(ctx, run); err != nil {
 		return err
 	}
 	if run.RunKind != EmailDeliveryRunKindCampaign {
@@ -574,8 +452,8 @@ func finalizeLockedEmailDeliveryRun(
 		locked.Campaign.SentAt = &now
 		locked.Campaign.SentCount = int(counts.Sent + counts.Delivered)
 	}
-	if err := tx.Save(locked.Campaign).Error; err != nil {
+	if err := tx.SaveCampaign(ctx, locked.Campaign); err != nil {
 		return err
 	}
-	return appendCampaignTerminalStatusAudit(ctx, tx, auditWriter, campaignID, campaignAuditState(previousStatus), campaignAuditState(decision.CampaignStatus))
+	return appendCampaignTerminalStatusAudit(ctx, joined, campaignID, campaignAuditState(previousStatus), campaignAuditState(decision.CampaignStatus))
 }

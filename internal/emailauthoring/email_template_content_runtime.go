@@ -3,29 +3,28 @@ package emailauthoring
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
-type campaignEmailEditorProjection struct {
+// TemplateEditorProjection is an Email Template's source document as the
+// editor loads it.
+type TemplateEditorProjection struct {
 	Document     *contentv1.RichTextDocument
 	Revision     string
 	SourceLocale string
 }
 
-func syncCustomEmailTemplateVariables(ctx context.Context, db *gorm.DB, templateID, contentHTML string) error {
+// customEmailTemplateVariables names the placeholders of a custom
+// template's source HTML, sorted and without duplicates.
+func customEmailTemplateVariables(contentHTML string) []TemplateVariable {
 	matches := previewPlaceholderRegex.FindAllStringSubmatch(email.NormalizeTemplatePlaceholders(contentHTML), -1)
 	seen := make(map[string]struct{}, len(matches))
 	names := make([]string, 0, len(matches))
@@ -44,92 +43,80 @@ func syncCustomEmailTemplateVariables(ctx context.Context, db *gorm.DB, template
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	variables := make(model.EmailTemplateVariables, 0, len(names))
+	variables := make([]TemplateVariable, 0, len(names))
 	for _, name := range names {
-		variables = append(variables, model.EmailTemplateVariable{Name: name})
+		variables = append(variables, TemplateVariable{Name: name})
 	}
-	if err := db.WithContext(ctx).Model(&emailTemplateBaseRow{}).
-		Where("id = ? AND is_system = FALSE", templateID).Update("variables", variables).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return variables
 }
 
-func loadCampaignEmailEditorProjection(ctx context.Context, db *gorm.DB, store *contentblock.Store, entityType, entityID string) (campaignEmailEditorProjection, error) {
-	if store == nil {
-		return campaignEmailEditorProjection{}, errs.Internal(errors.New("email template content block store is not configured"))
-	}
-	documentID, err := loadCampaignEmailContentDocumentID(ctx, db, entityType, entityID)
+func loadTemplateEditorProjection(ctx context.Context, store Store, templateID string) (TemplateEditorProjection, error) {
+	documentID, err := loadTemplateContentDocument(ctx, store, templateID, false)
 	if err != nil {
-		return campaignEmailEditorProjection{}, err
+		return TemplateEditorProjection{}, err
 	}
-	domain, err := loadCampaignEmailSourceContext(ctx, db, entityType, entityID)
+	sourceLocale, err := loadTemplateSourceLocale(ctx, store, templateID, false)
 	if err != nil {
-		return campaignEmailEditorProjection{}, err
+		return TemplateEditorProjection{}, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, domain.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return TemplateEditorProjection{}, emailTemplateContent.NormalizeContentBlockError(err)
 	}
 	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return TemplateEditorProjection{}, emailTemplateContent.NormalizeContentBlockError(err)
 	}
-	return campaignEmailEditorProjection{Document: document, Revision: snapshot.Document.Revision.String(), SourceLocale: domain.SourceLocale}, nil
+	return TemplateEditorProjection{Document: document, Revision: snapshot.Document.Revision.String(), SourceLocale: sourceLocale}, nil
 }
 
-func requireCampaignEmailDocumentLoad(
-	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	references CampaignDeliveryReferences,
-	principal *intrav1.CollaborationPrincipal,
-	resourceType intrav1.CollaborationResourceType,
-	resourceID string,
-) error {
-	if principal == nil || strings.TrimSpace(principal.GetSessionId()) == "" {
-		return errs.AuthenticationRequired()
+// requireEmailTemplateDocumentLoad authorizes the session of a room load to
+// edit the template that no active delivery renders.
+func (s *InternalService) requireEmailTemplateDocumentLoad(ctx context.Context, sessionID, templateID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return domainerr.AuthenticationRequired()
 	}
-	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
-	if err != nil {
-		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "emailauthoring", "event", "emailauthoring.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
-			return errs.AuthenticationRequired()
+	var resolved *auth.UserInfo
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if resolved, err = store.ResolveSessionPrincipal(ctx, sessionID); err != nil {
+			return failurecause.WithPrivate(err, sessionID)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "resolve_collaboration_principal", "outcome", "failed", failurecause.Attr(err, principal.GetSessionId()))
-		return errs.Internal(err)
+		if resolved == nil || !resolved.Authenticated || resolved.Banned || !resolved.Onboarded {
+			return nil
+		}
+		return store.RequireTemplateMutable(ctx, templateID)
+	})
+	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
-	if resolved == nil || !resolved.Authenticated {
-		return errs.AuthenticationRequired()
-	}
-	if resolved.Banned {
-		return errs.AccountBanned()
-	}
-	if !resolved.Onboarded {
-		return errs.NoPermission("edit", "collaboration resource")
-	}
-	if resourceType != intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_TEMPLATE {
-		return errs.InternalMsg("unsupported Email Template collaboration resource")
-	}
-	if err := ensureEmailTemplateMutableForActiveDelivery(ctx, db, references, resourceID); err != nil {
+	if err != nil {
 		return err
 	}
-	can, err := emailTemplateEditCan(resourceID)
+	if resolved == nil || !resolved.Authenticated {
+		return domainerr.AuthenticationRequired()
+	}
+	if resolved.Banned {
+		return domainerr.AccountBanned()
+	}
+	if !resolved.Onboarded {
+		return domainerr.NoPermission("edit", "collaboration resource")
+	}
+	can, err := emailTemplateEditCan(templateID)
 	if err != nil {
-		return errs.InvalidArgument("resource.id", "must be a canonical Email Template UUID")
+		return domainerr.InvalidField("resource.id", "must be a canonical Email Template UUID")
 	}
 	authorizationCtx := auth.WithUser(ctx, resolved)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
-	allowed, err := spiceDB.Can(authorizationCtx, decision)
+	allowed, err := s.spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
 		return err
 	}
 	if !allowed {
-		return errs.NoPermission("edit", "collaboration resource")
+		return domainerr.NoPermission("edit", "collaboration resource")
 	}
 	return nil
 }

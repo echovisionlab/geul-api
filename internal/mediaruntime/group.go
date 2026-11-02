@@ -3,10 +3,8 @@ package mediaruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
-
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // Starter starts a long-running service component.
@@ -72,21 +70,19 @@ func (g *Group) Close() error {
 	return CloseAll(g.closers)
 }
 
-// CloseAll releases resources in reverse order and returns the first error.
+// CloseAll releases resources in reverse order and returns every close
+// failure, named by component type, for the caller to log once.
 func CloseAll(closers []Closer) error {
-	var firstErr error
+	var failures []error
 	for index := len(closers) - 1; index >= 0; index-- {
 		if closers[index] == nil {
 			continue
 		}
 		if err := closers[index].Close(); err != nil {
-			slog.ErrorContext(context.Background(), "Failed to close media component", failurecause.Attr(err), "component_type", fmt.Sprintf("%T", closers[index]))
-			if firstErr == nil {
-				firstErr = err
-			}
+			failures = append(failures, fmt.Errorf("close %T: %w", closers[index], err))
 		}
 	}
-	return firstErr
+	return errors.Join(failures...)
 }
 
 // Healthy reports whether the group's health source is open.

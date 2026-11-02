@@ -4,12 +4,23 @@ import (
 	"time"
 )
 
+// AudienceSegmentType is the stored kind of an audience segment. The values
+// are the strings the audience_segment table holds; internal/audience maps
+// them to and from the API enum.
+type AudienceSegmentType string
+
+const (
+	AudienceSegmentAllMembers      AudienceSegmentType = "SEGMENT_TYPE_ALL_MEMBERS"
+	AudienceSegmentMemberTags      AudienceSegmentType = "SEGMENT_TYPE_MEMBER_TAGS"
+	AudienceSegmentMembersByFilter AudienceSegmentType = "SEGMENT_TYPE_MEMBERS_BY_FILTER"
+)
+
 // AudienceSegment represents the audience_segment table
 type AudienceSegment struct {
 	ID                           string                `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name                         string                `gorm:"column:name;type:varchar(100);not null"`
 	Description                  *string               `gorm:"column:description;type:text"`
-	SegmentType                  string                `gorm:"column:segment_type;type:varchar(30);not null"`
+	SegmentType                  AudienceSegmentType   `gorm:"column:segment_type;type:varchar(30);not null"`
 	CreatedAfter                 *time.Time            `gorm:"column:created_after"`
 	CreatedBefore                *time.Time            `gorm:"column:created_before"`
 	Config                       AudienceSegmentConfig `gorm:"-"`

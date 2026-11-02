@@ -11,17 +11,16 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 func TestUploadRemoteImportObjectUsesTransferManagerWithMinIOIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	s3Client := runtimeS3Client(t, stack)
-	svc := &FileService{
+	svc := &Service{
 		s3Client: s3Client,
 		s3Bucket: stack.S3MediaBucket,
 	}

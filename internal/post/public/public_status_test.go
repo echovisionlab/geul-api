@@ -5,16 +5,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/post"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestPublicPostStatusBoundary(t *testing.T) {
-	require.ElementsMatch(t, []string{
-		managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-		managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
-	}, publicPostStatusValues())
-
 	for _, test := range []struct {
 		name   string
 		status managev1.PostStatus
@@ -27,7 +22,7 @@ func TestPublicPostStatusBoundary(t *testing.T) {
 		{name: "unspecified", status: managev1.PostStatus_POST_STATUS_UNSPECIFIED},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.public, isPublicPostStatus(model.PostStatus(test.status.String())))
+			require.Equal(t, test.public, isPublicPostStatus(post.Status(test.status.String())))
 		})
 	}
 }

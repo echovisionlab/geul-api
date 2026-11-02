@@ -21,8 +21,8 @@ func TestEmailTemplateMutationMapsTheSharedEmailProfileCommand(t *testing.T) {
 		ExpectedSource: "en", ExpectedPresence: true, ContributorMemberID: contributor,
 		SetSubject: true, Subject: "", DeleteTranslation: false,
 	}
-	mapped := emailTemplateMutation(input)
-	if mapped.TemplateID != input.Reference || mapped.Locale != input.Locale ||
+	mapped := emailContentMutation(input)
+	if mapped.Reference != input.Reference || mapped.Locale != input.Locale ||
 		mapped.ContributorMember != contributor || !mapped.SetSubject || mapped.Subject != "" {
 		t.Fatalf("Email Template mutation mapping = %+v", mapped)
 	}

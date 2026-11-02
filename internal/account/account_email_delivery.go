@@ -8,7 +8,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"gorm.io/gorm"
 )
 
 const (
@@ -39,10 +38,10 @@ func LoadIdentityWithEmailCredentials(
 // ResolveMemberPrimaryEmailForIdentity starts from the exact active Identity,
 // validates its bilateral Member link, and returns the canonical delivery
 // address only while the Member projection and current proven candidate agree.
+// read runs the Member projection read, after the Kratos reads.
 func ResolveMemberPrimaryEmailForIdentity(
 	ctx context.Context,
-	db *gorm.DB,
-	memberEmails MemberEmailProjection,
+	read StepFunc,
 	identityManager auth.IdentityGetter,
 	identityID string,
 ) (*VerifiedAccountEmail, string, error) {
@@ -50,8 +49,8 @@ func ResolveMemberPrimaryEmailForIdentity(
 	if identityID == "" {
 		return nil, AccountEmailSkipReasonIdentityMissing, nil
 	}
-	if db == nil || memberEmails == nil || identityManager == nil {
-		return nil, "", fmt.Errorf("member email projection, database, and identity manager are required")
+	if read == nil || identityManager == nil {
+		return nil, "", fmt.Errorf("member email projection and identity manager are required")
 	}
 	identity, err := LoadIdentityWithEmailCredentials(ctx, identityManager, identityID)
 	if err != nil {
@@ -67,9 +66,14 @@ func ResolveMemberPrimaryEmailForIdentity(
 	if memberID == "" {
 		return nil, AccountEmailSkipReasonMemberLink, nil
 	}
-	primaryEmail, err := memberEmails.PrimaryEmail(ctx, db, memberID, identityID)
+	var primaryEmail string
+	err = read(ctx, func(store Store) error {
+		var err error
+		primaryEmail, err = store.MemberPrimaryEmail(ctx, memberID, identityID)
+		return err
+	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrMemberLinkNotFound) {
 			return nil, AccountEmailSkipReasonMemberLink, nil
 		}
 		return nil, "", err

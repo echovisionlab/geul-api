@@ -7,7 +7,6 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -99,7 +98,7 @@ func TestBuildCreativeInterchangeReplacementSeparatesExplicitEmptyFromOmittedDel
 	first := "block:" + firstID + ":typed:paragraph/content"
 
 	candidate, err := buildCreativeInterchangeCandidate(application.TranslationInterchangeApply{
-		Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode: application.InterchangeModeReplace,
 		Source: &core.SourceDocument{
 			ContentDocumentRevision: uuid.NewString(), ContentBlockDocument: source,
 		},
@@ -156,7 +155,7 @@ func TestBuildReleaseInterchangePatchPreservesAggregateSiblings(t *testing.T) {
 	}
 
 	candidate, err := buildReleaseInterchangeCandidate(application.TranslationInterchangeApply{
-		Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode: application.InterchangeModePatch,
 		Source: &core.SourceDocument{
 			ContentDocumentRevision: uuid.NewString(), ContentBlockDocument: source,
 		},

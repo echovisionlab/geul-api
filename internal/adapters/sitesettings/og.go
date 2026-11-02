@@ -10,17 +10,20 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -37,13 +40,13 @@ type LegalRequestCollector func(context.Context, *gorm.DB, string, *string) ([]o
 
 // Invalidator translates an atomic Site Settings mutation into durable OG work.
 type Invalidator struct {
-	planner *og.Planner
+	planner *ogpostgres.Planner
 	all     RequestCollector
 	legal   LegalRequestCollector
 }
 
 func NewInvalidator(
-	planner *og.Planner,
+	planner *ogpostgres.Planner,
 	all RequestCollector,
 	legal LegalRequestCollector,
 ) *Invalidator {
@@ -99,11 +102,11 @@ func siteRequest(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 func (i *Invalidator) Request(
 	ctx context.Context,
 	tx *gorm.DB,
-	before *model.SiteSettings,
-	after *model.SiteSettings,
+	before settingsdomain.Settings,
+	after settingsdomain.Settings,
 	keys []string,
 ) (*string, error) {
-	invalidation := settingsdomain.ClassifyOGInvalidation(before, after, keys)
+	invalidation := settingsdomain.ClassifyOGInvalidation(&before, &after, keys)
 	if !invalidation.All && !invalidation.Site && !invalidation.Content && !invalidation.Privacy && !invalidation.Terms {
 		return nil, nil
 	}
@@ -129,7 +132,7 @@ func (i *Invalidator) Request(
 func (i *Invalidator) requests(
 	ctx context.Context,
 	tx *gorm.DB,
-	after *model.SiteSettings,
+	after settingsdomain.Settings,
 	invalidation settingsdomain.OGInvalidation,
 ) ([]og.Request, error) {
 	var requests []og.Request
@@ -200,10 +203,10 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 		snapshot.OGImageConfig = canonical
 	}
 	// OG images draw the full light logo, falling back like every display logo.
-	logos := sitelogo.Display[commonv1.AssetRef]{}
+	logos := sitelogo.Display[mediaasset.Reference]{}
 	for _, slot := range []struct {
 		fileID *string
-		target **commonv1.AssetRef
+		target **mediaasset.Reference
 	}{
 		{settings.LogoFullLightFileID, &logos.FullLight},
 		{settings.LogoFullDarkFileID, &logos.FullDark},
@@ -214,7 +217,7 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 			continue
 		}
 		asset, _, err := readySiteSettingAsset(ctx, db, cdnDomain, *slot.fileID, "logo")
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && connect.CodeOf(err) != connect.CodeNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && !mutation.IsNotFound(err) {
 			return nil, "", err
 		}
 		if err == nil {
@@ -252,7 +255,7 @@ func (p *Projection) ReleasePending(
 		Update("site_og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, "site_settings", "1", []string{"og"},
 	)
 }
@@ -276,9 +279,18 @@ func (p *Projection) Complete(
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: "site_settings", OwnerID: "1", BindingKey: "og",
 	})
+}
+
+// ReferencesAsset reports whether the site OG image is assetID.
+func (*Projection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	var referenced bool
+	err := tx.WithContext(ctx).
+		Raw("SELECT EXISTS (SELECT 1 FROM site_settings WHERE site_og_asset_id = ?)", assetID).
+		Scan(&referenced).Error
+	return referenced, err
 }
 
 type renderSnapshot struct {
@@ -295,17 +307,12 @@ type assetSnapshot struct {
 	MimeType  string `json:"mime_type"`
 }
 
-func snapshotRef(asset interface {
-	GetAssetId() string
-	GetUrl() string
-	GetExtension() string
-	GetMimeType() string
-}) *assetSnapshot {
+func snapshotRef(asset *mediaasset.Reference) *assetSnapshot {
 	if asset == nil {
 		return nil
 	}
 	return &assetSnapshot{
-		AssetID: asset.GetAssetId(), URL: asset.GetUrl(), Extension: asset.GetExtension(), MimeType: asset.GetMimeType(),
+		AssetID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MimeType: asset.MimeType,
 	}
 }
 
@@ -345,6 +352,6 @@ func validateTarget(target og.Target) error {
 	return nil
 }
 
-var _ settingsdomain.OGInvalidator = (*Invalidator)(nil)
-var _ og.RenderConfig = (*RenderConfig)(nil)
-var _ og.Projection = (*Projection)(nil)
+var _ sitesettingspostgres.OG = (*Invalidator)(nil)
+var _ ogpostgres.RenderConfig = (*RenderConfig)(nil)
+var _ ogpostgres.Projection = (*Projection)(nil)

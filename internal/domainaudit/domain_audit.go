@@ -41,8 +41,7 @@ func AppendRequest(
 	if err != nil || actor.Kind != sharedtelemetry.ActorKindMember {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
 		if err != nil {
-			slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
-			return err
+			return failurecause.WithAttrs(err, actionAttr(action))
 		}
 		return errors.New("request domain audit requires member actor")
 	}
@@ -79,10 +78,21 @@ func AppendMember(
 	actor, err := sharedtelemetry.ActorForRecord(sharedtelemetry.MemberActor{MemberID: memberID})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
-		slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
-		return err
+		return failurecause.WithAttrs(err, actionAttr(action))
 	}
 	return appendRecord(ctx, tx, writer, action, actor, build)
+}
+
+// AppendAnonymous appends an audit record attributed to an anonymous
+// visitor, for a public mutation made without a session.
+func AppendAnonymous(
+	ctx context.Context,
+	tx *gorm.DB,
+	writer Appender,
+	action sharedtelemetry.AuditAction,
+	build Builder,
+) error {
+	return appendRecord(ctx, tx, writer, action, sharedtelemetry.RecordActor{Kind: sharedtelemetry.ActorKindAnonymous}, build)
 }
 
 // AppendSystem appends an audit record attributed to a backend service.
@@ -100,8 +110,7 @@ func AppendSystem(
 	actor, err := sharedtelemetry.ActorForRecord(sharedtelemetry.SystemActor{ServiceName: serviceName})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
-		slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
-		return err
+		return failurecause.WithAttrs(err, actionAttr(action))
 	}
 	return appendRecord(ctx, tx, writer, action, actor, build)
 }
@@ -122,8 +131,7 @@ func AppendVersion(
 		actor, err := sharedtelemetry.ActorForRecord(requestContext.Actor)
 		if err != nil {
 			apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
-			slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
-			return err
+			return failurecause.WithAttrs(err, actionAttr(action))
 		}
 		switch actor.Kind {
 		case sharedtelemetry.ActorKindMember, sharedtelemetry.ActorKindSystem:
@@ -169,12 +177,33 @@ func appendRecord(
 	})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureRecordBuildFailed)
-		slog.ErrorContext(ctx, "Failed to build domain audit record", failurecause.Attr(err), "action", string(action))
-		return err
+		return failurecause.WithAttrs(err, actionAttr(action))
 	}
-	err = writer.AppendDomainAuditInTransaction(ctx, tx, record)
-	if err != nil {
-		slog.ErrorContext(ctx, "Failed to append domain audit record", failurecause.Attr(err, record.Nickname), "action", string(action), "audit_id", record.AuditID)
+	if err := writer.AppendDomainAuditInTransaction(ctx, tx, record); err != nil {
+		return failurecause.WithPrivate(failurecause.WithAttrs(err, actionAttr(action), slog.String("audit_id", record.AuditID)), record.Nickname)
 	}
-	return err
+	return nil
+}
+
+// actionAttr names the audit action on a failure for the record that logs it.
+func actionAttr(action sharedtelemetry.AuditAction) slog.Attr {
+	return slog.String("action", string(action))
+}
+
+// Bind appends through writer in tx, regardless of the caller's transaction.
+// A nil writer stays nil.
+func Bind(tx *gorm.DB, writer Appender) Appender {
+	if writer == nil {
+		return nil
+	}
+	return boundAppender{tx: tx, writer: writer}
+}
+
+type boundAppender struct {
+	tx     *gorm.DB
+	writer Appender
+}
+
+func (b boundAppender) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, r sharedtelemetry.AuditRecord) error {
+	return b.writer.AppendDomainAuditInTransaction(ctx, b.tx, r)
 }

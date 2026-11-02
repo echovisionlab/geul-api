@@ -4,20 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/stretchr/testify/require"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
+	"github.com/stretchr/testify/require"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const discoveryDocumentID = "44444444-4444-4444-8444-444444444444"
@@ -147,13 +152,13 @@ func TestNewDocumentDiscoveryToolsRejectsNil(t *testing.T) {
 func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 28, 1, 2, 3, 0, time.UTC)
 	slug := "live-set"
-	programEvents := &recordingProgramEventDocumentDiscovery{response: &managev1.ListProgramEventsAdminResponse{
-		Events: []*managev1.ProgramEventSummary{{
-			Id: discoveryDocumentID, Title: "Live Set", Slug: &slug, SourceLocale: "ko",
-			Status:    managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED,
-			UpdatedAt: timestamppb.New(updatedAt),
-		}},
-		Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 10},
+	programEvents := &recordingProgramEventDocumentDiscovery{list: programevent.EventList{
+		Events: []programevent.EventSummary{{Event: programevent.Event{
+			ID: discoveryDocumentID, Title: "Live Set", Slug: slug, SourceLocale: "ko",
+			Status:    programevent.StatusPublished,
+			UpdatedAt: updatedAt,
+		}}},
+		Pagination: programevent.Pagination{Total: 1, Limit: 10},
 	}}
 	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, programEvents, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{})
 	if err != nil {
@@ -163,7 +168,7 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if programEvents.request == nil || len(programEvents.request.Msg.Filters) != 1 || programEvents.request.Msg.Filters[0].Value != "Live" {
+	if programEvents.request == nil || len(programEvents.request.Filters) != 1 || programEvents.request.Filters[0].Value != "Live" || programEvents.request.Limit != 10 {
 		t.Fatalf("Program Event request = %+v", programEvents.request)
 	}
 	documents := result.StructuredContent["documents"].([]any)
@@ -187,15 +192,10 @@ func (discovery *recordingPostDocumentDiscovery) ListAIDocuments(
 	return discovery.result, discovery.err
 }
 
-type recordingWorkDocumentDiscovery struct {
-	managev1connect.UnimplementedWorkServiceHandler
-}
+type recordingWorkDocumentDiscovery struct{}
 
-func (*recordingWorkDocumentDiscovery) ListWorksAdmin(
-	context.Context,
-	*connect.Request[managev1.ListWorksAdminRequest],
-) (*connect.Response[managev1.ListWorksAdminResponse], error) {
-	return connect.NewResponse(&managev1.ListWorksAdminResponse{}), nil
+func (*recordingWorkDocumentDiscovery) ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (workdomain.AdminWorkPage, error) {
+	return workdomain.AdminWorkPage{}, nil
 }
 
 type recordingPageDocumentDiscovery struct {
@@ -203,27 +203,23 @@ type recordingPageDocumentDiscovery struct {
 }
 
 type recordingProgramEventDocumentDiscovery struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
-	request  *connect.Request[managev1.ListProgramEventsAdminRequest]
-	response *managev1.ListProgramEventsAdminResponse
+	request *programevent.ListProgramEventsQuery
+	list    programevent.EventList
 }
 
 func (discovery *recordingProgramEventDocumentDiscovery) ListProgramEventsAdmin(
 	_ context.Context,
-	request *connect.Request[managev1.ListProgramEventsAdminRequest],
-) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
-	discovery.request = request
-	if discovery.response == nil {
-		discovery.response = &managev1.ListProgramEventsAdminResponse{}
-	}
-	return connect.NewResponse(discovery.response), nil
+	query programevent.ListProgramEventsQuery,
+) (programevent.EventList, error) {
+	discovery.request = &query
+	return discovery.list, nil
 }
 
 func (*recordingPageDocumentDiscovery) ListPagesAdmin(
 	context.Context,
-	*connect.Request[managev1.ListPagesAdminRequest],
-) (*connect.Response[managev1.ListPagesAdminResponse], error) {
-	return connect.NewResponse(&managev1.ListPagesAdminResponse{}), nil
+	pagedomain.ListPagesAdminQuery,
+) (pagedomain.PageList, error) {
+	return pagedomain.PageList{}, nil
 }
 
 func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
@@ -231,15 +227,15 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			slug := "same-name-is-not-an-id"
 			updatedAt := time.Date(2026, 10, 3, 12, 34, 56, 0, time.FixedZone("KST", 9*60*60))
-			releases := &recordingReleaseDocumentDiscovery{response: &managev1.ListReleasesAdminResponse{
-				Releases: []*managev1.ReleaseWithStats{nil, {}, {Release: &managev1.Release{}}, {Release: &managev1.Release{
-					Id: discoveryDocumentID, Title: "Same Name", Slug: &slug, SourceLocale: "ko", Status: "draft", UpdatedAt: timestamppb.New(updatedAt),
-				}}}, Pagination: &commonv1.PaginationResponse{Total: 25, Limit: 2, Offset: 4},
+			releases := &recordingReleaseDocumentDiscovery{page: releasedomain.ReleasePage{
+				Releases: []releasedomain.ReleaseWithStats{{View: releasedomain.View{Title: "Same Name", Release: releasedomain.Release{
+					ID: discoveryDocumentID, Slug: &slug, SourceLocale: "ko", Status: "draft", UpdatedAt: updatedAt,
+				}}}}, Total: 25, Limit: 2, Offset: 4,
 			}}
-			artists := &recordingArtistDocumentDiscovery{response: &managev1.ListArtistsAdminResponse{
-				Artists: []*managev1.ArtistWithStats{nil, {}, {Artist: &managev1.Artist{}}, {Artist: &managev1.Artist{
-					Id: discoveryDocumentID, Name: "Same Name", Slug: &slug, SourceLocale: "ko", Status: "published", UpdatedAt: timestamppb.New(updatedAt),
-				}}}, Pagination: &commonv1.PaginationResponse{Total: 25, Limit: 2, Offset: 4},
+			artists := &recordingArtistDocumentDiscovery{page: artist.AdminArtistPage{
+				Artists: []artist.AdminView{{}, {Artist: artist.View{Name: "Same Name", Artist: artist.Artist{
+					ID: discoveryDocumentID, Slug: &slug, SourceLocale: "ko", Status: "published", UpdatedAt: &updatedAt,
+				}}}}, Pagination: artist.Pagination{Total: 25, Limit: 2, Offset: 4},
 			}}
 			tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists)
 			require.NoError(t, err)
@@ -280,10 +276,10 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 			require.Equal(t, float64(6), result.StructuredContent["next_offset"])
 
 			// A final page uses the default page size and omits an absent slug.
-			releases.response.Pagination = &commonv1.PaginationResponse{Total: 1, Limit: 20}
-			releases.response.Releases[3].Release.Slug = nil
-			artists.response.Pagination = &commonv1.PaginationResponse{Total: 1, Limit: 20}
-			artists.response.Artists[3].Artist.Slug = nil
+			releases.page.Total, releases.page.Limit = 1, 20
+			releases.page.Releases[0].View.Release.Slug = nil
+			artists.page.Pagination = artist.Pagination{Total: 1, Limit: 20}
+			artists.page.Artists[1].Artist.Artist.Slug = nil
 			result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`","q":"   "}`))
 			require.NoError(t, err)
 			require.Nil(t, result.StructuredContent["next_offset"])
@@ -355,31 +351,32 @@ func TestDocumentDiscoveryRejectsMissingReleaseAndArtistServices(t *testing.T) {
 }
 
 type recordingReleaseDocumentDiscovery struct {
-	ctx      context.Context
-	request  *connect.Request[managev1.ListReleasesAdminRequest]
-	response *managev1.ListReleasesAdminResponse
-	err      error
+	ctx     context.Context
+	request *connect.Request[managev1.ListReleasesAdminRequest]
+	page    releasedomain.ReleasePage
+	err     error
 }
 
-func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, request *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
-	if discovery.response == nil {
-		discovery.response = &managev1.ListReleasesAdminResponse{}
-	}
-	return connect.NewResponse(discovery.response), discovery.err
+// ListReleasesAdmin records the query as the Connect request it stands for.
+func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, query releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error) {
+	discovery.ctx, discovery.request = ctx, connect.NewRequest(&managev1.ListReleasesAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset},
+		Filters:    query.Filters, Sorts: query.Sorts,
+	})
+	return discovery.page, discovery.err
 }
 
 type recordingArtistDocumentDiscovery struct {
-	ctx      context.Context
-	request  *connect.Request[managev1.ListArtistsAdminRequest]
-	response *managev1.ListArtistsAdminResponse
-	err      error
+	ctx     context.Context
+	request *connect.Request[managev1.ListArtistsAdminRequest]
+	page    artist.AdminArtistPage
+	err     error
 }
 
-func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, request *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
-	if discovery.response == nil {
-		discovery.response = &managev1.ListArtistsAdminResponse{}
-	}
-	return connect.NewResponse(discovery.response), discovery.err
+func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, query artist.ListArtistsQuery) (artist.AdminArtistPage, error) {
+	discovery.ctx = ctx
+	discovery.request = connect.NewRequest(&managev1.ListArtistsAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, Filters: query.Filters, Sorts: query.Sorts,
+	})
+	return discovery.page, discovery.err
 }

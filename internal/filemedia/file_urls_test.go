@@ -5,69 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
-
-func TestGetFileURLsForIDIncludesReadySourceAsset(t *testing.T) {
-	for _, kind := range []string{"image", "mesh"} {
-		t.Run(kind, func(t *testing.T) {
-			db := newServiceUnitDB(t)
-			require.NoError(t, db.Exec(`CREATE TABLE file_derivative (file_id TEXT, type TEXT, asset_id TEXT, media_generation_id TEXT)`).Error)
-			fileID, assetID := uuid.NewString(), uuid.NewString()
-			extension, mimeType := "webp", "image/webp"
-			if kind == "mesh" {
-				extension, mimeType = "glb", "model/gltf-binary"
-			}
-			require.NoError(t, db.Create(&model.File{ID: fileID, FileName: "original", Extension: extension, MimeType: mimeType, FileSize: 128}).Error)
-			size := int64(64)
-			require.NoError(t, db.Create(&model.PublicAsset{
-				ID: assetID, SourceFileID: &fileID, Kind: kind, ObjectKey: "asset/" + assetID + "/" + kind + "." + extension,
-				Extension: extension, MimeType: mimeType, FileSize: &size, SHA256: make([]byte, 32),
-				Disposition: "inline", Status: model.PublicAssetStatusReady, CreatedAt: time.Now(), UpdatedAt: time.Now(),
-			}).Error)
-			svc := &FileService{db: db, cdnDomain: "cdn.example.com", mediaDomain: "media.example.com", mediaSecret: "test-secret"}
-			single, err := svc.getFileUrlsForID(t.Context(), fileID)
-			require.NoError(t, err)
-			bulk, err := svc.loadFileURLResponses(t.Context(), []string{fileID})
-			require.NoError(t, err)
-			require.Equal(t, assetID, single.GetDelivery().GetAsset().GetAssetId())
-			require.True(t, proto.Equal(single.GetDelivery().GetAsset(), bulk[fileID].GetDelivery().GetAsset()))
-			require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/"+kind+"."+extension, single.GetDelivery().GetAsset().GetUrl())
-			require.True(t, strings.HasSuffix(single.GetDelivery().GetInline().GetUrl(), "/"+fileID+"."+extension))
-			require.Equal(t, commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, single.GetDelivery().GetProcessingStatus())
-		})
-	}
-}
-
-func TestGetFileURLsForIDPreservesNotFoundForMissingOrDeletingFile(t *testing.T) {
-	db := newServiceUnitDB(t)
-	svc := &FileService{db: db}
-	for _, deleting := range []bool{false, true} {
-		fileID := uuid.NewString()
-		if deleting {
-			now := time.Now()
-			require.NoError(t, db.Create(&model.File{ID: fileID, DeleteRequestedAt: &now}).Error)
-		}
-		response, err := svc.getFileUrlsForID(t.Context(), fileID)
-		require.Nil(t, response)
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-		require.EqualError(t, err, errs.NotFound("file", fileID).Error())
-	}
-}
 
 func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{
+	svc := &Service{
 		cdnDomain:   "cdn.example.com",
 		mediaDomain: "media.example.com",
 		mediaSecret: secret,
@@ -80,15 +27,15 @@ func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fileURLsResponseFromStoredFile() error = %v", err)
 	}
-	delivery := response.GetDelivery()
+	delivery := response.Delivery
 
-	if delivery.GetMimeType() != "image/jpeg" {
-		t.Fatalf("mime type = %q, want image/jpeg", delivery.GetMimeType())
+	if delivery.MimeType != "image/jpeg" {
+		t.Fatalf("mime type = %q, want image/jpeg", delivery.MimeType)
 	}
-	if delivery.GetFileSize() != 128 {
-		t.Fatalf("file size = %d, want 128", delivery.GetFileSize())
+	if delivery.FileSize != 128 {
+		t.Fatalf("file size = %d, want 128", delivery.FileSize)
 	}
-	downloadURL := delivery.GetDownload().GetUrl()
+	downloadURL := delivery.Download.URL
 	if !strings.HasPrefix(downloadURL, "https://media.example.com/media/") {
 		t.Fatalf("expected signed media URL, got %q", downloadURL)
 	}
@@ -117,7 +64,7 @@ func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 func TestFileURLsResponseFromStoredFileFailsClosedWithoutSecret(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{mediaDomain: "media.example.com"}
+	svc := &Service{mediaDomain: "media.example.com"}
 
 	if _, err := svc.fileURLsResponseFromStoredFile(
 		"11111111-1111-4111-8111-111111111111",
@@ -134,7 +81,7 @@ func TestFileURLsResponseFromStoredFileUsesDeterministicHistoricalFilenameFallba
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{mediaDomain: "media.example.com", mediaSecret: secret}
+	svc := &Service{mediaDomain: "media.example.com", mediaSecret: secret}
 	fileID := "11111111-1111-4111-8111-111111111111"
 	invalidName := "../source.wav"
 	response, err := svc.fileURLsResponseFromStoredFile(
@@ -147,7 +94,7 @@ func TestFileURLsResponseFromStoredFileUsesDeterministicHistoricalFilenameFallba
 	if err != nil {
 		t.Fatalf("fileURLsResponseFromStoredFile() error = %v", err)
 	}
-	claims := validateMediaURLToken(t, response.GetDelivery().GetDownload().GetUrl(), secret)
+	claims := validateMediaURLToken(t, response.Delivery.Download.URL, secret)
 	if claims.Filename != "download-"+fileID+".wav" {
 		t.Fatalf("filename = %q, want deterministic fallback", claims.Filename)
 	}
@@ -157,7 +104,7 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{
+	svc := &Service{
 		cdnDomain:   "cdn.example.com",
 		mediaDomain: "media.example.com",
 		mediaSecret: secret,
@@ -167,7 +114,7 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 	thumbnailID := "33333333-3333-4333-8333-333333333333"
 	spectrogramID := "44444444-4444-4444-8444-444444444444"
 	waveformID := "55555555-5555-4555-8555-555555555555"
-	response := &managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{}}
+	response := &MediaDeliveryResult{Delivery: &Delivery{}}
 	imageMime := "image/webp"
 	jsonMime := "application/json"
 	ready := model.PublicAssetStatusReady
@@ -223,22 +170,22 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 		t.Fatalf("attachFileDerivativeURLs() error = %v", err)
 	}
 
-	if response.GetDelivery().GetThumbnail().GetUrl() != "https://cdn.example.com/asset/"+thumbnailID+"/thumbnail.webp" {
-		t.Fatalf("thumbnail URL = %q", response.GetDelivery().GetThumbnail().GetUrl())
+	if response.Delivery.Thumbnail.URL != "https://cdn.example.com/asset/"+thumbnailID+"/thumbnail.webp" {
+		t.Fatalf("thumbnail URL = %q", response.Delivery.Thumbnail.URL)
 	}
-	if response.GetDelivery().GetSpectrogram().GetUrl() != "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp" {
-		t.Fatalf("spectrogram URL = %v", response.GetDelivery().GetSpectrogram().GetUrl())
+	if response.Delivery.Spectrogram.URL != "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp" {
+		t.Fatalf("spectrogram URL = %v", response.Delivery.Spectrogram.URL)
 	}
-	if response.GetDelivery().GetWaveform().GetUrl() != "https://media.example.com/asset/"+waveformID+"/waveform.json" {
-		t.Fatalf("waveform URL = %v", response.GetDelivery().GetWaveform().GetUrl())
+	if response.Delivery.Waveform.URL != "https://media.example.com/asset/"+waveformID+"/waveform.json" {
+		t.Fatalf("waveform URL = %v", response.Delivery.Waveform.URL)
 	}
-	playbackURL := response.GetDelivery().GetPlayback().GetUrl()
+	playbackURL := response.Delivery.Playback.URL
 	wantPlaybackURL := "https://media.example.com/media/" + fileID + "/hls/" + hlsID + "/master.m3u8"
 	if playbackURL != wantPlaybackURL {
 		t.Fatalf("playback URL = %q, want %q", playbackURL, wantPlaybackURL)
 	}
-	if response.GetDelivery().GetPlayback().GetGenerationId() != hlsID {
-		t.Fatalf("playback generation = %q, want %q", response.GetDelivery().GetPlayback().GetGenerationId(), hlsID)
+	if response.Delivery.Playback.GenerationID != hlsID {
+		t.Fatalf("playback generation = %q, want %q", response.Delivery.Playback.GenerationID, hlsID)
 	}
 }
 
@@ -252,7 +199,7 @@ func TestAssetRefForDerivativeRejectsLegacyAttachmentPublicAsset(t *testing.T) {
 	fileSize := int64(64)
 	disposition := "attachment"
 	status := model.PublicAssetStatusReady
-	_, err := (&FileService{cdnDomain: "cdn.example.com"}).assetRefForDerivative(
+	_, err := (&Service{cdnDomain: "cdn.example.com"}).assetRefForDerivative(
 		storedDerivativeDeliveryRow{
 			AssetID:          &assetID,
 			AssetKind:        &kind,

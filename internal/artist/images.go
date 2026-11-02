@@ -5,21 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"log/slog"
+	"errors"
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // ArtistImageProjection is the ordered Artist-to-File relation plus its ready
@@ -28,16 +24,21 @@ type ArtistImageProjection struct {
 	ArtistID  string
 	FileID    string
 	SortOrder int32
-	Asset     *commonv1.AssetRef
+	Asset     *mediaasset.Reference
 }
 
-func loadArtistImages(
-	ctx context.Context,
-	runtime Runtime,
-	db *gorm.DB,
-	artistID string,
-) ([]ArtistImageProjection, error) {
-	images, err := runtime.LoadArtistImages(ctx, db, []string{artistID})
+func (s *Service) loadArtistImages(ctx context.Context, artistID string) ([]ArtistImageProjection, error) {
+	var images []ArtistImageProjection
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		images, err = loadStoredArtistImages(ctx, store, artistID)
+		return err
+	})
+	return images, err
+}
+
+func loadStoredArtistImages(ctx context.Context, store Store, artistID string) ([]ArtistImageProjection, error) {
+	images, err := store.Images(ctx, []string{artistID})
 	if err != nil {
 		return nil, err
 	}
@@ -55,57 +56,57 @@ func artistImageRevision(images []ArtistImageProjection) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func applyManageArtistImages(artist *managev1.Artist, images []ArtistImageProjection) {
-	if artist == nil {
-		return
-	}
-	artist.Images = make([]*managev1.ArtistImage, 0, len(images))
-	for index, image := range images {
-		primary := index == 0
-		artist.Images = append(artist.Images, &managev1.ArtistImage{
-			FileId:    image.FileID,
-			Asset:     image.Asset,
-			SortOrder: int32(index),
-			Primary:   primary,
-		})
-		if primary {
-			artist.ImageAsset = image.Asset
-		}
-	}
+// SetArtistImagesCommand replaces the Artist's ordered images when they
+// still match ExpectedRevision; the first is the primary image.
+type SetArtistImagesCommand struct {
+	ArtistID         string
+	FileIDs          []string
+	ExpectedRevision string
 }
 
-func (s *ArtistService) SetArtistImages(
-	ctx context.Context,
-	req *connect.Request[managev1.SetArtistImagesRequest],
-) (_ *connect.Response[managev1.SetArtistImagesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "SetArtistImages", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// ImageUpdate is the Artist's images after a change and the OG generation
+// run it started.
+type ImageUpdate struct {
+	Images            []ArtistImageProjection
+	OgGenerationRunID *string
+}
 
-	fileIDs, err := validateOrderedArtistFileIDs(req.Msg.FileIds)
+// SetArtistImages replaces the Artist's ordered images.
+func (s *Service) SetArtistImages(ctx context.Context, command SetArtistImagesCommand) (ImageUpdate, error) {
+	fileIDs, err := validateOrderedArtistFileIDs(command.FileIDs)
 	if err != nil {
-		return nil, err
+		return ImageUpdate{}, err
 	}
-	if strings.TrimSpace(req.Msg.ExpectedRevision) == "" {
-		return nil, errs.Required("expected_revision")
+	if strings.TrimSpace(command.ExpectedRevision) == "" {
+		return ImageUpdate{}, domainerr.Required("expected_revision")
 	}
+	return s.replaceArtistImages(ctx, command.ArtistID, fileIDs, &command.ExpectedRevision)
+}
 
-	images, ogRunID, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, fileIDs, &req.Msg.ExpectedRevision)
+// SetArtistImageCommand makes FileID the Artist's only image.
+type SetArtistImageCommand struct {
+	ArtistID string
+	FileID   string
+}
+
+// SetArtistImage replaces the Artist's images with one primary image.
+func (s *Service) SetArtistImage(ctx context.Context, command SetArtistImageCommand) (ImageUpdate, error) {
+	fileIDs, err := validateOrderedArtistFileIDs([]string{command.FileID})
 	if err != nil {
-		return nil, err
+		return ImageUpdate{}, err
 	}
-	responseImages := make([]*managev1.ArtistImage, 0, len(images))
-	artist := &managev1.Artist{}
-	applyManageArtistImages(artist, images)
-	responseImages = append(responseImages, artist.Images...)
-	return connect.NewResponse(&managev1.SetArtistImagesResponse{
-		Images:            responseImages,
-		Revision:          artistImageRevision(images),
-		OgGenerationRunId: ogRunID,
-	}), nil
+	return s.replaceArtistImages(ctx, command.ArtistID, fileIDs, nil)
+}
+
+// DeleteArtistImageCommand removes every image of an Artist.
+type DeleteArtistImageCommand struct {
+	ArtistID string
+}
+
+// DeleteArtistImage removes the Artist's images without deleting their
+// files.
+func (s *Service) DeleteArtistImage(ctx context.Context, command DeleteArtistImageCommand) (ImageUpdate, error) {
+	return s.replaceArtistImages(ctx, command.ArtistID, nil, nil)
 }
 
 func validateOrderedArtistFileIDs(fileIDs []string) ([]string, error) {
@@ -114,10 +115,10 @@ func validateOrderedArtistFileIDs(fileIDs []string) ([]string, error) {
 	for _, value := range fileIDs {
 		fileID := strings.TrimSpace(value)
 		if fileID == "" {
-			return nil, errs.InvalidArgument("file_ids", "must not contain an empty File ID")
+			return nil, domainerr.InvalidField("file_ids", "must not contain an empty File ID")
 		}
 		if _, exists := seen[fileID]; exists {
-			return nil, errs.InvalidArgument("file_ids", "must not contain duplicates")
+			return nil, domainerr.InvalidField("file_ids", "must not contain duplicates")
 		}
 		seen[fileID] = struct{}{}
 		normalized = append(normalized, fileID)
@@ -125,62 +126,92 @@ func validateOrderedArtistFileIDs(fileIDs []string) ([]string, error) {
 	return normalized, nil
 }
 
-func (s *ArtistService) replaceArtistImages(
+// replaceArtistImages locks the Artist row before the fresh Manage check and
+// binds fileIDs in order; a changed primary image refreshes the OG image.
+func (s *Service) replaceArtistImages(
 	ctx context.Context,
 	artistID string,
 	fileIDs []string,
 	expectedRevision *string,
-) ([]ArtistImageProjection, *string, error) {
-	var ogRunID *string
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockEditableArtistImages(ctx, tx, s.spiceDB, artistID); err != nil {
-			return err
-		}
-		current, err := loadArtistImages(ctx, s.runtime, tx, artistID)
-		if err != nil {
-			return err
-		}
-		if expectedRevision != nil && artistImageRevision(current) != *expectedRevision {
-			return errs.FailedPrecondition("Artist images changed; reload before saving")
-		}
-		if sameArtistImageFileIDs(current, fileIDs) {
+) (ImageUpdate, error) {
+	ogRunID, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*artistImageChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			if _, err := store.LockArtistID(ctx, artistID); err != nil {
+				if errors.Is(err, ErrArtistNotFound) {
+					return domainerr.ResourceNotFound("artist", artistID)
+				}
+				return err
+			}
 			return nil
-		}
-		primaryChanged := artistPrimaryImageID(current) != firstString(fileIDs)
-		if err := s.runtime.ReplaceArtistImageBindings(ctx, tx, artistID, fileIDs); err != nil {
-			return err
-		}
-		if err := s.appendArtistGalleryAudit(ctx, tx, artistID, fileIDs); err != nil {
-			return err
-		}
-		if primaryChanged {
-			runID, requestErr := s.runtime.RequestCurrentWithDB(
-				ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST,
-				artistID, "", false, "artist_primary_image_updated",
-			)
-			if requestErr != nil {
-				return requestErr
+		},
+		Access: artistEntity.LockedAccess(s.spiceDB, artistID, policyv1.Artist.Manage),
+		Change: func(ctx context.Context, store Store) (*artistImageChange, error) {
+			return bindArtistImages(ctx, store, artistID, fileIDs, expectedRevision)
+		},
+		Audit: func(change *artistImageChange) mutation.Audit {
+			if change == nil {
+				return mutation.Unchanged()
 			}
-			if runID != "" {
-				ogRunID = &runID
+			return mutation.RequestAudit(sharedtelemetry.AuditArtistUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewArtistGalleryAuditRecord(m, artistID, fileIDs)
+			})
+		},
+		Outbox: func(ctx context.Context, store Store, change *artistImageChange) error {
+			if change == nil {
+				return nil
 			}
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageMediaMutationContentUpdatedEvent(
-			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST,
-			artistID,
-			"media.images",
-		))
-	}); err != nil {
-		return nil, nil, err
-	}
-	images, err := loadArtistImages(ctx, s.runtime, s.db, artistID)
+			return store.PublishContentUpdate(ctx, ContentUpdate{ArtistID: artistID, Kind: MediaUpdate})
+		},
+	})
 	if err != nil {
-		return nil, nil, errs.Internal(err)
+		return ImageUpdate{}, err
+	}
+	images, err := s.loadArtistImages(ctx, artistID)
+	if err != nil {
+		return ImageUpdate{}, err
 	}
 	sort.SliceStable(images, func(i, j int) bool {
 		return images[i].SortOrder < images[j].SortOrder
 	})
-	return images, ogRunID, nil
+	update := ImageUpdate{Images: images}
+	if ogRunID != nil {
+		update.OgGenerationRunID = ogRunID.ogRunID
+	}
+	return update, nil
+}
+
+// artistImageChange is a committed image replacement; nil when the images
+// were already fileIDs.
+type artistImageChange struct {
+	ogRunID *string
+}
+
+func bindArtistImages(ctx context.Context, store Store, artistID string, fileIDs []string, expectedRevision *string) (*artistImageChange, error) {
+	current, err := loadStoredArtistImages(ctx, store, artistID)
+	if err != nil {
+		return nil, err
+	}
+	if expectedRevision != nil && artistImageRevision(current) != *expectedRevision {
+		return nil, domainerr.Precondition("Artist images changed; reload before saving")
+	}
+	if sameArtistImageFileIDs(current, fileIDs) {
+		return nil, nil
+	}
+	primaryChanged := artistPrimaryImageID(current) != firstString(fileIDs)
+	if err := store.ReplaceImageBindings(ctx, artistID, fileIDs); err != nil {
+		return nil, err
+	}
+	change := &artistImageChange{}
+	if primaryChanged {
+		runID, err := store.RequestOG(ctx, artistID, "", false, "artist_primary_image_updated")
+		if err != nil {
+			return nil, err
+		}
+		if runID != "" {
+			change.ogRunID = &runID
+		}
+	}
+	return change, nil
 }
 
 func sameArtistImageFileIDs(images []ArtistImageProjection, fileIDs []string) bool {
@@ -193,17 +224,6 @@ func sameArtistImageFileIDs(images []ArtistImageProjection, fileIDs []string) bo
 		}
 	}
 	return true
-}
-
-func lockEditableArtistImages(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) error {
-	var artist model.Artist
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&artist, "id = ?", artistID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFound("artist", artistID)
-		}
-		return err
-	}
-	return requireLockedArtistPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Manage)
 }
 
 func artistPrimaryImageID(images []ArtistImageProjection) string {

@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,15 +47,21 @@ func TestMapPlaceManagementDescriptors(t *testing.T) {
 
 func TestMapPlaceManagementReadProjectionAndOrder(t *testing.T) {
 	image, google, city := mapPlaceManagementSecondID, "google-id", "Seoul"
-	place := &managev1.MapPlace{Id: mapPlaceManagementTestID, Name: "Park", Address: "1 Park Road", Lat: 0, Lng: 0, AddressComponents: &managev1.AddressComponents{City: &city}, ImageFileId: &image, GooglePlaceId: &google, ImageAsset: &commonv1.AssetRef{Url: "https://cdn.example.test/map.png"}}
-	app := &recordingMapPlaceManagement{place: place, places: []*managev1.MapPlace{place}}
+	place := &referencecatalog.MapPlaceView{
+		Place: referencecatalog.MapPlace{
+			ID: mapPlaceManagementTestID, Name: "Park", Address: "1 Park Road", Lat: 0, Lng: 0,
+			AddressComponents: &referencecatalog.AddressComponents{City: &city}, ImageFileID: &image, GooglePlaceID: &google,
+		},
+		ImageAsset: &mediaasset.Reference{URL: "https://cdn.example.test/map.png"},
+	}
+	app := &recordingMapPlaceManagement{place: place, places: []referencecatalog.MapPlaceView{*place}}
 	tools, err := NewMapPlaceManagementTools(app)
 	require.NoError(t, err)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceGet, toolArguments(t, `{"map_place_id":"`+mapPlaceManagementTestID+`"}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 	require.Equal(t, t.Context(), app.ctx)
-	require.Equal(t, mapPlaceManagementTestID, app.get.Id)
+	require.Equal(t, mapPlaceManagementTestID, app.get.ID)
 	projected := result.StructuredContent["place"].(map[string]any)
 	require.Len(t, projected, 9)
 	require.Equal(t, float64(0), projected["lat"])
@@ -61,7 +69,7 @@ func TestMapPlaceManagementReadProjectionAndOrder(t *testing.T) {
 	require.Equal(t, map[string]any{"city": "Seoul"}, projected["address_components"])
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceGetMany, toolArguments(t, `{"map_place_ids":["`+mapPlaceManagementTestID+`","`+mapPlaceManagementSecondID+`"]}`))
 	require.NoError(t, err)
-	require.Equal(t, []string{mapPlaceManagementTestID, mapPlaceManagementSecondID}, app.many.Ids)
+	require.Equal(t, []string{mapPlaceManagementTestID, mapPlaceManagementSecondID}, app.many.IDs)
 	require.Len(t, result.StructuredContent["items"], 1)
 	app.places = nil
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceGetMany, toolArguments(t, `{"map_place_ids":["`+mapPlaceManagementTestID+`"]}`))
@@ -81,13 +89,13 @@ func TestMapPlaceManagementListQueryAndContinuation(t *testing.T) {
 		{`{"limit":1,"offset":2147483647}`, 0, 1, 2147483647, false, ""},
 	} {
 		t.Run(test.args, func(t *testing.T) {
-			app := &recordingMapPlaceManagement{pagination: &commonv1.PaginationResponse{Total: test.total, Limit: test.limit, Offset: test.offset}}
+			app := &recordingMapPlaceManagement{pagination: referencecatalog.Pagination{Total: test.total, Limit: test.limit, Offset: test.offset}}
 			tools, err := NewMapPlaceManagementTools(app)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceList, toolArguments(t, test.args))
 			require.NoError(t, err)
-			require.Equal(t, test.limit, app.list.Pagination.Limit)
-			require.Equal(t, test.offset, app.list.Pagination.Offset)
+			require.Equal(t, test.limit, app.list.Limit)
+			require.Equal(t, test.offset, app.list.Offset)
 			require.Empty(t, app.list.Sorts)
 			if test.query == "" {
 				require.Empty(t, app.list.Filters)
@@ -113,8 +121,8 @@ func TestMapPlaceManagementMutationsPreserveOptionalValues(t *testing.T) {
 	require.Equal(t, float64(0), app.create.Lat)
 	require.Equal(t, float64(0), app.create.Lng)
 	require.Equal(t, "", *app.create.AddressComponents.PostalCode)
-	require.Equal(t, mapPlaceManagementSecondID, *app.create.ImageFileId)
-	require.Equal(t, "google-id", *app.create.GooglePlaceId)
+	require.Equal(t, mapPlaceManagementSecondID, *app.create.ImageFileID)
+	require.Equal(t, "google-id", *app.create.GooglePlaceID)
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceSettingsUpdate, toolArguments(t, `{"map_place_id":"`+mapPlaceManagementTestID+`","lat":0,"lng":0,"address_components":{},"image_file_id":"`+mapPlaceManagementSecondID+`","clear_image":true,"google_place_id":""}`))
 	require.NoError(t, err)
 	require.Nil(t, app.update.Name)
@@ -126,19 +134,19 @@ func TestMapPlaceManagementMutationsPreserveOptionalValues(t *testing.T) {
 	require.NotNil(t, app.update.AddressComponents)
 	require.Nil(t, app.update.AddressComponents.City)
 	require.True(t, app.update.ClearImage)
-	require.Equal(t, mapPlaceManagementSecondID, *app.update.ImageFileId)
-	require.NotNil(t, app.update.GooglePlaceId)
-	require.Empty(t, *app.update.GooglePlaceId)
+	require.Equal(t, mapPlaceManagementSecondID, *app.update.ImageFileID)
+	require.NotNil(t, app.update.GooglePlaceID)
+	require.Empty(t, *app.update.GooglePlaceID)
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceSettingsUpdate, toolArguments(t, `{"map_place_id":"`+mapPlaceManagementTestID+`"}`))
 	require.NoError(t, err)
 	require.Nil(t, app.update.Lat)
 	require.Nil(t, app.update.Lng)
 	require.Nil(t, app.update.AddressComponents)
-	require.Nil(t, app.update.GooglePlaceId)
-	require.Nil(t, app.update.ImageFileId)
+	require.Nil(t, app.update.GooglePlaceID)
+	require.Nil(t, app.update.ImageFileID)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapPlaceDelete, toolArguments(t, `{"map_place_id":"`+mapPlaceManagementTestID+`"}`))
 	require.NoError(t, err)
-	require.Equal(t, mapPlaceManagementTestID, app.delete.Id)
+	require.Equal(t, mapPlaceManagementTestID, app.delete.ID)
 	require.Equal(t, true, result.StructuredContent["success"])
 }
 
@@ -203,53 +211,52 @@ func TestMapPlaceManagementPreservesNativeErrors(t *testing.T) {
 }
 
 type recordingMapPlaceManagement struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
 	ctx        context.Context
 	calls      int
 	err        error
-	place      *managev1.MapPlace
-	places     []*managev1.MapPlace
-	pagination *commonv1.PaginationResponse
-	get        *managev1.GetMapPlaceRequest
-	many       *managev1.GetMapPlacesByIdsRequest
-	list       *managev1.ListMapPlacesAdminRequest
-	create     *managev1.CreateMapPlaceRequest
-	update     *managev1.UpdateMapPlaceRequest
-	delete     *managev1.DeleteMapPlaceRequest
+	place      *referencecatalog.MapPlaceView
+	places     []referencecatalog.MapPlaceView
+	pagination referencecatalog.Pagination
+	get        referencecatalog.GetMapPlaceQuery
+	many       referencecatalog.GetMapPlacesByIDsQuery
+	list       referencecatalog.ListMapPlacesAdminQuery
+	create     referencecatalog.CreateMapPlaceCommand
+	update     referencecatalog.UpdateMapPlaceCommand
+	delete     referencecatalog.DeleteMapPlaceCommand
 }
 
-func (app *recordingMapPlaceManagement) record(ctx context.Context) *managev1.MapPlace {
+func (app *recordingMapPlaceManagement) record(ctx context.Context) referencecatalog.MapPlaceView {
 	app.ctx = ctx
 	app.calls++
 	if app.place != nil {
-		return app.place
+		return *app.place
 	}
-	return &managev1.MapPlace{Id: mapPlaceManagementTestID}
+	return referencecatalog.MapPlaceView{Place: referencecatalog.MapPlace{ID: mapPlaceManagementTestID}}
 }
-func (app *recordingMapPlaceManagement) GetMapPlace(ctx context.Context, req *connect.Request[managev1.GetMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error) {
-	app.get = req.Msg
-	return connect.NewResponse(app.record(ctx)), app.err
+func (app *recordingMapPlaceManagement) GetMapPlace(ctx context.Context, query referencecatalog.GetMapPlaceQuery) (referencecatalog.MapPlaceView, error) {
+	app.get = query
+	return app.record(ctx), app.err
 }
-func (app *recordingMapPlaceManagement) GetMapPlacesByIds(ctx context.Context, req *connect.Request[managev1.GetMapPlacesByIdsRequest]) (*connect.Response[managev1.GetMapPlacesByIdsResponse], error) {
-	app.many = req.Msg
+func (app *recordingMapPlaceManagement) GetMapPlacesByIDs(ctx context.Context, query referencecatalog.GetMapPlacesByIDsQuery) ([]referencecatalog.MapPlaceView, error) {
+	app.many = query
 	app.record(ctx)
-	return connect.NewResponse(&managev1.GetMapPlacesByIdsResponse{Places: app.places}), app.err
+	return app.places, app.err
 }
-func (app *recordingMapPlaceManagement) ListMapPlacesAdmin(ctx context.Context, req *connect.Request[managev1.ListMapPlacesAdminRequest]) (*connect.Response[managev1.ListMapPlacesAdminResponse], error) {
-	app.list = req.Msg
+func (app *recordingMapPlaceManagement) ListMapPlacesAdmin(ctx context.Context, query referencecatalog.ListMapPlacesAdminQuery) (referencecatalog.Page[referencecatalog.MapPlaceView], error) {
+	app.list = query
 	app.record(ctx)
-	return connect.NewResponse(&managev1.ListMapPlacesAdminResponse{Places: app.places, Pagination: app.pagination}), app.err
+	return referencecatalog.Page[referencecatalog.MapPlaceView]{Items: app.places, Pagination: app.pagination}, app.err
 }
-func (app *recordingMapPlaceManagement) CreateMapPlace(ctx context.Context, req *connect.Request[managev1.CreateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error) {
-	app.create = req.Msg
-	return connect.NewResponse(app.record(ctx)), app.err
+func (app *recordingMapPlaceManagement) CreateMapPlace(ctx context.Context, command referencecatalog.CreateMapPlaceCommand) (referencecatalog.MapPlaceView, error) {
+	app.create = command
+	return app.record(ctx), app.err
 }
-func (app *recordingMapPlaceManagement) UpdateMapPlace(ctx context.Context, req *connect.Request[managev1.UpdateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error) {
-	app.update = req.Msg
-	return connect.NewResponse(app.record(ctx)), app.err
+func (app *recordingMapPlaceManagement) UpdateMapPlace(ctx context.Context, command referencecatalog.UpdateMapPlaceCommand) (referencecatalog.MapPlaceView, error) {
+	app.update = command
+	return app.record(ctx), app.err
 }
-func (app *recordingMapPlaceManagement) DeleteMapPlace(ctx context.Context, req *connect.Request[managev1.DeleteMapPlaceRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	app.delete = req.Msg
+func (app *recordingMapPlaceManagement) DeleteMapPlace(ctx context.Context, command referencecatalog.DeleteMapPlaceCommand) error {
+	app.delete = command
 	app.record(ctx)
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), app.err
+	return app.err
 }

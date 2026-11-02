@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -23,10 +22,9 @@ type exactPageDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactPageDocumentAPI) Load(
+func (a *exactPageDocumentAPI) LoadAIDocument(
 	context.Context,
-	string,
-	string,
+	pagedomain.LoadAIDocumentQuery,
 ) (pagedomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
@@ -34,20 +32,17 @@ func (a *exactPageDocumentAPI) Load(
 
 func (a *exactPageDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
-	pageID string,
-	locale string,
-	_ pagedomain.AIDocumentExecutionMode,
-	compiler pagedomain.AIDocumentMutationCompiler,
+	command pagedomain.ExecuteAIDocumentMutationCommand,
 ) (pagedomain.AIDocumentMutationResult, error) {
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return pagedomain.AIDocumentMutationResult{}, a.authorizeErr
 	}
-	if pageID != a.state.Page.ID || locale != a.state.Locale {
+	if command.PageID != a.state.Page.ID || command.Locale != a.state.Locale {
 		return pagedomain.AIDocumentMutationResult{}, errors.New("unexpected Page identity or locale")
 	}
 	a.compilerCalls++
-	mutation, err := compiler(a.state)
+	mutation, err := command.Compile(a.state)
 	if err != nil {
 		return pagedomain.AIDocumentMutationResult{}, err
 	}
@@ -138,10 +133,10 @@ func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
 	require.Len(t, api.mutations, 1)
 	mutation := api.mutations[0]
 	require.True(t, mutation.Metadata.SetDocumentLayout)
-	require.Equal(t, model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned, HideTableOfContents: true}, mutation.Metadata.DocumentLayout)
+	require.Equal(t, pagedomain.DocumentLayout{ContentHeight: pagedomain.ContentHeightViewport, PageChrome: pagedomain.PlacementPinned, Footer: pagedomain.PlacementPinned, HideTableOfContents: true}, mutation.Metadata.DocumentLayout)
 	require.Len(t, mutation.Batch.Upserts, 1)
 	require.Contains(t, string(mutation.Batch.Upserts[0].SharedData), "https://example.com/changed")
-	require.Equal(t, model.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
+	require.Equal(t, pagedomain.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
 }
 
 func TestPageExactDocumentLayoutRejectsTargetInvalidAndUnset(t *testing.T) {
@@ -181,7 +176,7 @@ func TestPageExactMutationAuthorizesBeforeExposingValidationResult(t *testing.T)
 	pageID := uuid.New()
 	denied := errors.New("page not found")
 	api := &exactPageDocumentAPI{
-		state:        pagedomain.AIDocumentState{Page: model.Page{ID: pageID.String()}, Locale: "en"},
+		state:        pagedomain.AIDocumentState{Page: pagedomain.Page{ID: pageID.String()}, Locale: "en"},
 		authorizeErr: denied,
 	}
 	port := &pagePort{application: api, codec: codec, catalog: codec.Catalog()}
@@ -291,8 +286,10 @@ func TestPageExactMutationMapsSplitRevisionConflicts(t *testing.T) {
 		t.Parallel()
 		port, api, identity := newExactPagePortForLocale(t, "en", true)
 		currentDocument := uuid.NewString()
-		api.executeErr = &pagedomain.AIDocumentRevisionConflictError{
-			Kind: pagedomain.AIDocumentDocumentRevisionConflict, CurrentRevision: currentDocument,
+		api.executeErr = &core.RevisionConflict{
+			Kind:                    core.ConflictDocumentRevision,
+			CurrentDocumentRevision: currentDocument,
+			Message:                 "Page AI document revision changed: current revision is " + currentDocument,
 		}
 		service, err := core.NewService(port)
 		require.NoError(t, err)
@@ -313,9 +310,11 @@ func TestPageExactMutationMapsSplitRevisionConflicts(t *testing.T) {
 		t.Parallel()
 		port, api, identity := newExactPagePortForLocale(t, "ko", true)
 		currentTarget := "tr1_ko-current"
-		api.executeErr = &pagedomain.AIDocumentRevisionConflictError{
-			Kind: pagedomain.AIDocumentTargetRevisionConflict, CurrentRevision: api.state.Revision,
-			CurrentTargetRevision: &currentTarget,
+		api.executeErr = &core.RevisionConflict{
+			Kind:                    core.ConflictTargetRevision,
+			CurrentDocumentRevision: api.state.Revision,
+			CurrentTargetRevision:   &currentTarget,
+			Message:                 "Page AI document revision changed: current revision is " + api.state.Revision,
 		}
 		service, err := core.NewService(port)
 		require.NoError(t, err)
@@ -404,7 +403,7 @@ func TestPageMixedMetadataAndContentRejectionKeepsOriginalOperationIndex(t *test
 	require.NoError(t, err)
 	command, generic := core.ValidateLoadedApply(loaded, request)
 	require.True(t, generic.Valid(), "%+v", generic)
-	_, issues, err := port.compile(api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
+	_, issues, err := port.compile(t.Context(), api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 	require.Equal(t, 1, issues[0].Operation)

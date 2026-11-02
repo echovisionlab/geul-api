@@ -8,12 +8,9 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
 func TestMusicReferenceDescriptors(t *testing.T) {
@@ -71,10 +68,10 @@ func TestMusicReferenceRequestsProjectionAndContinuation(t *testing.T) {
 	description := "Electronic music"
 	emptyDescription := ""
 	fixture := &recordingMusicReferences{
-		genres:     []*managev1.GenreWithStats{{Genre: &managev1.Genre{Id: managementWorkID, Name: "Electronic", Slug: "electronic", Description: &description}, ReleaseCount: 99}},
-		styles:     []*managev1.StyleWithStats{{Style: &managev1.Style{Id: managementWorkID, Name: "Techno", Slug: "techno", Description: &emptyDescription}}},
-		formats:    []*managev1.FormatWithStats{{Format: &managev1.Format{Id: managementWorkID, Name: "Vinyl", Slug: "vinyl"}}},
-		pagination: &commonv1.PaginationResponse{Total: 25, HasMore: true},
+		genres:     []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Electronic", Slug: "electronic", Description: &description}, Count: 99}},
+		styles:     []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Techno", Slug: "techno", Description: &emptyDescription}}},
+		formats:    []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Vinyl", Slug: "vinyl"}}},
+		pagination: referencecatalog.Pagination{Total: 25, HasMore: true},
 	}
 	tools := newMusicReferenceFixture(t, fixture)
 	for _, test := range []struct{ name, title, slug string }{
@@ -85,8 +82,8 @@ func TestMusicReferenceRequestsProjectionAndContinuation(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantFilters := []*commonv1.FilterSpec{{Field: "search", Op: commonv1.FilterOp_FILTER_OP_ILIKE, Value: "music"}}
-		if fixture.requestPagination.Limit != 10 || fixture.requestPagination.Offset != 10 || !reflect.DeepEqual(wantFilters, fixture.filters) {
-			t.Fatalf("request=%v filters=%v", fixture.requestPagination, fixture.filters)
+		if fixture.request.Limit != 10 || fixture.request.Offset != 10 || !reflect.DeepEqual(wantFilters, fixture.request.Filters) {
+			t.Fatalf("request=%v", fixture.request)
 		}
 		output := result.StructuredContent
 		if output["total"] != float64(25) || output["has_more"] != true || output["next_offset"] != float64(20) || output["limit"] != float64(10) || output["offset"] != float64(10) {
@@ -142,8 +139,8 @@ func TestMusicReferenceInputBoundsAndEmptyResults(t *testing.T) {
 					}
 					return
 				}
-				if err != nil || fixture.calls != 1 || fixture.requestPagination.Limit != test.limit || fixture.requestPagination.Offset != test.offset || len(fixture.filters) != 0 {
-					t.Fatalf("request=%v filters=%v err=%v", fixture.requestPagination, fixture.filters, err)
+				if err != nil || fixture.calls != 1 || fixture.request.Limit != test.limit || fixture.request.Offset != test.offset || len(fixture.request.Filters) != 0 {
+					t.Fatalf("request=%v err=%v", fixture.request, err)
 				}
 				if len(result.StructuredContent["items"].([]any)) != 0 || result.StructuredContent["has_more"] != false {
 					t.Fatal(result.StructuredContent)
@@ -195,8 +192,8 @@ func TestMusicReferenceAuthorityAndDependencies(t *testing.T) {
 func TestMusicReferenceNativeOwnersRejectDirectUnauthenticatedCalls(t *testing.T) {
 	// These dependencies have no connection. The native owners must reject
 	// before a database query or SpiceDB call, even without an RPC interceptor.
-	db, spiceDB := &gorm.DB{}, &auth.SpiceDBClient{}
-	tools, err := NewMusicReferenceTools(referencecatalog.NewGenreService(db, spiceDB), referencecatalog.NewStyleService(db, spiceDB), referencecatalog.NewFormatService(db, spiceDB))
+	catalog := &referencecatalog.Service{}
+	tools, err := NewMusicReferenceTools(catalog, catalog, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,32 +216,31 @@ func newMusicReferenceFixture(t *testing.T, fixture *recordingMusicReferences) *
 }
 
 type recordingMusicReferences struct {
-	genres            []*managev1.GenreWithStats
-	styles            []*managev1.StyleWithStats
-	formats           []*managev1.FormatWithStats
-	pagination        *commonv1.PaginationResponse
-	requestPagination *commonv1.PaginationRequest
-	filters           []*commonv1.FilterSpec
-	calls             int
-	err               error
+	genres     []referencecatalog.ReferenceUsage
+	styles     []referencecatalog.ReferenceUsage
+	formats    []referencecatalog.ReferenceUsage
+	pagination referencecatalog.Pagination
+	request    referencecatalog.ReferenceListQuery
+	calls      int
+	err        error
 }
 
-func (r *recordingMusicReferences) record(page *commonv1.PaginationRequest, filters []*commonv1.FilterSpec) {
+func (r *recordingMusicReferences) record(query referencecatalog.ReferenceListQuery) {
 	r.calls++
-	r.requestPagination, r.filters = page, filters
+	r.request = query
 }
 
-func (r *recordingMusicReferences) ListGenresAdmin(_ context.Context, request *connect.Request[managev1.ListGenresAdminRequest]) (*connect.Response[managev1.ListGenresAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListGenresAdminResponse{Genres: r.genres, Pagination: r.pagination}), r.err
+func (r *recordingMusicReferences) ListGenresAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
+	r.record(query)
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.genres, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingMusicReferences) ListStylesAdmin(_ context.Context, request *connect.Request[managev1.ListStylesAdminRequest]) (*connect.Response[managev1.ListStylesAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListStylesAdminResponse{Styles: r.styles, Pagination: r.pagination}), r.err
+func (r *recordingMusicReferences) ListStylesAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
+	r.record(query)
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.styles, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingMusicReferences) ListFormatsAdmin(_ context.Context, request *connect.Request[managev1.ListFormatsAdminRequest]) (*connect.Response[managev1.ListFormatsAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListFormatsAdminResponse{Formats: r.formats, Pagination: r.pagination}), r.err
+func (r *recordingMusicReferences) ListFormatsAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
+	r.record(query)
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.formats, Pagination: r.pagination}, r.err
 }

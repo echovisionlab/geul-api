@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -81,8 +80,8 @@ func TestMemberNicknameSuggestionPrefersClaimsAndSkipsInvalidClaimValues(t *test
 			}}},
 		}},
 	}
-	service := &MemberService{identity: &fakeIdentityManager{identity: identity}}
-	member := model.Member{ID: memberID, AccountIdentityID: new(identityID)}
+	service := &Service{identity: &fakeIdentityManager{identity: identity}}
+	member := Member{ID: memberID, AccountIdentityID: new(identityID)}
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 		IdentityID: identityID, MemberID: memberID,
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true,
@@ -123,8 +122,8 @@ func TestMemberNicknameSuggestionIsLiveBestEffortOnlyBeforeOnboarding(t *testing
 			}}},
 		}},
 	}
-	service := &MemberService{identity: &fakeIdentityManager{identity: identity}}
-	member := model.Member{ID: memberID, AccountIdentityID: new(identityID)}
+	service := &Service{identity: &fakeIdentityManager{identity: identity}}
+	member := Member{ID: memberID, AccountIdentityID: new(identityID)}
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 		IdentityID: identityID, MemberID: memberID,
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true,

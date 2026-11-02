@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
+
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	"gorm.io/gorm"
 )
 
@@ -53,7 +55,7 @@ func loadReadyPublicAssetsForSourceFiles(
 	sourceFileIDs []string,
 	kinds ...string,
 ) (map[string]readyPublicAssetRow, error) {
-	ids := uniqueNonEmptyIDs(sourceFileIDs)
+	ids := sliceutil.UniqueNonZero(sourceFileIDs)
 	result := make(map[string]readyPublicAssetRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -82,14 +84,14 @@ func loadReadyPublicAssetsForSourceFiles(
 	return result, nil
 }
 
-func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*commonv1.AssetRef, error) {
+func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*mediaasset.Reference, error) {
 	if strings.TrimSpace(row.AssetID) == "" || strings.TrimSpace(row.Extension) == "" || strings.TrimSpace(row.MimeType) == "" {
 		return nil, errors.New("ready public asset metadata is incomplete")
 	}
 	if row.FileSize <= 0 || len(row.SHA256) != 32 {
 		return nil, errors.New("ready public asset integrity metadata is incomplete")
 	}
-	if expected := model.GetExtensionFromMime(row.MimeType); expected == "bin" || expected != row.Extension {
+	if expected := mediamime.GetExtensionFromMime(row.MimeType); expected == "bin" || expected != row.Extension {
 		return nil, errors.New("ready public asset extension does not match MIME type")
 	}
 	if row.Kind == "attachment" || row.Disposition != "inline" {
@@ -99,79 +101,27 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*common
 	if err != nil {
 		return nil, err
 	}
-	return &commonv1.AssetRef{
-		AssetId:     row.AssetID,
-		Url:         joinPublicCDNPath(cdnDomain, assetPath),
+	return &mediaasset.Reference{
+		AssetID:     row.AssetID,
+		URL:         joinPublicCDNPath(cdnDomain, assetPath),
 		Extension:   row.Extension,
 		MimeType:    row.MimeType,
 		FileSize:    row.FileSize,
-		Sha256:      append([]byte(nil), row.SHA256...),
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+		SHA256:      append([]byte(nil), row.SHA256...),
+		Disposition: mediaasset.DispositionInline,
 	}, nil
 }
 
-func buildExpiringFileRef(
-	mediaDomain string,
-	mediaSecret string,
-	fileID string,
-	extension string,
-	mimeType string,
-	fileName *string,
-	purpose mediaauth.Purpose,
-	ttl time.Duration,
-) (*commonv1.ExpiringMediaRef, error) {
-	var downloadFilename string
-	if purpose == mediaauth.PurposeDownload {
-		downloadFilename = releasepublic.CanonicalDownloadFilename(fileName, fileID, extension)
-	}
-	url, expiresAt, err := SignMediaFileURL(
-		mediaDomain,
-		fileID,
-		extension,
-		mediaSecret,
-		ttl,
-		purpose,
-		downloadFilename,
-	)
+func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*fileref.HLSReference, error) {
+	url, err := mediaauth.PublicHLSURL(mediaDomain, row.FileID, row.GenerationID, row.ManifestName)
 	if err != nil {
 		return nil, err
 	}
-	ref := &commonv1.ExpiringMediaRef{
-		FileId:    fileID,
-		Url:       url,
-		Purpose:   mediaDeliveryPurpose(purpose),
-		ExpiresAt: timestamppb.New(expiresAt),
-		Extension: extension,
-		MimeType:  mimeType,
-		FileName:  fileName,
-	}
-	if purpose == mediaauth.PurposeDownload {
-		ref.FileName = &downloadFilename
-	}
-	return ref, nil
-}
-
-func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*commonv1.HlsMediaRef, error) {
-	url, err := BuildPublicMediaHLSURL(mediaDomain, row.FileID, row.GenerationID, row.ManifestName)
-	if err != nil {
-		return nil, err
-	}
-	return &commonv1.HlsMediaRef{
-		FileId:       row.FileID,
-		GenerationId: row.GenerationID,
-		Url:          url,
+	return &fileref.HLSReference{
+		FileID:       row.FileID,
+		GenerationID: row.GenerationID,
+		URL:          url,
 	}, nil
-}
-
-func mediaDeliveryPurpose(purpose mediaauth.Purpose) commonv1.MediaDeliveryPurpose {
-	switch purpose {
-	case mediaauth.PurposeInline:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE
-	case mediaauth.PurposeDownload:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD
-	default:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED
-	}
 }
 
 func joinPublicCDNPath(cdnDomain string, resourcePath string) string {

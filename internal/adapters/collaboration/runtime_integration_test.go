@@ -10,6 +10,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/model"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -70,7 +72,7 @@ func seedCollaborationAuthorizationPrincipal(
 	t.Helper()
 
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Collaboration editor "+identityID[:8])
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Collaboration editor "+identityID[:8])
 	require.NoError(t, db.Model(&model.Member{}).
 		Where("id = ?", memberID).
 		Update("onboarded", onboarded).Error)
@@ -164,10 +166,10 @@ func attachCollaborationResourcePolicy(
 
 func TestAuthorizeCollaborationDelegatesEverySupportedResourceToCanonicalSpiceDBSubject(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
 
 	for _, spec := range registrationSpecs {
 		spec := spec
@@ -210,10 +212,10 @@ func TestAuthorizeCollaborationDelegatesEverySupportedResourceToCanonicalSpiceDB
 
 func TestAuthorizeCollaborationDeniesWhenSpiceDBDeniesEdit(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
 	checker := &recordingCollaborationAuthorizationChecker{delegate: spiceDB}
 	resourceID := seedCollaborationRoot(
 		t,
@@ -246,7 +248,7 @@ func TestAuthorizeCollaborationDeniesWhenSpiceDBDeniesEdit(t *testing.T) {
 
 func TestAuthorizeCollaborationRejectsInvalidOrNonOnboardedSessionBeforeSpiceDB(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	nonOnboarded := seedCollaborationAuthorizationPrincipal(t, db, false)
 	spiceDB := integrationSpiceDB(t)
 
@@ -285,13 +287,13 @@ func TestAuthorizeCollaborationRejectsInvalidOrNonOnboardedSessionBeforeSpiceDB(
 
 func TestAuthorizeCollaborationUsesArchivedObjectPermissionsForEveryLifecycleDomainIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	author := seedCollaborationAuthorizationPrincipal(t, db, true)
 	nonAuthor := seedCollaborationAuthorizationPrincipal(t, db, true)
 	admin := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, author.identityID, policyv1.Role.Author())
-	grantIntegrationGlobalRole(t, spiceDB, admin.identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, author.identityID, policyv1.Role.Author())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, admin.identityID, policyv1.Role.Admin())
 
 	for _, testCase := range []struct {
 		name         string
@@ -534,7 +536,7 @@ func collaborationMapThemeVariant(color string) model.MapThemeVariant {
 
 func TestAuthorizeCollaborationRejectsInvalidPermissionOrResourceIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	service := newAuthorizationService(db, &recordingCollaborationAuthorizationChecker{delegate: integrationSpiceDB(t)}, "")
 	for _, testCase := range []struct {
@@ -554,7 +556,7 @@ func TestAuthorizeCollaborationRejectsInvalidPermissionOrResourceIntegration(t *
 
 func TestAuthorizeCollaborationRejectsNonCanonicalLocaleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	checker := &recordingCollaborationAuthorizationChecker{delegate: integrationSpiceDB(t)}
 	service := newAuthorizationService(db, checker, "")
@@ -574,7 +576,7 @@ func TestAuthorizeCollaborationRejectsNonCanonicalLocaleIntegration(t *testing.T
 
 func TestAuthorizeCollaborationArchivedPostRejectsResourceCollaboratorViewIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	collaborator := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
 	postID := seedArchivedCollaborationPost(t, db, true)
@@ -600,10 +602,10 @@ func TestAuthorizeCollaborationArchivedPostRejectsResourceCollaboratorViewIntegr
 
 func TestAuthorizeCollaborationHidesEveryMissingRootWithoutSpiceDBFallbackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, principal.identityID, policyv1.Role.Admin())
 
 	for _, spec := range registrationSpecs {
 		spec := spec

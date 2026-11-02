@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,17 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/email"
-)
-
-// One short transaction serializes the four overlapping budgets. The lock is
-// transaction-scoped, so PostgreSQL releases it on commit, rollback, or a lost
-// connection without a lease-renewal loop.
-const (
-	authCodeIssuanceAdvisoryLockID   int64 = 4923378199947301957
-	authCodeIssuanceCleanupBatchSize int   = 1000
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 type AuthCodeIssuanceLimits struct {
@@ -62,24 +52,29 @@ type authCodeQuota struct {
 type authCodeIssuanceBudget struct {
 	limit  int
 	window time.Duration
-	column string
+	scope  IssuanceScope
 	digest string
 }
 
+// AuthCodeIssuanceLimiter reserves public auth code issuances against four
+// overlapping budgets. A reservation is admission bookkeeping for an
+// anonymous request, not a mutation of domain state: there is no principal
+// to fence or authorize and no audit record, so it runs in its own unit of
+// work instead of mutation.Run.
 type AuthCodeIssuanceLimiter struct {
-	db        *gorm.DB
+	units     mutation.UnitOfWork[Store]
 	keySecret []byte
 	limits    AuthCodeIssuanceLimits
 	now       func() time.Time
 }
 
 func NewAuthCodeIssuanceLimiter(
-	db *gorm.DB,
+	units mutation.UnitOfWork[Store],
 	keySecret []byte,
 	limits AuthCodeIssuanceLimits,
 ) *AuthCodeIssuanceLimiter {
-	if db == nil {
-		panic("auth code issuance limiter database is required")
+	if units == nil {
+		panic("auth code issuance limiter unit of work is required")
 	}
 	if len(keySecret) == 0 {
 		panic("auth code issuance limiter key secret is required")
@@ -88,7 +83,7 @@ func NewAuthCodeIssuanceLimiter(
 		panic("auth code issuance limits must be positive")
 	}
 	return &AuthCodeIssuanceLimiter{
-		db:        db,
+		units:     units,
 		keySecret: append([]byte(nil), keySecret...),
 		limits:    limits,
 		now:       time.Now,
@@ -102,82 +97,24 @@ func (l *AuthCodeIssuanceLimiter) Reserve(
 	if l == nil {
 		return AuthCodeIssuanceReservation{}, false, 0, errors.New("auth code issuance limiter is required")
 	}
-	if !isAuthCodeEvent(request.EventKey) {
-		return AuthCodeIssuanceReservation{}, false, 0, fmt.Errorf("unsupported auth code event: %q", request.EventKey)
+	issuance, err := l.newIssuance(request)
+	if err != nil {
+		return AuthCodeIssuanceReservation{}, false, 0, err
 	}
-	recipient := email.NormalizeAddressForDelivery(request.Recipient)
-	flowID := strings.TrimSpace(request.FlowID)
-	clientIP := normalizeAuthCodeClientIP(request.ClientIP)
-	if recipient == "" && flowID == "" {
-		return AuthCodeIssuanceReservation{}, false, 0, errors.New("auth code recipient or flow is required")
-	}
-	if clientIP == "" {
-		return AuthCodeIssuanceReservation{}, false, 0, errors.New("auth code client IP is required")
-	}
-
-	subject := recipient
-	if subject == "" {
-		subject = "flow:" + flowID
-	}
-	subjectDigest := l.digest(subject)
-	clientIPDigest := l.digest(clientIP)
-	budgets := []authCodeIssuanceBudget{
-		{limit: l.limits.GlobalPerMinute, window: time.Minute},
-		{limit: l.limits.IPTenMinute, window: 10 * time.Minute, column: "client_ip_digest", digest: clientIPDigest},
-		{limit: l.limits.AddressHourly, window: time.Hour, column: "subject_digest", digest: subjectDigest},
-		// Login and registration are intentionally the same public operation.
-		// Purpose remains provenance, never an address-existence side channel.
-		{limit: 1, window: l.limits.Cooldown, column: "subject_digest", digest: subjectDigest},
-	}
-
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return AuthCodeIssuanceReservation{}, false, 0, fmt.Errorf("generate auth code issuance token: %w", err)
-	}
-	now := l.now().UTC().Truncate(time.Microsecond)
-	reservation := AuthCodeIssuanceReservation{
-		token:    hex.EncodeToString(tokenBytes),
-		issuedAt: now,
-	}
-	recipientDigest := l.digest(recipient)
+	reservation := AuthCodeIssuanceReservation{token: issuance.token, issuedAt: issuance.issuedAt}
 	allowed := false
 	retryAfter := time.Duration(0)
-	err := l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", authCodeIssuanceAdvisoryLockID).Error; err != nil {
+	// One short transaction serializes the four overlapping budgets.
+	err = l.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		if err := store.LockIssuances(ctx); err != nil {
 			return err
 		}
-		for _, budget := range budgets {
-			candidate, count, err := authCodeIssuanceRetryAfter(tx, budget, now)
-			if err != nil {
-				return err
-			}
-			if budget.column == "client_ip_digest" {
-				reservation.quota = authCodeQuota{
-					limit:         int64(budget.limit),
-					remaining:     max(0, int64(budget.limit)-count),
-					windowSeconds: int64(budget.window / time.Second),
-				}
-			}
-			if candidate > retryAfter {
-				retryAfter = candidate
-			}
+		var err error
+		if retryAfter, reservation.quota, err = l.spendBudgets(ctx, store, issuance); err != nil || retryAfter > 0 {
+			return err
 		}
-		if retryAfter > 0 {
-			return nil
-		}
-		if err := tx.Exec(`
-			INSERT INTO public.auth_code_issuance (
-				token, purpose, recipient_digest, subject_digest,
-				client_ip_digest, issued_at, expires_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			reservation.token,
-			request.EventKey.String(),
-			recipientDigest,
-			subjectDigest,
-			clientIPDigest,
-			now,
-			now.Add(authCodeIssuanceRecordTTL(l.limits)),
-		).Error; err != nil {
+		if err := store.InsertIssuance(ctx, l.issuanceRow(issuance)); err != nil {
 			return err
 		}
 		reservation.quota.remaining = max(0, reservation.quota.remaining-1)
@@ -193,68 +130,111 @@ func (l *AuthCodeIssuanceLimiter) Reserve(
 	return reservation, true, 0, nil
 }
 
-func deleteExpiredAuthCodeIssuances(tx *gorm.DB, now time.Time, limit int) (int64, error) {
-	if tx == nil {
-		return 0, errors.New("auth code issuance cleanup database is required")
-	}
-	if limit <= 0 {
-		return 0, errors.New("auth code issuance cleanup limit must be positive")
-	}
-	result := tx.Exec(`
-		WITH expired AS (
-			SELECT token
-			FROM public.auth_code_issuance
-			WHERE expires_at <= ?
-			ORDER BY expires_at, token
-			LIMIT ?
-		)
-		DELETE FROM public.auth_code_issuance AS issuance
-		USING expired
-		WHERE issuance.token = expired.token`, now, limit)
-	if result.Error != nil {
-		return 0, fmt.Errorf("delete expired auth code issuances: %w", result.Error)
-	}
-	return result.RowsAffected, nil
+// authCodeIssuance is one requested issuance with its keyed digests.
+type authCodeIssuance struct {
+	request         AuthCodeIssuanceRequest
+	token           string
+	issuedAt        time.Time
+	recipientDigest string
+	subjectDigest   string
+	clientIPDigest  string
 }
 
-// CleanupExpiredAuthCodeIssuances physically removes a bounded batch of
-// logically expired limiter rows. It is safe to run alongside Reserve because
-// active budget queries ignore expired windows and the delete targets only
-// expires_at <= now.
-func CleanupExpiredAuthCodeIssuances(ctx context.Context, db *gorm.DB, now time.Time, limit int) (int64, error) {
-	if db == nil {
-		return 0, errors.New("auth code issuance cleanup database is required")
+func (l *AuthCodeIssuanceLimiter) newIssuance(request AuthCodeIssuanceRequest) (authCodeIssuance, error) {
+	if !isAuthCodeEvent(request.EventKey) {
+		return authCodeIssuance{}, fmt.Errorf("unsupported auth code event: %q", request.EventKey)
 	}
-	return deleteExpiredAuthCodeIssuances(db.WithContext(ctx), now.UTC(), limit)
+	recipient := email.NormalizeAddressForDelivery(request.Recipient)
+	flowID := strings.TrimSpace(request.FlowID)
+	clientIP := normalizeAuthCodeClientIP(request.ClientIP)
+	if recipient == "" && flowID == "" {
+		return authCodeIssuance{}, errors.New("auth code recipient or flow is required")
+	}
+	if clientIP == "" {
+		return authCodeIssuance{}, errors.New("auth code client IP is required")
+	}
+	subject := recipient
+	if subject == "" {
+		subject = "flow:" + flowID
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return authCodeIssuance{}, fmt.Errorf("generate auth code issuance token: %w", err)
+	}
+	return authCodeIssuance{
+		request:         request,
+		token:           hex.EncodeToString(tokenBytes),
+		issuedAt:        l.now().UTC().Truncate(time.Microsecond),
+		recipientDigest: l.digest(recipient),
+		subjectDigest:   l.digest(subject),
+		clientIPDigest:  l.digest(clientIP),
+	}, nil
+}
+
+// spendBudgets reports how long issuance must wait for its tightest
+// exhausted budget, zero when every budget has room, and the client IP
+// budget's quota.
+func (l *AuthCodeIssuanceLimiter) spendBudgets(ctx context.Context, store Store, issuance authCodeIssuance) (time.Duration, authCodeQuota, error) {
+	budgets := []authCodeIssuanceBudget{
+		{limit: l.limits.GlobalPerMinute, window: time.Minute, scope: EveryIssuance},
+		{limit: l.limits.IPTenMinute, window: 10 * time.Minute, scope: ClientIPIssuances, digest: issuance.clientIPDigest},
+		{limit: l.limits.AddressHourly, window: time.Hour, scope: SubjectIssuances, digest: issuance.subjectDigest},
+		// Login and registration are intentionally the same public operation.
+		// Purpose remains provenance, never an address-existence side channel.
+		{limit: 1, window: l.limits.Cooldown, scope: SubjectIssuances, digest: issuance.subjectDigest},
+	}
+	var quota authCodeQuota
+	retryAfter := time.Duration(0)
+	for _, budget := range budgets {
+		candidate, count, err := authCodeIssuanceRetryAfter(ctx, store, budget, issuance.issuedAt)
+		if err != nil {
+			return 0, authCodeQuota{}, err
+		}
+		if budget.scope == ClientIPIssuances {
+			quota = authCodeQuota{
+				limit:         int64(budget.limit),
+				remaining:     max(0, int64(budget.limit)-count),
+				windowSeconds: int64(budget.window / time.Second),
+			}
+		}
+		retryAfter = max(retryAfter, candidate)
+	}
+	return retryAfter, quota, nil
+}
+
+func (l *AuthCodeIssuanceLimiter) issuanceRow(issuance authCodeIssuance) Issuance {
+	return Issuance{
+		Token:           issuance.token,
+		Purpose:         issuance.request.EventKey,
+		RecipientDigest: issuance.recipientDigest,
+		SubjectDigest:   issuance.subjectDigest,
+		ClientIPDigest:  issuance.clientIPDigest,
+		IssuedAt:        issuance.issuedAt,
+		ExpiresAt:       issuance.issuedAt.Add(authCodeIssuanceRecordTTL(l.limits)),
+	}
 }
 
 func authCodeIssuanceRetryAfter(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	budget authCodeIssuanceBudget,
 	now time.Time,
 ) (time.Duration, int64, error) {
-	query := "SELECT count(*), min(issued_at) FROM public.auth_code_issuance WHERE issued_at > ?"
-	args := []any{now.Add(-budget.window)}
-	if budget.column != "" {
-		query += " AND " + budget.column + " = ?"
-		args = append(args, budget.digest)
-	}
-	var count int64
-	var first sql.NullTime
-	if err := tx.Raw(query, args...).Row().Scan(&count, &first); err != nil {
+	usage, err := store.IssuanceUsage(ctx, IssuanceUsageQuery{Scope: budget.scope, Digest: budget.digest, After: now.Add(-budget.window)})
+	if err != nil {
 		return 0, 0, err
 	}
-	if count < int64(budget.limit) {
-		return 0, count, nil
+	if usage.Count < int64(budget.limit) {
+		return 0, usage.Count, nil
 	}
-	if !first.Valid {
-		return budget.window, count, nil
+	if usage.First.IsZero() {
+		return budget.window, usage.Count, nil
 	}
-	retryAfter := budget.window - now.Sub(first.Time.UTC())
+	retryAfter := budget.window - now.Sub(usage.First.UTC())
 	if retryAfter <= 0 {
-		return time.Microsecond, count, nil
+		return time.Microsecond, usage.Count, nil
 	}
-	return retryAfter, count, nil
+	return retryAfter, usage.Count, nil
 }
 
 func (l *AuthCodeIssuanceLimiter) Release(
@@ -267,8 +247,9 @@ func (l *AuthCodeIssuanceLimiter) Release(
 	if !validAuthCodeIssuanceID(reservation.token) {
 		return errors.New("auth code issuance reservation is invalid")
 	}
-	if err := l.db.WithContext(ctx).
-		Exec("DELETE FROM public.auth_code_issuance WHERE token = ?", reservation.token).Error; err != nil {
+	if err := l.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		return tx.Store().DeleteIssuance(ctx, reservation.token)
+	}); err != nil {
 		return fmt.Errorf("release auth code issuance: %w", err)
 	}
 	return nil
@@ -292,26 +273,21 @@ func (l *AuthCodeIssuanceLimiter) CurrentReservation(
 		return AuthCodeIssuanceReservation{}, false, fmt.Errorf("unsupported auth code event: %q", eventKey)
 	}
 	recipientDigest := l.digest(recipient)
-	var record struct {
-		Token           string
-		Purpose         string
-		RecipientDigest string
-		IssuedAt        time.Time
-	}
-	err := l.db.WithContext(ctx).Raw(`
-		SELECT token, purpose, recipient_digest, issued_at
-		FROM public.auth_code_issuance
-		WHERE recipient_digest = ? AND expires_at > ?
-		ORDER BY issued_at DESC
-		LIMIT 1`, recipientDigest, l.now().UTC()).Scan(&record).Error
+	var record IssuedCode
+	var found bool
+	err := l.units.Read(ctx, func(store Store) error {
+		var err error
+		record, found, err = store.LatestIssuance(ctx, recipientDigest, l.now().UTC())
+		return err
+	})
 	if err != nil {
 		return AuthCodeIssuanceReservation{}, false, fmt.Errorf("load auth code issuance reservation: %w", err)
 	}
-	if record.Token == "" {
+	if !found {
 		return AuthCodeIssuanceReservation{}, false, nil
 	}
 	if !validAuthCodeIssuanceID(record.Token) ||
-		record.Purpose != eventKey.String() ||
+		record.Purpose != eventKey ||
 		record.RecipientDigest != recipientDigest {
 		return AuthCodeIssuanceReservation{}, false, errors.New("auth code issuance reservation is invalid")
 	}

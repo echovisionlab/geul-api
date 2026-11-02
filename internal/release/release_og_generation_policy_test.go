@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -14,6 +16,7 @@ import (
 
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -27,22 +30,17 @@ func TestReleaseOgPolicyRetainsLegacyIdentityWithoutNewGeneration(t *testing.T) 
 }
 
 func TestManualReleaseOgGenerationIsDisabledBeforeDatabaseLookup(t *testing.T) {
-	_, err := releaseOGResolverForTest().Resolve(t.Context(), nil, &managev1.RegenerateOgImageRequest{
-		EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_RELEASE,
-		EntityId:   new("release-1"),
-		Selection: &managev1.OgTargetSelection{Target: &managev1.OgTargetSelection_Primary{
-			Primary: &managev1.OgPrimaryTarget{},
-		}},
-	})
+	store := ogpostgres.NewStore(nil, ogpostgres.Ports{Requests: releaseOGResolverForTest()})
+	_, err := og.ResolveRequests(t.Context(), store, "release", "release-1", og.Selection{Kind: og.SelectionPrimary})
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
 
 func TestAutomaticReleaseOgGenerationIsDisabledBeforeDatabaseLookup(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	refresher := og.NewRefresher(
-		og.NewPlanner(db, "", releaseOGRenderConfig{}, postadapter.NewProjection()),
+	refresher := ogpostgres.NewRefresher(
+		ogpostgres.NewPlanner("", releaseOGRenderConfig{}, postadapter.NewProjection()),
 		releaseOGResolverForTest(),
 	)
 	_, err = refresher.RequestCurrentWithDB(
@@ -51,7 +49,7 @@ func TestAutomaticReleaseOgGenerationIsDisabledBeforeDatabaseLookup(t *testing.T
 		"release-1", "", false, "release_updated",
 	)
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
 
 type releaseOGRenderConfig struct{}
@@ -61,6 +59,6 @@ func (releaseOGRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func releaseOGResolverForTest() *og.Resolver {
-	return og.NewResolver(postadapter.NewRequests())
+func releaseOGResolverForTest() *ogpostgres.Resolver {
+	return ogpostgres.NewResolver(postadapter.NewRequests())
 }

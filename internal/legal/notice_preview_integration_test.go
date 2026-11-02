@@ -16,15 +16,18 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -63,8 +66,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 ) {
 	t.Parallel()
 	db := newLegalLocalKratosIntegrationDB(t)
-	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
-	seedLegalDeliveryTemplateIntegration(t, db, email.EventTermsUpdate.String())
+	orytest.EnsureKratosIdentityFixtureColumns(t, db)
 	now := time.Now().UTC()
 	seedBulkEmailAudienceIdentity(
 		t,
@@ -73,15 +75,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		now,
 	)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
-	store, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
-	require.NoError(t, err)
-	service := newTermsServiceForLegalIntegrationTest(
-		db,
-		"https://example.test",
-		"https://cdn.example.test",
-		spiceDB,
-		legaldomain.WithTermsContentBlockStore(store),
-	)
+	service := newLegalIntegration(t, db, spiceDB, &audittest.Recorder{}).terms()
 	draft, err := service.CreateTermsVersion(
 		ctx,
 		connect.NewRequest(&managev1.CreateTermsVersionRequest{
@@ -91,6 +85,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	)
 	require.NoError(t, err)
 	effectiveAt := now.Add(6 * 24 * time.Hour)
+	scheduleStartedAt := time.Now().UTC().Truncate(time.Microsecond)
 	_, err = service.ScheduleTerms(
 		ctx,
 		connect.NewRequest(&managev1.ScheduleTermsRequest{
@@ -99,6 +94,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 			EffectiveFrom:    timestamppb.New(effectiveAt),
 		}),
 	)
+	scheduleFinishedAt := time.Now().UTC()
 	require.NoError(t, err)
 
 	var run model.CampaignDeliveryRun
@@ -107,8 +103,9 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		draft.Msg.Id,
 		email.EventTermsUpdate.String(),
 	).Take(&run).Error)
-	require.WithinDuration(t, now, run.ScheduledAt, time.Second)
-	data, err := campaign.CampaignDeliveryRunTemplateData(run)
+	require.False(t, run.ScheduledAt.Before(scheduleStartedAt), "notice dispatch precedes its schedule command")
+	require.False(t, run.ScheduledAt.After(scheduleFinishedAt), "notice dispatch is deferred beyond its schedule command")
+	data, err := campaign.CampaignDeliveryRunTemplateData(campaignpostgres.DeliveryRunFromRow(run))
 	require.NoError(t, err)
 	require.Equal(t, "September contributor terms", data["policy_title"])
 	require.Equal(t, effectiveAt.Format("2006-01-02"), data["effective_date"])
@@ -116,26 +113,14 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	require.Zero(t, countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	failingPublisher := &failingLegalNoticeBulkPublisher{}
-	err = campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
-		spiceDB,
-		failingPublisher,
-		noopDomainAuditAppender{},
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	).
+	err = campaignadapter.NewDeliveryDispatcher(db, spiceDB, failingPublisher, &audittest.Recorder{}, legaladapter.NewRuntime()).
 		DispatchEmailDeliveryRun(t.Context(), run.ID)
 	require.NoError(t, err)
 	require.Zero(t, failingPublisher.calls)
 	require.Equal(t, int64(1), countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	retryPublisher := &recordingLegalEmailPublisher{}
-	resumed, err := campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
-		spiceDB,
-		retryPublisher,
-		noopDomainAuditAppender{},
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	).
+	resumed, err := campaignadapter.NewDeliveryDispatcher(db, spiceDB, retryPublisher, &audittest.Recorder{}, legaladapter.NewRuntime()).
 		ResumeActiveEmailDeliveryRuns(t.Context(), 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, resumed)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"gorm.io/gorm"
@@ -19,12 +20,9 @@ func (p *Publisher) EnqueueTranslationGenerateWithDB(
 	if job == nil {
 		return fmt.Errorf("translation generate job is required")
 	}
-	executor, err := GormTransactionExecutor(tx)
+	executor, err := contentsignal.TransactionExecutor(tx)
 	if err != nil {
 		return err
-	}
-	if _, ok := executor.(gorm.TxCommitter); !ok {
-		return fmt.Errorf("translation command requires the owning transaction")
 	}
 	return EnqueueProtobuf(ctx, executor, eventpkg.QueueTranslationGenerate, job.GetJobId(), job)
 }

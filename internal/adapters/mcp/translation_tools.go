@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
 const (
@@ -18,72 +18,80 @@ const (
 	ToolTranslationXLIFFImport = "translation_xliff_import"
 )
 
-var translationTools = []mcpserver.Tool{
-	{
+var translationTools = toolRegistry[TranslationTools]{
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationJobsList, Title: "List translation jobs",
 		Description: "List bounded translation Job metadata. Non-admin callers must provide one exact document target.",
 		InputSchema: translationJobsListInputSchema(), OutputSchema: translationJobsOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).listJobs),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationList, Title: "List document translations",
 		Description: "List locale presence metadata for one document. Read translated fields with document_read.",
 		InputSchema: translationTargetInputSchema(), OutputSchema: translationListOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).listTranslations),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationGet, Title: "Get document translation metadata",
 		Description: "Get locale presence metadata without returning editor-native content. Read content with document_read.",
 		InputSchema: translationGetInputSchema(), OutputSchema: translationGetOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).getTranslation),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationJobCancel, Title: "Cancel translation job",
 		Description: "Cancel one queued or running translation Job under current source-document edit authority.",
 		InputSchema: translationJobInputSchema(), OutputSchema: translationJobCancellationOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).cancelJob),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationRegenerate, Title: "Request document translations",
 		Description: "Request or regenerate Translation Jobs for an explicit non-empty locale selection.",
 		InputSchema: translationRegenerateInputSchema(), OutputSchema: translationJobsOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, true),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).regenerate),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationXLIFFExport, Title: "Export XLIFF 2.2",
 		Description: "Create a short-lived XLIFF 2.2 artifact reference. XML is never returned in tool content.",
 		InputSchema: translationXLIFFExportInputSchema(), OutputSchema: translationXLIFFExportOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*TranslationTools).exportXLIFF),
+	defineTool(mcpserver.Tool{
 		Name: ToolTranslationXLIFFImport, Title: "Import XLIFF 2.2",
 		Description: "Import a completed existing File upload by file_id with explicit patch or replace semantics.",
 		InputSchema: translationXLIFFImportInputSchema(), OutputSchema: translationXLIFFImportOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
+	}, (*TranslationTools).importXLIFF),
 }
 
-// TranslationApplication is the exact generated TranslationService handler
-// contract used by the normal Connect transport. MCP calls the same
-// application object so PAT actor context, owning-domain authorization, Job
-// lifecycle and XLIFF authority are not reimplemented here. This public MCP
-// adapter does not own or call Web AI Chat, browser sessions, prompts, models,
-// provider credentials or an in-editor provider loop.
-type TranslationApplication = managev1connect.TranslationServiceHandler
+// TranslationApplication is the Translation use cases the tools call, the
+// same ones the Connect transport serves, so PAT actor context,
+// owning-domain authorization, Job lifecycle and XLIFF authority are not
+// reimplemented here. This public MCP adapter does not own or call Web AI
+// Chat, browser sessions, prompts, models, provider credentials or an
+// in-editor provider loop.
+type TranslationApplication interface {
+	ListTranslationJobs(context.Context, translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error)
+	ListEntityTranslations(context.Context, translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error)
+	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (translationapp.Entry, error)
+	CancelTranslationJob(context.Context, translationapp.CancelTranslationJobCommand) error
+	RegenerateEntityTranslations(context.Context, translationapp.RegenerateEntityTranslationsCommand) ([]translationapp.Job, error)
+	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error)
+	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error)
+}
 
 type TranslationTools struct {
 	application TranslationApplication
@@ -96,12 +104,10 @@ func NewTranslationTools(application TranslationApplication) (*TranslationTools,
 	return &TranslationTools{application: application}, nil
 }
 
-func (*TranslationTools) ToolNames() []string {
-	return toolDefinitionNames(translationTools)
-}
+func (*TranslationTools) ToolNames() []string { return translationTools.names() }
 
 func (*TranslationTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(translationTools), nil
+	return translationTools.list(), nil
 }
 
 func (tools *TranslationTools) CallTool(
@@ -110,24 +116,7 @@ func (tools *TranslationTools) CallTool(
 	name string,
 	arguments mcpserver.ToolArguments,
 ) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolTranslationJobsList:
-		return tools.listJobs(ctx, arguments)
-	case ToolTranslationList:
-		return tools.listTranslations(ctx, arguments)
-	case ToolTranslationGet:
-		return tools.getTranslation(ctx, arguments)
-	case ToolTranslationJobCancel:
-		return tools.cancelJob(ctx, arguments)
-	case ToolTranslationRegenerate:
-		return tools.regenerate(ctx, arguments)
-	case ToolTranslationXLIFFExport:
-		return tools.exportXLIFF(ctx, arguments)
-	case ToolTranslationXLIFFImport:
-		return tools.importXLIFF(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return translationTools.call(tools, ctx, name, arguments)
 }
 
 var (

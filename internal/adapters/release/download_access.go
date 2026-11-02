@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -22,10 +23,10 @@ import (
 type DownloadAccess struct {
 	db       *gorm.DB
 	spiceDB  *auth.SpiceDBClient
-	segments mediaasset.SegmentConfigLoader
+	segments mediaassetpostgres.SegmentConfigLoader
 }
 
-func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, segments mediaasset.SegmentConfigLoader) *DownloadAccess {
+func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, segments mediaassetpostgres.SegmentConfigLoader) *DownloadAccess {
 	if segments == nil {
 		panic("release download access: segment config loader is required")
 	}
@@ -54,7 +55,7 @@ func (a *DownloadAccess) Resolve(
 
 	user := auth.GetUser(ctx)
 	var evaluatedSources map[string]mediaasset.FileDownloadSource
-	var evaluatedAccess map[string]*openv1.FileDownloadAccess
+	var evaluatedAccess map[string]*releasepublic.DownloadAccess
 	var evaluatedFingerprints map[string]string
 	var evaluatedViewerFingerprint string
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -68,7 +69,7 @@ func (a *DownloadAccess) Resolve(
 			evaluatedSources = map[string]mediaasset.FileDownloadSource{}
 			return nil
 		}
-		sources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, tx, trackIDs)
+		sources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), trackIDs)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -77,7 +78,7 @@ func (a *DownloadAccess) Resolve(
 				delete(sources, trackID)
 			}
 		}
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, a.spiceDB, sources, user, a.segments)
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), a.spiceDB, sources, user)
 		if evaluateErr != nil {
 			return evaluateErr
 		}
@@ -90,9 +91,11 @@ func (a *DownloadAccess) Resolve(
 					signIn[id] = true
 				case mediaasset.FileDownloadAudienceRestricted:
 					restricted[id] = source
+				case mediaasset.FileDownloadAudienceDisabled, mediaasset.FileDownloadAudiencePublic:
+					// Signing in changes nothing: the download is off, or already open.
 				}
 			}
-			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
+			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), restricted)
 			if presenceErr != nil {
 				return presenceErr
 			}
@@ -100,15 +103,15 @@ func (a *DownloadAccess) Resolve(
 				signIn[id] = present
 			}
 		}
-		access := make(map[string]*openv1.FileDownloadAccess, len(sources))
+		access := make(map[string]*releasepublic.DownloadAccess, len(sources))
 		for id, source := range sources {
 			access[id] = trackDownloadAccess(source, user, allowed[id], signIn[id])
 		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources, a.segments)
+		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), sources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, user)
+		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), sources, user)
 		if viewerErr != nil {
 			return viewerErr
 		}
@@ -124,7 +127,7 @@ func (a *DownloadAccess) Resolve(
 	}
 
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); lockErr != nil {
+		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), evaluatedSources); lockErr != nil {
 			return lockErr
 		}
 		var releaseRow struct {
@@ -132,7 +135,7 @@ func (a *DownloadAccess) Resolve(
 			ContentDocumentID *string `gorm:"column:content_document_id"`
 		}
 		releaseQuery := tx.WithContext(ctx).Table("release").Select("status, content_document_id").Where("id = ?", releaseID).
-			Clauses(clause.Locking{Strength: "SHARE"}).Take(&releaseRow)
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&releaseRow)
 		if errors.Is(releaseQuery.Error, gorm.ErrRecordNotFound) || releaseRow.Status != expectedReleaseStatus {
 			return nil
 		}
@@ -148,7 +151,7 @@ func (a *DownloadAccess) Resolve(
 		if !ownerAuthorized {
 			return nil
 		}
-		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, user)
+		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), evaluatedSources, user)
 		if lockErr != nil {
 			return lockErr
 		}
@@ -157,18 +160,18 @@ func (a *DownloadAccess) Resolve(
 		}
 		if lockErr := tx.WithContext(ctx).Table("track").Select("id").
 			Where("release_id = ? AND id IN ? AND audio_original_file_id IS NOT NULL", releaseID, trackIDs).
-			Order("id").Clauses(clause.Locking{Strength: "SHARE"}).Find(&lockedTracks).Error; lockErr != nil {
+			Order("id").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Find(&lockedTracks).Error; lockErr != nil {
 			return lockErr
 		}
-		currentSources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, tx, trackIDs)
+		currentSources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), trackIDs)
 		if loadErr != nil {
 			return loadErr
 		}
-		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, currentSources, a.segments)
+		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), currentSources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, currentSources, user)
+		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), currentSources, user)
 		if viewerErr != nil {
 			return viewerErr
 		}
@@ -183,7 +186,7 @@ func (a *DownloadAccess) Resolve(
 				continue
 			}
 			authorization := releasepublic.TrackDownloadAuthorization{Access: decision}
-			if authorization.Access.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD && signer != nil {
+			if downloadAction(authorization.Access) == releasepublic.DownloadActionDownload && signer != nil {
 				download, signErr := signer(releasepublic.MediaFile{
 					ID: current.FileID, Extension: current.Extension, MimeType: current.MimeType, FileName: current.FileName,
 				})
@@ -216,7 +219,7 @@ func (a *DownloadAccess) validateReleaseDownloadOwnerAuthorization(
 	}
 	query := db.WithContext(ctx).Table("release").Select("status, content_document_id").Where("id = ?", releaseID)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -251,7 +254,7 @@ func (a *DownloadAccess) validateLockedReleaseDownloadOwnerAuthorization(
 	}
 	switch authorization.Mode {
 	case mediaasset.ContentDownloadOwnerAccessPublic:
-		return status == managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), nil
+		return status == string(model.ReleaseStatusPublished), nil
 	case mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft:
 		user := auth.GetUser(ctx)
 		if user == nil || !user.Authenticated || user.Banned ||
@@ -292,7 +295,7 @@ func validateReleaseDownloadShareLink(
 	var link model.ShareLink
 	query := db.WithContext(ctx).Where("id = ?", witness.ID)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Take(&link).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -311,25 +314,33 @@ func sameReleaseDownloadTime(left, right *time.Time) bool {
 	return (left == nil && right == nil) || (left != nil && right != nil && left.Equal(*right))
 }
 
-func trackDownloadAccess(source mediaasset.FileDownloadSource, user *auth.UserInfo, allowed, signIn bool) *openv1.FileDownloadAccess {
+func trackDownloadAccess(source mediaasset.FileDownloadSource, user *auth.UserInfo, allowed, signIn bool) *releasepublic.DownloadAccess {
 	if allowed {
-		return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD}
+		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionDownload}
 	}
 	if (source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted) &&
 		(user == nil || !user.Authenticated || user.MemberID == "") && signIn {
-		return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_SIGN_IN}
+		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionSignIn}
 	}
 	return unavailableTrackDownloadAccess()
 }
 
-func unavailableTrackDownloadAccess() *openv1.FileDownloadAccess {
-	return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_UNAVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE}
+func unavailableTrackDownloadAccess() *releasepublic.DownloadAccess {
+	return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadUnavailable, Action: releasepublic.DownloadActionNone}
+}
+
+// downloadAction is the action of access; none when there is no decision.
+func downloadAction(access *releasepublic.DownloadAccess) releasepublic.DownloadAction {
+	if access == nil {
+		return releasepublic.DownloadActionNone
+	}
+	return access.Action
 }
 
 func trackDownloadDecisionDependsOnActiveViewer(
 	source mediaasset.FileDownloadSource,
-	access *openv1.FileDownloadAccess,
+	access *releasepublic.DownloadAccess,
 ) bool {
-	return access.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD &&
+	return downloadAction(access) == releasepublic.DownloadActionDownload &&
 		(source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted)
 }

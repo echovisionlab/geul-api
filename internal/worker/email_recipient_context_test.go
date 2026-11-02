@@ -21,7 +21,7 @@ import (
 
 func TestEnforceEmailRecipientContextBypassAllowlist(t *testing.T) {
 	ctx := context.Background()
-	handlers := &Handlers{}
+	handlers := &emailSeams{}
 
 	t.Run("allows explicit system direct reasons", func(t *testing.T) {
 		for _, reason := range []string{
@@ -136,7 +136,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("allows current verified account email", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-1", "user@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-1",
@@ -163,7 +163,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("blocks a passkey notice whose exact mutation was not committed", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-security-stale", "canonical@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-security-stale",
@@ -197,7 +197,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("requires exact social credential context", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-social", "canonical@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-social",
@@ -228,7 +228,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("blocks a legacy noncanonical Member primary projection", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-selected", "delivery@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-selected",
@@ -253,7 +253,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("security notice uses the canonical Member primary projection", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-security", "canonical@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-security",
@@ -293,7 +293,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("blocks stale account email", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-2", "new@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-2",
@@ -318,7 +318,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 
 	t.Run("blocks unverified account email", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-3", "user@example.com")
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-3",
@@ -343,7 +343,7 @@ func TestEnforceEmailRecipientContextAccountCurrentEmail(t *testing.T) {
 	t.Run("blocks account mail before Member onboarding", func(t *testing.T) {
 		db, memberID := activeMemberEmailTestDB(t, "identity-unonboarded", "user@example.com")
 		require.NoError(t, db.Exec("UPDATE member SET onboarded = FALSE WHERE id = ?", memberID).Error)
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			db: db,
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:         "identity-unonboarded",
@@ -396,7 +396,7 @@ func TestEnforceEmailRecipientContextNewsletterSubscriptionRechecksCurrentRow(t 
 		IdentityID:   identityID,
 		SubscribedAt: time.Now().UTC(),
 	}).Error)
-	handlers := &Handlers{
+	handlers := &emailSeams{
 		db: db,
 		kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 			ID:         identityID,
@@ -470,7 +470,7 @@ func activeMemberEmailTestDB(t *testing.T, identityID, primaryEmail string) (*go
 
 func TestEnforceEmailRecipientContextVerificationTargets(t *testing.T) {
 	ctx := context.Background()
-	handlers := &Handlers{
+	handlers := &emailSeams{
 		kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 			ID:    "identity-1",
 			State: auth.KratosStateActive,
@@ -621,7 +621,7 @@ func TestEnforceEmailRecipientContextBlocksObsoleteVerificationDelivery(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handlers := &Handlers{kratosClient: fakeWorkerIdentityManager{identity: tt.identity}}
+			handlers := &emailSeams{kratosClient: fakeWorkerIdentityManager{identity: tt.identity}}
 			job := tt.buildJob(tt.identity.ID, tt.recipient)
 			blocked, err := handlers.enforceEmailRecipientContext(ctx, job)
 
@@ -650,7 +650,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 	}
 
 	t.Run("allows unverified email when it is an identity code address", func(t *testing.T) {
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:    "identity-1",
 				State: auth.KratosStateActive,
@@ -674,7 +674,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 	})
 
 	t.Run("blocks login recipient absent from code credential", func(t *testing.T) {
-		handlers := &Handlers{
+		handlers := &emailSeams{
 			kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 				ID:    "identity-1",
 				State: auth.KratosStateActive,
@@ -718,7 +718,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 			tc.identity.Credentials = map[string]auth.Credential{
 				"code": {Type: "code", Identifiers: []string{"user@example.com"}},
 			}
-			handlers := &Handlers{
+			handlers := &emailSeams{
 				kratosClient: fakeWorkerIdentityManager{identity: tc.identity},
 			}
 
@@ -734,7 +734,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 	}
 
 	t.Run("allows authenticated courier registration without account or subscriber lookup", func(t *testing.T) {
-		handlers := &Handlers{}
+		handlers := &emailSeams{}
 
 		blocked, err := handlers.enforceEmailRecipientContext(ctx, &managev1.SendEmailEvent{
 			Recipient:        "new@example.com",
@@ -747,7 +747,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 	})
 
 	t.Run("blocks registration target mismatch", func(t *testing.T) {
-		handlers := &Handlers{}
+		handlers := &emailSeams{}
 
 		blocked, err := handlers.enforceEmailRecipientContext(ctx, &managev1.SendEmailEvent{
 			Recipient:        "other@example.com",
@@ -763,7 +763,7 @@ func TestEnforceEmailRecipientContextPasswordlessFlows(t *testing.T) {
 func TestEnforceEmailRecipientContextVerificationTemplateMatrix(t *testing.T) {
 	ctx := context.Background()
 	targetEmail := "target@example.com"
-	handlers := &Handlers{
+	handlers := &emailSeams{
 		kratosClient: fakeWorkerIdentityManager{identity: &auth.Identity{
 			ID:    "identity-1",
 			State: auth.KratosStateActive,

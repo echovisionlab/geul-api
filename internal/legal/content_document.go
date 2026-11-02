@@ -4,82 +4,64 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
-	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
 const legalContentDocumentProfile = "policy"
 
-type legalContentDocumentRoot struct {
-	ID                string     `gorm:"column:id"`
-	Title             string     `gorm:"column:title"`
-	Status            string     `gorm:"column:status"`
-	Version           int        `gorm:"column:version"`
-	SourceLocale      string     `gorm:"column:source_locale"`
-	ContentDocumentID *uuid.UUID `gorm:"column:content_document_id;type:uuid"`
+// lockFor is the lock a root read takes: for update, else shared.
+func lockFor(forUpdate bool) RowLock {
+	if forUpdate {
+		return UpdateLock
+	}
+	return ShareLock
 }
 
 func loadLegalContentDocumentRoot(
 	ctx context.Context,
-	db *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	forUpdate bool,
-) (legalContentDocumentRoot, error) {
-	policy, err := legalDocumentPolicyForType(kind)
+) (Root, error) {
+	root, err := store.Root(ctx, kind.kind, entityID, lockFor(forUpdate))
 	if err != nil {
-		return legalContentDocumentRoot{}, err
-	}
-	query := db.WithContext(ctx).Table(policy.table).
-		Select("id", "title", "status", "version", "source_locale", "content_document_id").
-		Where("id = ?", entityID)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-	} else {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
-	}
-	var root legalContentDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return legalContentDocumentRoot{}, errs.NotFound(kind, entityID)
+		if errors.Is(err, ErrPolicyNotFound) {
+			return Root{}, domainerr.ResourceNotFound(kind.entity(), entityID)
 		}
-		return legalContentDocumentRoot{}, errs.Internal(err)
+		return Root{}, err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " content document has not been populated")
+		return Root{}, domainerr.Precondition(kind.entity() + " content document has not been populated")
 	}
 	if strings.TrimSpace(root.SourceLocale) == "" {
-		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " source locale is missing")
+		return Root{}, domainerr.Precondition(kind.entity() + " source locale is missing")
 	}
 	if _, err := canonicalLegalLocale(root.SourceLocale); err != nil {
-		slog.ErrorContext(ctx, "Stored legal source locale is invalid", failurecause.Attr(err), "entity_type", kind, "entity_id", entityID)
-		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " source locale is not canonical")
+		return Root{}, domainerr.Precondition(kind.entity() + " source locale is not canonical").WithCause(failurecause.ServerFault(err))
 	}
 	return root, nil
 }
 
 func loadLegalContentDocumentID(
 	ctx context.Context,
-	db *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 ) (uuid.UUID, error) {
-	root, err := loadLegalContentDocumentRoot(ctx, db, kind, entityID, false)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -88,11 +70,11 @@ func loadLegalContentDocumentID(
 
 func loadLegalContentDomainContext(
 	ctx context.Context,
-	db *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 ) (contentblock.DomainContext, error) {
-	root, err := loadLegalContentDocumentRoot(ctx, db, kind, entityID, false)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false)
 	if err != nil {
 		return contentblock.DomainContext{}, err
 	}
@@ -100,30 +82,23 @@ func loadLegalContentDomainContext(
 }
 
 func legalCollaborationDocumentFence(
-	checkpoints persistencecheckpoint.ContributorFence,
-	kind string,
+	kind *policyKind,
 	entityID string,
 	contributors []string,
 	batch *contentblock.Batch,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := loadLegalContentDocumentRoot(ctx, tx, kind, entityID, true)
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition(kind + " content document changed; reload before saving")
+			return contentblock.DomainContext{}, domainerr.Precondition(kind.entity() + " content document changed; reload before saving")
 		}
-		if err := checkpoints.RequireCurrentContributors(
-			ctx,
-			tx,
-			legalCollaborationResourceType(kind),
-			entityID,
-			contributors,
-		); err != nil {
+		if err := store.RequireCurrentContributors(ctx, kind.kind, entityID, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := requireLegalTargetTranslationRows(ctx, tx, kind, entityID, root.SourceLocale, batch); err != nil {
+		if err := requireLegalTargetTranslationRows(ctx, store, kind, entityID, root.SourceLocale, batch); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return contentblock.DomainContext{SourceLocale: root.SourceLocale}, nil
@@ -132,21 +107,19 @@ func legalCollaborationDocumentFence(
 
 func requireLegalTargetTranslationRows(
 	ctx context.Context,
-	tx *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	sourceLocale string,
 	batch *contentblock.Batch,
 ) error {
 	for _, locale := range legalTargetLocales(sourceLocale, batch) {
-		var count int64
-		if err := tx.WithContext(ctx).Table(kind+"_translation").
-			Where("entity_id = ? AND locale = ?", entityID, locale).
-			Count(&count).Error; err != nil {
-			return errs.Internal(err)
+		count, err := store.CountTranslations(ctx, kind.kind, entityID, locale)
+		if err != nil {
+			return err
 		}
 		if count != 1 {
-			return errs.FailedPrecondition(kind + " target locale must be created before collaboration editing")
+			return domainerr.Precondition(kind.entity() + " target locale must be created before collaboration editing")
 		}
 	}
 	return nil
@@ -177,75 +150,63 @@ func legalTargetLocales(sourceLocale string, batch *contentblock.Batch) []string
 // TranslationJob to finish against any still-existing policy root. Current
 // administrator permissions continue to govern new requests and direct
 // edits; completion reuses the authority accepted at request time.
-func legalTranslationJobApplyDocumentFence(kind, entityID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := loadLegalContentDocumentRoot(ctx, tx, kind, entityID, true)
+func legalTranslationJobApplyDocumentFence(kind *policyKind, entityID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition(kind + " content document changed; translation job cannot be applied")
+			return contentblock.DomainContext{}, domainerr.Precondition(kind.entity() + " content document changed; translation job cannot be applied")
 		}
-		return loadLegalContentDomainContext(ctx, tx, kind, entityID)
+		return loadLegalContentDomainContext(ctx, store, kind, entityID)
 	}
 }
 
 func authorizeLegalBlockBootstrap(
 	ctx context.Context,
-	db *gorm.DB,
-	checker CollaborationPermissionChecker,
-	kind string,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	kind *policyKind,
 	entityID string,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID string,
 ) error {
-	if principalMessage == nil || strings.TrimSpace(principalMessage.GetSessionId()) == "" {
-		return errs.AuthenticationRequired()
+	if strings.TrimSpace(sessionID) == "" {
+		return domainerr.AuthenticationRequired()
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, db, kind, entityID, true)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 	if err != nil {
 		return err
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		db,
-		principalMessage.GetSessionId(),
-	)
+	principal, err := store.ResolveSessionPrincipal(ctx, sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Legal collaboration session rejected", failurecause.Attr(err, principalMessage.GetSessionId()), "entity_type", kind, "entity_id", entityID)
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(failurecause.WithPrivate(err, sessionID))
 	}
 	if err != nil {
-		return errs.Internal(fmt.Errorf("resolve %s collaboration principal: %w", kind, err))
+		return fmt.Errorf("resolve %s collaboration principal: %w", kind.entity(), err)
 	}
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if principal.Banned {
-		return errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 	if !principal.Onboarded {
-		return errs.NoPermission("edit", kind)
+		return domainerr.NoPermission("edit", kind.entity())
 	}
-	policy, err := legalDocumentPolicyForType(kind)
-	if err != nil {
-		return err
-	}
-	return requireLegalPermissionForPrincipal(
-		ctx, checker, legalCollaborationResourceType(kind), entityID,
-		legalViewAction(policy, root.Status), principal,
-	)
+	return requireLegalPermissionForPrincipal(ctx, checker, kind.kind, entityID, legalViewAction(kind, root.Status), principal)
 }
 
-func legalDocumentOwnershipFence(kind string, entityID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := loadLegalContentDocumentRoot(ctx, tx, kind, entityID, true)
+func legalDocumentOwnershipFence(kind *policyKind, entityID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition(kind + " content document changed; reload before mutation")
+			return contentblock.DomainContext{}, domainerr.Precondition(kind.entity() + " content document changed; reload before mutation")
 		}
-		return loadLegalContentDomainContext(ctx, tx, kind, entityID)
+		return loadLegalContentDomainContext(ctx, store, kind, entityID)
 	}
 }
 
@@ -253,159 +214,73 @@ func parseLegalContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
+		return uuid.Nil, domainerr.InvalidField(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
 }
 
 func normalizeLegalContentBlockError(kind string, err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.NotFoundMsg(kind + " content document not found")
+		return domainerr.New(domainerr.NotFound, "", kind+" content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.FailedPrecondition(kind + " content revision changed; reload before saving")
+		return domainerr.Precondition(kind + " content revision changed; reload before saving").WithCause(err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.InvalidArgument("blocks", "File Blocks are not allowed in legal policy documents")
+		return domainerr.InvalidField("blocks", "File Blocks are not allowed in legal policy documents").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("%s content document: %w", kind, err))
+		return fmt.Errorf("%s content document: %w", kind, err)
 	}
 }
 
 func normalizeLegalCollaborationContentBlockError(kind string, err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			kind+" target locale changed since it was loaded; reload before saving", err,
-		)
+			kind+" target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			kind+" document changed since it was loaded; reload before saving", err,
-		)
+			kind+" document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	default:
 		return normalizeLegalContentBlockError(kind, err)
 	}
 }
 
-func verifyLegalExpectedRevisionWithDB(
+func verifyLegalExpectedRevision(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	expectedRevision string,
 ) error {
-	if store == nil {
-		return errs.InternalMsg(kind + " content Block store is not configured")
-	}
 	expected, err := parseLegalContentUUID("expected_revision", expectedRevision)
 	if err != nil {
 		return err
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, db, kind, entityID, true)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 	if err != nil {
 		return err
 	}
-	revision, err := loadLegalDocumentRevisionWithDB(ctx, db, *root.ContentDocumentID)
+	revision, err := store.ContentRevision(ctx, *root.ContentDocumentID)
 	if err != nil {
-		return normalizeLegalContentBlockError(kind, err)
+		return normalizeLegalContentBlockError(kind.entity(), err)
 	}
 	if revision != expected {
-		return normalizeLegalContentBlockError(kind, &contentblock.StaleRevisionError{CurrentRevision: revision})
+		return normalizeLegalContentBlockError(kind.entity(), &contentblock.StaleRevisionError{CurrentRevision: revision})
 	}
 	return nil
-}
-
-func loadLegalDocumentRevisionWithDB(ctx context.Context, db *gorm.DB, documentID uuid.UUID) (uuid.UUID, error) {
-	var row struct {
-		Revision uuid.UUID `gorm:"column:revision"`
-	}
-	if err := db.WithContext(ctx).
-		Table("content_document").
-		Select("revision").
-		Clauses(clause.Locking{Strength: "SHARE"}).
-		Where("id = ?", documentID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, contentblock.ErrDocumentNotFound
-		}
-		return uuid.Nil, err
-	}
-	return row.Revision, nil
-}
-
-func regenerateLegalDerivedContent(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	spiceDB *auth.SpiceDBClient,
-	legalOG OG,
-	kind string,
-	entityID string,
-	expectedCanonicalHash string,
-) (string, error) {
-	if store == nil {
-		return "", errs.InternalMsg(kind + " content Block store is not configured")
-	}
-	var canonicalHash string
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadLegalContentDocumentRoot(ctx, tx, kind, entityID, true)
-		if err != nil {
-			return err
-		}
-		policy, err := legalDocumentPolicyForType(kind)
-		if err != nil {
-			return err
-		}
-		if err := requireActiveLegalPrincipal(ctx, tx, "manage", false); err != nil {
-			return err
-		}
-		if err := requireLegalPermission(
-			ctx, spiceDB, kind, entityID,
-			legalMutationAction(policy, root.Status, legalActionManage),
-		); err != nil {
-			return err
-		}
-		snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, *root.ContentDocumentID, root.SourceLocale)
-		if err != nil {
-			return normalizeLegalContentBlockError(kind, err)
-		}
-		canonicalHash = snapshot.SnapshotDigest
-		if strings.TrimSpace(expectedCanonicalHash) == "" || expectedCanonicalHash != canonicalHash {
-			return errs.FailedPrecondition("legal derived-content regeneration targets a stale Block document")
-		}
-		if err := (internalLegalDocumentService{db: tx, kind: kind, contentBlocks: store, legalOG: legalOG}).
-			refreshDerivedContentProjectionsWithDB(
-				ctx, tx, entityID, snapshot, root.SourceLocale, time.Now().UTC(),
-			); err != nil {
-			return err
-		}
-		err = legalOG.RequestSaved(
-			ctx,
-			tx,
-			kind,
-			entityID,
-			"",
-			true,
-			kind+"_derived_content_regenerated",
-		)
-		return err
-	})
-	return canonicalHash, err
 }

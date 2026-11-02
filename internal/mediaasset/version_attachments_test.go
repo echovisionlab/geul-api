@@ -4,33 +4,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
+	"context"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 func TestLoadUnavailableVersionAttachmentKindsUsesFileAuthority(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,
-		id TEXT PRIMARY KEY,
-		mime_type TEXT NOT NULL,
-		delete_requested_at DATETIME
-	)`).Error)
-
 	availableID := uuid.New()
 	pendingID := uuid.New()
 	missingID := uuid.New()
-	require.NoError(t, db.Exec(
-		`INSERT INTO file (id, mime_type, delete_requested_at) VALUES (?, 'image/png', NULL), (?, 'audio/wav', ?)`,
-		availableID.String(), pendingID.String(), time.Now().UTC(),
-	).Error)
+	now := time.Now().UTC()
+	store := versionFilesStore{{ID: availableID.String(), MIMEType: "image/png"}, {ID: pendingID.String(), MIMEType: "audio/wav", DeleteRequestedAt: &now}}
 
 	document := versionAttachmentTestDocument(availableID, pendingID, missingID)
-	unavailable, err := LoadUnavailableVersionAttachmentKinds(t.Context(), db, document)
+	unavailable, err := LoadUnavailableVersionAttachmentKinds(t.Context(), store, document)
 	require.NoError(t, err)
 	require.NotContains(t, unavailable, availableID)
 	require.Equal(
@@ -77,3 +67,19 @@ func versionAttachmentTestDocument(fileIDs ...uuid.UUID) *contentv1.LocalizedRic
 }
 
 func versionAttachmentStringPointer(value string) *string { return &value }
+
+type versionFilesStore []VersionFile
+
+func (s versionFilesStore) LockVersionFiles(_ context.Context, ids []string) ([]VersionFile, error) {
+	requested := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		requested[id] = true
+	}
+	var rows []VersionFile
+	for _, row := range s {
+		if requested[row.ID] {
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}

@@ -3,38 +3,38 @@ package artist
 import (
 	"testing"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/stretchr/testify/require"
 )
 
-func TestArtistAIDocumentContentUpdatedEventCoversTranslationLifecycle(t *testing.T) {
-	if event := artistAIDocumentContentUpdatedEvent(AIDocumentMutation{}, AIDocumentMutationResult{}, "member"); event != nil {
-		t.Fatalf("no-op event = %+v", event)
-	}
-	event := artistAIDocumentContentUpdatedEvent(
+func TestArtistAIDocumentContentUpdateCoversTranslationLifecycle(t *testing.T) {
+	source := artistAIDocumentContentUpdate(
 		AIDocumentMutation{ArtistID: "artist", Locale: "en", ExpectedSource: "en"},
 		AIDocumentMutationResult{Revision: "revision", Changed: true},
 		"member",
 	)
-	if event.GetEntityId() != "artist" || event.GetSource() != managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI ||
-		event.GetDocumentRevision() != "revision" || event.GetLocale() != "en" || !event.GetLocaleExists() ||
-		event.GetTargetRevision() != "" || !event.GetDocumentStateChanged() || len(event.GetContributorMemberIds()) != 1 || event.GetContributorMemberIds()[0] != "member" {
-		t.Fatalf("event = %+v", event)
-	}
+	require.Equal(t, ContentUpdate{ArtistID: "artist", Kind: LocaleUpdate, Locale: LocaleChange{
+		Fields: []string{"content"}, DocumentRevision: "revision", Contributors: []string{"member"},
+		Source: SourceAI, Locale: "en", DocumentStateChanged: true,
+	}}, source)
+
 	targetRevision := "target-revision"
-	target := artistAIDocumentContentUpdatedEvent(
+	target := artistAIDocumentContentUpdate(
 		AIDocumentMutation{ArtistID: "artist", Locale: "ko", ExpectedSource: "en"},
 		AIDocumentMutationResult{Revision: "revision", TargetRevision: &targetRevision, Changed: true},
 		"member",
 	)
-	if target.GetLocale() != "ko" || !target.GetLocaleExists() || target.GetTargetRevision() != targetRevision || target.GetDocumentStateChanged() {
-		t.Fatalf("target event = %+v", target)
-	}
-	deleted := artistAIDocumentContentUpdatedEvent(
+	require.Equal(t, "ko", target.Locale.Locale)
+	require.False(t, target.Locale.LocaleDeleted)
+	require.Equal(t, &targetRevision, target.Locale.TargetRevision)
+	require.False(t, target.Locale.DocumentStateChanged)
+
+	deleted := artistAIDocumentContentUpdate(
 		AIDocumentMutation{ArtistID: "artist", Locale: "ko", ExpectedSource: "en", DeleteTranslation: true},
 		AIDocumentMutationResult{Revision: "revision", Changed: true},
 		"member",
 	)
-	if deleted.GetLocale() != "ko" || deleted.GetLocaleExists() || deleted.GetTargetRevision() != "" || deleted.GetDocumentStateChanged() {
-		t.Fatalf("deleted event = %+v", deleted)
-	}
+	require.Equal(t, "ko", deleted.Locale.Locale)
+	require.True(t, deleted.Locale.LocaleDeleted)
+	require.Nil(t, deleted.Locale.TargetRevision)
+	require.False(t, deleted.Locale.DocumentStateChanged)
 }

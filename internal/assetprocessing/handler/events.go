@@ -116,7 +116,7 @@ func (p *Processor) publishFail(ctx context.Context, job *apiv1.MeshOptimization
 		time.Since(startedAt).Milliseconds(),
 		sharedtelemetry.JobFailure{Reason: telemetryJobFailureReason(reason)},
 	)
-	_ = apptelemetry.EmitSystem(ctx, failedRecord, failedRecordErr)
+	apptelemetry.EmitSystem(ctx, failedRecord, failedRecordErr)
 	return &TerminalResultError{cause: cause}
 }
 

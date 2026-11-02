@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 func TestCampaignOwnsSealedDeliveryRenderDefinition(t *testing.T) {
@@ -28,12 +28,12 @@ func TestCampaignOwnsSealedDeliveryRenderDefinition(t *testing.T) {
 	require.NotContains(t, string(encodedSnapshot), `"status"`)
 
 	campaignID := "campaign-a"
-	campaignRun := model.CampaignDeliveryRun{
+	campaignRun := DeliveryRun{
 		RunKind:               EmailDeliveryRunKindCampaign,
 		CampaignID:            &campaignID,
 		DefinitionSealed:      true,
 		SnapshotSchemaVersion: CampaignDeliverySnapshotSchemaVersion,
-		TemplateData:          model.JSONFields{},
+		TemplateData:          map[string]any{},
 		RenderSnapshot:        renderSnapshot,
 	}
 	require.NoError(t, ValidateEmailDeliveryRenderDefinition(campaignRun))
@@ -45,13 +45,13 @@ func TestCampaignOwnsSealedDeliveryRenderDefinition(t *testing.T) {
 
 	termsID := "terms-a"
 	eventKey := "terms_effective"
-	legalRun := model.CampaignDeliveryRun{
+	legalRun := DeliveryRun{
 		RunKind:               EmailDeliveryRunKindLegalNotice,
 		TermsID:               &termsID,
 		DefinitionSealed:      true,
 		SnapshotSchemaVersion: CampaignDeliverySnapshotSchemaVersion,
 		TemplateEventKey:      &eventKey,
-		TemplateData:          model.JSONFields{"terms_url": "https://example.test/terms"},
+		TemplateData:          map[string]any{"terms_url": "https://example.test/terms"},
 		RenderSnapshot:        renderSnapshot,
 	}
 	require.NoError(t, ValidateEmailDeliveryRenderDefinition(legalRun))
@@ -81,7 +81,7 @@ func TestSealLegalNoticeDeliveryRunValidatesCampaignOwnedAuthorityBeforeWrite(t 
 	err := func() error {
 		_, err := SealLegalNoticeDeliveryRun(
 			context.Background(),
-			nil,
+			Joined{},
 			LegalNoticeDeliveryRunDefinition{
 				TermsID:                 &termsID,
 				PrivacyID:               &privacyID,
@@ -95,7 +95,7 @@ func TestSealLegalNoticeDeliveryRunValidatesCampaignOwnedAuthorityBeforeWrite(t 
 		)
 		return err
 	}()
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestDecodeCampaignDeliverySnapshotRequiresClosedCompleteTranslations(t *testing.T) {
@@ -157,7 +157,7 @@ func TestDecodeCampaignDeliveryTemplateDataRejectsUnknownAndNonStringValues(t *t
 	data, err := decodeCampaignDeliveryTemplateData(
 		EmailDeliveryRunKindLegalNotice,
 		"terms_update",
-		model.JSONFields{
+		map[string]any{
 			"policy_title":   "Contributor terms",
 			"effective_date": "2026-07-30",
 			"preview_url":    "https://example.test/terms/preview",
@@ -169,14 +169,14 @@ func TestDecodeCampaignDeliveryTemplateDataRejectsUnknownAndNonStringValues(t *t
 	_, err = decodeCampaignDeliveryTemplateData(
 		EmailDeliveryRunKindCampaign,
 		"",
-		model.JSONFields{"recipient_email": "must-only-exist-in-worker-memory"},
+		map[string]any{"recipient_email": "must-only-exist-in-worker-memory"},
 	)
 	require.ErrorContains(t, err, "unknown key")
 
 	_, err = decodeCampaignDeliveryTemplateData(
 		EmailDeliveryRunKindCampaign,
 		"",
-		model.JSONFields{"unexpected": 7},
+		map[string]any{"unexpected": 7},
 	)
 	require.ErrorContains(t, err, "must be a string")
 }

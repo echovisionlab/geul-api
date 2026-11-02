@@ -2,20 +2,15 @@ package filemedia
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // finalizeFileManagerDeliveries is the final issuance fence for File Manager
@@ -24,27 +19,28 @@ import (
 // output relations, rechecks both witnesses, and signs locally while mutation
 // and deletion are excluded. Mesh completion and File deletion use the same
 // File -> candidate order.
-func (s *FileService) finalizeFileManagerDeliveries(
+func (s *Service) finalizeFileManagerDeliveries(
 	ctx context.Context,
 	rows []fileManagerCatalogRow,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	usageCounts map[string]int32,
-	generatedOutputs []*managev1.FileGeneratedOutput,
-) (map[string]*managev1.FileManagerFile, []*managev1.FileGeneratedOutput, bool, error) {
+	generatedOutputs []*GeneratedOutput,
+) (map[string]*LibraryFile, []*GeneratedOutput, bool, error) {
 	fileIDs := fileManagerDeliveryFileIDs(rows, generatedOutputs)
 	if len(fileIDs) == 0 {
-		return map[string]*managev1.FileManagerFile{}, cloneFileGeneratedOutputs(generatedOutputs), false, nil
+		return map[string]*LibraryFile{}, cloneFileGeneratedOutputs(generatedOutputs), false, nil
 	}
 	if s.testBeforeFileManagerDeliveryFence != nil {
 		s.testBeforeFileManagerDeliveryFence(append([]string(nil), fileIDs...))
 	}
 
-	files := make(map[string]*managev1.FileManagerFile, len(rows))
+	var files map[string]*LibraryFile
 	outputs := cloneFileGeneratedOutputs(generatedOutputs)
 	meshWitnesses := fileManagerMeshDeliveryWitnesses(rows, outputs)
 	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		active, err := identitystate.LockActivePrincipal(ctx, tx, auth.GetUser(ctx))
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
+		active, err := tx.LockDeliveryPrincipal(ctx, auth.GetUser(ctx))
 		if err != nil {
 			return fmt.Errorf("lock File Manager delivery principal: %w", err)
 		}
@@ -52,69 +48,93 @@ func (s *FileService) finalizeFileManagerDeliveries(
 			changed = true
 			return nil
 		}
-		var locked []model.File
-		query := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "folder_id", "uploaded_by_member_id", "delete_requested_at", "created_at", "updated_at").
-			Where("id IN ?", fileIDs).
-			Order("id ASC")
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
-		}
-		if err := query.Find(&locked).Error; err != nil {
+		lockedByID, err := tx.LockDeliveryFiles(ctx, fileIDs, domain.CatalogDelivery)
+		if err != nil {
 			return err
-		}
-		lockedByID := make(map[string]model.File, len(locked))
-		for _, file := range locked {
-			lockedByID[file.ID] = file
 		}
 		currentMeshCandidates, err := lockFileManagerMeshDeliveryWitnesses(ctx, tx, meshWitnesses)
 		if err != nil {
 			return err
 		}
-
-		for _, row := range rows {
-			if row.ItemType != "file" {
-				continue
-			}
-			file, ok := lockedByID[row.ID]
-			if !ok || file.DeleteRequestedAt != nil || !fileManagerCatalogRowMatchesFile(row, file) {
-				changed = true
-				continue
-			}
-			built, err := s.fileManagerFileFromCatalogRow(row, members, usageCounts[row.ID])
-			if err != nil {
-				return err
-			}
-			files[row.ID] = built
+		files, changed, err = s.fenceFileManagerCatalogFiles(rows, lockedByID, members, usageCounts)
+		if err != nil {
+			return err
 		}
-
-		for _, output := range outputs {
-			delivery := output.GetDelivery()
-			if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
-				continue
-			}
-			if output.GetType() == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH &&
-				!currentMeshCandidates[output.GetId()] {
-				output.Delivery = nil
-				continue
-			}
-			file, ok := lockedByID[delivery.GetFileId()]
-			if !ok || file.DeleteRequestedAt != nil || !fileManagerDeliveryMatchesFile(delivery, file) {
-				output.Delivery = nil
-				continue
-			}
-			fenced, err := s.rebuildLockedPrivateDelivery(delivery, file)
-			if err != nil {
-				return err
-			}
-			output.Delivery = fenced
+		if err := s.fenceFileManagerGeneratedOutputs(outputs, lockedByID, currentMeshCandidates); err != nil {
+			return err
 		}
 		if s.testAfterFileManagerDeliverySigned != nil {
 			s.testAfterFileManagerDeliverySigned(append([]string(nil), fileIDs...))
 		}
 		return nil
 	})
+	if files == nil {
+		files = make(map[string]*LibraryFile, len(rows))
+	}
 	return files, outputs, changed, err
+}
+
+// fenceFileManagerCatalogFiles builds the catalog Files whose locked rows
+// still match what the catalog read; changed reports a File that did not.
+func (s *Service) fenceFileManagerCatalogFiles(
+	rows []fileManagerCatalogRow,
+	lockedByID map[string]File,
+	members map[string]MemberSummary,
+	usageCounts map[string]int32,
+) (map[string]*LibraryFile, bool, error) {
+	files := make(map[string]*LibraryFile, len(rows))
+	changed := false
+	for _, row := range rows {
+		if row.ItemType != "file" {
+			continue
+		}
+		file, ok := lockedByID[row.ID]
+		if !ok || file.DeleteRequestedAt != nil || !fileManagerCatalogRowMatchesFile(row, file) {
+			changed = true
+			continue
+		}
+		built, err := s.fileManagerFileFromCatalogRow(row, members, usageCounts[row.ID])
+		if err != nil {
+			return nil, changed, err
+		}
+		files[row.ID] = built
+	}
+	return files, changed, nil
+}
+
+// fenceFileManagerGeneratedOutputs re-signs each generated output delivery
+// against its locked File and drops the deliveries whose File or ready mesh
+// candidate changed.
+func (s *Service) fenceFileManagerGeneratedOutputs(
+	outputs []*GeneratedOutput,
+	lockedByID map[string]File,
+	currentMeshCandidates map[string]bool,
+) error {
+	for _, output := range outputs {
+		if output == nil {
+			continue
+		}
+		delivery := output.Delivery
+		if delivery == nil || (delivery.Inline == nil && delivery.Download == nil) {
+			continue
+		}
+		if output.Type == DerivativeOptimizedMesh &&
+			!currentMeshCandidates[output.ID] {
+			output.Delivery = nil
+			continue
+		}
+		file, ok := lockedByID[delivery.FileID]
+		if !ok || file.DeleteRequestedAt != nil || !fileManagerDeliveryMatchesFile(delivery, file) {
+			output.Delivery = nil
+			continue
+		}
+		fenced, err := s.rebuildLockedPrivateDelivery(delivery, file)
+		if err != nil {
+			return err
+		}
+		output.Delivery = fenced
+	}
+	return nil
 }
 
 type fileManagerMeshDeliveryWitness struct {
@@ -125,7 +145,7 @@ type fileManagerMeshDeliveryWitness struct {
 
 func fileManagerMeshDeliveryWitnesses(
 	rows []fileManagerCatalogRow,
-	outputs []*managev1.FileGeneratedOutput,
+	outputs []*GeneratedOutput,
 ) []fileManagerMeshDeliveryWitness {
 	sourceFileID := ""
 	for _, row := range rows {
@@ -136,46 +156,22 @@ func fileManagerMeshDeliveryWitnesses(
 	}
 	witnesses := make([]fileManagerMeshDeliveryWitness, 0)
 	for _, output := range outputs {
-		if output.GetType() != managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH ||
-			output.GetDelivery() == nil || output.GetDelivery().GetInline() == nil {
+		if output == nil {
+			continue
+		}
+		if output.Type != DerivativeOptimizedMesh ||
+			output.Delivery == nil || output.Delivery.Inline == nil {
 			continue
 		}
 		witnesses = append(witnesses, fileManagerMeshDeliveryWitness{
-			candidateID: output.GetId(), sourceFileID: sourceFileID, outputFileID: output.GetDelivery().GetFileId(),
+			candidateID: output.ID, sourceFileID: sourceFileID, outputFileID: output.Delivery.FileID,
 		})
 	}
 	sort.Slice(witnesses, func(i, j int) bool { return witnesses[i].candidateID < witnesses[j].candidateID })
 	return witnesses
 }
 
-func lockFileManagerMeshDeliveryWitnesses(
-	ctx context.Context,
-	tx *gorm.DB,
-	witnesses []fileManagerMeshDeliveryWitness,
-) (map[string]bool, error) {
-	current := make(map[string]bool, len(witnesses))
-	for _, witness := range witnesses {
-		var row struct{ ID string }
-		query := tx.WithContext(ctx).Table("mesh_optimization_candidate").Select("id").Where(
-			"id = ? AND source_file_id = ? AND status = ? AND output_file_id = ?",
-			witness.candidateID, witness.sourceFileID, model.MeshOptimizationCandidateStatusReady, witness.outputFileID,
-		)
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
-		}
-		result := query.Take(&row)
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			continue
-		}
-		if result.Error != nil {
-			return nil, result.Error
-		}
-		current[witness.candidateID] = true
-	}
-	return current, nil
-}
-
-func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev1.FileGeneratedOutput) []string {
+func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*GeneratedOutput) []string {
 	seen := make(map[string]struct{}, len(rows)+len(outputs))
 	for _, row := range rows {
 		if row.ItemType == "file" && strings.TrimSpace(row.ID) != "" {
@@ -183,11 +179,14 @@ func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev
 		}
 	}
 	for _, output := range outputs {
-		delivery := output.GetDelivery()
-		if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
+		if output == nil {
 			continue
 		}
-		if fileID := strings.TrimSpace(delivery.GetFileId()); fileID != "" {
+		delivery := output.Delivery
+		if delivery == nil || (delivery.Inline == nil && delivery.Download == nil) {
+			continue
+		}
+		if fileID := strings.TrimSpace(delivery.FileID); fileID != "" {
 			seen[fileID] = struct{}{}
 		}
 	}
@@ -199,19 +198,19 @@ func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev
 	return fileIDs
 }
 
-func cloneFileGeneratedOutputs(outputs []*managev1.FileGeneratedOutput) []*managev1.FileGeneratedOutput {
-	cloned := make([]*managev1.FileGeneratedOutput, 0, len(outputs))
+func cloneFileGeneratedOutputs(outputs []*GeneratedOutput) []*GeneratedOutput {
+	cloned := make([]*GeneratedOutput, 0, len(outputs))
 	for _, output := range outputs {
 		if output == nil {
 			cloned = append(cloned, nil)
 			continue
 		}
-		cloned = append(cloned, proto.Clone(output).(*managev1.FileGeneratedOutput))
+		cloned = append(cloned, output.Clone())
 	}
 	return cloned
 }
 
-func fileManagerCatalogRowMatchesFile(row fileManagerCatalogRow, file model.File) bool {
+func fileManagerCatalogRowMatchesFile(row fileManagerCatalogRow, file File) bool {
 	if row.ID != file.ID || row.Name != file.FileName || !equalOptionalString(row.ParentID, file.FolderID) ||
 		!equalOptionalString(row.MemberID, file.UploadedByMemberID) || row.Extension == nil ||
 		row.MimeType == nil || row.FileSize == nil || *row.Extension != file.Extension ||
@@ -225,15 +224,18 @@ func fileManagerCatalogRowMatchesFile(row fileManagerCatalogRow, file model.File
 	return int64(*row.DurationSeconds) == int64(*file.DurationSeconds)
 }
 
-func fileManagerDeliveryMatchesFile(delivery *commonv1.MediaDelivery, file model.File) bool {
-	if delivery.GetFileId() != file.ID || delivery.GetExtension() != file.Extension ||
-		delivery.GetMimeType() != file.MimeType || delivery.GetFileSize() != file.FileSize {
+func fileManagerDeliveryMatchesFile(delivery *Delivery, file File) bool {
+	if delivery == nil {
+		return false
+	}
+	if delivery.FileID != file.ID || delivery.Extension != file.Extension ||
+		delivery.MimeType != file.MimeType || delivery.FileSize != file.FileSize {
 		return false
 	}
 	if delivery.DurationSeconds == nil || file.DurationSeconds == nil {
 		return delivery.DurationSeconds == nil && file.DurationSeconds == nil
 	}
-	return int64(delivery.GetDurationSeconds()) == int64(*file.DurationSeconds)
+	return int64(*delivery.DurationSeconds) == int64(*file.DurationSeconds)
 }
 
 func equalOptionalString(left, right *string) bool {
@@ -243,12 +245,12 @@ func equalOptionalString(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *FileService) rebuildLockedPrivateDelivery(
-	previous *commonv1.MediaDelivery,
-	file model.File,
-) (*commonv1.MediaDelivery, error) {
-	delivery := proto.Clone(previous).(*commonv1.MediaDelivery)
-	delivery.FileId = file.ID
+func (s *Service) rebuildLockedPrivateDelivery(
+	previous *Delivery,
+	file File,
+) (*Delivery, error) {
+	delivery := previous.Clone()
+	delivery.FileID = file.ID
 	delivery.Extension = file.Extension
 	delivery.MimeType = file.MimeType
 	delivery.FileSize = file.FileSize
@@ -262,7 +264,7 @@ func (s *FileService) rebuildLockedPrivateDelivery(
 	delivery.Inline = nil
 	delivery.Download = nil
 	var err error
-	if previous.GetInline() != nil {
+	if previous.Inline != nil {
 		delivery.Inline, err = buildExpiringMediaFileRef(
 			s.mediaDomain, s.mediaSecret, file.ID, file.Extension, file.MimeType, nil,
 			mediaauth.PurposeInline, mediaauth.InlineTTL,
@@ -271,7 +273,7 @@ func (s *FileService) rebuildLockedPrivateDelivery(
 			return nil, err
 		}
 	}
-	if previous.GetDownload() != nil {
+	if previous.Download != nil {
 		delivery.Download, err = buildExpiringMediaFileRef(
 			s.mediaDomain, s.mediaSecret, file.ID, file.Extension, file.MimeType, &file.FileName,
 			mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
@@ -286,28 +288,28 @@ func (s *FileService) rebuildLockedPrivateDelivery(
 // finalizeManageFileURLResponses is the post-authorization issuance fence for
 // the external manage delivery RPCs. Internal content composition keeps its
 // owning authorization boundary and does not pass through this method.
-func (s *FileService) finalizeManageFileURLResponses(
+func (s *Service) finalizeManageFileURLResponses(
 	ctx context.Context,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
+) (map[string]*MediaDeliveryResult, bool, error) {
 	fileIDs := make([]string, 0, len(responses))
 	for fileID, response := range responses {
-		if strings.TrimSpace(fileID) == "" || response == nil || response.GetDelivery() == nil {
+		if strings.TrimSpace(fileID) == "" || response == nil || response.Delivery == nil {
 			continue
 		}
 		fileIDs = append(fileIDs, fileID)
 	}
 	sort.Strings(fileIDs)
 	if len(fileIDs) == 0 {
-		return map[string]*managev1.GetMediaDeliveryResponse{}, false, nil
+		return map[string]*MediaDeliveryResult{}, false, nil
 	}
 	if s.testBeforeManageDeliveryFence != nil {
 		s.testBeforeManageDeliveryFence(append([]string(nil), fileIDs...))
 	}
 
 	if authorization == nil || authorization.principal == nil {
-		return map[string]*managev1.GetMediaDeliveryResponse{}, true, nil
+		return map[string]*MediaDeliveryResult{}, true, nil
 	}
 	weakIDs := make([]string, 0, len(fileIDs))
 	strongIDs := make([]string, 0, len(fileIDs))
@@ -325,7 +327,7 @@ func (s *FileService) finalizeManageFileURLResponses(
 		}
 	}
 
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	weak, weakChanged, err := s.finalizeUsageManageFileURLResponses(ctx, weakIDs, responses, authorization)
 	if err != nil {
 		return nil, changed, err
@@ -345,22 +347,23 @@ func (s *FileService) finalizeManageFileURLResponses(
 	return result, changed, nil
 }
 
-func (s *FileService) finalizeStrongManageFileURLResponses(
+func (s *Service) finalizeStrongManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+) (map[string]*MediaDeliveryResult, bool, error) {
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	if len(fileIDs) == 0 {
 		return result, false, nil
 	}
 	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
 		if s.testBeforeManagePrincipalLock != nil {
 			s.testBeforeManagePrincipalLock(append([]string(nil), fileIDs...))
 		}
-		active, err := identitystate.LockActivePrincipal(ctx, tx, authorization.principal)
+		active, err := tx.LockDeliveryPrincipal(ctx, authorization.principal)
 		if err != nil {
 			return fmt.Errorf("lock manage delivery principal: %w", err)
 		}
@@ -368,54 +371,20 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 			changed = true
 			return nil
 		}
-		var locked []model.File
-		query := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "uploaded_by_member_id", "delete_requested_at", "client_media_bundle_id").
-			Where("id IN ?", fileIDs).
-			Order("id ASC")
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
-		}
-		if err := query.Find(&locked).Error; err != nil {
+		lockedByID, err := tx.LockDeliveryFiles(ctx, fileIDs, domain.StrongDelivery)
+		if err != nil {
 			return err
 		}
-		lockedByID := make(map[string]model.File, len(locked))
-		for _, file := range locked {
-			lockedByID[file.ID] = file
-		}
 		for _, fileID := range fileIDs {
-			response := responses[fileID]
-			grant := authorization.files[fileID]
-			file, ok := lockedByID[fileID]
-			if !ok || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) ||
-				(grant.expectedUploader != "" && (file.UploadedByMemberID == nil || *file.UploadedByMemberID != grant.expectedUploader)) {
-				changed = true
-				continue
-			}
-			if grant.expectedAvatarOwner != "" {
-				var binding model.FileIngestBinding
-				bindingQuery := tx.WithContext(ctx).Where(
-					"file_id = ? AND upload_type = ? AND entity_id = ?",
-					fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(), grant.expectedAvatarOwner,
-				)
-				if tx.Dialector.Name() == "postgres" {
-					bindingQuery = bindingQuery.Clauses(clause.Locking{Strength: "SHARE"})
-				}
-				if err := bindingQuery.Take(&binding).Error; err != nil {
-					if errors.Is(err, gorm.ErrRecordNotFound) {
-						changed = true
-						continue
-					}
-					return err
-				}
-			}
-			cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
-			fenced, err := s.rebuildLockedPrivateDelivery(cloned.GetDelivery(), file)
+			fenced, current, err := s.fenceStrongManageDelivery(ctx, tx, responses[fileID], authorization.files[fileID], lockedByID, fileID)
 			if err != nil {
 				return err
 			}
-			cloned.Delivery = fenced
-			result[fileID] = cloned
+			if !current {
+				changed = true
+				continue
+			}
+			result[fileID] = fenced
 		}
 		if s.testAfterManageDeliverySigned != nil {
 			s.testAfterManageDeliverySigned(append([]string(nil), fileIDs...))
@@ -425,13 +394,47 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 	return result, changed, err
 }
 
-func (s *FileService) finalizeUsageManageFileURLResponses(
+// fenceStrongManageDelivery re-signs response against the locked File when
+// the File, its uploader and, for an avatar grant, its avatar binding are
+// still the ones authorization saw; current is false otherwise.
+func (s *Service) fenceStrongManageDelivery(
+	ctx context.Context,
+	tx Store,
+	response *MediaDeliveryResult,
+	grant manageFileDeliveryGrant,
+	lockedByID map[string]File,
+	fileID string,
+) (*MediaDeliveryResult, bool, error) {
+	file, ok := lockedByID[fileID]
+	if !ok || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) ||
+		(grant.expectedUploader != "" && (file.UploadedByMemberID == nil || *file.UploadedByMemberID != grant.expectedUploader)) {
+		return nil, false, nil
+	}
+	if grant.expectedAvatarOwner != "" {
+		current, err := tx.LockAvatarFileBinding(ctx, fileID, grant.expectedAvatarOwner)
+		if err != nil {
+			return nil, false, err
+		}
+		if !current {
+			return nil, false, nil
+		}
+	}
+	cloned := response.Clone()
+	fenced, err := s.rebuildLockedPrivateDelivery(cloned.Delivery, file)
+	if err != nil {
+		return nil, false, err
+	}
+	cloned.Delivery = fenced
+	return cloned, true, nil
+}
+
+func (s *Service) finalizeUsageManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+) (map[string]*MediaDeliveryResult, bool, error) {
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	changed := false
 	for _, fileID := range fileIDs {
 		response, current, err := s.finalizeUsageManageFileURLResponse(ctx, fileID, responses[fileID], authorization)
@@ -447,22 +450,23 @@ func (s *FileService) finalizeUsageManageFileURLResponses(
 	return result, changed, nil
 }
 
-func (s *FileService) finalizeUsageManageFileURLResponse(
+func (s *Service) finalizeUsageManageFileURLResponse(
 	ctx context.Context,
 	fileID string,
-	response *managev1.GetMediaDeliveryResponse,
+	response *MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (*managev1.GetMediaDeliveryResponse, bool, error) {
-	var finalized *managev1.GetMediaDeliveryResponse
+) (*MediaDeliveryResult, bool, error) {
+	var finalized *MediaDeliveryResult
 	currentResult := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		tx := unit.Store()
 		witnesses := append([]manageFileDeliveryUsageWitness(nil), authorization.files[fileID].usageWitnesses...)
 		sort.Slice(witnesses, func(i, j int) bool { return witnesses[i].key() < witnesses[j].key() })
 		currentOwners, err := lockManageDeliveryUsageOwners(ctx, tx, witnesses)
 		if err != nil {
 			return err
 		}
-		active, err := identitystate.LockActivePrincipal(ctx, tx, authorization.principal)
+		active, err := tx.LockDeliveryPrincipal(ctx, authorization.principal)
 		if err != nil {
 			return fmt.Errorf("lock usage manage delivery principal: %w", err)
 		}
@@ -477,19 +481,14 @@ func (s *FileService) finalizeUsageManageFileURLResponse(
 			}
 			current[witness.key()] = matches
 		}
-		var file model.File
-		fileQuery := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "delete_requested_at", "client_media_bundle_id").
-			Where("id = ?", fileID)
-		if tx.Dialector.Name() == "postgres" {
-			fileQuery = fileQuery.Clauses(clause.Locking{Strength: "SHARE"})
-		}
-		if err := fileQuery.Take(&file).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+		file, found, err := tx.LockUsageDeliveryFile(ctx, fileID)
+		if err != nil {
 			return err
 		}
+		if !found {
+			return nil
+		}
+
 		grant := authorization.files[fileID]
 		anyCurrent := false
 		for _, witness := range grant.usageWitnesses {
@@ -499,8 +498,8 @@ func (s *FileService) finalizeUsageManageFileURLResponse(
 		if !anyCurrent || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) {
 			return nil
 		}
-		cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
-		previous := proto.Clone(cloned.GetDelivery()).(*commonv1.MediaDelivery)
+		cloned := response.Clone()
+		previous := cloned.Delivery.Clone()
 		previous.Download = nil
 		fenced, err := s.rebuildLockedPrivateDelivery(previous, file)
 		if err != nil {
@@ -519,7 +518,7 @@ func (s *FileService) finalizeUsageManageFileURLResponse(
 
 func lockManageDeliveryUsageOwners(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	witnesses []manageFileDeliveryUsageWitness,
 ) (map[string]bool, error) {
 	owners := make(map[string]manageFileDeliveryUsageWitness)
@@ -534,33 +533,14 @@ func lockManageDeliveryUsageOwners(
 	current := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		witness := owners[key]
-		table, ok := uploadPermissionResourceTable(witness.resourceType)
-		if !ok {
-			return nil, fmt.Errorf("unsupported manage delivery usage owner %q", witness.resourceType)
+		row, found, err := tx.LockDeliveryOwner(ctx, witness.resourceType, witness.resourceID)
+		if err != nil {
+			return nil, err
 		}
-		var row struct {
-			ID                string  `gorm:"column:id"`
-			ContentDocumentID *string `gorm:"column:content_document_id"`
-			Status            string  `gorm:"column:status"`
-		}
-		selectFields := "id"
-		if isContentManageDeliveryOwner(witness.resourceType) {
-			selectFields = "id, content_document_id"
-			if witness.resourceType == "post" || witness.resourceType == "program_event" {
-				selectFields += ", status"
-			}
-		}
-		query := tx.WithContext(ctx).Table(table).Select(selectFields).Where("id = ?", witness.resourceID)
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
-		}
-		result := query.Take(&row)
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		if !found {
 			continue
 		}
-		if result.Error != nil {
-			return nil, result.Error
-		}
+
 		fingerprint := ""
 		if isContentManageDeliveryOwner(witness.resourceType) {
 			documentID := ""
@@ -586,80 +566,29 @@ func isContentManageDeliveryOwner(resourceType string) bool {
 	}
 }
 
-func lockExactManageDeliveryUsage(
-	ctx context.Context,
-	tx *gorm.DB,
-	witness manageFileDeliveryUsageWitness,
-) (bool, error) {
-	query := tx.WithContext(ctx)
-	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
-	}
-	var row struct{ ID string }
-	switch witness.kind {
-	case "content_attachment":
-		result := query.Table("content_block_attachment").Select("block_id AS id").
-			Where("block_id = ? AND reference_path = ? AND selector_kind = 'active' AND file_id = ?", witness.relationID, witness.referencePath, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "featured_image":
-		table, ok := uploadPermissionResourceTable(witness.resourceType)
-		if !ok {
-			return false, fmt.Errorf("unsupported featured image owner %q", witness.resourceType)
-		}
-		result := query.Table(table).Select("id").Where("id = ? AND featured_image_file_id = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "artist_file":
-		result := query.Table("artist_file").Select("artist_id AS id").Where("artist_id = ? AND file_id = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "release_file":
-		result := query.Table("release_file").Select("release_id AS id").Where("release_id = ? AND file_id = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "program_event_media":
-		result := query.Table("program_event_media").Select("id").Where("id = ? AND event_id = ? AND file_id = ?", witness.relationID, witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "track":
-		result := query.Table("track").Select("id").Where("id = ? AND release_id = ? AND audio_original_file_id = ?", witness.relationID, witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "label_logo":
-		column := "logo_light_file_id"
-		if witness.referencePath == "logo_dark" {
-			column = "logo_dark_file_id"
-		}
-		result := query.Table("label").Select("id").Where("id = ? AND "+column+" = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "series_featured_image":
-		result := query.Table("series").Select("id").Where("id = ? AND featured_image_file_id = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	case "form_featured_image":
-		result := query.Table("form").Select("id").Where("id = ? AND featured_image_file_id = ?", witness.resourceID, witness.fileID).Take(&row)
-		return manageDeliveryUsageLockResult(result)
-	default:
-		return false, fmt.Errorf("unsupported manage delivery usage witness %q", witness.kind)
-	}
-}
-
-func manageDeliveryUsageLockResult(result *gorm.DB) (bool, error) {
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return false, nil
-	}
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return true, nil
-}
-
-func manageDeliveryResponseMatchesFile(response *managev1.GetMediaDeliveryResponse, file model.File) bool {
-	if response != nil && !equalOptionalString(response.ClientMediaBundleId, file.ClientMediaBundleID) {
+func manageDeliveryResponseMatchesFile(response *MediaDeliveryResult, file File) bool {
+	if response != nil && !equalOptionalString(response.ClientMediaBundleID, file.ClientMediaBundleID) {
 		return false
 	}
-	if response == nil || !fileManagerDeliveryMatchesFile(response.GetDelivery(), file) ||
-		!equalOptionalString(response.IngestSlotId, file.IngestSlotID) ||
-		!equalOptionalString(response.IngestAttemptId, file.IngestAttemptID) {
+	if response == nil || !fileManagerDeliveryMatchesFile(response.Delivery, file) ||
+		!equalOptionalString(response.IngestSlotID, file.IngestSlotID) ||
+		!equalOptionalString(response.IngestAttemptID, file.IngestAttemptID) {
 		return false
 	}
-	fileName := response.GetDelivery().FileName
+	fileName := response.Delivery.FileName
 	if fileName == nil {
 		return strings.TrimSpace(file.FileName) == ""
 	}
 	return *fileName == file.FileName
+}
+
+func lockFileManagerMeshDeliveryWitnesses(ctx context.Context, store Store, witnesses []fileManagerMeshDeliveryWitness) (map[string]bool, error) {
+	values := make([]domain.MeshDeliveryWitness, len(witnesses))
+	for i, w := range witnesses {
+		values[i] = domain.MeshDeliveryWitness{CandidateID: w.candidateID, SourceFileID: w.sourceFileID, OutputFileID: w.outputFileID}
+	}
+	return store.LockMeshDeliveryWitnesses(ctx, values)
+}
+func lockExactManageDeliveryUsage(ctx context.Context, store Store, w manageFileDeliveryUsageWitness) (bool, error) {
+	return store.LockExactDeliveryUsage(ctx, domain.DeliveryUsageWitness{Kind: w.kind, FileID: w.fileID, ResourceType: w.resourceType, ResourceID: w.resourceID, RelationID: w.relationID, ReferencePath: w.referencePath})
 }

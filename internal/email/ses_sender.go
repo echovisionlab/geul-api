@@ -17,7 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 	"github.com/aws/smithy-go"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -37,7 +36,7 @@ type sesEmailClient interface {
 }
 
 // NewSESAdapter creates a new SESAdapter from configuration.
-func NewSESAdapter(id, name string, cfg *model.SESAdapterConfig) (*SESAdapter, error) {
+func NewSESAdapter(id, name string, cfg *SESAdapterConfig) (*SESAdapter, error) {
 	// Validate from email format
 	if cfg.FromEmail == "" {
 		return nil, fmt.Errorf("SES from email is required")
@@ -82,8 +81,8 @@ func (a *SESAdapter) ID() string { return a.id }
 func (a *SESAdapter) Name() string { return a.name }
 
 // Type returns the adapter type.
-func (a *SESAdapter) Type() model.MailAdapterType {
-	return model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String())
+func (a *SESAdapter) Type() MailAdapterType {
+	return MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String())
 }
 
 // Send sends an email using AWS SES.

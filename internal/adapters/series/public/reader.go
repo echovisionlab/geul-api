@@ -2,18 +2,21 @@ package public
 
 import (
 	"context"
+	"errors"
+
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"gorm.io/gorm"
 
+	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
 
@@ -38,66 +41,62 @@ type publicSeriesRow struct {
 	FeaturedImageFileID *string `gorm:"column:featured_image_file_id"`
 }
 
-func (r *PublicReader) List(
-	ctx context.Context,
-	req *openv1.ListSeriesRequest,
-	acceptLanguage string,
-) (seriespublic.Page, error) {
+func (r *PublicReader) List(ctx context.Context, request seriespublic.ListSeriesQuery) (seriespublic.Page, error) {
 	var rows []publicSeriesRow
 	var total int64
 	query := r.db.WithContext(ctx).Table("series AS s").
 		Select(`s.id, s.slug, s.featured_image_file_id,
 			(SELECT COUNT(DISTINCT p.id) FROM post p WHERE p.series_id = s.id AND p.status IN ?) AS post_count`, publicPostStatusValues()).
-		Where("s.status = ?", managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
+		Where("s.status = ?", model.SeriesStatusPublished)
 
 	var err error
-	query, err = seriespublic.SeriesFilterConfig.ApplyFilters(query, req.Filters)
+	query, err = seriesFilterConfig.ApplyFilters(query, request.Filters)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return seriespublic.Page{}, errs.Internal(err)
 	}
-	query, err = seriespublic.SeriesSortConfig.ApplySort(query, req.Sorts)
+	query, err = seriesSortConfig.ApplySort(query, request.Sorts)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	query = query.Order("s.id ASC")
-	pagination := queryutil.GetPaginationParams(req.Pagination.GetLimit(), req.Pagination.GetOffset(), 100)
+	pagination := queryutil.GetPaginationParams(request.Limit, request.Offset, 100)
 	if err := queryutil.ApplyPagination(query, pagination).Find(&rows).Error; err != nil {
 		return seriespublic.Page{}, errs.Internal(err)
 	}
 
-	items, err := r.projectSeriesRows(ctx, rows, acceptLanguage)
+	items, err := r.projectSeriesRows(ctx, rows, request.AcceptLanguage)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	return seriespublic.Page{Items: items, Total: int32(total), Limit: pagination.Limit, Offset: pagination.Offset}, nil
 }
 
-func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string) (*openv1.Series, error) {
+func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string) (seriespublic.Series, error) {
 	var row publicSeriesRow
 	query := r.db.WithContext(ctx).Table("series AS s").
 		Select(`s.id, s.slug, s.featured_image_file_id,
 			(SELECT COUNT(DISTINCT p.id) FROM post p WHERE p.series_id = s.id AND p.status IN ?) AS post_count`, publicPostStatusValues()).
-		Where("s.status = ?", managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
+		Where("s.status = ?", model.SeriesStatusPublished)
 	if _, err := uuid.Parse(idOrSlug); err == nil {
 		query = query.Where("s.id = ?", idOrSlug)
 	} else {
 		query = query.Where("s.slug = ?", idOrSlug)
 	}
 	if err := query.Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("series", idOrSlug)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return seriespublic.Series{}, errs.NotFound("series", idOrSlug)
 		}
-		return nil, errs.Internal(err)
+		return seriespublic.Series{}, errs.Internal(err)
 	}
 	items, err := r.projectSeriesRows(ctx, []publicSeriesRow{row}, acceptLanguage)
 	if err != nil {
-		return nil, err
+		return seriespublic.Series{}, err
 	}
 	if len(items) != 1 {
-		return nil, errs.NotFound("series", idOrSlug)
+		return seriespublic.Series{}, errs.NotFound("series", idOrSlug)
 	}
 	return items[0], nil
 }
@@ -106,7 +105,7 @@ func (r *PublicReader) projectSeriesRows(
 	ctx context.Context,
 	rows []publicSeriesRow,
 	acceptLanguage string,
-) ([]*openv1.Series, error) {
+) ([]seriespublic.Series, error) {
 	ids := make([]string, 0, len(rows))
 	fileIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -115,7 +114,7 @@ func (r *PublicReader) projectSeriesRows(
 			fileIDs = append(fileIDs, *row.FeaturedImageFileID)
 		}
 	}
-	selections, err := publiccontent.ResolveBatch(ctx, r.db, seriesLocalizationSpec, ids, acceptLanguage)
+	selections, err := publiccontent.ResolveBatch(ctx, r.db, seriesLocalizationSpec, ids, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(r.db))
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
@@ -149,25 +148,29 @@ func (r *PublicReader) projectSeriesRows(
 		return nil, errs.Internal(err)
 	}
 
-	items := make([]*openv1.Series, 0, len(rows))
+	items := make([]seriespublic.Series, 0, len(rows))
 	for _, row := range rows {
 		selection := selections[row.ID]
 		if selection.Title == nil {
 			return nil, errs.InternalMsg("published series is missing localized title")
 		}
-		item := &openv1.Series{
-			Id:               row.ID,
-			Title:            *selection.Title,
-			Slug:             row.Slug,
-			Description:      selection.Summary,
-			PostCount:        row.PostCount,
-			LocalizationInfo: publiccontent.ToProtoLocalizationInfo(selection),
+		item := seriespublic.Series{
+			ID:          row.ID,
+			Title:       *selection.Title,
+			Slug:        row.Slug,
+			Description: selection.Summary,
+			PostCount:   row.PostCount,
+			Localization: seriespublic.Localization{
+				RequestedLocale: selection.RequestedLocale, DisplayedLocale: selection.DisplayedLocale,
+				SourceLocale: selection.SourceLocale, IsFallback: selection.IsFallback, IsOriginal: selection.IsOriginal,
+				FallbackReason: int32(selection.FallbackReason), AvailableLocales: selection.AvailableLocales,
+			},
 		}
 		if row.FeaturedImageFileID != nil {
-			item.FeaturedImageAsset = featuredAssets[*row.FeaturedImageFileID]
+			item.FeaturedImageAsset = seriesadapter.AssetFromRef(featuredAssets[*row.FeaturedImageFileID])
 		}
 		if selection.OgAssetID != nil {
-			item.OgAsset = ogAssets[*selection.OgAssetID]
+			item.OgAsset = seriesadapter.AssetFromRef(ogAssets[*selection.OgAssetID])
 		}
 		items = append(items, item)
 	}
@@ -178,9 +181,9 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 	ctx context.Context,
 	featuredImageFileIDs []string,
 	ogAssetIDs []string,
-) (map[string]*commonv1.AssetRef, map[string]*commonv1.AssetRef, error) {
-	featuredRefs := make(map[string]*commonv1.AssetRef, len(featuredImageFileIDs))
-	ogRefs := make(map[string]*commonv1.AssetRef, len(ogAssetIDs))
+) (map[string]*mediaasset.Reference, map[string]*mediaasset.Reference, error) {
+	featuredRefs := make(map[string]*mediaasset.Reference, len(featuredImageFileIDs))
+	ogRefs := make(map[string]*mediaasset.Reference, len(ogAssetIDs))
 	if len(featuredImageFileIDs) == 0 && len(ogAssetIDs) == 0 {
 		return featuredRefs, ogRefs, nil
 	}
@@ -214,7 +217,7 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 	if err := query.Order("source_file_id ASC, created_at DESC, id DESC").Find(&assets).Error; err != nil {
 		return nil, nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(r.db, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(r.db), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
@@ -227,7 +230,7 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 		if !exactOG && !featured {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -252,7 +255,7 @@ var seriesLocalizationSpec = publiccontent.Spec{
 
 func publicPostStatusValues() []string {
 	return []string{
-		managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-		managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+		string(model.PostStatusPublished),
+		string(model.PostStatusArchived),
 	}
 }

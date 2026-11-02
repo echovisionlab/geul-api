@@ -4,41 +4,38 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
+// TranslationJob is the part of a translation job a Work delivery reads.
+type TranslationJob struct {
+	EntityType          string
+	EntityID            string
+	SourceLocale        string
+	TargetLocale        string
+	RequestedByMemberID string
+}
+
 // LoadTypedTranslationSourceDocument loads the canonical Work Rich Text
-// document used by translation extraction.
-func LoadTypedTranslationSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	workID string,
-) (*translation.SourceDocument, error) {
-	if store == nil {
-		return nil, errors.New("work translation content Block store is not configured")
-	}
-	source, err := LoadRequiredSourceLocaleMetadata(ctx, db, workID)
+// document used by translation extraction, through store bound to the
+// translation domain's database handle.
+func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, workID string) (*translation.SourceDocument, error) {
+	source, err := LoadRequiredSourceLocaleMetadata(ctx, store, workID)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadWorkContentDocumentID(ctx, db, workID)
+	documentID, err := loadWorkContentDocumentID(ctx, store, workID, Unlocked)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, source.Locale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, source.Locale)
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
 	}
@@ -54,21 +51,21 @@ func LoadTypedTranslationSourceDocument(
 	}, nil
 }
 
-// ApplyTypedTranslationCandidateWithDB persists a translated Work locale
-// overlay behind the Work-owned document fence.
-func ApplyTypedTranslationCandidateWithDB(
+// ApplyTypedTranslationCandidate persists a translated Work locale overlay
+// behind the Work-owned document fence, in the translation application's
+// transaction, which joined is bound to.
+func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
+	store := joined.Store
+	if store == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed Work translation candidate and content Block store are required")
 	}
-	documentID, err := loadWorkContentDocumentID(ctx, tx, job.EntityID)
+	documentID, err := loadWorkContentDocumentID(ctx, store, job.EntityID, Unlocked)
 	if err != nil {
 		return err
 	}
@@ -77,10 +74,9 @@ func ApplyTypedTranslationCandidateWithDB(
 		candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ApplyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
-	domain, err := workSystemTranslationDocumentFence(job.EntityID)(ctx, tx, documentID)
+	domain, err := workSystemTranslationDocumentFence(job.EntityID)(ctx, store, documentID)
 	if err != nil {
 		return err
 	}
@@ -90,13 +86,9 @@ func ApplyTypedTranslationCandidateWithDB(
 		); err != nil {
 			return err
 		}
-		return applyWorkProviderSourceCandidate(
-			ctx, tx, store, job, candidate, entry, auditWriter, documentID, domain,
-		)
+		return applyWorkProviderSourceCandidate(ctx, joined, job, candidate, entry, documentID, domain)
 	}
-	state, err := loadWorkTargetLocaleState(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, true,
-	)
+	state, err := loadWorkTargetLocaleState(ctx, store, job.EntityID, documentID, job.TargetLocale, true)
 	if err != nil {
 		return err
 	}
@@ -119,20 +111,22 @@ func ApplyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return err
 	}
-	result, _, err := applyWorkTargetLocaleBatch(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch, nil,
-		workTargetMetadataPatch{
+	result, _, err := applyWorkTargetLocaleMutation(ctx, store, workTargetLocaleMutationInput{
+		WorkID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+		Patch: workTargetMetadataPatch{
 			EnsureLocale:  true,
 			UpdateTitle:   !candidate.HasProviderUnitPatch() || candidate.ProviderUnitRequested("entity:title"),
 			Title:         cloneOptionalString(entry.Title),
 			UpdateSummary: !candidate.HasProviderUnitPatch() || candidate.ProviderUnitRequested("entity:summary"),
 			Summary:       cloneOptionalString(entry.Summary),
 		},
-		true, false, true, true, entry.Now, workLockedTargetFence(documentID, domain),
-	)
+		Policy: targetlocale.Policy{
+			AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
+		},
+		Now: entry.Now, Fence: lockedContentFence(documentID, domain),
+	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ApplyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err
@@ -150,8 +144,8 @@ func ApplyTypedTranslationCandidateWithDB(
 	if !targetPreviouslyExists {
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
-	if err := appendWorkMemberTargetLocaleAudit(
-		ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
+	if err := appendWorkTranslationAudit(
+		ctx, joined.Audit, strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID, job.TargetLocale, operation,
 	); err != nil {
 		return err
@@ -161,20 +155,19 @@ func ApplyTypedTranslationCandidateWithDB(
 
 func applyWorkProviderSourceCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 ) error {
+	store := joined.Store
 	requesterID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
 		return errors.New("work translation provider delivery requires its requesting Member")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return err
 	}
@@ -189,17 +182,16 @@ func applyWorkProviderSourceCandidate(
 		SetTitle: candidate.ProviderUnitRequested("entity:title"), Title: cloneOptionalString(entry.Title),
 		SetSummary: candidate.ProviderUnitRequested("entity:summary"), Summary: cloneOptionalString(entry.Summary),
 	}
-	result, err := store.ApplyBatchWithMetadata(
-		ctx, tx, batch, workLockedTargetFence(documentID, domain),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, batch, lockedContentFence(documentID, domain),
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 			return applyWorkAIDocumentMetadata(
-				ctx, tx, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
+				ctx, store, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
 			)
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "applyWorkProviderSourceCandidate", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err
@@ -208,28 +200,27 @@ func applyWorkProviderSourceCandidate(
 		return nil
 	}
 	if !result.TranslationSourceChanged {
-		return errs.InternalMsg("provider source Work translation did not advance source state")
+		return errors.New("provider source Work translation did not advance source state")
 	}
-	if err := tx.WithContext(ctx).Model(&model.Work{}).
-		Where("id = ?", job.EntityID).UpdateColumn("updated_at", entry.Now).Error; err != nil {
+	if err := store.TouchWork(ctx, job.EntityID, entry.Now); err != nil {
 		return err
 	}
-	return appendWorkMemberTargetLocaleAudit(
-		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
+	return appendWorkTranslationAudit(
+		ctx, joined.Audit, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
 		sharedtelemetry.AuditItemOperationUpdated,
 	)
 }
 
-func workSystemTranslationDocumentFence(workID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		work, err := lockWorkForContentDocument(ctx, tx, documentID)
+func workSystemTranslationDocumentFence(workID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		work, err := lockWorkForContentDocument(ctx, store, documentID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if work.ID != workID {
 			return contentblock.DomainContext{}, fmt.Errorf("work content document changed during translation apply")
 		}
-		return loadWorkContentDomainContext(ctx, tx, workID)
+		return loadWorkContentDomainContext(ctx, store, workID)
 	}
 }
 

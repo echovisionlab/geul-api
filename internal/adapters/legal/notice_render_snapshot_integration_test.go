@@ -8,13 +8,14 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEmailTemplateRenderSnapshotUsesExactSourceWithoutLegacySourceFlag(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 
 	var template model.EmailTemplate
 	require.NoError(t, postgres.DB.Where("event_key = ?", "privacy_effective").Take(&template).Error)

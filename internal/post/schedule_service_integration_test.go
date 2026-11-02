@@ -6,19 +6,22 @@ import (
 	"testing"
 	"time"
 
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"gorm.io/gorm"
+
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	now := time.Now().UTC().Truncate(time.Minute)
-	dueIDs := []string{testutil.IntegrationUUID(), testutil.IntegrationUUID()}
-	futureID := testutil.IntegrationUUID()
-	documentIDs := []string{testutil.IntegrationUUID(), testutil.IntegrationUUID(), testutil.IntegrationUUID()}
+	dueIDs := []string{orytest.IntegrationUUID(), orytest.IntegrationUUID()}
+	futureID := orytest.IntegrationUUID()
+	documentIDs := []string{orytest.IntegrationUUID(), orytest.IntegrationUUID(), orytest.IntegrationUUID()}
 
 	for index, postID := range append(dueIDs, futureID) {
 		documentID := documentIDs[index]
@@ -37,20 +40,29 @@ func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) 
 			postID, managev1.PostStatus_POST_STATUS_SCHEDULED.String(), scheduledAt, documentID,
 		).Error)
 	}
-	t.Cleanup(func() {
-		require.NoError(t, db.Exec("DELETE FROM post WHERE id IN ?", append(dueIDs, futureID)).Error)
-		require.NoError(t, db.Exec("DELETE FROM content_document WHERE id IN ?", documentIDs).Error)
-	})
 
-	published, err := postdomain.ProcessDueScheduledPosts(t.Context(), db, 100)
+	published, err := processDueScheduledPosts(t, db)
 	require.NoError(t, err)
 	require.ElementsMatch(t, dueIDs, published)
 
-	published, err = postdomain.ProcessDueScheduledPosts(t.Context(), db, 100)
+	published, err = processDueScheduledPosts(t, db)
 	require.NoError(t, err)
 	require.Empty(t, published)
 
 	var futureStatus string
 	require.NoError(t, db.Table("post").Select("status").Where("id = ?", futureID).Scan(&futureStatus).Error)
 	require.Equal(t, managev1.PostStatus_POST_STATUS_SCHEDULED.String(), futureStatus)
+}
+
+// processDueScheduledPosts runs one scheduler tick in its own transaction,
+// as the worker does.
+func processDueScheduledPosts(t *testing.T, db *gorm.DB) ([]string, error) {
+	t.Helper()
+	var published []string
+	err := db.WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
+		var err error
+		published, err = postpostgres.ProcessDueScheduledPosts(t.Context(), tx, 100)
+		return err
+	})
+	return published, err
 }

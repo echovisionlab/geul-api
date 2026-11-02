@@ -2,21 +2,18 @@ package email
 
 import (
 	"context"
-	"database/sql"
-	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 // UpsertLayoutTranslationEntry persists one Email Layout locale entry.
 func UpsertLayoutTranslationEntry(
 	ctx context.Context,
-	db *gorm.DB,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	input translation.EntryWrite,
@@ -29,29 +26,14 @@ func UpsertLayoutTranslationEntry(
 		input.ContentHTML = &normalized
 	}
 
-	return db.WithContext(ctx).Exec(
-		`INSERT INTO email_layout_translation (
-			entity_id, locale, html_content, content_text,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-			html_content = EXCLUDED.html_content,
-			content_text = EXCLUDED.content_text,
-			updated_at = EXCLUDED.updated_at`,
-		layoutID,
-		locale,
-		input.ContentHTML,
-		input.ContentText,
-		input.Now,
-		input.Now,
-	).Error
+	return store.UpsertLayoutEntry(ctx, layoutID, locale, input.ContentHTML, input.ContentText, input.Now)
 }
 
 // SaveLayoutSourceLocaleDocument persists the canonical source wrapper and
 // makes it the only source-locale row.
 func SaveLayoutSourceLocaleDocument(
 	ctx context.Context,
-	db *gorm.DB,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	document LayoutTranslationDocument,
@@ -67,14 +49,14 @@ func SaveLayoutSourceLocaleDocument(
 	if contentText == nil || strings.TrimSpace(dereferenceString(contentText)) == "" {
 		contentText = stringPointer(StripHTML(htmlContent))
 	}
-	if err := UpsertLayoutTranslationEntry(ctx, db, layoutID, locale, translation.EntryWrite{
+	if err := UpsertLayoutTranslationEntry(ctx, store, layoutID, locale, translation.EntryWrite{
 		ContentHTML: &htmlContent,
 		ContentText: contentText,
 		Now:         now,
 	}); err != nil {
 		return err
 	}
-	return normalizeLayoutTargetRepresentations(ctx, db, layoutID, locale, htmlContent)
+	return normalizeLayoutTargetRepresentations(ctx, store, layoutID, locale, htmlContent)
 }
 
 // PrepareLayoutSourceLocaleSwitch makes only the requested locale safe to
@@ -82,7 +64,7 @@ func SaveLayoutSourceLocaleDocument(
 // an absent row receives one complete explicit-empty value wrapper.
 func PrepareLayoutSourceLocaleSwitch(
 	ctx context.Context,
-	db *gorm.DB,
+	store AuthoringStore,
 	layoutID string,
 	currentSourceLocale string,
 	requestedLocale string,
@@ -90,7 +72,7 @@ func PrepareLayoutSourceLocaleSwitch(
 ) error {
 	current, err := LoadCanonicalLayoutTranslationDocument(
 		ctx,
-		db,
+		store,
 		layoutID,
 		currentSourceLocale,
 	)
@@ -100,7 +82,7 @@ func PrepareLayoutSourceLocaleSwitch(
 	if current.ContentHTML == nil {
 		return errs.FailedPrecondition("Email Layout source locale content is missing")
 	}
-	entry, err := LoadLayoutTranslationEntry(ctx, db, layoutID, requestedLocale)
+	entry, err := LoadLayoutTranslationEntry(ctx, store, layoutID, requestedLocale)
 	if err != nil {
 		return err
 	}
@@ -114,11 +96,10 @@ func PrepareLayoutSourceLocaleSwitch(
 		)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching"), failurecause.ServerFault(err))
 	}
 	if entry == nil {
-		return UpsertLayoutTranslationEntry(ctx, db, layoutID, requestedLocale, translation.EntryWrite{
+		return UpsertLayoutTranslationEntry(ctx, store, layoutID, requestedLocale, translation.EntryWrite{
 			ContentHTML: contentHTML,
 			ContentText: contentText,
 			Now:         now.UTC(),
@@ -128,57 +109,36 @@ func PrepareLayoutSourceLocaleSwitch(
 		dereferenceString(entry.ContentText) == dereferenceString(contentText) {
 		return nil
 	}
-	return db.WithContext(ctx).Exec(
-		`UPDATE email_layout_translation
-		 SET html_content = ?, content_text = ?
-		 WHERE entity_id = ? AND locale = ?`,
-		contentHTML,
-		contentText,
-		layoutID,
-		requestedLocale,
-	).Error
+	return store.UpdateLayoutEntry(ctx, layoutID, requestedLocale, contentHTML, contentText)
 }
 
 func normalizeLayoutTargetRepresentations(
 	ctx context.Context,
-	db *gorm.DB,
+	store AuthoringStore,
 	layoutID string,
 	sourceLocale string,
 	canonicalSource string,
 ) error {
-	var rows []struct {
-		Locale      string         `gorm:"column:locale"`
-		ContentHTML sql.NullString `gorm:"column:html_content"`
-		ContentText sql.NullString `gorm:"column:content_text"`
-	}
-	if err := db.WithContext(ctx).Table("email_layout_translation").
-		Select("locale, html_content, content_text").
-		Where("entity_id = ? AND locale <> ?", layoutID, sourceLocale).
-		Order("locale ASC").Scan(&rows).Error; err != nil {
+	rows, err := store.LayoutTargets(ctx, layoutID, sourceLocale)
+	if err != nil {
 		return errs.Internal(err)
 	}
 	for _, row := range rows {
-		if !row.ContentHTML.Valid {
+		if row.HTMLContent == nil {
 			continue
 		}
 		nextHTML, nextText, err := NormalizeLayoutLocaleRepresentation(
 			canonicalSource,
-			row.ContentHTML.String,
+			*row.HTMLContent,
 		)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Email Layout target markers require backfill before source editing")
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target markers require backfill before source editing"), failurecause.ServerFault(err))
 		}
-		if dereferenceString(nextHTML) == row.ContentHTML.String &&
-			row.ContentText.Valid && dereferenceString(nextText) == row.ContentText.String {
+		if dereferenceString(nextHTML) == *row.HTMLContent &&
+			row.ContentText != nil && dereferenceString(nextText) == *row.ContentText {
 			continue
 		}
-		if err := db.WithContext(ctx).Exec(
-			`UPDATE email_layout_translation
-			 SET html_content = ?, content_text = ?
-			 WHERE entity_id = ? AND locale = ?`,
-			nextHTML, nextText, layoutID, row.Locale,
-		).Error; err != nil {
+		if err := store.UpdateLayoutEntry(ctx, layoutID, row.Locale, nextHTML, nextText); err != nil {
 			return errs.Internal(err)
 		}
 	}
@@ -190,7 +150,7 @@ func normalizeLayoutTargetRepresentations(
 // never calls this function; explicit target creation does.
 func SeedLayoutTranslationEntryFromSource(
 	ctx context.Context,
-	db *gorm.DB,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	sourceLocale string,
@@ -202,15 +162,14 @@ func SeedLayoutTranslationEntryFromSource(
 	if locale == sourceLocale {
 		return errs.FailedPrecondition("Email Layout source locale changed while seeding target metadata")
 	}
-	source, err := LoadCanonicalLayoutTranslationDocument(ctx, db, layoutID, sourceLocale)
+	source, err := LoadCanonicalLayoutTranslationDocument(ctx, store, layoutID, sourceLocale)
 	if err != nil {
 		return err
 	}
 	sourceHTML := dereferenceString(source.ContentHTML)
 	units, err := ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target"), failurecause.ServerFault(err))
 	}
 	values := make(map[string]string, len(units))
 	for _, unit := range units {
@@ -220,11 +179,5 @@ func SeedLayoutTranslationEntryFromSource(
 	if err != nil {
 		return errs.Internal(err)
 	}
-	return db.WithContext(ctx).Exec(`
-		INSERT INTO email_layout_translation (
-			entity_id, locale, html_content, content_text, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO NOTHING`,
-		layoutID, locale, targetHTML, targetText, now, now,
-	).Error
+	return store.InsertLayoutEntry(ctx, layoutID, locale, targetHTML, targetText, now)
 }

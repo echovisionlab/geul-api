@@ -6,29 +6,21 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/favicon"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -48,7 +40,7 @@ func generalFileMaxSize(mimeType string) int64 {
 	case strings.HasPrefix(mimeType, "audio/"):
 		return 4 * 1024 * 1024 * 1024
 	case strings.HasPrefix(mimeType, "image/"):
-		return model.ManagedRasterFinalMaxSize
+		return domain.ManagedRasterFinalMaxSize
 	case strings.HasPrefix(mimeType, "model/"):
 		return 50 * 1024 * 1024
 	default:
@@ -106,9 +98,9 @@ func isMissingStoredObjectError(err error) bool {
 	}
 }
 
-func cloneUploadConfigs() map[managev1.UploadType]*model.UploadConfig {
-	configs := make(map[managev1.UploadType]*model.UploadConfig, len(model.DefaultUploadConfigs))
-	for uploadType, cfg := range model.DefaultUploadConfigs {
+func cloneUploadConfigs() map[string]*domain.UploadConfig {
+	configs := make(map[string]*domain.UploadConfig, len(domain.DefaultUploadConfigs))
+	for uploadType, cfg := range domain.DefaultUploadConfigs {
 		if cfg == nil {
 			continue
 		}
@@ -120,14 +112,12 @@ func cloneUploadConfigs() map[managev1.UploadType]*model.UploadConfig {
 }
 
 // getUploadConfig returns the upload config for the given type from DefaultUploadConfigs.
-func getUploadConfig(uploadType managev1.UploadType) *model.UploadConfig {
-	if cfg, ok := model.DefaultUploadConfigs[uploadType]; ok {
+func getUploadConfig(uploadType UploadType) *domain.UploadConfig {
+	if cfg, ok := domain.DefaultUploadConfigs[uploadType.String()]; ok {
 		return cfg
 	}
 	return nil
 }
-
-type FileServiceOption func(*FileService)
 
 // LegalRouteIdentity resolves stable Legal route IDs for Legal-owned site
 // assets. FileMedia owns this consumer port; composition supplies the Legal
@@ -136,236 +126,74 @@ type LegalRouteIdentity interface {
 	RouteID(kind string) string
 }
 
-func WithEditorImageMaxSizeBytes(maxSize int64) FileServiceOption {
-	return func(s *FileService) {
-		if maxSize <= 0 {
-			return
-		}
-		if cfg := s.uploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE]; cfg != nil {
-			cfg.MaxSize = maxSize
-		}
-	}
-}
-
-func WithMediaDownloadTTL(downloadTTL time.Duration) FileServiceOption {
-	return func(s *FileService) {
-		if downloadTTL > 0 {
-			s.downloadTTL = min(downloadTTL, mediaauth.DownloadTTL)
-		}
-	}
-}
-
-func WithFileDomainAuditWriter(writer domainaudit.Appender) FileServiceOption {
-	return func(s *FileService) { s.auditWriter = writer }
-}
-
-func WithMultipartUploadPresigner(presigner *s3.PresignClient) FileServiceOption {
-	return func(s *FileService) {
-		if presigner != nil {
-			s.s3PresignClient = presigner
-		}
-	}
-}
-
-func WithLegalRouteIdentity(identity LegalRouteIdentity) FileServiceOption {
-	return func(s *FileService) { s.legalRouteIdentity = identity }
-}
-
-func WithPostAccess(access PostAccess) FileServiceOption {
-	return func(s *FileService) { s.postAccess = access }
-}
-
-func WithPagePolicyAccess(access PagePolicyAccess) FileServiceOption {
-	return func(s *FileService) { s.pagePolicyAccess = access }
-}
-
-func WithWorkAttachment(attachment WorkAttachment) FileServiceOption {
-	return func(s *FileService) { s.workAttachment = attachment }
-}
-
-func WithWorkPolicyAccess(access WorkPolicyAccess) FileServiceOption {
-	return func(s *FileService) { s.workPolicyAccess = access }
-}
-
-func WithProgramEventAttachment(attachment ProgramEventAttachment) FileServiceOption {
-	return func(s *FileService) { s.programEventAttachment = attachment }
-}
-
-func WithTrackAttachment(attachment TrackAttachment) FileServiceOption {
-	return func(s *FileService) { s.trackAttachment = attachment }
-}
-
-func WithReleasePolicyAccess(access ReleasePolicyAccess) FileServiceOption {
-	return func(s *FileService) { s.releasePolicyAccess = access }
-}
-
-func WithAudienceAccess(access AudienceAccess) FileServiceOption {
-	return func(s *FileService) { s.audienceAccess = access }
-}
-
-func WithMemberSummaries(summaries MemberSummaries) FileServiceOption {
-	return func(s *FileService) { s.memberSummaries = summaries }
-}
-
-// FileService implements the FileService Connect handler
-type FileService struct {
-	managev1connect.UnimplementedFileServiceHandler
-	db                        *gorm.DB
-	s3Bucket                  string
-	cdnDomain                 string
-	mediaDomain               string
-	mediaSecret               string
-	downloadTTL               time.Duration
-	s3Client                  *s3.Client
-	s3PresignClient           *s3.PresignClient
-	asyncPublisher            AsyncPublisher
-	publisher                 mq.TranscoderPublisher
-	spiceDB                   *auth.SpiceDBClient
-	auditWriter               domainaudit.Appender
-	postAccess                PostAccess
-	pagePolicyAccess          PagePolicyAccess
-	workAttachment            WorkAttachment
-	workPolicyAccess          WorkPolicyAccess
-	programEventAttachment    ProgramEventAttachment
-	trackAttachment           TrackAttachment
-	releasePolicyAccess       ReleasePolicyAccess
-	audienceAccess            AudienceAccess
-	memberSummaries           MemberSummaries
-	remoteImportResolver      remoteImportResolver
-	remoteImportDialer        remoteImportDialer
-	remoteImportBaseTransport *http.Transport
-	legalRouteIdentity        LegalRouteIdentity
-
-	uploadConfigs                      map[managev1.UploadType]*model.UploadConfig
-	faviconProcessor                   favicon.Processor
-	testFaviconBundleTimeout           time.Duration
-	testFaviconCommitError             error
-	testFaviconReconcileError          error
-	testVerifiedIngestCommitError      error
-	testBeforeTrackSessionInsert       func(model.UploadSession)
-	testAfterTrackSessionInsert        func(model.UploadSession)
-	testBeforeResumeReconciliation     func(model.UploadSession)
-	testBeforeFileManagerDeliveryFence func([]string)
-	testAfterFileManagerDeliverySigned func([]string)
-	testBeforeManageDeliveryFence      func([]string)
-	testBeforeManagePrincipalLock      func([]string)
-	testAfterManageDeliverySigned      func([]string)
-	testBeforeFileMutationPrincipal    func(*gorm.DB, []string)
-	testAfterFileMutationPrincipal     func([]string)
-	testAfterScopedFeaturedSigned      func(string, string, string)
-	testAfterScopedBlockMediaSigned    func(string, string, []string)
-}
-
-// NewFileService creates a new FileService
-func NewFileService(
-	db *gorm.DB,
-	s3Client *s3.Client,
-	asyncPublisher AsyncPublisher,
-	s3Bucket, cdnDomain, mediaDomain string,
-	mediaSecret string,
-	publisher mq.TranscoderPublisher,
-	spiceDB *auth.SpiceDBClient,
-	options ...FileServiceOption,
-) *FileService {
-	if db == nil {
-		panic("db is required")
-	}
-	if s3Client == nil {
-		panic("s3Client is required")
-	}
-	if asyncPublisher == nil {
-		panic("asyncPublisher is required")
-	}
-	if publisher == nil {
-		panic("publisher is required")
-	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
-	}
-
-	s := &FileService{
-		db:               db,
-		s3Client:         s3Client,
-		s3PresignClient:  s3.NewPresignClient(s3Client),
-		asyncPublisher:   asyncPublisher,
-		s3Bucket:         s3Bucket,
-		cdnDomain:        cdnDomain,
-		mediaDomain:      mediaDomain,
-		mediaSecret:      mediaSecret,
-		downloadTTL:      mediaauth.DownloadTTL,
-		publisher:        publisher,
-		spiceDB:          spiceDB,
-		uploadConfigs:    cloneUploadConfigs(),
-		faviconProcessor: favicon.NewProcessor(),
-	}
-	for _, option := range options {
-		if option != nil {
-			option(s)
-		}
-	}
-	return s
-}
-
-func (s *FileService) getUploadConfig(uploadType managev1.UploadType) *model.UploadConfig {
+func (s *Service) getUploadConfig(uploadType UploadType) *domain.UploadConfig {
 	if s != nil && s.uploadConfigs != nil {
-		if cfg, ok := s.uploadConfigs[uploadType]; ok {
+		if cfg, ok := s.uploadConfigs[uploadType.String()]; ok {
 			return cfg
 		}
 	}
 	return getUploadConfig(uploadType)
 }
 
-func (s *FileService) resolveTrackReleaseID(ctx context.Context, trackID string) (string, error) {
-	var track struct {
-		ReleaseID string `gorm:"column:release_id"`
-	}
-
-	if err := s.db.WithContext(ctx).
-		Table("track").
-		Select("release_id").
-		Where("id = ?", trackID).
-		First(&track).Error; err != nil {
-		return "", err
-	}
-
-	return track.ReleaseID, nil
+func (s *Service) resolveTrackReleaseID(ctx context.Context, trackID string) (string, error) {
+	var releaseID string
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		rows, err := store.TrackReleaseIDs(ctx, []string{trackID})
+		if err != nil {
+			return err
+		}
+		var ok bool
+		releaseID, ok = rows[trackID]
+		if !ok {
+			return domain.ErrUploadTrackNotFound
+		}
+		return nil
+	})
+	return releaseID, err
 }
 
-func (s *FileService) buildManagedFileKey(
+func (s *Service) readUploadFacts(ctx context.Context, read func(Store) error) error {
+	if s.uploadReads != nil {
+		return s.uploadReads.Read(ctx, read)
+	}
+	return s.units.Read(ctx, read)
+}
+
+func (s *Service) buildManagedFileKey(
 	fileID string,
 	mimeType string,
 ) (string, error) {
 	return mediaauth.MediaObjectKey(fileID, mediaExtension(&mimeType))
 }
 
-func isSiteEmailLogoUpload(uploadType managev1.UploadType, slotID string) bool {
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_SITE_LOGO {
+func isSiteEmailLogoUpload(uploadType UploadType, slotID string) bool {
+	if uploadType != UploadSiteLogo {
 		return false
 	}
 	slot := strings.TrimSpace(slotID)
 	return slot == siteLogoSlotEmailLight || slot == siteLogoSlotEmailDark
 }
 
-func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mimeType string) error {
+func validateSiteEmailLogoMime(uploadType UploadType, slotID string, mimeType string) error {
 	if !isSiteEmailLogoUpload(uploadType, slotID) {
 		return nil
 	}
 	if normalizeMimeType(mimeType) == siteEmailLogoStableMime {
 		return nil
 	}
-	return errs.InvalidArgument("mime_type", "email logo uploads must be PNG")
+	return domainerr.InvalidField("mime_type", "email logo uploads must be PNG")
 }
 
 func validateMultipartCompletionVerifiedMime(
-	uploadType managev1.UploadType,
-	session model.UploadSession,
-	config *model.UploadConfig,
+	uploadType UploadType,
+	session domain.UploadSession,
+	config *domain.UploadConfig,
 ) (string, error) {
 	if session.DetectedMime == nil || *session.DetectedMime == "" {
-		return "", errs.FailedPrecondition(errs.MsgMimeNotVerified)
+		return "", domainerr.Precondition("MIME type not verified")
 	}
 	if config == nil {
-		return "", errs.InvalidArgument("upload_type", fmt.Sprintf("invalid upload type: %s", session.UploadType))
+		return "", domainerr.InvalidField("upload_type", fmt.Sprintf("invalid upload type: %s", session.UploadType))
 	}
 
 	verifiedMime, err := validateMultipartCompletionMime(
@@ -383,124 +211,100 @@ func validateMultipartCompletionVerifiedMime(
 	return verifiedMime, nil
 }
 
-func completedMultipartFileRecord(session model.UploadSession) structured.Fields {
-	extension := mediaExtension(session.DetectedMime)
-	file := structured.Fields{
-		"id":        session.FileID,
-		"file_name": storedFileBasename(session.FileName, session.FileID, extension),
-		"mime_type": derefString(session.DetectedMime),
-		"file_size": session.FileSize,
-		"extension": extension,
+// fileIngestRecord is the file row a verified ingest creates. A nil sha256
+// and empty ingest identifiers are left out of the insert.
+type fileIngestRecord struct {
+	id              string
+	fileName        string
+	mimeType        string
+	fileSize        int64
+	extension       string
+	sha256          []byte
+	ingestSlotID    string
+	ingestAttemptID string
+}
+
+func (r fileIngestRecord) file() File {
+	file := File{ID: r.id, FileName: r.fileName, MimeType: r.mimeType, FileSize: r.fileSize, Extension: r.extension, SHA256: r.sha256}
+	if r.ingestSlotID != "" {
+		file.IngestSlotID = new(r.ingestSlotID)
 	}
-	if session.SlotID != nil && *session.SlotID != "" {
-		file["ingest_slot_id"] = *session.SlotID
-	}
-	if session.AttemptID != nil && *session.AttemptID != "" {
-		file["ingest_attempt_id"] = *session.AttemptID
+	if r.ingestAttemptID != "" {
+		file.IngestAttemptID = new(r.ingestAttemptID)
 	}
 	return file
 }
 
-func ensureFileManagerDateFolder(ctx context.Context, tx *gorm.DB) (*string, error) {
-	if tx.Dialector.Name() != "postgres" {
-		return nil, nil
+func completedMultipartFileRecord(session domain.UploadSession) fileIngestRecord {
+	extension := mediaExtension(session.DetectedMime)
+	return fileIngestRecord{
+		id:              session.FileID,
+		fileName:        storedFileBasename(session.FileName, session.FileID, extension),
+		mimeType:        derefString(session.DetectedMime),
+		fileSize:        session.FileSize,
+		extension:       extension,
+		ingestSlotID:    derefString(session.SlotID),
+		ingestAttemptID: derefString(session.AttemptID),
 	}
-	var dateParts struct {
-		Year  string `gorm:"column:year"`
-		Month string `gorm:"column:month"`
-		Day   string `gorm:"column:day"`
-	}
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT to_char(CURRENT_DATE, 'YYYY') AS year,
-		       to_char(CURRENT_DATE, 'MM') AS month,
-		       to_char(CURRENT_DATE, 'DD') AS day
-	`).Scan(&dateParts).Error; err != nil {
-		return nil, err
-	}
-	var parentID *string
-	for _, name := range []string{dateParts.Year, dateParts.Month, dateParts.Day} {
-		var folderID string
-		if err := tx.WithContext(ctx).Raw(`
-			INSERT INTO file_folder (id, parent_id, name, created_by_member_id, created_at, updated_at)
-			VALUES (gen_random_uuid(), ?, ?, NULL, now(), now())
-			ON CONFLICT (parent_id, name) DO UPDATE SET name = EXCLUDED.name
-			RETURNING id
-		`, parentID, name).Scan(&folderID).Error; err != nil {
-			return nil, err
-		}
-		parentID = &folderID
-	}
-	return parentID, nil
 }
 
-func (s *FileService) createVerifiedFileIngestRecord(
+func (s *Service) createVerifiedFileIngestRecord(
 	ctx context.Context,
-	file structured.Fields,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	record fileIngestRecord,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
 	authority verifiedFileIngestAuthority,
 ) error {
-	fileID, _ := file["id"].(string)
+	fileID := record.id
 	if strings.TrimSpace(fileID) == "" {
 		return fmt.Errorf("completed file ID is required")
 	}
 	if authority == nil {
 		return fmt.Errorf("verified File ingest authority is required")
 	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := authority.revalidate(ctx, tx, s, fileID, uploadType, entityType, entityID); err != nil {
-			return err
-		}
-		extension, _ := file["extension"].(string)
-		fileName, _ := file["file_name"].(string)
-		file["file_name"] = storedFileBasename(fileName, fileID, extension)
-		folderID, err := ensureFileManagerDateFolder(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if folderID != nil {
-			file["folder_id"] = *folderID
-		}
-		if user := auth.GetUser(ctx); user != nil && strings.TrimSpace(user.MemberID.String()) != "" {
-			file["uploaded_by_member_id"] = user.MemberID.String()
-		}
-		if err := tx.Table("file").Create(file).Error; err != nil {
-			return err
-		}
-		var entityTypeName *string
-		if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-			value := entityType.String()
-			entityTypeName = &value
-		}
-		binding := &model.FileIngestBinding{
-			FileID:     fileID,
-			UploadType: uploadType.String(),
-			EntityType: entityTypeName,
-			EntityID:   entityID,
-		}
-		bindingWrite := tx
-		if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType) {
-			bindingWrite = bindingWrite.Omit("EntityID")
-		}
-		if err := bindingWrite.Create(binding).Error; err != nil {
-			return err
-		}
-		if err := appendFileCreatedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
-			return err
-		}
-		apply, err := policyv1.File.TouchPolicy(fileID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.File.DeletePolicy(fileID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+	if s.storeMutations == nil {
+		return fmt.Errorf("File ingest mutation runner is required")
+	}
+	_, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[string, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return authority.revalidate(ctx, store, s, fileID, uploadType, entityType, entityID, lockActive)
+		}),
+		Change: func(ctx context.Context, store Store) (string, error) {
+			file := record.file()
+			file.FileName = storedFileBasename(record.fileName, fileID, record.extension)
+			folder, err := store.EnsureIngestDateFolder(ctx)
+			if err != nil {
+				return "", err
+			}
+			file.FolderID = folder
+			if user := auth.GetUser(ctx); user != nil && strings.TrimSpace(user.MemberID.String()) != "" {
+				file.UploadedByMemberID = new(user.MemberID.String())
+			}
+			if err := store.InsertIngestFile(ctx, file); err != nil {
+				return "", err
+			}
+			binding := domain.IngestBinding{FileID: fileID, UploadType: uploadType.String(), EntityID: entityID}
+			if entityType != EntityUnspecified {
+				binding.EntityType = new(entityType.String())
+			}
+			if err := store.InsertIngestBinding(ctx, binding, uploadType == UploadGeneralFile || isEditorFileIngestUploadType(uploadType)); err != nil {
+				return "", err
+			}
+			return fileID, nil
+		},
+		Audit: fileCreatedAudit,
+		Relationships: func(id string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			apply, err := policyv1.File.TouchPolicy(id)
+			if err != nil {
+				return nil, nil, err
+			}
+			compensate, err := policyv1.File.DeletePolicy(id)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []policyv1.RelationshipMutation{apply}, []policyv1.RelationshipMutation{compensate}, nil
+		},
 	})
 	if err != nil {
 		return err
@@ -511,27 +315,31 @@ func (s *FileService) createVerifiedFileIngestRecord(
 	return nil
 }
 
-func (s *FileService) completedFileRecordExists(ctx context.Context, fileID string) (bool, error) {
+func (s *Service) completedFileRecordExists(ctx context.Context, fileID string) (bool, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.File{}).
-		Where("id = ?", fileID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count == 1, nil
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		count, err = store.FileCount(ctx, []string{fileID})
+		return err
+	})
+	return count == 1, err
 }
 
-func (s *FileService) validateCompletedFileRecord(
+func (s *Service) validateCompletedFileRecord(
 	ctx context.Context,
-	session model.UploadSession,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	session domain.UploadSession,
+	uploadType UploadType,
+	entityType EntityType,
 ) error {
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error; err != nil {
+	var file File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, session.FileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load completed file record: %w", err)
 	}
+
 	if file.FileName != storedFileBasename(session.FileName, session.FileID, file.Extension) ||
 		file.MimeType != derefString(session.DetectedMime) ||
 		file.FileSize != session.FileSize ||
@@ -544,12 +352,17 @@ func (s *FileService) validateCompletedFileRecord(
 		return fmt.Errorf("completed file is pending deletion")
 	}
 
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", session.FileID).Take(&binding).Error; err != nil {
+	var binding domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		binding, err = store.IngestBinding(ctx, session.FileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load completed file ingest binding: %w", err)
 	}
+
 	var expectedEntityType *string
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType != EntityUnspecified {
 		value := entityType.String()
 		expectedEntityType = &value
 	}
@@ -569,7 +382,7 @@ func sameOptionalString(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *FileService) verifyCompletedObjectMetadata(
+func (s *Service) verifyCompletedObjectMetadata(
 	ctx context.Context,
 	objectKey string,
 	expectedSize int64,
@@ -591,7 +404,7 @@ func (s *FileService) verifyCompletedObjectMetadata(
 	return nil
 }
 
-func (s *FileService) readStoredObjectPrefix(
+func (s *Service) readStoredObjectPrefix(
 	ctx context.Context,
 	objectKey string,
 	expectedSize int64,
@@ -654,46 +467,46 @@ var siteLogoUploadEntityIDs = map[string]string{
 
 func resolveSiteUploadEntityID(
 	legalRoutes LegalRouteIdentity,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	slotID string,
 ) (string, error) {
 	slot := strings.TrimSpace(slotID)
 
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO:
+	case UploadSiteLogo:
 		if entityID, ok := siteLogoUploadEntityIDs[slot]; ok {
 			return entityID, nil
 		}
-		return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
+		return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON:
+	case UploadSiteFavicon:
 		if slot != "" && slot != "favicon" {
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site favicon slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site favicon slot: %s", slot))
 		}
 		return siteUploadEntityIDFavicon, nil
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOADER:
+	case UploadSiteLoader:
 		if slot != "" && slot != "loader" {
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site loader slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site loader slot: %s", slot))
 		}
 		return siteUploadEntityIDLoader, nil
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND:
+	case UploadSiteOGBackground:
 		switch slot {
 		case "", "site_og_background":
 			return siteUploadEntityIDSiteOgBackground, nil
 		case "privacy_og_background":
 			if legalRoutes == nil {
-				return "", errs.DependencyUnavailable("Legal route identity")
+				return "", domainerr.DependencyUnavailable("Legal route identity")
 			}
 			return legalRoutes.RouteID("privacy"), nil
 		case "terms_og_background":
 			if legalRoutes == nil {
-				return "", errs.DependencyUnavailable("Legal route identity")
+				return "", domainerr.DependencyUnavailable("Legal route identity")
 			}
 			return legalRoutes.RouteID("terms"), nil
 		default:
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site OG background slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site OG background slot: %s", slot))
 		}
 	}
 
@@ -703,17 +516,17 @@ func resolveSiteUploadEntityID(
 // checkPartUploadPermission verifies that the user still has permission at
 // prefix verification, presign, and confirmation. A signed part URL itself is
 // intentionally independent of the application session until its short expiry.
-func (s *FileService) checkPartUploadPermission(ctx context.Context, userID string, session model.UploadSession) error {
+func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, session domain.UploadSession) error {
 	if session.ClientMediaBundleID != nil {
 		plan, err := decodeClientMediaPlan(session)
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if plan.MemberID != userID {
-			return errs.PermissionDenied("client media bundle belongs to another member")
+			return domainerr.Denied("client media bundle belongs to another member")
 		}
 	}
-	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
+	uploadType, _ := domain.ParseUploadType(session.UploadType)
 	target, entityID, err := s.resolvePartUploadPermissionTarget(ctx, uploadType, session)
 	if err != nil {
 		return err
@@ -730,10 +543,10 @@ func (s *FileService) checkPartUploadPermission(ctx context.Context, userID stri
 
 // checkEntityPermission verifies that the user has permission to upload to the specified entity.
 // This prevents unauthorized users from uploading files to entities they don't manage.
-func (s *FileService) checkEntityPermission(ctx context.Context, uploadType managev1.UploadType, entityType, entityID, userID string) error {
+func (s *Service) checkEntityPermission(ctx context.Context, uploadType UploadType, entityType, entityID, userID string) error {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 
 	entityID = strings.TrimSpace(entityID)
@@ -742,14 +555,14 @@ func (s *FileService) checkEntityPermission(ctx context.Context, uploadType mana
 		return connectUploadPermissionValidationError(err)
 	}
 	if uploadPermissionRequiresEntityID(uploadType, target) && entityID == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	entityID, err = s.resolveUploadPermissionEntityID(ctx, uploadType, entityID)
 	if err != nil {
 		return err
 	}
 	if uploadPermissionRequiresEntityID(uploadType, target) && strings.TrimSpace(entityID) == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	if target.resourceType != "post" && target.resourceType != "program_event" {
 		if err := s.ensureUploadPermissionEntityExists(ctx, target, entityID); err != nil {
@@ -757,18 +570,10 @@ func (s *FileService) checkEntityPermission(ctx context.Context, uploadType mana
 		}
 	}
 	if target.resourceType == "post" {
-		access, dependencyErr := requirePostAccess(s.postAccess)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
-		return access.RequireEdit(ctx, entityID)
+		return s.requireOwnerPreflight(ctx, "post", entityID, true)
 	}
 	if target.resourceType == "program_event" {
-		access, dependencyErr := requireProgramEventAttachment(s.programEventAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
-		return access.RequireEdit(ctx, s.spiceDB, entityID)
+		return s.requireOwnerPreflight(ctx, "program_event", entityID, true)
 	}
 	if handled, err := s.checkUploadResourceAuthority(ctx, target, entityID, user); handled {
 		return err
@@ -776,28 +581,28 @@ func (s *FileService) checkEntityPermission(ctx context.Context, uploadType mana
 	if handled, err := checkUploadPrincipalPolicy(ctx, target, entityID, userID, user, s.spiceDB); handled {
 		return err
 	}
-	return s.checkSpiceDBUploadPermission(ctx, target, entityID, userID)
+	return s.checkSpiceDBUploadPermission(ctx, target, entityID)
 }
 
-func (s *FileService) resolveUploadPermissionEntityID(
+func (s *Service) resolveUploadPermissionEntityID(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	entityID string,
 ) (string, error) {
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
+	if uploadType != UploadTrackAudio {
 		return entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
-	if err == gorm.ErrRecordNotFound {
-		return "", errs.NotFoundMsg("track not found")
+	if errors.Is(err, domain.ErrUploadTrackNotFound) {
+		return "", domainerr.New(domainerr.NotFound, "", "track not found")
 	}
 	if err != nil {
-		return "", errs.Internal(fmt.Errorf("failed to resolve track release: %w", err))
+		return "", fmt.Errorf("failed to resolve track release: %w", err)
 	}
 	return releaseID, nil
 }
 
-func (s *FileService) checkUploadResourceAuthority(
+func (s *Service) checkUploadResourceAuthority(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
@@ -815,17 +620,15 @@ func checkUploadPrincipalPolicy(
 	entityID string,
 	userID string,
 	user *auth.UserInfo,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 ) (bool, error) {
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-		return true, errs.DependencyUnavailable("SpiceDB")
+		return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-		return true, errs.DependencyUnavailable("SpiceDB")
+		return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
 		return true, nil
@@ -833,66 +636,61 @@ func checkUploadPrincipalPolicy(
 	if target.authorOnly {
 		authorCan, err := policyv1.File.List()
 		if err != nil {
-			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-			return true, errs.DependencyUnavailable("SpiceDB")
+			return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		isAuthor, err := checkSpiceDBCan(ctx, user, authorCan, spiceDB)
 		if err != nil {
-			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-			return true, errs.DependencyUnavailable("SpiceDB")
+			return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		if !isAuthor {
-			return true, errs.NoPermission("upload to", "the file manager")
+			return true, domainerr.NoPermission("upload to", "the file manager")
 		}
 	}
 	if target.userOwned {
 		if entityID != userID {
-			return true, errs.PermissionDenied("cannot upload avatar for another user")
+			return true, domainerr.Denied("cannot upload avatar for another user")
 		}
 		return true, nil
 	}
 	if target.adminOnly {
-		return true, errs.AdminRequired()
+		return true, domainerr.AdminRequired()
 	}
 	return false, nil
 }
 
-func (s *FileService) checkSpiceDBUploadPermission(
+func (s *Service) checkSpiceDBUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
-	userID string,
 ) error {
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
 	}
-	if _, err := uploadPermissionIdentityID(ctx, userID); err != nil {
+	if err := requireUploadIdentity(ctx); err != nil {
 		return err
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)
 	if err != nil {
 		if errors.Is(err, errUnsupportedUploadAuthorizationResource) {
-			return errs.InvalidArgument("entity_type", "unsupported authorization resource")
+			return domainerr.InvalidField("entity_type", "unsupported authorization resource")
 		}
-		return errs.InvalidArgument("entity_id", err.Error())
+		return domainerr.InvalidField("entity_id", err.Error())
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "checkSpiceDBUploadPermission: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "SpiceDB permission check failed", failurecause.Attr(err), "resourceType", target.resourceType, "entityID", entityID)
-		return errs.InternalMsg("permission check failed")
+		return fmt.Errorf("permission check failed: %w", failurecause.WithAttrs(err, slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID)))
 	}
 	if !hasPermission {
-		return errs.NoPermission("upload to", "this entity")
+		return domainerr.NoPermission("upload to", "this entity")
 	}
 	return nil
 }
 
-func (s *FileService) ensureUploadPermissionEntityExists(
+func (s *Service) ensureUploadPermissionEntityExists(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
@@ -901,18 +699,21 @@ func (s *FileService) ensureUploadPermissionEntityExists(
 		return nil
 	}
 
-	table, ok := uploadPermissionResourceTable(target.resourceType)
-	if !ok {
+	if _, ok := uploadPermissionResourceTable(target.resourceType); !ok {
 		return nil
 	}
+	var exists bool
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		exists, err = store.UploadOwnerExists(ctx, target.resourceType, entityID)
+		return err
+	}); err != nil {
+		return err
+	}
+	if !exists {
+		return domainerr.ResourceNotFound(target.resourceType, entityID)
+	}
 
-	var count int64
-	if err := s.db.WithContext(ctx).Table(table).Where("id = ?", entityID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if count == 0 {
-		return errs.NotFound(target.resourceType, entityID)
-	}
 	return nil
 }
 
@@ -942,69 +743,70 @@ func uploadPermissionResourceTable(resourceType string) (string, bool) {
 }
 
 // AbortMultipartUpload aborts a multipart upload
-func (s *FileService) AbortMultipartUpload(
-	ctx context.Context,
-	req *connect.Request[managev1.AbortMultipartUploadRequest],
-) (_ *connect.Response[managev1.AbortMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AbortMultipartUpload", "code", connect.CodeOf(resultErr).String())
+// AbortMultipartUploadCommand aborts the multipart upload of a File.
+type AbortMultipartUploadCommand struct {
+	FileID        string
+	UploadID      string
+	CorrelationID string
+}
+
+func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipartUploadCommand) error {
+	var row domain.UploadSession
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, command.UploadID, command.FileID, false)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
+			return domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-	}()
-	var session model.UploadSession
-	if err := s.db.WithContext(ctx).
-		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
-		First(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("upload session not found")
-		}
-		return nil, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
+		return fmt.Errorf("failed to load upload session: %w", err)
 	}
+	session := row
 
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	entityType := ""
 	if session.EntityType != nil {
 		entityType = *session.EntityType
 	}
-	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
+	uploadType, _ := domain.ParseUploadType(session.UploadType)
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
-		return nil, err
+		return err
 	}
 
 	progressEmitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
-		req.Msg.GetCorrelationId(),
+		command.CorrelationID,
 		session.FileID,
 		session.FileSize,
 	)
 	if progressEmitter != nil {
 		if err := s.bindUploadSessionIngestEmitter(progressEmitter, session); err != nil {
-			return nil, errs.Internal(err)
+			return err
 		}
 	}
 	if session.ClientMediaBundleID != nil {
 		if err := s.checkPartUploadPermission(ctx, user.MemberID.String(), session); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	fileKey, err := uploadSessionObjectKey(session)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
+		return fmt.Errorf("invalid upload session target: %w", err)
 	}
 	claimed, err := s.claimUploadSessionAbort(ctx, session.UploadID, session.FileID, time.Now())
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to claim upload session abort: %w", err))
+		return fmt.Errorf("failed to claim upload session abort: %w", err)
 	}
 	if !claimed {
-		return nil, errs.FailedPrecondition("upload session is finalizing and can no longer be aborted")
+		return domainerr.Precondition("upload session is finalizing and can no longer be aborted")
 	}
 
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
@@ -1016,7 +818,7 @@ func (s *FileService) AbortMultipartUpload(
 	})
 	if err != nil {
 		if !IsMissingMultipartUploadAbortError(err) {
-			return nil, errs.Internal(fmt.Errorf("failed to abort multipart upload: %w", err))
+			return fmt.Errorf("failed to abort multipart upload: %w", err)
 		}
 		slog.Info("Multipart upload was already absent during abort cleanup", "uploadId", session.UploadID, "fileId", session.FileID)
 	}
@@ -1026,53 +828,63 @@ func (s *FileService) AbortMultipartUpload(
 	}
 
 	if err := s.cleanupClientMediaStaging(cleanupCtx, session); err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	if err := s.deleteAbortedUploadSession(cleanupCtx, session.UploadID); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to delete upload session after abort: %w", err))
+		return fmt.Errorf("failed to delete upload session after abort: %w", err)
 	}
 
-	return connect.NewResponse(&managev1.AbortMultipartUploadResponse{
-		Success: true,
-	}), nil
+	return nil
 }
 
-// FindMultipartUploadCandidate returns the latest active resumable upload for an entity and upload type.
-func (s *FileService) FindMultipartUploadCandidate(
+// FindMultipartUploadCandidateQuery describes the upload a client may resume.
+// The optional fields narrow the match to the same local file.
+type FindMultipartUploadCandidateQuery struct {
+	UploadType            UploadType
+	EntityID              string
+	EntityType            *EntityType
+	FileID                *string
+	UploadID              *string
+	FileName              *string
+	FileSize              *int64
+	MimeType              *string
+	FileLastModified      *int64
+	SlotID                *string
+	ExpectedCurrentFileID *string
+}
+
+func (q FindMultipartUploadCandidateQuery) entityType() EntityType {
+	if q.EntityType == nil {
+		return EntityUnspecified
+	}
+	return *q.EntityType
+}
+
+// FindMultipartUploadCandidate returns the latest active resumable upload for
+// an entity and upload type, or an empty response when there is none.
+func (s *Service) FindMultipartUploadCandidate(
 	ctx context.Context,
-	req *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (_ *connect.Response[managev1.FindMultipartUploadCandidateResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FindMultipartUploadCandidate", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+	query FindMultipartUploadCandidateQuery,
+) (*MultipartCandidate, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 
-	search, err := s.prepareMultipartCandidateSearch(ctx, req.Msg, user.MemberID.String())
+	search, err := s.prepareMultipartCandidateSearch(ctx, query, user.MemberID.String())
 	if err != nil {
 		return nil, err
 	}
 	session, found, err := s.findMultipartUploadCandidate(ctx, search)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(fmt.Errorf("failed to find upload session candidate: %w", err))
+		return nil, fmt.Errorf("failed to find upload session candidate: %w", err)
 	}
 	if !found {
-		return connect.NewResponse(&managev1.FindMultipartUploadCandidateResponse{}), nil
+		return &MultipartCandidate{}, nil
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(fmt.Errorf("failed to reconcile upload session candidate: %w", err))
+		return nil, fmt.Errorf("failed to reconcile upload session candidate: %w", err)
 	}
-	return connect.NewResponse(response), nil
+	return response, nil
 }

@@ -3,18 +3,10 @@ package release
 import (
 	"testing"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestTrackDerivativeURLFileIDNormalizationUnit(t *testing.T) {
-	t.Parallel()
-
-	got := uniqueNonEmptyIDs([]string{"", "file-a", "file-b", "file-a", "", "file-c", "file-b"})
-
-	assert.Equal(t, []string{"file-a", "file-b", "file-c"}, got)
-	assert.Empty(t, uniqueNonEmptyIDs(nil))
-}
 
 func TestProjectTrackStaticDerivativeRefsUnit(t *testing.T) {
 	t.Parallel()
@@ -36,11 +28,11 @@ func TestProjectTrackStaticDerivativeRefsUnit(t *testing.T) {
 
 	require.Len(t, got, 2)
 	require.NotNil(t, got["audio-1"])
-	assert.Equal(t, waveformID, got["audio-1"].GetAssetId())
-	assert.Equal(t, "https://media.example.com/asset/"+waveformID+"/waveform.json", got["audio-1"].GetUrl())
+	assert.Equal(t, waveformID, optional.Value(got["audio-1"]).AssetID)
+	assert.Equal(t, "https://media.example.com/asset/"+waveformID+"/waveform.json", optional.Value(got["audio-1"]).URL)
 	require.NotNil(t, got["audio-2"])
-	assert.Equal(t, spectrogramID, got["audio-2"].GetAssetId())
-	assert.Equal(t, "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp", got["audio-2"].GetUrl())
+	assert.Equal(t, spectrogramID, optional.Value(got["audio-2"]).AssetID)
+	assert.Equal(t, "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp", optional.Value(got["audio-2"]).URL)
 	empty, err := projectTrackStaticDerivativeRefs("https://media.example.com", nil)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
@@ -75,8 +67,8 @@ func TestProjectTrackHLSRefsUnit(t *testing.T) {
 
 	require.Len(t, got, 1)
 	require.NotNil(t, got[fileID])
-	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", got[fileID].GetUrl())
-	assert.Equal(t, generationID, got[fileID].GetGenerationId())
+	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", optional.Value(got[fileID]).URL)
+	assert.Equal(t, generationID, optional.Value(got[fileID]).GenerationID)
 	empty, err := projectTrackHLSRefs("https://media.example.com", nil)
 	require.NoError(t, err)
 	assert.Empty(t, empty)

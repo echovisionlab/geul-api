@@ -7,25 +7,15 @@ import (
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
-
-func loadFileUsageCounts(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]int32, error) {
-	rows, err := loadFileUsages(ctx, db, fileIDs)
-	if err != nil {
-		return nil, err
-	}
-	return countFileUsageRows(rows), nil
-}
 
 func countFileUsageRows(rows []fileUsageRow) map[string]int32 {
 	result := make(map[string]int32)
@@ -37,22 +27,20 @@ func countFileUsageRows(rows []fileUsageRow) map[string]int32 {
 	return result
 }
 
-func (s *FileService) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []string) (map[string]int32, error) {
+func (s *Service) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []string) (map[string]int32, error) {
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "loadVisibleFileUsageCounts: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "loadVisibleFileUsageCounts: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
-		return loadFileUsageCounts(ctx, s.db, fileIDs)
+		return s.loadLibraryUsageCounts(ctx, fileIDs)
 	}
-	rows, err := loadFileUsages(ctx, s.db, fileIDs)
+	rows, err := s.loadLibraryFileUsages(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -63,46 +51,43 @@ func (s *FileService) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []
 	return countFileUsageRows(rows), nil
 }
 
-func (s *FileService) fileManagerFileFromCatalogRow(
+func (s *Service) fileManagerFileFromCatalogRow(
 	row fileManagerCatalogRow,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	usageCount int32,
-) (*managev1.FileManagerFile, error) {
+) (*LibraryFile, error) {
 	if row.Extension == nil || row.MimeType == nil || row.FileSize == nil {
 		return nil, fmt.Errorf("file catalog row %s is incomplete", row.ID)
 	}
-	fullName := CanonicalDownloadFilename(&row.Name, row.ID, *row.Extension)
+	fullName := mediaauth.CanonicalDownloadFilename(&row.Name, row.ID, *row.Extension)
 	deliveryResponse, err := s.fileURLsResponseFromStoredFile(row.ID, *row.Extension, *row.MimeType, *row.FileSize, &fullName)
 	if err != nil {
 		return nil, err
 	}
-	file := &managev1.FileManagerFile{
-		Id: row.ID, FileName: row.Name, Extension: *row.Extension, MimeType: *row.MimeType,
-		FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, FolderId: row.ParentID,
-		CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
+	file := &LibraryFile{
+		ID: row.ID, FileName: row.Name, Extension: *row.Extension, MimeType: *row.MimeType,
+		FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, FolderID: row.ParentID,
+		CreatedAt: &row.CreatedAt, UpdatedAt: &row.UpdatedAt,
 		Delivery: deliveryResponse.Delivery, UsageCount: usageCount,
 	}
 	if row.MemberID != nil {
-		file.UploadedByMember = members[*row.MemberID]
+		file.UploadedByMember = memberSummaryForID(members, *row.MemberID)
 	}
 	return file, nil
 }
 
-func loadFileUsages(ctx context.Context, db *gorm.DB, fileIDs []string) ([]fileUsageRow, error) {
+func loadFileUsages(ctx context.Context, store Store, fileIDs []string) ([]fileUsageRow, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
-	var rows []fileUsageRow
-	if err := db.WithContext(ctx).Raw(
-		"SELECT file_id::text AS file_id, domain, entity_id, reference_path, block_id, block_type, label FROM ("+fileUsageUnionSQL+") AS usage WHERE file_id IN ? ORDER BY file_id, domain, entity_id, reference_path, COALESCE(block_id, '')",
-		fileIDs,
-	).Scan(&rows).Error; err != nil {
+	rows, err := store.FileUsages(ctx, fileIDs)
+	if err != nil {
 		return nil, err
 	}
-	return hydrateFileUsageLinks(ctx, db, rows)
+	return hydrateFileUsageLinks(ctx, store, rows)
 }
 
-func hydrateFileUsageLinks(ctx context.Context, db *gorm.DB, rows []fileUsageRow) ([]fileUsageRow, error) {
+func hydrateFileUsageLinks(ctx context.Context, store Store, rows []fileUsageRow) ([]fileUsageRow, error) {
 	entityIDSet := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		entityIDSet[row.EntityID] = struct{}{}
@@ -113,29 +98,15 @@ func hydrateFileUsageLinks(ctx context.Context, db *gorm.DB, rows []fileUsageRow
 	}
 	sort.Strings(entityIDs)
 
-	type slugRow struct {
-		Domain   string  `gorm:"column:domain"`
-		EntityID string  `gorm:"column:entity_id"`
-		Slug     *string `gorm:"column:slug"`
-	}
-	var slugs []slugRow
+	var slugs []domain.FileUsageSlug
 	if len(entityIDs) > 0 {
-		if err := db.WithContext(ctx).Raw(`
-			SELECT 'post' AS domain, id::text AS entity_id, slug FROM post WHERE id::text IN ?
-			UNION ALL SELECT 'page', id::text, slug FROM page WHERE id::text IN ?
-			UNION ALL SELECT 'work', id::text, slug FROM work WHERE id::text IN ?
-			UNION ALL SELECT 'program_event', id::text, slug FROM program_event WHERE id::text IN ?
-			UNION ALL SELECT 'artist', id::text, slug FROM artist WHERE id::text IN ?
-			UNION ALL SELECT 'label', id::text, slug FROM label WHERE id::text IN ?
-			UNION ALL SELECT 'release', id::text, slug FROM release WHERE id::text IN ?
-			UNION ALL SELECT 'series', id::text, slug FROM series WHERE id::text IN ?
-			UNION ALL SELECT 'form', id::text, slug FROM form WHERE id::text IN ?
-			UNION ALL SELECT 'track', t.id::text, COALESCE(NULLIF(r.slug, ''), r.id::text)
-			FROM track t JOIN release r ON r.id = t.release_id WHERE t.id::text IN ?
-		`, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs).Scan(&slugs).Error; err != nil {
+		var err error
+		slugs, err = store.FileUsageSlugs(ctx, entityIDs)
+		if err != nil {
 			return nil, err
 		}
 	}
+
 	slugByResource := make(map[string]string, len(slugs))
 	for _, row := range slugs {
 		if row.Slug != nil {
@@ -205,17 +176,15 @@ func fileUsageResourceTarget(row fileUsageRow, releaseIDByTrackID map[string]str
 	}
 }
 
-func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUsageRow) ([]fileUsageRow, error) {
+func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageRow) ([]fileUsageRow, error) {
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin || len(rows) == 0 {
 		return rows, nil
@@ -223,10 +192,39 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 	if user == nil || strings.TrimSpace(user.MemberID.String()) == "" {
 		return nil, fmt.Errorf("file usage viewer is missing")
 	}
-	if s.spiceDB == nil || user.IdentityID.String() == "" {
-		return nil, errs.DependencyUnavailable("SpiceDB")
+	if user.IdentityID.String() == "" {
+		return nil, domainerr.DependencyUnavailable("SpiceDB")
 	}
 
+	releaseIDByTrackID, err := s.fileUsageTrackReleaseIDs(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	allowedTargets, err := s.editableFileUsageTargets(ctx, rows, releaseIDByTrackID)
+	if err != nil {
+		return nil, err
+	}
+
+	visible := make([]fileUsageRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Domain == "map_place" {
+			visible = append(visible, row)
+			continue
+		}
+		resourceType, resourceID, ok := fileUsageResourceTarget(row, releaseIDByTrackID)
+		if !ok {
+			continue
+		}
+		if _, allowed := allowedTargets[resourceType+"\x00"+resourceID]; allowed {
+			visible = append(visible, row)
+		}
+	}
+	return visible, nil
+}
+
+// fileUsageTrackReleaseIDs maps each Track a usage names to its Release,
+// whose authority governs the usage.
+func (s *Service) fileUsageTrackReleaseIDs(ctx context.Context, rows []fileUsageRow) (map[string]string, error) {
 	trackIDs := make([]string, 0)
 	for _, row := range rows {
 		if row.Domain == "track" {
@@ -234,19 +232,23 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 		}
 	}
 	releaseIDByTrackID := make(map[string]string, len(trackIDs))
-	if len(trackIDs) > 0 {
-		var tracks []struct {
-			ID        string `gorm:"column:id"`
-			ReleaseID string `gorm:"column:release_id"`
-		}
-		if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", normalizedSortedFileIDs(trackIDs)).Find(&tracks).Error; err != nil {
-			return nil, err
-		}
-		for _, track := range tracks {
-			releaseIDByTrackID[track.ID] = track.ReleaseID
-		}
+	if len(trackIDs) == 0 {
+		return releaseIDByTrackID, nil
 	}
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		releaseIDByTrackID, err = store.TrackReleaseIDs(ctx, sliceutil.SortedUniqueTrimmed(trackIDs))
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return releaseIDByTrackID, nil
+}
 
+// editableFileUsageTargets checks, in key order, which usage owners the
+// viewer may edit, keyed by resource type and ID.
+func (s *Service) editableFileUsageTargets(ctx context.Context, rows []fileUsageRow, releaseIDByTrackID map[string]string) (map[string]struct{}, error) {
 	type permissionTarget struct {
 		resourceType string
 		resourceID   string
@@ -273,131 +275,132 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 		}
 		decision, decisionErr := auth.AuthorizationDecision(ctx, can)
 		if decisionErr != nil {
-			slog.WarnContext(ctx, "filterVisibleFileUsages: AuthenticationRequired", failurecause.Attr(decisionErr))
-			return nil, errs.AuthenticationRequired()
+			return nil, domainerr.AuthenticationRequired().WithCause(decisionErr)
 		}
 		allowed, checkErr := s.spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(checkErr))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		if allowed {
 			allowedTargets[key] = struct{}{}
 		}
 	}
-
-	visible := make([]fileUsageRow, 0, len(rows))
-	for _, row := range rows {
-		if row.Domain == "map_place" {
-			visible = append(visible, row)
-			continue
-		}
-		resourceType, resourceID, ok := fileUsageResourceTarget(row, releaseIDByTrackID)
-		if !ok {
-			continue
-		}
-		if _, allowed := allowedTargets[resourceType+"\x00"+resourceID]; allowed {
-			visible = append(visible, row)
-		}
-	}
-	return visible, nil
+	return allowedTargets, nil
 }
 
-func fileUsageDomain(domain string) managev1.FileUsageDomain {
-	switch domain {
+func fileUsageDomain(kind string) UsageDomain {
+	switch kind {
 	case "post":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST
+		return domain.UsagePost
 	case "page":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE
+		return domain.UsagePage
 	case "work":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_WORK
+		return domain.UsageWork
 	case "site_settings":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_SITE_SETTINGS
+		return domain.UsageSiteSettings
 	case "release":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_RELEASE
+		return domain.UsageRelease
 	case "track":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_TRACK
+		return domain.UsageTrack
 	case "artist":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_ARTIST
+		return domain.UsageArtist
 	case "label":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_LABEL
+		return domain.UsageLabel
 	case "client":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_CLIENT
+		return domain.UsageClient
 	case "series":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_SERIES
+		return domain.UsageSeries
 	case "form":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_FORM
+		return domain.UsageForm
 	case "program_event":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PROGRAM_EVENT
+		return domain.UsageProgramEvent
 	case "map_place":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_MAP_PLACE
+		return domain.UsageMapPlace
 	default:
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_UNSPECIFIED
+		return domain.UsageUnspecified
 	}
 }
 
-func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
-	return &managev1.FileUsage{
-		Domain: fileUsageDomain(row.Domain), EntityId: row.EntityID, ReferencePath: row.ReferencePath,
-		BlockId: row.BlockID, Count: 1, BlockType: row.BlockType, Title: row.Title, Link: row.Link,
+func fileUsageView(row fileUsageRow) *UsageView {
+	return &UsageView{
+		Domain: fileUsageDomain(row.Domain), EntityID: row.EntityID, ReferencePath: row.ReferencePath,
+		BlockID: row.BlockID, Count: 1, BlockType: row.BlockType, Title: row.Title, Link: row.Link,
 	}
 }
 
-func (s *FileService) ListFileUsages(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFileUsagesRequest],
-) (_ *connect.Response[managev1.ListFileUsagesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileUsages", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
-		return nil, err
+// ListFileUsagesQuery pages the usages of one File the caller may see.
+type ListFileUsagesQuery struct {
+	FileID    string
+	PageToken string
+	PageSize  int32
+}
+
+// FileUsagePage is one page of a File's usages.
+type FileUsagePage struct {
+	Usages        []*UsageView
+	NextPageToken *string
+	Total         int64
+}
+
+func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (FileUsagePage, error) {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+		return FileUsagePage{}, err
 	}
-	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)
+	fileID, err := normalizeFileManagerUUID(req.FileID, "file_id", false)
 	if err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
-	offset, err := decodeFileManagerPageToken(req.Msg.PageToken)
+	offset, err := decodeFileManagerPageToken(req.PageToken)
 	if err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
 	if err := s.requireFileManagerFile(ctx, *fileID); err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
-	rows, err := loadFileUsages(ctx, s.db, []string{*fileID})
+	rows, err := s.loadLibraryFileUsages(ctx, []string{*fileID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileUsagePage{}, err
 	}
 	rows, err = s.filterVisibleFileUsages(ctx, rows)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileUsagePage{}, err
 	}
 	total := len(rows)
-	pageSize := fileManagerPageSize(req.Msg.PageSize, fileManagerMaxUsagePageSize)
+	pageSize := fileManagerPageSize(req.PageSize, fileManagerMaxUsagePageSize)
 	start := min(offset, total)
 	end := min(start+pageSize, total)
 	rows = rows[start:end]
-	usages := make([]*managev1.FileUsage, 0, len(rows))
+	usages := make([]*UsageView, 0, len(rows))
 	for _, row := range rows {
-		usages = append(usages, fileUsageProto(row))
+		usages = append(usages, fileUsageView(row))
 	}
 	var next *string
 	if offset+len(rows) < total {
 		next = encodeFileManagerPageToken(offset + len(rows))
 	}
-	return connect.NewResponse(&managev1.ListFileUsagesResponse{Usages: usages, NextPageToken: next, Total: int64(total)}), nil
+	return FileUsagePage{Usages: usages, NextPageToken: next, Total: int64(total)}, nil
 }
 
-func (s *FileService) requireFileManagerFile(ctx context.Context, fileID string) error {
+func (s *Service) requireFileManagerFile(ctx context.Context, fileID string) error {
 	var count int64
-	if err := s.db.WithContext(ctx).Table("file").Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+	if err := s.units.Read(ctx, func(store Store) error { var err error; count, err = store.ActiveFileCount(ctx, fileID); return err }); err != nil {
+		return err
 	}
 	if count == 0 {
-		return errs.NotFound("file", fileID)
+		return domainerr.ResourceNotFound("file", fileID)
 	}
 	return nil
+}
+
+func (s *Service) loadLibraryFileUsages(ctx context.Context, ids []string) ([]fileUsageRow, error) {
+	var rows []fileUsageRow
+	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = loadFileUsages(ctx, store, ids); return err })
+	return rows, err
+}
+func (s *Service) loadLibraryUsageCounts(ctx context.Context, ids []string) (map[string]int32, error) {
+	rows, err := s.loadLibraryFileUsages(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return countFileUsageRows(rows), nil
 }

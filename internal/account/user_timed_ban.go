@@ -4,83 +4,53 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 var ErrPendingAccountDeletion = errors.New("account deletion is pending")
 
-func hasPendingAccountDeletion(tx *gorm.DB, identityID string) (bool, error) {
-	var pendingDeletionCount int64
-	if err := tx.Model(&model.UserDeletionRequest{}).
-		Where("identity_id = ? AND lifecycle_state IN ?", identityID, accountLifecycleDeletionPendingStates).
-		Count(&pendingDeletionCount).Error; err != nil {
-		return false, fmt.Errorf("check pending account deletion: %w", err)
+// clearUserBan lifts the ban of identityID in the store's transaction, which
+// holds its Identity fence, and reports whether it was banned. A pending
+// deletion keeps the Identity inactive.
+func clearUserBan(ctx context.Context, store Store, identityManager userStateIdentities, identityID string) (bool, error) {
+	pendingDeletion, err := store.HasPendingDeletion(ctx, identityID)
+	if err != nil {
+		return false, err
 	}
-	return pendingDeletionCount > 0, nil
-}
-
-func clearUserBan(
-	ctx context.Context,
-	db *gorm.DB,
-	identityManager auth.IdentityManager,
-	identityID string,
-	afterClear func(context.Context, *gorm.DB) error,
-) (bool, error) {
-	cleared := false
-	err := identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
-		pendingDeletion, err := hasPendingAccountDeletion(tx, identityID)
-		if err != nil {
-			return err
-		}
-		if pendingDeletion {
-			return ErrPendingAccountDeletion
-		}
-		identity, err := identityManager.GetIdentity(mutationCtx, identityID)
-		if err != nil {
-			return err
-		}
-		if identity == nil {
-			return errors.New("unban identity was not found")
-		}
-		if !identity.IsBanned() {
-			return nil
-		}
-		if err := NewUserStateService(identityManager).ClearBan(mutationCtx, identityID); err != nil {
-			return err
-		}
-		if afterClear != nil {
-			if err := afterClear(mutationCtx, tx); err != nil {
-				return err
-			}
-		}
-		cleared = true
-		return nil
-	})
-	return cleared, err
+	if pendingDeletion {
+		return false, ErrPendingAccountDeletion
+	}
+	identity, err := identityManager.GetIdentity(ctx, identityID)
+	if err != nil {
+		return false, err
+	}
+	if identity == nil {
+		return false, errors.New("unban identity was not found")
+	}
+	if !identity.IsBanned() {
+		return false, nil
+	}
+	return true, NewUserStateService(identityManager).ClearBan(ctx, identityID)
 }
 
 // ClearExpiredTimedBan clears an expired timed ban only after re-reading both
 // authorities under the per-user identity-state fence. A pending deletion
 // lifecycle remains authoritative for inactivity and must not be undone by a
-// stale scheduler snapshot.
+// stale scheduler snapshot. The Kratos write commits before the audit step,
+// which records the cleared ban attributed to the backend.
 func ClearExpiredTimedBan(
 	ctx context.Context,
-	db *gorm.DB,
-	identityManager auth.IdentityManager,
+	units Units,
+	identityManager userStateIdentities,
 	identityID string,
 	now time.Time,
-	auditWriters ...domainaudit.Appender,
+	auditWriter domainaudit.Appender,
 ) (bool, error) {
 	if identityManager == nil {
 		return false, fmt.Errorf("expired ban reconciliation requires identity manager")
@@ -91,17 +61,14 @@ func ClearExpiredTimedBan(
 	}
 
 	cleared := false
-	var auditWriter domainaudit.Appender
-	if len(auditWriters) > 0 {
-		auditWriter = auditWriters[0]
-	}
-	err := identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
-		pendingDeletion, err := hasPendingAccountDeletion(tx, identityID)
-		if err != nil {
+	err := units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		var pendingDeletion bool
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			var err error
+			pendingDeletion, err = store.HasPendingDeletion(mutationCtx, identityID)
 			return err
-		}
-		if pendingDeletion {
-			return nil
+		}); err != nil || pendingDeletion {
+			return err
 		}
 
 		identity, err := identityManager.GetIdentity(mutationCtx, identityID)
@@ -111,32 +78,30 @@ func ClearExpiredTimedBan(
 		if identity == nil {
 			return errors.New("expired ban identity was not found")
 		}
-		if !identityHasExpiredTimedBan(identity, now) {
-			return nil
+		expired, err := identityHasExpiredTimedBan(identity, now)
+		if err != nil || !expired {
+			return err
 		}
 		if err := NewUserStateService(identityManager).ClearBan(mutationCtx, identityID); err != nil {
 			return err
 		}
-		if auditWriter != nil {
-			memberID, err := authorizationtarget.ActiveMemberIDForIdentity(mutationCtx, tx, identityID)
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+		var memberID string
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			var err error
+			memberID, err = store.ActiveMemberIDForIdentity(mutationCtx, identityID)
+			return err
+		}); err != nil {
+			if errors.Is(err, ErrMemberLinkNotFound) {
 				return errors.New("expired ban member was not found")
 			}
-			if err != nil {
-				return err
-			}
-			if err := domainaudit.AppendSystem(
-				mutationCtx,
-				tx,
-				auditWriter,
-				sharedtelemetry.ServiceBackend,
-				sharedtelemetry.AuditMemberUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewMemberUnbannedAuditRecord(metadata, memberID)
-				},
-			); err != nil {
-				return err
-			}
+			return err
+		}
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			return store.AppendSystemAudit(mutationCtx, auditWriter, sharedtelemetry.AuditMemberUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMemberUnbannedAuditRecord(metadata, memberID)
+			})
+		}); err != nil {
+			return err
 		}
 		cleared = true
 		return nil
@@ -144,21 +109,23 @@ func ClearExpiredTimedBan(
 	return cleared, err
 }
 
-func identityHasExpiredTimedBan(identity *auth.Identity, now time.Time) bool {
+// identityHasExpiredTimedBan reports an unreadable expiry as an error, so
+// the unban scheduler logs it instead of skipping the identity silently.
+func identityHasExpiredTimedBan(identity *auth.Identity, now time.Time) (bool, error) {
 	if identity == nil || identity.MetadataAdmin == nil {
-		return false
+		return false, nil
 	}
 	banned, ok := identity.MetadataAdmin["banned"].(bool)
 	if !ok || !banned {
-		return false
+		return false, nil
 	}
 	expiresRaw, ok := identity.MetadataAdmin["ban_expires"].(string)
 	if !ok || strings.TrimSpace(expiresRaw) == "" {
-		return false
+		return false, nil
 	}
 	expiresAt, err := time.Parse(time.RFC3339, expiresRaw)
 	if err != nil {
-		slog.Error("Invalid timed ban expiry", "identity_id", identity.ID, failurecause.Attr(err, expiresRaw))
+		return false, failurecause.WithPrivate(fmt.Errorf("parse timed ban expiry: %w", err), expiresRaw)
 	}
-	return err == nil && !expiresAt.After(now)
+	return !expiresAt.After(now), nil
 }

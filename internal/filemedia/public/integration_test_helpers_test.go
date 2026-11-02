@@ -1,30 +1,44 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
+	"time"
+
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	"github.com/stretchr/testify/assert"
+
+	filepublicpostgres "github.com/echovisionlab/geul-api/internal/filemedia/public/postgres"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	"github.com/echovisionlab/geul-api/internal/model"
+
+	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start public File/Media integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close public File/Media integration suite: %v\n", err)
 		code = 1
@@ -34,12 +48,60 @@ func TestMain(m *testing.M) {
 
 func newPublicIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
 	return stack.DB
 }
 
 func publicIntegrationSpiceDBClient(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
+	return orytest.SetupOryStack(t).SpiceDBClient
+}
+
+var errUnusedTestDependency = errors.New("test did not configure this public File dependency")
+
+// newTestService builds the public File use cases through NewService. A test
+// that leaves Segments unset gets a loader that fails if reached.
+func newTestService(deps testDeps) *Service {
+	if deps.Segments == nil {
+		deps.Segments = unusedSegmentConfigs{}
+	}
+	service, err := NewService(Deps{Units: filepublicpostgres.NewUnits(deps.DB, filepublicpostgres.Ports{Segments: deps.Segments}), SpiceDB: deps.SpiceDB, CDNDomain: deps.CDNDomain, MediaDomain: deps.MediaDomain, MediaSecret: deps.MediaSecret, DownloadTTL: deps.DownloadTTL})
+	if err != nil {
+		panic(err)
+	}
+	return service
+}
+
+type unusedSegmentConfigs struct{}
+
+func (unusedSegmentConfigs) LoadSegmentConfigs(context.Context, *gorm.DB, []*model.AudienceSegment) error {
+	return errUnusedTestDependency
+}
+
+type testDeps struct {
+	DB                                  *gorm.DB
+	SpiceDB                             *auth.SpiceDBClient
+	Segments                            mediaassetpostgres.SegmentConfigLoader
+	CDNDomain, MediaDomain, MediaSecret string
+	DownloadTTL                         time.Duration
+}
+
+const publicDownloadUnitSecret = "public-download-unit-secret"
+
+func assertDownloadToken(t *testing.T, signedURL string, fileID string, fileName string, expectedTTL time.Duration) {
+	t.Helper()
+	parsed, err := url.Parse(signedURL)
+	require.NoError(t, err)
+	tokenAndPath := strings.TrimPrefix(parsed.Path, "/media/")
+	token, _, found := strings.Cut(tokenAndPath, "/")
+	require.True(t, found)
+
+	claims, err := mediaauth.ValidateToken(token, publicDownloadUnitSecret)
+	require.NoError(t, err)
+	assert.Equal(t, mediaauth.PurposeDownload, claims.Purpose)
+	assert.Equal(t, mediaauth.ScopeExact, claims.ScopeType)
+	assert.Equal(t, "media/"+fileID+".wav", claims.ScopeValue)
+	assert.Equal(t, fileName, claims.Filename)
+	assert.Equal(t, int64(expectedTTL/time.Second), claims.ExpiryUnix-claims.IssuedAtUnix)
 }

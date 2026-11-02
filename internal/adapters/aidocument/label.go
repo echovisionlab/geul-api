@@ -84,74 +84,34 @@ func (p *labelPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Label")
-	domainResult, err := p.api.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state labeldomain.AIDocumentState) (labeldomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[labeldomain.AIDocumentState, labeldomain.AIDocumentMutation, labeldomain.AIDocumentMutationResult]{
+		Domain:       "Label",
+		ValidateOnly: mode == labeldomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(labeldomain.AIDocumentState) (labeldomain.AIDocumentMutation, error)) (labeldomain.AIDocumentMutationResult, error) {
+			return p.api.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state labeldomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state labeldomain.AIDocumentState, current core.Document, command core.ValidatedApply) (labeldomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := labelContributorID(state.ViewerMemberID)
 			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
+				return labeldomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compileMutation(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compileMutation(state, current, contributor, command.Operations)
 			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
+				return labeldomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == labeldomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *labeldomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == labeldomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code:                    code,
-				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   labelCoreTargetRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == labeldomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+		Result: func(domainResult labeldomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()), Changed: domainResult.Content.Changed}
+			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
-		Changed:          domainResult.Content.Changed,
-	}
-	output.TargetRevision = labelCoreTargetRevision(domainResult.TargetRevision)
-	if domainResult.Content.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: labelOperationHandles(operation, run.command.Locale),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+	})
 }
 
 func (p *labelPort) compileMutation(
@@ -163,7 +123,7 @@ func (p *labelPort) compileMutation(
 	mutation := labeldomain.AIDocumentMutation{
 		LabelID: string(loaded.Identity.Reference), Locale: string(loaded.Locale),
 		ExpectedRevision: string(loaded.DocumentRevision), ExpectedSource: string(loaded.SourceLocale),
-		ExpectedTargetRevision: labelDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ExpectedPresence:       loaded.LocaleExists, ContributorMemberID: contributor,
 	}
 	if len(operations) == 1 && operations[0].Kind == core.OperationCreateTranslation {
@@ -203,7 +163,7 @@ func (p *labelPort) document(identity core.DocumentIdentity, locale core.Locale,
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision), SourceLocale: core.Locale(state.SourceLocale),
 		Locale: locale, LocaleExists: state.LocaleExists, Catalog: p.codec.Catalog(), Nodes: nodes,
-		TargetRevision: labelCoreTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 	}, nil
 }
 
@@ -226,43 +186,6 @@ func validateLabelIdentity(identity core.DocumentIdentity) error {
 		return errors.New("label AI document reference must be a canonical UUID")
 	}
 	return nil
-}
-
-func labelCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func labelDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
-}
-
-func labelOperationHandles(operation core.Operation, locale core.Locale) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{"block:" + string(operation.SetField.Target.Block) + "/field:" + string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{"block:" + string(operation.UnsetField.Target.Block) + "/field:" + string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{"block:" + string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{"block:" + string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{"block:" + string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{"block:" + string(operation.ReplaceBlockKind.Block)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"translation:" + string(locale)}
-	default:
-		return []string{"label"}
-	}
 }
 
 func labelAPIIsNil(api labelDocumentAPI) bool {

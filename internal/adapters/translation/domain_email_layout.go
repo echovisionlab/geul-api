@@ -2,6 +2,7 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -18,8 +20,8 @@ import (
 )
 
 func emailLayoutDomainRegistration(
-	references emailauthoring.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	references emailauthoringpostgres.DeliveryReferences,
+	audit domainaudit.Appender,
 ) domainRegistration {
 	return newConfiguredDomainPort(core.KindEmailLayout, domainPortFunctions{
 		loadSourceDocument: func(
@@ -28,14 +30,14 @@ func emailLayoutDomainRegistration(
 			_ *contentblock.Store,
 			entityID string,
 		) (*core.SourceDocument, error) {
-			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, db, entityID)
+			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, emailauthoringpostgres.NewRenderingStore(db), entityID)
 			if err != nil {
 				return nil, err
 			}
 			if !found {
 				return nil, fmt.Errorf("email layout %q source locale is not initialized", entityID)
 			}
-			return email.LoadLayoutTranslationSourceDocument(ctx, db, entityID, locale)
+			return email.LoadLayoutTranslationSourceDocument(ctx, emailauthoringpostgres.NewRenderingStore(db), entityID, locale)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return email.BuildLayoutTranslationExtractionPlan(
@@ -56,13 +58,17 @@ func emailLayoutDomainRegistration(
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
+			if job == nil {
+				return errors.New("email layout provider translation dependencies are required")
+			}
 			return emailauthoring.ApplyEmailLayoutProviderTranslationCandidate(
-				ctx, tx, store, references, job, candidate, input, auditWriter,
+				ctx, emailauthoringpostgres.Bind(tx, emailAuthoringPorts(store, references), audit),
+				emailContentTranslationJob(job), candidate, input,
 			)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
-			return email.LayoutTranslationEntrySelectSQL()
+			return emailauthoringpostgres.LayoutTranslationEntrySelectSQL()
 		},
 		requireInterchangeView: genericInterchangeView(
 			core.KindEmailLayout,
@@ -84,12 +90,12 @@ func emailLayoutDomainRegistration(
 			now time.Time,
 		) error {
 			return email.PrepareLayoutSourceLocaleSwitch(
-				ctx, db, entityID, currentSourceLocale, requestedLocale, now,
+				ctx, emailauthoringpostgres.NewRenderingStore(db), entityID, currentSourceLocale, requestedLocale, now,
 			)
 		},
 		requireSourceMutable: func(ctx context.Context, db *gorm.DB, entityID string) error {
 			return emailauthoring.RequireTranslationSourceMutable(
-				ctx, db, references, string(core.KindEmailLayout), entityID,
+				ctx, emailAuthoringStore(db, nil, references), string(core.KindEmailLayout), entityID,
 			)
 		},
 	})

@@ -2,27 +2,36 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
+	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
+	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
+	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"gorm.io/gorm"
 )
 
 // Runtime adapts legal-route OG persistence to the Legal domain port.
 type Runtime struct {
 	cdnDomain string
-	planner   *og.Planner
+	planner   *ogpostgres.Planner
 }
 
 func NewRuntime() *Runtime { return &Runtime{} }
 
-func NewOGRuntime(cdnDomain string, planner *og.Planner) *Runtime {
+func NewOGRuntime(cdnDomain string, planner *ogpostgres.Planner) *Runtime {
 	return &Runtime{cdnDomain: cdnDomain, planner: planner}
 }
 
@@ -51,20 +60,15 @@ func (r *Runtime) RequestSaved(
 
 func (*Runtime) RouteID(kind string) string { return RouteID(kind) }
 
-func (r *Runtime) ReleaseAssets(ctx context.Context, db *gorm.DB, kind, documentID string) error {
-	return ReleaseAssets(ctx, db, r.cdnDomain, kind, documentID)
-}
-
 func (r *Runtime) CancelAndRelease(
 	ctx context.Context,
 	tx *gorm.DB,
 	kind, ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).
-		CancelEntityWithDB(ctx, tx, og.EntityTypeForName(kind), ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, og.EntityTypeForName(kind), ownerID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, kind, ownerID, "og")
 }
 
@@ -72,18 +76,18 @@ func (*Runtime) LocalizedOGDisposition(
 	ctx context.Context,
 	db *gorm.DB,
 	kind, routeID, locale string,
-) (legaldomain.OGDisposition, error) {
-	disposition, err := og.ResolveExactLocalizedGeneration(ctx, db, kind, routeID, locale)
+) (legalpublic.OGDisposition, error) {
+	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(ctx, db, kind, routeID, locale)
 	if err != nil {
-		return legaldomain.OGUnavailable, err
+		return legalpublic.OGUnavailable, err
 	}
 	switch disposition {
 	case og.LocalizedGenerationPending:
-		return legaldomain.OGPending, nil
+		return legalpublic.OGPending, nil
 	case og.LocalizedGenerationReady:
-		return legaldomain.OGReady, nil
+		return legalpublic.OGReady, nil
 	default:
-		return legaldomain.OGUnavailable, nil
+		return legalpublic.OGUnavailable, nil
 	}
 }
 
@@ -91,41 +95,46 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 	ctx context.Context,
 	db *gorm.DB,
 	kind, routeID, locale string,
-) (*commonv1.AssetRef, error) {
-	var binding struct {
-		AssetID string `gorm:"column:asset_id"`
-	}
-	err := db.WithContext(ctx).Table("public_asset_binding").
-		Select("asset_id").
-		Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?",
-			kind,
-			routeID,
-			"og_"+strings.TrimSpace(locale),
-		).
-		Take(&binding).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	if err != nil {
+) (*mediaasset.Reference, error) {
+	assetID, bound, err := mediaassetadapter.BoundPublicAssetID(ctx, db, kind, routeID, "og_"+strings.TrimSpace(locale))
+	if err != nil || !bound {
 		return nil, err
 	}
-	ref, err := mediaasset.NewLifecycle(db, r.cdnDomain).ReadyAssetRef(ctx, binding.AssetID)
-	if err == gorm.ErrRecordNotFound {
+	ref, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain).ReadyAssetRef(ctx, assetID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return ref, err
 }
 
+// PrepareAutomaticPreviewShareLink materializes the preview link of a
+// sealed update notice in Campaign's dispatch transaction.
 func (*Runtime) PrepareAutomaticPreviewShareLink(
 	ctx context.Context,
 	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
+	run campaign.DeliveryRun,
 	now time.Time,
 ) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, run, now)
+	links := legalpostgres.Bind(tx, legalpostgres.Ports{PreviewLinks: sharelinkadapter.LegalPreviewLinks{}}, nil)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, links.Store, legalpostgres.NoticeRun(campaignpostgres.DeliveryRunToRow(run)), now)
 }
 
-var _ legaldomain.OG = (*Runtime)(nil)
-var _ legaldomain.PublicMedia = (*Runtime)(nil)
-var _ campaign.LegalNoticeDeliveryPort = (*Runtime)(nil)
+// OGAssets releases, on db, the OG images of a deleted version.
+type OGAssets struct {
+	db        *gorm.DB
+	cdnDomain string
+}
+
+// NewOGAssets returns the OG image release of deleted versions over db.
+func NewOGAssets(db *gorm.DB, cdnDomain string) OGAssets {
+	return OGAssets{db: db, cdnDomain: cdnDomain}
+}
+
+func (a OGAssets) ReleaseOGAssets(ctx context.Context, kind legaldomain.PolicyKind, id string) error {
+	return ReleaseAssets(ctx, a.db, a.cdnDomain, string(kind), id)
+}
+
+var _ legalpostgres.Routes = (*Runtime)(nil)
+var _ legalpublicpostgres.Media = (*Runtime)(nil)
+var _ campaignpostgres.LegalNoticeDeliveryPort = (*Runtime)(nil)
+var _ legaldomain.OGAssets = OGAssets{}

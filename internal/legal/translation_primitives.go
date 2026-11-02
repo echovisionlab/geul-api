@@ -2,13 +2,11 @@ package legal
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -36,9 +34,9 @@ const (
 	legalActionManageShareLinks
 )
 
-func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, error) {
+func legalCanSetForKind(kind PolicyKind) (legalCanSet, error) {
 	switch kind {
-	case intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY:
+	case Terms:
 		return legalCanSet{
 			view:             policyv1.TermsHistory.View,
 			edit:             policyv1.TermsHistory.Edit,
@@ -49,7 +47,7 @@ func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, er
 			manage:           policyv1.TermsHistory.Manage,
 			manageShareLinks: policyv1.TermsHistory.ManageShareLinks,
 		}, nil
-	case intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY:
+	case Privacy:
 		return legalCanSet{
 			view:             policyv1.PrivacyHistory.View,
 			edit:             policyv1.PrivacyHistory.Edit,
@@ -61,12 +59,12 @@ func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, er
 			manageShareLinks: policyv1.PrivacyHistory.ManageShareLinks,
 		}, nil
 	default:
-		return legalCanSet{}, errs.InvalidArgument("resource.type", "must be legal policy history")
+		return legalCanSet{}, domainerr.InvalidField("resource.type", "must be legal policy history")
 	}
 }
 
 func legalCanForAction(
-	kind intrav1.CollaborationResourceType,
+	kind PolicyKind,
 	resourceID string,
 	action legalAction,
 ) (policyv1.Can, error) {
@@ -95,38 +93,33 @@ func legalCanForAction(
 	case legalActionManageShareLinks:
 		return set.manageShareLinks(resourceID)
 	default:
-		return policyv1.Can{}, errs.InvalidArgument("action", "is not supported for legal policy")
+		return policyv1.Can{}, domainerr.InvalidField("action", "is not supported for legal policy")
 	}
 }
 
 func requireLegalPermissionForPrincipal(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
-	kind intrav1.CollaborationResourceType,
+	checker authz.AuthorizationDecisionChecker,
+	kind PolicyKind,
 	resourceID string,
 	action legalAction,
 	principal *auth.UserInfo,
 ) error {
-	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
 	can, err := legalCanForAction(kind, resourceID, action)
 	if err != nil {
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return domainerr.InvalidField("resource.id", "must be a canonical resource UUID")
 	}
 	authorizationCtx := auth.WithUser(ctx, principal)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(authorizationCtx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "legal policy")
+		return domainerr.NoPermission(can.Action().Name(), "legal policy")
 	}
 	return nil
 }

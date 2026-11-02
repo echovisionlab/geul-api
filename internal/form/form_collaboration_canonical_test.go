@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -95,21 +94,22 @@ func TestFormEmptyTargetSchemaPreservesOrderedSharedTopology(t *testing.T) {
 func TestFormCollaborativeCanonicalNoopAndExplicitEmptyTitle(t *testing.T) {
 	schema := []byte(formCanonicalCollaborationSchema)
 	now := time.Date(2026, time.August, 25, 0, 0, 0, 0, time.UTC)
-	current := formAIDocumentLocaleRow{Schema: schema}
+	current := Locale{Schema: schema}
 	update, titleChanged := formCollaborativeLocaleUpdates(current, nil, schema, now)
-	if titleChanged || len(update.fields) != 0 {
+	if _, changed := update.change(); titleChanged || changed {
 		t.Fatalf("canonical no-op = (%+v, %v)", update, titleChanged)
 	}
 	empty := ""
 	update, titleChanged = formCollaborativeLocaleUpdates(current, &empty, schema, now)
-	if !titleChanged || len(update.fields) != 2 || update.fields["title"] == nil {
-		t.Fatalf("explicit empty title update = (%+v, %v)", update, titleChanged)
+	change, changed := update.change()
+	if !titleChanged || !changed || !change.SetTitle || change.Title == nil || change.SetSchema || !change.UpdatedAt.Equal(now) {
+		t.Fatalf("explicit empty title update = (%+v, %v)", change, titleChanged)
 	}
 }
 
 func TestFormCanonicalDocumentRejectsInvalidSchemaAtomically(t *testing.T) {
 	invalid := "{\"id\":\"schema_A\",\"steps\":\"invalid\"}"
-	if _, _, err := formCanonicalDocumentFromMeta(&intrav1.FormMeta{Schema: &invalid}); err == nil {
+	if _, _, err := formCanonicalDocumentFromMeta(&DocumentMeta{Schema: &invalid}); err == nil {
 		t.Fatal("invalid canonical Form schema was accepted")
 	}
 }

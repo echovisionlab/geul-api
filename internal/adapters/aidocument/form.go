@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formintrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -47,17 +45,11 @@ type formPort struct {
 }
 
 type formDocumentAPI interface {
-	LoadAIDocumentState(context.Context, string, string) (formdomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		formdomain.AIDocumentExecutionMode,
-		formdomain.AIDocumentMutationCompiler,
-	) (formdomain.AIDocumentMutationResult, error)
+	LoadAIDocument(context.Context, formdomain.LoadAIDocumentQuery) (formdomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, formdomain.ExecuteAIDocumentMutationCommand) (formdomain.AIDocumentMutationResult, error)
 }
 
-func NewFormRegistration(service *formdomain.InternalFormService) (DomainRegistration, error) {
+func NewFormRegistration(service *formdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("form AI document service is required")
 	}
@@ -89,7 +81,7 @@ func (p *formPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validateFormDocumentIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.service.LoadAIDocumentState(ctx, string(identity.Reference), string(locale))
+	state, err := p.service.LoadAIDocument(ctx, formdomain.LoadAIDocumentQuery{FormID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -122,65 +114,42 @@ func (p *formPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Form")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return formdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[formdomain.AIDocumentState, formdomain.AIDocumentMutation, formdomain.AIDocumentMutationResult]{
+		Domain:       "Form",
+		ValidateOnly: mode == formdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error)) (formdomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, formdomain.ExecuteAIDocumentMutationCommand{
+				FormID:  string(identity.Reference),
+				Locale:  string(request.Locale),
+				Mode:    mode,
+				Compile: compiler,
+			})
+		},
+		Project: func(state formdomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state formdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (formdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := canonicalFormContributor(state.ViewerMemberID)
 			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
+				return formdomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
+				return formdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return formdomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == formdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *formdomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			return core.ValidationResult{}, core.ApplyResult{}, formConflict(conflict, run.command.AffectedHandles)
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == formdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+		Result: func(domainResult formdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
+			}
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   formCoreRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, run.command.Locale, "form"),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+	})
 }
 
 func (p *formPort) document(identity core.DocumentIdentity, locale core.Locale, state formdomain.AIDocumentState) (core.Document, error) {
@@ -193,7 +162,7 @@ func (p *formPort) document(identity core.DocumentIdentity, locale core.Locale, 
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: formCoreRevision(state.TargetRevision), SourceLocale: core.Locale(state.SourceLocale),
+		TargetRevision: core.OptionalRevision(state.TargetRevision), SourceLocale: core.Locale(state.SourceLocale),
 		Locale: locale, LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
 }
@@ -211,7 +180,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	mutation := formdomain.AIDocumentMutation{
 		FormID: state.FormID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   formStringRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale, ExpectedPresence: state.LocaleExists,
 		ContributorMemberID: contributor,
 	}
@@ -229,7 +198,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil {
-			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
+			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "form"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
 		}
 		if formOperationMutatesRoot(operation) {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: "block:document", Message: "Form document root cannot be structurally changed"}}, nil
@@ -248,10 +217,9 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 				Shared: []core.FieldValue{{ID: formRawField, Value: operation.SetField.Value}},
 			}
 			if _, err := formObjectFromNode(node); err != nil {
-				slog.Warn("Form document source operation rejected", failurecause.Attr(err, operation.SetField.Value.Text), "operation_index", index)
-				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{
+				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{ //nolint:nilerr // invalid client source is an operation issue, not a failure
 					Operation: index, Code: core.IssueInvalidOperation,
-					Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: err.Error(),
+					Handle: compactIssueHandle(operation, document.Locale, "form"), Message: err.Error(),
 				}}, nil
 			}
 		}
@@ -314,33 +282,6 @@ func validateFormDocumentIdentity(identity core.DocumentIdentity) error {
 	}
 	return nil
 }
-func formConflict(conflict *formdomain.AIDocumentRevisionConflictError, handles []string) error {
-	code := core.ConflictDocumentRevision
-	if conflict.Kind == formdomain.AIDocumentTargetRevisionConflict {
-		code = core.ConflictTargetRevision
-	}
-	return &core.ConflictError{Conflict: core.Conflict{
-		Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-		CurrentTargetRevision: formCoreRevision(conflict.CurrentTargetRevision),
-		AffectedHandles:       append([]string(nil), handles...),
-	}}
-}
-
-func formCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func formStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
-}
 
 func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 	if !state.LocaleExists && len(state.LocaleSchema) != 0 {
@@ -373,7 +314,7 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			return nil, err
 		}
 	}
-	root := core.Node{ID: formRootID, Kind: formRootKind, Shared: []core.FieldValue{{ID: formSchemaIDField, Value: core.Text(formString(source, "id"))}}}
+	root := core.Node{ID: formRootID, Kind: formRootKind, Shared: []core.FieldValue{{ID: formSchemaIDField, Value: core.Text(formObjectID(source))}}}
 	title := state.LocaleTitle
 	if state.Locale == state.SourceLocale {
 		title = state.SourceTitle
@@ -382,9 +323,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 		root.Localized = []core.FieldValue{{ID: formRootTitleField, Value: core.Text(*title)}}
 	}
 	nodes := []core.Node{root}
-	targetSteps := indexFormObjects(formArray(localized, "steps"), "id")
+	targetSteps := indexFormObjectsByID(formArray(localized, "steps"))
 	for stepIndex, sourceStep := range formArray(source, "steps") {
-		stableID := formString(sourceStep, "id")
+		stableID := formObjectID(sourceStep)
 		handle, err := formintrav1.FormStepBlockHandle(stableID)
 		if err != nil {
 			return nil, fmt.Errorf("form step %q: %w", stableID, err)
@@ -394,9 +335,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 		step := core.Node{ID: stepID, Kind: formStepKind, Parent: formRootID, Order: stepIndex, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(formRaw(sourceStep, "fields", "title", "description"))}}}
 		step.Localized = formLocalizedFields(targetOrSource(targetStep, sourceStep, state.Locale == state.SourceLocale), map[core.FieldID]string{formStepTitleField: "title", formStepDescriptionField: "description"})
 		nodes = append(nodes, step)
-		targetFields := indexFormObjects(formArray(targetStep, "fields"), "id")
+		targetFields := indexFormObjectsByID(formArray(targetStep, "fields"))
 		for fieldIndex, sourceField := range formArray(sourceStep, "fields") {
-			stableID := formString(sourceField, "id")
+			stableID := formObjectID(sourceField)
 			handle, err := formintrav1.FormFieldBlockHandle(stableID)
 			if err != nil {
 				return nil, fmt.Errorf("form field %q: %w", stableID, err)
@@ -406,9 +347,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			field := core.Node{ID: fieldID, Kind: formFieldKind, Parent: stepID, Order: fieldIndex, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(formFieldSourceRaw(sourceField))}}}
 			field.Localized = formLocalizedFields(targetOrSource(targetField, sourceField, state.Locale == state.SourceLocale), map[core.FieldID]string{formFieldLabelField: "label", formFieldDescriptionField: "description", formFieldPlaceholderField: "placeholder", formFieldCheckboxLabelField: "checkboxLabel"})
 			nodes = append(nodes, field)
-			targetOptions := indexFormObjects(formArray(targetField, "options"), "id")
+			targetOptions := indexFormObjectsByID(formArray(targetField, "options"))
 			for optionIndex, sourceOption := range formArray(sourceField, "options") {
-				stableID := formString(sourceOption, "id")
+				stableID := formObjectID(sourceOption)
 				handle, err := formintrav1.FormOptionBlockHandle(stableID)
 				if err != nil {
 					return nil, fmt.Errorf("form option %q: %w", stableID, err)
@@ -419,9 +360,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			}
 			sourceValidation := formObject(sourceField, "validation")
 			targetValidation := formObject(targetField, "validation")
-			targetValidators := indexFormObjects(formArray(targetValidation, "validators"), "id")
+			targetValidators := indexFormObjectsByID(formArray(targetValidation, "validators"))
 			for validatorIndex, sourceValidator := range formArray(sourceValidation, "validators") {
-				stableID := formString(sourceValidator, "id")
+				stableID := formObjectID(sourceValidator)
 				handle, err := formintrav1.FormValidatorBlockHandle(stableID)
 				if err != nil {
 					return nil, fmt.Errorf("form validator %q: %w", stableID, err)
@@ -573,11 +514,11 @@ func decodeFormSchema(body []byte) (map[string]any, error) {
 	}
 	return value, nil
 }
-func formString(value map[string]any, key string) string {
+func formObjectID(value map[string]any) string {
 	if value == nil {
 		return ""
 	}
-	text, _ := value[key].(string)
+	text, _ := value["id"].(string)
 	return text
 }
 func formArray(value map[string]any, key string) []map[string]any {
@@ -665,8 +606,8 @@ func formLocalizedFields(value map[string]any, fields map[core.FieldID]string) [
 	}
 	return out
 }
-func indexFormObjects(values []map[string]any, key string) map[string]map[string]any {
-	return indexFormObjectsByIdentity(values, func(value map[string]any) string { return formString(value, key) })
+func indexFormObjectsByID(values []map[string]any) map[string]map[string]any {
+	return indexFormObjectsByIdentity(values, formObjectID)
 }
 func indexFormObjectsByIdentity(values []map[string]any, identity func(map[string]any) string) map[string]map[string]any {
 	out := make(map[string]map[string]any, len(values))
@@ -727,7 +668,7 @@ func formObjectFromNode(node core.Node) (map[string]any, error) {
 	if err := json.Unmarshal([]byte(raw.Text), &object); err != nil {
 		return nil, fmt.Errorf("form %s source payload: %w", node.ID, err)
 	}
-	stableID := formString(object, "id")
+	stableID := formObjectID(object)
 	var handle string
 	var err error
 	switch node.Kind {

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,8 @@ import (
 
 	seriespublicadapter "github.com/echovisionlab/geul-api/internal/adapters/series/public"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -40,8 +43,8 @@ func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {
-		imageFileID, _ := seedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
-		_, ogAssetID := seedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
+		imageFileID, _ := filetest.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
+		_, ogAssetID := filetest.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
 		seedLocalizedPublicSeries(
 			t, db, uuid.NewString(), fmt.Sprintf("Public Series %02d %s", index, suffix),
 			fmt.Sprintf("public-series-%02d-%s", index, suffix),
@@ -54,7 +57,7 @@ func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(countedDB, "https://cdn.example.com"))
+	service := newPublicSeriesHandler(t, seriespublicadapter.NewPublicReader(countedDB, "https://cdn.example.com"))
 	listCount := func(limit int32) int64 {
 		queryCount.Store(0)
 		response, err := service.List(context.Background(), connect.NewRequest(&openv1.ListSeriesRequest{
@@ -78,7 +81,7 @@ func TestPublicSeriesPostCountIncludesPublishedAndArchivedIntegration(t *testing
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Series count author")
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Series count author")
 	seriesID := uuid.NewString()
 	suffix := uuid.NewString()
 	seedLocalizedPublicSeries(
@@ -107,7 +110,7 @@ func TestPublicSeriesPostCountIncludesPublishedAndArchivedIntegration(t *testing
 		`, postID, memberID).Error)
 	}
 
-	response, err := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(db, "https://cdn.example.com")).List(
+	response, err := newPublicSeriesHandler(t, seriespublicadapter.NewPublicReader(db, "https://cdn.example.com")).List(
 		context.Background(), connect.NewRequest(&openv1.ListSeriesRequest{
 			Pagination: &commonv1.PaginationRequest{Limit: 20},
 		}),
@@ -143,7 +146,7 @@ func TestPublicSeriesGetUsesDeterministicIDOrSlugAndConcealsDraftIntegration(t *
 		managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(), nil, nil,
 	)
 
-	service := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(db, "https://cdn.example.com"))
+	service := newPublicSeriesHandler(t, seriespublicadapter.NewPublicReader(db, "https://cdn.example.com"))
 	byID := connect.NewRequest(&openv1.GetSeriesRequest{Slug: targetID})
 	byID.Header().Set("Accept-Language", "ko")
 	idResponse, err := service.Get(context.Background(), byID)
@@ -175,7 +178,7 @@ func TestPublicSeriesPaginationIsStableAcrossDuplicateTitlesIntegration(t *testi
 		)
 	}
 
-	service := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(db, "https://cdn.example.com"))
+	service := newPublicSeriesHandler(t, seriespublicadapter.NewPublicReader(db, "https://cdn.example.com"))
 	seen := make(map[string]struct{}, len(seeded))
 	for offset := int32(0); ; offset += 100 {
 		response, err := service.List(context.Background(), connect.NewRequest(&openv1.ListSeriesRequest{
@@ -221,4 +224,11 @@ func seedLocalizedPublicSeries(
 			entity_id, locale, title, created_at, updated_at, og_asset_id
 		) VALUES (?::uuid, 'en', ?, NOW(), NOW(), ?::uuid)
 	`, id, title, ogAssetID).Error)
+}
+
+func newPublicSeriesHandler(t *testing.T, reader seriespublic.Reader) *seriespublic.ConnectHandler {
+	t.Helper()
+	service, err := seriespublic.NewService(reader)
+	require.NoError(t, err)
+	return seriespublic.NewConnectHandler(service)
 }

@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -18,45 +19,15 @@ const (
 	ToolMemberAdminGet  = "member_admin_get"
 )
 
-var memberAdminTools = []mcpserver.Tool{
-	oauthTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false),
-	oauthTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false),
-}
+var memberAdminTools = toolRegistry[MemberAdminTools]{
+	defineTool(oauthTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false), func(tools *MemberAdminTools, ctx context.Context, name string, call toolCall[memberAdminListArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
 
-// MemberAdminReader retains the owning service's authorization and access audit.
-type MemberAdminReader interface {
-	ListMembersAdmin(context.Context, *connect.Request[managev1.ListMembersAdminRequest]) (*connect.Response[managev1.ListMembersAdminResponse], error)
-	GetMember(context.Context, *connect.Request[managev1.GetMemberRequest]) (*connect.Response[managev1.AdminMember], error)
-}
-
-type MemberAdminTools struct{ reader MemberAdminReader }
-
-func NewMemberAdminTools(reader MemberAdminReader) (*MemberAdminTools, error) {
-	if interfaceValueIsNil(reader) {
-		return nil, errors.New("MCP administrator Member reader is required")
-	}
-	return &MemberAdminTools{reader: reader}, nil
-}
-
-func (*MemberAdminTools) ToolNames() []string { return toolDefinitionNames(memberAdminTools) }
-
-func (*MemberAdminTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(memberAdminTools), nil
-}
-
-func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMemberAdminList:
 		if err := rejectNullArguments(arguments, "query", "status", "limit", "offset"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			Query  string `json:"query"`
-			Status string `json:"status"`
-			Limit  int    `json:"limit"`
-			Offset int    `json:"offset"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input memberAdminListArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if _, supplied := arguments["limit"]; !supplied {
@@ -70,22 +41,20 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 		}
 		filters := discoverySearchFilters(input.Query)
 		if _, supplied := arguments["status"]; supplied {
-			switch input.Status {
-			case "active", "banned", "pending_deletion", "deleted":
-				filters = append(filters, &commonv1.FilterSpec{Field: "status", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: input.Status})
-			default:
+			if !slices.Contains(member.AdminStatuses, member.AdminStatus(input.Status)) {
 				return executionError(errors.New("status must be active, banned, pending_deletion, or deleted"))
 			}
+			filters = append(filters, &commonv1.FilterSpec{Field: "status", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: input.Status})
 		}
-		response, err := tools.reader.ListMembersAdmin(ctx, connect.NewRequest(&managev1.ListMembersAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(input.Limit), Offset: int32(input.Offset)}, Filters: filters,
-		}))
+		page, err := tools.reader.ListAdminMembers(ctx, member.ListAdminMembersQuery{
+			Limit: int32(input.Limit), Offset: int32(input.Offset), Filters: filters,
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		members := make([]memberAdminOutput, 0, len(response.Msg.Members))
-		for _, member := range response.Msg.Members {
-			members = append(members, projectMemberAdmin(member))
+		members := make([]memberAdminOutput, 0, len(page.Members))
+		for _, adminMember := range page.Members {
+			members = append(members, projectMemberAdmin(member.AdminMemberMessage(adminMember)))
 		}
 		return memberAdminResult(struct {
 			Members []memberAdminOutput `json:"members"`
@@ -93,27 +62,49 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 			Limit   int32               `json:"limit"`
 			Offset  int32               `json:"offset"`
 			HasMore bool                `json:"has_more"`
-		}{members, response.Msg.Pagination.GetTotal(), response.Msg.Pagination.GetLimit(), response.Msg.Pagination.GetOffset(), response.Msg.Pagination.GetHasMore()})
-	case ToolMemberAdminGet:
-		var input struct {
-			MemberID string `json:"member_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		}{members, page.Pagination.Total, page.Pagination.Limit, page.Pagination.Offset, page.Pagination.HasMore})
+	}),
+	defineTool(oauthTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false), func(tools *MemberAdminTools, ctx context.Context, name string, call toolCall[memberAdminGetArguments]) (mcpserver.ToolResult, error) {
+		var input memberAdminGetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateUUID("member_id", input.MemberID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.reader.GetMember(ctx, connect.NewRequest(&managev1.GetMemberRequest{MemberId: input.MemberID}))
+		adminMember, err := tools.reader.GetAdminMember(ctx, member.GetAdminMemberQuery{MemberID: input.MemberID})
 		if err != nil {
 			return expectedToolError(err)
 		}
 		return memberAdminResult(struct {
 			Member memberAdminOutput `json:"member"`
-		}{projectMemberAdmin(response.Msg)})
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+		}{projectMemberAdmin(member.AdminMemberMessage(adminMember))})
+	}),
+}
+
+// MemberAdminReader retains the owning service's authorization and access audit.
+type MemberAdminReader interface {
+	ListAdminMembers(context.Context, member.ListAdminMembersQuery) (member.AdminMemberPage, error)
+	GetAdminMember(context.Context, member.GetAdminMemberQuery) (member.AdminMember, error)
+}
+
+type MemberAdminTools struct{ reader MemberAdminReader }
+
+func NewMemberAdminTools(reader MemberAdminReader) (*MemberAdminTools, error) {
+	if interfaceValueIsNil(reader) {
+		return nil, errors.New("MCP administrator Member reader is required")
 	}
+	return &MemberAdminTools{reader: reader}, nil
+}
+
+func (*MemberAdminTools) ToolNames() []string { return memberAdminTools.names() }
+
+func (*MemberAdminTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return memberAdminTools.list(), nil
+}
+
+func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return memberAdminTools.call(tools, ctx, name, arguments)
 }
 
 type memberAdminOutput struct {
@@ -163,18 +154,22 @@ type memberAdminSubscriptionOutput struct {
 	SubscribedAt string `json:"subscribed_at,omitempty"`
 }
 
-func projectMemberAdmin(member *managev1.AdminMember) memberAdminOutput {
-	profile, account, subscription := member.GetMember(), member.GetAccount(), member.GetNewsletterSubscription()
+func projectMemberAdmin(adminMember *managev1.AdminMember) memberAdminOutput {
+	profile, account, subscription := adminMember.GetMember(), adminMember.GetAccount(), adminMember.GetNewsletterSubscription()
 	result := memberAdminOutput{
 		Profile: memberAdminProfileOutput{ID: profile.GetSummary().GetId(), Nickname: profile.GetSummary().GetNickname(), Deleted: profile.GetSummary().GetDeleted(),
 			AvatarAssetID: profile.GetSummary().GetAvatarAsset().GetAssetId(),
 			Bio:           profile.Bio, Website: profile.Website, SocialLinks: profile.GetSocialLinks(), PreferredLocale: profile.PreferredLocale,
 			CreatedAt: timestampString(profile.GetCreatedAt()), UpdatedAt: timestampString(profile.GetUpdatedAt())},
-		TagIDs: append([]string{}, member.GetTagIds()...), Onboarded: member.GetOnboarded(),
+		TagIDs: append([]string{}, adminMember.GetTagIds()...), Onboarded: adminMember.GetOnboarded(),
 		NewsletterSubscription: memberAdminSubscriptionOutput{Subscribed: subscription.GetSubscribed(), SubscribedAt: timestampString(subscription.GetSubscribedAt())},
 	}
 	if account != nil {
-		result.Account = &memberAdminAccountOutput{Role: strings.ToLower(account.GetRole().String()), Status: strings.ToLower(strings.TrimPrefix(account.GetStatus().String(), "ACCOUNT_STATUS_")), Banned: account.GetBanned()}
+		status, known := member.AdminStatusFromProto(account.GetStatus())
+		if !known {
+			status = "unspecified"
+		}
+		result.Account = &memberAdminAccountOutput{Role: strings.ToLower(account.GetRole().String()), Status: string(status), Banned: account.GetBanned()}
 		if email := account.GetCanonicalEmail(); email != nil {
 			result.Account.CanonicalEmail = &memberAdminEmailOutput{Email: email.GetEmail(), Verified: email.GetVerified()}
 		}
@@ -191,4 +186,15 @@ func memberAdminResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP administrator Member result: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+type memberAdminListArguments = struct {
+	Query  string `json:"query"`
+	Status string `json:"status"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
+type memberAdminGetArguments = struct {
+	MemberID string `json:"member_id"`
 }

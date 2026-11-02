@@ -49,7 +49,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		c.wg.Add(1)
 		go c.worker(ctx, workerID)
 	}
-	slog.Info("Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
+	slog.InfoContext(ctx, "Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
 	return nil
 }
 
@@ -103,13 +103,13 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	}
 	jobCtx, cancel := context.WithTimeout(parent, c.config.Timeout)
 	err = c.handler(jobCtx, body)
-	// The normalizing handler reduces "error" to a type; "cause" keeps the sanitized diagnostic.
 	if err != nil {
+		// A worker shutdown is an expected outcome; a job timeout is not.
 		level := slog.LevelError
-		if jobCtx.Err() != nil {
+		if parent.Err() != nil {
 			level = slog.LevelWarn
 		}
-		slog.Log(jobCtx, level, "PGMQ handler failed", failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
+		slog.Log(jobCtx, level, "PGMQ handler failed", append(failurecause.Args(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))...)
 	}
 	cancel()
 	if isTerminalResult(err) && parent.Err() == nil {
@@ -121,7 +121,7 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 		return
 	}
 	if parent.Err() != nil {
-		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		retryCtx, retryCancel := shutdownRequeueContext(parent)
 		defer retryCancel()
 		retryErr := c.client.Retry(retryCtx, c.conn.DB(), c.config.Name, message.TransportID, 0)
 		if retryErr != nil {
@@ -191,4 +191,13 @@ func (c *Consumer) Close() error {
 	c.closeOnce.Do(func() { close(c.done) })
 	c.wg.Wait()
 	return nil
+}
+
+const shutdownRequeueTimeout = 5 * time.Second
+
+// shutdownRequeueContext requeues a delivery after the worker shutdown has
+// cancelled parent, keeping its correlation and trace for the requeue
+// telemetry.
+func shutdownRequeueContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), shutdownRequeueTimeout)
 }

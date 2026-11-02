@@ -3,66 +3,44 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
-	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	workdomain "github.com/echovisionlab/geul-api/internal/work"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 )
 
 type PostAccess struct {
-	db      *gorm.DB
 	spiceDB *auth.SpiceDBClient
 }
 
-func NewPostAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient) *PostAccess {
-	return &PostAccess{db: db, spiceDB: spiceDB}
-}
-
-func (a *PostAccess) RequireView(ctx context.Context, postID string) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Post access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedView(ctx, tx, postID)
-	})
-}
-
-func (a *PostAccess) RequireEdit(ctx context.Context, postID string) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Post access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedEdit(ctx, tx, postID)
-	})
+func NewPostAccess(spiceDB *auth.SpiceDBClient) *PostAccess {
+	return &PostAccess{spiceDB: spiceDB}
 }
 
 func (a *PostAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, postID string) error {
 	if a == nil || tx == nil || a.spiceDB == nil {
 		return errs.DependencyUnavailable("Post access")
 	}
-	return maskPrivatePostAccess(postdomain.RequireLockedView(ctx, tx, a.spiceDB, postID), postID)
+	return maskPrivatePostAccess(postpostgres.RequireLockedView(ctx, tx, a.spiceDB, postID), postID)
 }
 
 func (a *PostAccess) RequireLockedEdit(ctx context.Context, tx *gorm.DB, postID string) error {
 	if a == nil || tx == nil || a.spiceDB == nil {
 		return errs.DependencyUnavailable("Post access")
 	}
-	return maskPrivatePostAccess(postdomain.RequireLockedSourceLocaleEdit(ctx, tx, a.spiceDB, postID), postID)
+	return maskPrivatePostAccess(postpostgres.RequireLockedSourceLocaleEdit(ctx, tx, a.spiceDB, postID), postID)
 }
 
 func maskPrivatePostAccess(err error, postID string) error {
@@ -71,54 +49,15 @@ func maskPrivatePostAccess(err error, postID string) error {
 
 func maskPrivateDomainAccess(err error, domain, resourceID string) error {
 	if err != nil {
-		switch connect.CodeOf(err) {
+		switch errs.CodeOf(err) {
 		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-			slog.Warn("File attachment access rejected", failurecause.Attr(err), "entity_type", domain, "entity_id", resourceID)
-			return errs.NotFound(domain, resourceID)
+			return errs.WithCause(errs.NotFound(domain, resourceID), err)
 		}
 	}
 	return err
 }
 
-type WorkAttachment struct{ db *gorm.DB }
-
-func NewWorkAttachment(db *gorm.DB) *WorkAttachment { return &WorkAttachment{db: db} }
-
-func (a *WorkAttachment) RequireExists(ctx context.Context, workID string) error {
-	return workdomain.RequireExists(ctx, a.db, workID)
-}
-
-type ProgramEventAttachment struct{ db *gorm.DB }
-
-func NewProgramEventAttachment(db *gorm.DB) *ProgramEventAttachment {
-	return &ProgramEventAttachment{db: db}
-}
-
-func (a *ProgramEventAttachment) RequireView(
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	eventID string,
-) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Program Event access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedView(ctx, tx, spiceDB, eventID)
-	})
-}
-
-func (a *ProgramEventAttachment) RequireEdit(
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	eventID string,
-) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Program Event access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedEdit(ctx, tx, spiceDB, eventID)
-	})
-}
+type ProgramEventAttachment struct{}
 
 func (a *ProgramEventAttachment) RequireLockedView(
 	ctx context.Context,
@@ -130,7 +69,7 @@ func (a *ProgramEventAttachment) RequireLockedView(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedView(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedView(ctx, programEventStore(tx), spiceDB, programEventLockActive(ctx, tx), eventID)),
 		"program event",
 		eventID,
 	)
@@ -146,54 +85,65 @@ func (a *ProgramEventAttachment) RequireLockedEdit(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, programEventStore(tx), spiceDB, programEventLockActive(ctx, tx), eventID)),
 		"program event",
 		eventID,
 	)
 }
 
-type AudienceAccess struct{}
-
-func NewAudienceAccess() *AudienceAccess { return &AudienceAccess{} }
-
-func (*AudienceAccess) ValidateAuthenticatedSegmentIDs(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentIDs []string,
-) error {
-	return audiencedomain.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs)
+// programEventStore binds the Program Event rows to the attachment
+// transaction.
+func programEventStore(tx *gorm.DB) programevent.Store {
+	return programeventpostgres.Bind(tx, programeventpostgres.Ports{}, nil).Store
 }
 
-func (*AudienceAccess) AuthenticatedSegmentSummary(
-	segment *model.AudienceSegment,
-) (*managev1.AudienceSegmentSummary, bool) {
-	return audiencedomain.AuthenticatedAccessSegmentSummary(segment)
+// programEventLockActive is the identity fence of the attachment
+// transaction.
+func programEventLockActive(ctx context.Context, tx *gorm.DB) programevent.LockActive {
+	return func(principal *auth.UserInfo) (bool, error) {
+		return identitystate.LockActivePrincipal(ctx, tx, principal)
+	}
 }
 
-type MemberSummaries struct {
-	db        *gorm.DB
-	cdnDomain string
+// programEventAccessAnswer gives a Program Event access rejection the
+// Connect form maskPrivateDomainAccess classifies by code; other errors pass
+// unchanged.
+func programEventAccessAnswer(err error) error {
+	if _, rejected := errors.AsType[*domainerr.Error](err); rejected {
+		return errs.Wrap(err)
+	}
+	return err
 }
 
-func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
-	return &MemberSummaries{db: db, cdnDomain: cdnDomain}
-}
+// TrackAttachment runs the Release-owned Track steps of a File ingest in
+// the ingest's transaction.
+type TrackAttachment struct{ audit domainaudit.Appender }
 
-func (a *MemberSummaries) Load(
-	ctx context.Context,
-	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
-	return memberdomain.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
-}
-
-type TrackAttachment struct{ authority *releasedomain.TrackAuthority }
-
+// NewTrackAttachment returns the Track steps of File ingest; audit is
+// required.
 func NewTrackAttachment(audit domainaudit.Appender) *TrackAttachment {
-	return &TrackAttachment{authority: releasedomain.NewTrackAuthority(audit)}
+	if audit == nil {
+		panic("release track authority audit appender is required")
+	}
+	return &TrackAttachment{audit: audit}
 }
 
+// LockExistsWithDB serializes File-owned Track upload-session work with
+// Track mutation and deletion while preserving the caller's outer
+// transaction.
 func (a *TrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+	return releaseConnectError(releasedomain.LockTrackForUpload(ctx, releasepostgres.NewStore(tx, releasepostgres.Ports{}), trackID))
+}
+
+func (a *TrackAttachment) CurrentReleaseForAudio(ctx context.Context, tx *gorm.DB, track, file string) (string, error) {
+	row, err := releasepostgres.NewStore(tx, releasepostgres.Ports{}).FindTrack(ctx, track)
+	if err != nil {
+		return "", err
+	}
+	if row.AudioOriginalFileID == nil || *row.AudioOriginalFileID != file {
+		return "", gorm.ErrRecordNotFound
+	}
+	return row.ReleaseID, nil
 }
 
 func (a *TrackAttachment) AttachOriginalWithDB(
@@ -201,7 +151,7 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 	tx *gorm.DB,
 	input filemediadomain.TrackOriginalAudioInput,
 ) (filemediadomain.TrackOriginalAudioAttachment, error) {
-	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasedomain.TrackOriginalAudioInput{
+	attachment, err := releasedomain.AttachTrackOriginalAudio(ctx, releasepostgres.Bind(tx, releasepostgres.Ports{}, a.audit), releasedomain.TrackOriginalAudioInput{
 		ClientMediaReady:      input.ClientMediaReady,
 		DurationSeconds:       input.DurationSeconds,
 		TrackID:               input.TrackID,
@@ -212,14 +162,23 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 		AlreadyApplied: attachment.AlreadyApplied,
 		CurrentFileID:  attachment.CurrentFileID,
 		ReleaseID:      attachment.ReleaseID,
-	}, err
+	}, releaseConnectError(err)
+}
+
+// releaseConnectError gives a Release use-case answer the Connect form the
+// File domain branches on; an unclassified error passes through.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }
 
 // TrackFileManager adapts FileMedia's deletion fence error to the Release-owned
 // retry sentinel while delegating the File-owned session lifecycle unchanged.
-type TrackFileManager struct{ files *filemediadomain.FileService }
+type TrackFileManager struct{ files *filemediadomain.Service }
 
-func NewTrackFileManager(files *filemediadomain.FileService) *TrackFileManager {
+func NewTrackFileManager(files *filemediadomain.Service) *TrackFileManager {
 	return &TrackFileManager{files: files}
 }
 
@@ -236,11 +195,12 @@ func (m *TrackFileManager) RequireNoTrackUploadSessionsWithDB(
 	tx *gorm.DB,
 	trackID string,
 ) error {
-	err := m.files.RequireNoTrackUploadSessionsWithDB(ctx, tx, trackID)
+	err := m.files.RequireNoTrackUploadSessions(ctx, filemediapostgres.Bind(tx, filemediapostgres.Ports{}, nil), trackID)
 	if errors.Is(err, filemediadomain.ErrTrackUploadSessionsChanged) {
 		return releasedomain.ErrTrackUploadSessionsChanged
 	}
 	return err
 }
 
-var _ releasedomain.TrackFileManager = (*TrackFileManager)(nil)
+var _ releasedomain.TrackUploads = (*TrackFileManager)(nil)
+var _ releasepostgres.TrackFiles = (*TrackFileManager)(nil)

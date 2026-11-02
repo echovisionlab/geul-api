@@ -7,16 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
 	artistlabelpublictest "github.com/echovisionlab/geul-api/internal/testutil/artistlabelpublic"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -123,16 +127,19 @@ func TestArtistPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *te
 	require.Error(t, err)
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
-	adminDraftArtist, err := publicArtistSvc.Get(testutil.PostIntegrationContext(adminID), connect.NewRequest(&openv1.GetArtistRequest{Slug: draftArtist.GetSlug()}))
+	adminDraftArtist, err := publicArtistSvc.Get(orytest.PostIntegrationContext(adminID), connect.NewRequest(&openv1.GetArtistRequest{Slug: draftArtist.GetSlug()}))
 	require.NoError(t, err)
 	require.Equal(t, draftArtist.Id, adminDraftArtist.Msg.Artist.Id)
 
-	managerArtistSvc := artistpublic.NewArtistService(
-		db, fixture.SpiceDB, fixture.ArtistMedia,
-		artistpublic.WithArtistContentBlockStore(testutil.NewCreativeContentStore(t, fixture.SpiceDB)),
-	)
+	managerArtistUnits, err := artistpublicpostgres.NewUnits(db, contenttest.NewCreativeContentStore(t))
+	require.NoError(t, err)
+	managerArtistService, err := artistpublic.NewService(artistpublic.Deps{
+		Units: managerArtistUnits, SpiceDB: fixture.SpiceDB, Media: fixture.ArtistMedia,
+	})
+	require.NoError(t, err)
+	managerArtistSvc := artistpublic.NewConnectHandler(managerArtistService)
 	managerReq := connect.NewRequest(&openv1.GetArtistRequest{Slug: draftArtist.GetSlug()})
-	managerCtx := testutil.PostIntegrationContext(adminID)
+	managerCtx := orytest.PostIntegrationContext(adminID)
 	managerDraftArtist, err := managerArtistSvc.Get(managerCtx, managerReq)
 	require.NoError(t, err)
 	require.Equal(t, draftArtist.Id, managerDraftArtist.Msg.Artist.Id)

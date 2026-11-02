@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/label"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -17,23 +18,25 @@ const (
 	ToolLabelList              = "label_list"
 )
 
-var programEventReferenceTools = []mcpserver.Tool{
-	oauthTool(ToolProgramEventTypeList, "List Program Event types", "List canonical Program Event type IDs, localized names, status, and place/stream requirements before program_event_create or program_event_settings_update. Choose an active type and pass its id as type_id. Type name search is not supported; continue with next_offset to see more types. Authorization remains in the native admin list.", programEventTypeListInputJSONSchema, programEventTypeListOutputJSONSchema, true, false),
-	oauthTool(ToolProgramEventSeriesList, "List Program Event series", "List or search canonical Program Event series IDs and titles. Pass a selected id as the optional series_id in program_event_create or program_event_settings_update. Continue with next_offset and the same filters. Authorization remains in the native admin list.", programEventSeriesListInputJSONSchema, programEventSeriesListOutputJSONSchema, true, false),
-	oauthTool(ToolLabelList, "List Labels", "List or search canonical Label IDs and source names. Use returned IDs for optional Program Event label relations. Continue with next_offset and the same filters. Authorization remains in the native admin list.", labelListInputJSONSchema, labelListOutputJSONSchema, true, false),
+var programEventReferenceTools = toolRegistry[ProgramEventReferenceTools]{
+	programEventReferenceTool(oauthTool(ToolProgramEventTypeList, "List Program Event types", "List canonical Program Event type IDs, localized names, status, and place/stream requirements before program_event_create or program_event_settings_update. Choose an active type and pass its id as type_id. Type name search is not supported; continue with next_offset to see more types. Authorization remains in the native admin list.", programEventTypeListInputJSONSchema, programEventTypeListOutputJSONSchema, true, false), func(input programEventReferenceListArguments) programEventReferenceSearchArguments {
+		return programEventReferenceSearchArguments{programEventReferenceListArguments: input}
+	}),
+	programEventReferenceTool(oauthTool(ToolProgramEventSeriesList, "List Program Event series", "List or search canonical Program Event series IDs and titles. Pass a selected id as the optional series_id in program_event_create or program_event_settings_update. Continue with next_offset and the same filters. Authorization remains in the native admin list.", programEventSeriesListInputJSONSchema, programEventSeriesListOutputJSONSchema, true, false), func(input programEventReferenceSearchArguments) programEventReferenceSearchArguments { return input }),
+	programEventReferenceTool(oauthTool(ToolLabelList, "List Labels", "List or search canonical Label IDs and source names. Use returned IDs for optional Program Event label relations. Continue with next_offset and the same filters. Authorization remains in the native admin list.", labelListInputJSONSchema, labelListOutputJSONSchema, true, false), func(input programEventReferenceSearchArguments) programEventReferenceSearchArguments { return input }),
 }
 
 // These interfaces consume only the native authorized reference lists.
 type ProgramEventTypeReferenceDiscovery interface {
-	ListProgramEventTypesAdmin(context.Context, *connect.Request[managev1.ListProgramEventTypesAdminRequest]) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error)
+	ListProgramEventTypesAdmin(context.Context, programevent.ListProgramEventTypesQuery) (programevent.TypeList, error)
 }
 
 type ProgramEventSeriesReferenceDiscovery interface {
-	ListProgramEventSeriesAdmin(context.Context, *connect.Request[managev1.ListProgramEventSeriesAdminRequest]) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error)
+	ListProgramEventSeriesAdmin(context.Context, programevent.ListProgramEventSeriesQuery) (programevent.SeriesList, error)
 }
 
 type LabelReferenceDiscovery interface {
-	ListLabelsAdmin(context.Context, *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error)
+	ListLabelsAdmin(context.Context, label.ListLabelsQuery) (label.AdminLabelPage, error)
 }
 
 type ProgramEventReferenceTools struct {
@@ -49,12 +52,10 @@ func NewProgramEventReferenceTools(types ProgramEventTypeReferenceDiscovery, ser
 	return &ProgramEventReferenceTools{types: types, series: series, labels: labels}, nil
 }
 
-func (*ProgramEventReferenceTools) ToolNames() []string {
-	return toolDefinitionNames(programEventReferenceTools)
-}
+func (*ProgramEventReferenceTools) ToolNames() []string { return programEventReferenceTools.names() }
 
 func (*ProgramEventReferenceTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(programEventReferenceTools), nil
+	return programEventReferenceTools.list(), nil
 }
 
 type programEventReferenceListArguments struct {
@@ -83,23 +84,10 @@ func (input programEventReferenceListArguments) pagination() (*commonv1.Paginati
 }
 
 func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolProgramEventTypeList && name != ToolProgramEventSeriesList && name != ToolLabelList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	if err := rejectNullArguments(arguments, "query", "status", "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	var input programEventReferenceSearchArguments
-	var err error
-	if name == ToolProgramEventTypeList {
-		// Types have no native name search; do not accept an ignored query.
-		err = decodeArguments(arguments, &input.programEventReferenceListArguments)
-	} else {
-		err = decodeArguments(arguments, &input)
-	}
-	if err != nil {
-		return executionError(err)
-	}
+	return programEventReferenceTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *ProgramEventReferenceTools) listReferences(ctx context.Context, name string, arguments mcpserver.ToolArguments, input programEventReferenceSearchArguments) (mcpserver.ToolResult, error) {
 	pagination, err := input.pagination()
 	if err != nil {
 		return executionError(err)
@@ -124,53 +112,38 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolProgramEventTypeList:
-		response, err := tools.types.ListProgramEventTypesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventTypesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.types.ListProgramEventTypesAdmin(ctx, programevent.ListProgramEventTypesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Types {
-			if item == nil {
-				continue
-			}
-			locales := make([]map[string]any, 0, len(item.Locales))
-			for _, locale := range item.Locales {
-				if locale != nil {
-					localized := map[string]any{"locale": locale.Locale, "name": locale.Name}
-					if locale.Description != nil {
-						localized["description"] = *locale.Description
-					}
-					locales = append(locales, localized)
-				}
-			}
-			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales})
+		responsePagination = programevent.PaginationMessage(list.Pagination)
+		for _, view := range list.Types {
+			item := programevent.TypeMessage(view)
+			items = append(items, programEventTypeReferenceItem(item))
 		}
 	case ToolProgramEventSeriesList:
-		response, err := tools.series.ListProgramEventSeriesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventSeriesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.series.ListProgramEventSeriesAdmin(ctx, programevent.ListProgramEventSeriesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Series {
-			if item != nil {
-				items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
-			}
+		responsePagination = programevent.PaginationMessage(list.Pagination)
+		for _, series := range list.Series {
+			item := programevent.SeriesMessage(series)
+			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
 		}
 	case ToolLabelList:
-		response, err := tools.labels.ListLabelsAdmin(ctx, connect.NewRequest(&managev1.ListLabelsAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.labels.ListLabelsAdmin(ctx, label.ListLabelsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Labels {
-			if item != nil && item.Label != nil {
-				label := item.Label
-				projected := map[string]any{"id": label.Id, "name": label.Name, "status": label.Status, "source_locale": label.SourceLocale}
-				if label.Slug != nil {
-					projected["slug"] = *label.Slug
-				}
-				items = append(items, projected)
+		responsePagination = label.PaginationMessage(page.Pagination)
+		for _, item := range page.Labels {
+			listed := item.Label.Label
+			projected := map[string]any{"id": listed.ID, "name": item.Label.Name, "status": string(listed.Status), "source_locale": listed.SourceLocale}
+			if listed.Slug != nil {
+				projected["slug"] = *listed.Slug
 			}
+			items = append(items, projected)
 		}
 	}
 	output := map[string]any{"items": items, "total": responsePagination.GetTotal(), "limit": pagination.Limit, "offset": pagination.Offset, "has_more": responsePagination.GetHasMore()}
@@ -178,4 +151,31 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 		output["next_offset"] = int64(pagination.Offset) + int64(pagination.Limit)
 	}
 	return contentResult(output)
+}
+
+func programEventTypeReferenceItem(item *managev1.ProgramEventType) map[string]any {
+	locales := make([]map[string]any, 0, len(item.Locales))
+	for _, locale := range item.Locales {
+		if locale != nil {
+			localized := map[string]any{"locale": locale.Locale, "name": locale.Name}
+			if locale.Description != nil {
+				localized["description"] = *locale.Description
+			}
+			locales = append(locales, localized)
+		}
+	}
+	return map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales}
+}
+
+func programEventReferenceTool[Input any](definition mcpserver.Tool, normalize func(Input) programEventReferenceSearchArguments) registeredTool[ProgramEventReferenceTools] {
+	return defineTool(definition, func(tools *ProgramEventReferenceTools, ctx context.Context, name string, call toolCall[Input]) (mcpserver.ToolResult, error) {
+		if err := rejectNullArguments(call.Arguments, "query", "status", "limit", "offset"); err != nil {
+			return executionError(err)
+		}
+		var input Input
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.listReferences(ctx, name, call.Arguments, normalize(input))
+	})
 }

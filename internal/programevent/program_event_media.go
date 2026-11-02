@@ -2,258 +2,216 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *ProgramEventService) AddProgramEventMedia(
-	ctx context.Context,
-	req *connect.Request[managev1.AddProgramEventMediaRequest],
-) (_ *connect.Response[managev1.AddProgramEventMediaResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "AddProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var media model.ProgramEventMedia
-	var changed bool
-	var eventUpdatedAt time.Time
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockProgramEventForMutation(ctx, tx, req.Msg.EventId); err != nil {
-			return err
-		}
-		if err := requireProgramEventMutationPermissionWithDB(ctx, tx, s.spiceDB, req.Msg.EventId, policyv1.ProgramEvent.Edit); err != nil {
-			return err
-		}
-		role, err := normalizeProgramEventMediaRole(req.Msg.Role)
-		if err != nil {
-			return err
-		}
-		var before model.ProgramEventMedia
-		beforeResult := tx.Where("event_id = ? AND role = ? AND file_id = ?", req.Msg.EventId, role, req.Msg.FileId).First(&before)
-		if beforeResult.Error != nil && beforeResult.Error != gorm.ErrRecordNotFound {
-			return errs.Internal(beforeResult.Error)
-		}
-		primaryBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, req.Msg.EventId, role)
-		if err != nil {
-			return err
-		}
-		if err := addProgramEventMedia(
-			ctx,
-			tx,
-			s.runtime,
-			req.Msg.EventId,
-			req.Msg.FileId,
-			req.Msg.Role,
-			req.Msg.Alt,
-			req.Msg.Caption,
-			req.Msg.MakePrimary,
-		); err != nil {
-			return err
-		}
-		var after model.ProgramEventMedia
-		if err := tx.Where("event_id = ? AND role = ? AND file_id = ?", req.Msg.EventId, role, req.Msg.FileId).First(&after).Error; err != nil {
-			return errs.Internal(err)
-		}
-		primaryAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, req.Msg.EventId, role)
-		if err != nil {
-			return err
-		}
-		media = after
-		changed = beforeResult.Error == gorm.ErrRecordNotFound || !sameProgramEventMedia(before, after)
-		eventUpdatedAt, err = programEventRelationMutationUpdatedAt(ctx, tx, req.Msg.EventId, changed)
-		if err != nil {
-			return err
-		}
-		if role == "poster" && primaryBefore != primaryAfter {
-			if primaryAfter != "" {
-				return s.appendProgramEventPosterAudit(ctx, tx, req.Msg.EventId, primaryAfter, sharedtelemetry.AuditCollectionOperationAdded)
-			}
-			return s.appendProgramEventPosterAudit(ctx, tx, req.Msg.EventId, primaryBefore, sharedtelemetry.AuditCollectionOperationRemoved)
-		}
-		if beforeResult.Error == gorm.ErrRecordNotFound {
-			return s.appendProgramEventChildAudit(ctx, tx, req.Msg.EventId, "media", after.ID, sharedtelemetry.AuditItemOperationCreated)
-		}
-		if !sameProgramEventMedia(before, after) {
-			return s.appendProgramEventChildAudit(ctx, tx, req.Msg.EventId, "media", after.ID, sharedtelemetry.AuditItemOperationUpdated)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.AddProgramEventMediaResponse{
-		EventId:   req.Msg.EventId,
-		Changed:   changed,
-		Media:     programEventMediaProto(media),
-		UpdatedAt: timestamppb.New(eventUpdatedAt),
-	}), nil
+// AddProgramEventMediaCommand adds FileID to the event under Role, or
+// updates the alt text, caption and primary flag of the existing relation;
+// omitted alt and caption values clear them.
+type AddProgramEventMediaCommand struct {
+	EventID     string
+	FileID      string
+	Role        string
+	Alt         *string
+	Caption     *string
+	MakePrimary bool
 }
 
-func (s *ProgramEventService) DeleteProgramEventMedia(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteProgramEventMediaRequest],
-) (_ *connect.Response[managev1.DeleteProgramEventMediaResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var eventUpdatedAt time.Time
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockProgramEventForMutation(ctx, tx, req.Msg.EventId); err != nil {
-			return err
-		}
-		if err := requireProgramEventMutationPermissionWithDB(ctx, tx, s.spiceDB, req.Msg.EventId, policyv1.ProgramEvent.Edit); err != nil {
-			return err
-		}
-		var before model.ProgramEventMedia
-		if err := tx.First(&before, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.MediaId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("program event media", req.Msg.MediaId)
-			}
-			return errs.Internal(err)
-		}
-		primaryBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, req.Msg.EventId, before.Role)
-		if err != nil {
-			return err
-		}
-		eventUpdatedAt, err = programEventRelationMutationUpdatedAt(ctx, tx, req.Msg.EventId, true)
-		if err != nil {
-			return err
-		}
-		if _, err := deleteProgramEventMedia(ctx, tx, s.runtime, req.Msg.EventId, req.Msg.MediaId); err != nil {
-			return err
-		}
-		primaryAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, req.Msg.EventId, before.Role)
-		if err != nil {
-			return err
-		}
-		if before.Role == "poster" && primaryBefore != primaryAfter {
-			if primaryAfter != "" {
-				return s.appendProgramEventPosterAudit(ctx, tx, req.Msg.EventId, primaryAfter, sharedtelemetry.AuditCollectionOperationAdded)
-			}
-			return s.appendProgramEventPosterAudit(ctx, tx, req.Msg.EventId, primaryBefore, sharedtelemetry.AuditCollectionOperationRemoved)
-		}
-		return s.appendProgramEventChildAudit(ctx, tx, req.Msg.EventId, "media", before.ID, sharedtelemetry.AuditItemOperationDeleted)
-	}); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteProgramEventMediaResponse{
-		EventId:   req.Msg.EventId,
-		Changed:   true,
-		MediaId:   req.Msg.MediaId,
-		UpdatedAt: timestamppb.New(eventUpdatedAt),
-	}), nil
+// MediaChange is the outcome of a media relation edit.
+type MediaChange struct {
+	EventID string
+	Changed bool
+	// Media is the added or updated relation.
+	Media     *Media
+	UpdatedAt time.Time
 }
 
-func (s *ProgramEventService) ReorderProgramEventMedia(
-	ctx context.Context,
-	req *connect.Request[managev1.ReorderProgramEventMediaRequest],
-) (_ *connect.Response[managev1.ReorderProgramEventMediaResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ReorderProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var role string
-	var changed bool
-	var eventUpdatedAt time.Time
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockProgramEventForMutation(ctx, tx, req.Msg.EventId); err != nil {
-			return err
-		}
-		if err := requireProgramEventMutationPermissionWithDB(ctx, tx, s.spiceDB, req.Msg.EventId, policyv1.ProgramEvent.Edit); err != nil {
-			return err
-		}
-		var err error
-		role, err = normalizeProgramEventMediaRole(req.Msg.Role)
-		if err != nil {
-			return err
-		}
-		before, err := loadProgramEventMediaIDs(ctx, tx, req.Msg.EventId, role)
-		if err != nil {
-			return err
-		}
-		if err := reorderProgramEventMedia(ctx, tx, req.Msg.EventId, role, req.Msg.MediaIds); err != nil {
-			return err
-		}
-		changed = !sameStringSlice(before, req.Msg.MediaIds)
-		eventUpdatedAt, err = programEventRelationMutationUpdatedAt(ctx, tx, req.Msg.EventId, changed)
-		if err != nil {
-			return err
-		}
-		if !changed {
-			return nil
-		}
-		return s.appendProgramEventChildOrderAudit(ctx, tx, req.Msg.EventId, "media", req.Msg.MediaIds)
-	}); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ReorderProgramEventMediaResponse{
-		EventId:   req.Msg.EventId,
-		Changed:   changed,
-		Role:      role,
-		MediaIds:  req.Msg.MediaIds,
-		UpdatedAt: timestamppb.New(eventUpdatedAt),
-	}), nil
+// AddProgramEventMedia adds or updates one media relation of the event.
+func (s *Service) AddProgramEventMedia(ctx context.Context, command AddProgramEventMediaCommand) (MediaChange, error) {
+	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
+	var audit *mutation.Audit
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[MediaChange, Store]{
+		Lock:   lock,
+		Access: access,
+		Change: func(ctx context.Context, store Store) (MediaChange, error) {
+			change, record, err := addMedia(ctx, store, command)
+			audit = record
+			return change, err
+		},
+		Audit: func(MediaChange) mutation.Audit {
+			if audit == nil {
+				return mutation.Unchanged()
+			}
+			return *audit
+		},
+	})
 }
 
-func programEventRelationMutationUpdatedAt(ctx context.Context, db *gorm.DB, eventID string, changed bool) (time.Time, error) {
+func addMedia(ctx context.Context, store Store, command AddProgramEventMediaCommand) (MediaChange, *mutation.Audit, error) {
+	role, err := normalizeProgramEventMediaRole(command.Role)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	before, existed, err := store.MediaOfFile(ctx, command.EventID, role, command.FileID)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	created := !existed
+	primaryBefore, err := store.PrimaryMediaFileID(ctx, command.EventID, role)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	if err := addProgramEventMedia(
+		ctx, store, command.EventID, command.FileID, command.Role, command.Alt, command.Caption, command.MakePrimary,
+	); err != nil {
+		return MediaChange{}, nil, err
+	}
+	after, found, err := store.MediaOfFile(ctx, command.EventID, role, command.FileID)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	if !found {
+		return MediaChange{}, nil, ErrMediaNotFound
+	}
+	primaryAfter, err := store.PrimaryMediaFileID(ctx, command.EventID, role)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	changed := created || !sameProgramEventMedia(before, after)
+	updatedAt, err := programEventRelationMutationUpdatedAt(ctx, store, command.EventID, changed)
+	if err != nil {
+		return MediaChange{}, nil, err
+	}
+	change := MediaChange{EventID: command.EventID, Changed: changed, Media: &after, UpdatedAt: updatedAt}
+	switch {
+	case role == "poster" && primaryBefore != primaryAfter:
+		return change, posterAudit(command.EventID, primaryBefore, primaryAfter), nil
+	case created:
+		audit := childAudit(command.EventID, "media", after.ID, sharedtelemetry.AuditItemOperationCreated)
+		return change, &audit, nil
+	case changed:
+		audit := childAudit(command.EventID, "media", after.ID, sharedtelemetry.AuditItemOperationUpdated)
+		return change, &audit, nil
+	}
+	return change, nil, nil
+}
+
+// DeleteProgramEventMediaCommand names the media relation to delete.
+type DeleteProgramEventMediaCommand struct {
+	EventID string
+	MediaID string
+}
+
+// DeleteProgramEventMedia deletes one media relation of the event and
+// promotes the next relation of its role when it was primary.
+func (s *Service) DeleteProgramEventMedia(ctx context.Context, command DeleteProgramEventMediaCommand) (MediaChange, error) {
+	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
+	var audit mutation.Audit
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[MediaChange, Store]{
+		Lock:   lock,
+		Access: access,
+		Change: func(ctx context.Context, store Store) (MediaChange, error) {
+			before, err := store.MediaByID(ctx, command.EventID, command.MediaID)
+			if err != nil {
+				if errors.Is(err, ErrMediaNotFound) {
+					return MediaChange{}, domainerr.ResourceNotFound("program event media", command.MediaID)
+				}
+				return MediaChange{}, err
+			}
+			primaryBefore, err := store.PrimaryMediaFileID(ctx, command.EventID, before.Role)
+			if err != nil {
+				return MediaChange{}, err
+			}
+			updatedAt, err := programEventRelationMutationUpdatedAt(ctx, store, command.EventID, true)
+			if err != nil {
+				return MediaChange{}, err
+			}
+			if _, err := deleteProgramEventMedia(ctx, store, command.EventID, command.MediaID); err != nil {
+				return MediaChange{}, err
+			}
+			primaryAfter, err := store.PrimaryMediaFileID(ctx, command.EventID, before.Role)
+			if err != nil {
+				return MediaChange{}, err
+			}
+			audit = childAudit(command.EventID, "media", before.ID, sharedtelemetry.AuditItemOperationDeleted)
+			if poster := posterAudit(command.EventID, primaryBefore, primaryAfter); before.Role == "poster" && poster != nil {
+				audit = *poster
+			}
+			return MediaChange{EventID: command.EventID, Changed: true, UpdatedAt: updatedAt}, nil
+		},
+		Audit: func(MediaChange) mutation.Audit { return audit },
+	})
+}
+
+// ReorderProgramEventMediaCommand orders every media relation of Role; the
+// first becomes primary.
+type ReorderProgramEventMediaCommand struct {
+	EventID  string
+	Role     string
+	MediaIDs []string
+}
+
+// MediaOrder is the outcome of a media reorder.
+type MediaOrder struct {
+	Changed   bool
+	Role      string
+	UpdatedAt time.Time
+}
+
+// ReorderProgramEventMedia orders the media relations of one role.
+func (s *Service) ReorderProgramEventMedia(ctx context.Context, command ReorderProgramEventMediaCommand) (MediaOrder, error) {
+	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[MediaOrder, Store]{
+		Lock:   lock,
+		Access: access,
+		Change: func(ctx context.Context, store Store) (MediaOrder, error) {
+			role, err := normalizeProgramEventMediaRole(command.Role)
+			if err != nil {
+				return MediaOrder{}, err
+			}
+			current, err := store.RoleMedia(ctx, command.EventID, role)
+			if err != nil {
+				return MediaOrder{}, err
+			}
+			before := mediaIDs(current)
+			if err := reorderProgramEventMedia(ctx, store, command.EventID, role, command.MediaIDs); err != nil {
+				return MediaOrder{}, err
+			}
+			changed := !sameStringSlice(before, command.MediaIDs)
+			updatedAt, err := programEventRelationMutationUpdatedAt(ctx, store, command.EventID, changed)
+			return MediaOrder{Changed: changed, Role: role, UpdatedAt: updatedAt}, err
+		},
+		Audit: func(order MediaOrder) mutation.Audit {
+			if !order.Changed {
+				return mutation.Unchanged()
+			}
+			return childOrderAudit(command.EventID, "media", command.MediaIDs)
+		},
+	})
+}
+
+func programEventRelationMutationUpdatedAt(ctx context.Context, store Store, eventID string, changed bool) (time.Time, error) {
 	if changed {
 		now := dbtime.Now()
-		if err := db.WithContext(ctx).Model(&model.ProgramEvent{}).Where("id = ?", eventID).Update("updated_at", now).Error; err != nil {
-			return time.Time{}, errs.Internal(err)
+		if err := store.TouchEvent(ctx, eventID, now); err != nil {
+			return time.Time{}, err
 		}
 		return now, nil
 	}
-	var event struct {
-		UpdatedAt time.Time `gorm:"column:updated_at"`
-	}
-	if err := db.WithContext(ctx).Table("program_event").Select("updated_at").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		return time.Time{}, errs.Internal(err)
-	}
-	return event.UpdatedAt, nil
-}
-
-func programEventMediaProto(media model.ProgramEventMedia) *managev1.ProgramEventMedia {
-	return &managev1.ProgramEventMedia{
-		Id:        media.ID,
-		FileId:    media.FileID,
-		Role:      media.Role,
-		SortOrder: media.SortOrder,
-		IsPrimary: media.IsPrimary,
-		Alt:       media.Alt,
-		Caption:   media.Caption,
-		CreatedAt: timestamppb.New(media.CreatedAt),
-		UpdatedAt: timestamppb.New(media.UpdatedAt),
-	}
+	return store.EventUpdatedAt(ctx, eventID)
 }
 
 func addProgramEventMedia(
 	ctx context.Context,
-	db *gorm.DB,
-	mediaAssets MediaAssets,
+	store Store,
 	eventID string,
 	fileID string,
 	role string,
@@ -264,142 +222,115 @@ func addProgramEventMedia(
 	eventID = strings.TrimSpace(eventID)
 	fileID = strings.TrimSpace(fileID)
 	if eventID == "" {
-		return errs.Required("event_id")
+		return domainerr.Required("event_id")
 	}
 	if fileID == "" {
-		return errs.Required("file_id")
+		return domainerr.Required("file_id")
 	}
 	normalizedRole, err := normalizeProgramEventMediaRole(role)
 	if err != nil {
 		return err
 	}
-	if err := lockProgramEventForMutation(ctx, db, eventID); err != nil {
+	if err := lockProgramEventForMutation(ctx, store, eventID); err != nil {
 		return err
 	}
-	if err := mediaAssets.LockAttachableFilesForUpdate(ctx, db, []string{fileID}); err != nil {
+	if err := store.LockAttachableFiles(ctx, []string{fileID}); err != nil {
 		return err
 	}
 
-	var existing model.ProgramEventMedia
-	result := db.WithContext(ctx).
-		Where("event_id = ? AND role = ? AND file_id = ?", eventID, normalizedRole, fileID).
-		First(&existing)
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-		return errs.Internal(result.Error)
+	existing, exists, err := store.MediaOfFile(ctx, eventID, normalizedRole, fileID)
+	if err != nil {
+		return err
 	}
 
 	shouldBePrimary := makePrimary
 	if !shouldBePrimary {
-		hasPrimary, err := hasProgramEventMediaPrimary(ctx, db, eventID, normalizedRole)
+		hasPrimary, err := store.HasPrimaryMedia(ctx, eventID, normalizedRole)
 		if err != nil {
 			return err
 		}
 		shouldBePrimary = !hasPrimary
 	}
-	if result.Error == nil && existing.IsPrimary == shouldBePrimary && sameNullableString(existing.Alt, nullableString(alt)) && sameNullableString(existing.Caption, nullableString(caption)) {
+	if exists && existing.IsPrimary == shouldBePrimary && sameNullableString(existing.Alt, nullableString(alt)) && sameNullableString(existing.Caption, nullableString(caption)) {
 		return nil
 	}
 	if shouldBePrimary {
-		if err := clearProgramEventMediaPrimary(ctx, db, eventID, normalizedRole); err != nil {
+		if err := store.ClearPrimaryMedia(ctx, eventID, normalizedRole, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
 
 	now := time.Now().UTC()
-	if result.Error == nil {
-		updates := structured.Fields{
-			"alt":        nullableString(alt),
-			"caption":    nullableString(caption),
-			"updated_at": now,
+	if exists {
+		if err := store.UpdateMedia(ctx, existing.ID, nullableString(alt), nullableString(caption), shouldBePrimary, now); err != nil {
+			return err
 		}
-		if shouldBePrimary {
-			updates["is_primary"] = true
-		}
-		if err := db.WithContext(ctx).Model(&existing).Updates(updates).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return bindProgramEventMediaPublicAsset(ctx, db, mediaAssets, existing)
+		return bindProgramEventMediaPublicAsset(ctx, store, existing)
 	}
 
-	var next struct {
-		SortOrder int32 `gorm:"column:sort_order"`
+	next, err := store.NextMediaSortOrder(ctx, eventID, normalizedRole)
+	if err != nil {
+		return err
 	}
-	if err := db.WithContext(ctx).
-		Table("program_event_media").
-		Select("COALESCE(MAX(sort_order), -1) + 1 AS sort_order").
-		Where("event_id = ? AND role = ?", eventID, normalizedRole).
-		Scan(&next).Error; err != nil {
-		return errs.Internal(err)
-	}
-
-	row := &model.ProgramEventMedia{
+	media := &Media{
 		EventID:   eventID,
 		FileID:    fileID,
 		Role:      normalizedRole,
-		SortOrder: next.SortOrder,
+		SortOrder: next,
 		IsPrimary: shouldBePrimary,
 		Alt:       nullableString(alt),
 		Caption:   nullableString(caption),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := db.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(row).Error; err != nil {
-		return errs.Internal(err)
+	if err := store.InsertMedia(ctx, media); err != nil {
+		return err
 	}
-	return bindProgramEventMediaPublicAsset(ctx, db, mediaAssets, *row)
+	return bindProgramEventMediaPublicAsset(ctx, store, *media)
 }
 
-func bindProgramEventMediaPublicAsset(ctx context.Context, db *gorm.DB, mediaAssets MediaAssets, media model.ProgramEventMedia) error {
-	assetKind, ok := programEventMediaPublicAssetKind(media.Role)
-	if !ok {
+// bindProgramEventMediaPublicAsset binds the public asset of a poster
+// relation. Program Event's inventory grants public-asset ownership only to
+// poster media: that one asset is the shared Open Graph image. Other role
+// relations preserve their File references without guessing a derivative
+// kind.
+func bindProgramEventMediaPublicAsset(ctx context.Context, store Store, media Media) error {
+	if media.Role != "poster" {
 		return nil
 	}
-	_, err := mediaAssets.BindReadyAssetForSourceFile(
-		ctx, db, media.FileID, "program_event", media.EventID, "media_"+media.ID, assetKind,
-	)
-	return err
+	return store.BindPosterMedia(ctx, media.EventID, media.ID, media.FileID)
 }
 
-// Program Event's inventory grants public-asset ownership only to poster
-// media: that one asset is the shared Open Graph image. Other role relations
-// preserve their File references without guessing a derivative kind.
-func programEventMediaPublicAssetKind(role string) (string, bool) {
-	if role == "poster" {
-		return "poster", true
-	}
-	return "", false
-}
-
-func deleteProgramEventMedia(ctx context.Context, db *gorm.DB, mediaAssets MediaAssets, eventID string, mediaID string) (string, error) {
+func deleteProgramEventMedia(ctx context.Context, store Store, eventID string, mediaID string) (string, error) {
 	eventID = strings.TrimSpace(eventID)
 	mediaID = strings.TrimSpace(mediaID)
 	if eventID == "" {
-		return "", errs.Required("event_id")
+		return "", domainerr.Required("event_id")
 	}
 	if mediaID == "" {
-		return "", errs.Required("media_id")
+		return "", domainerr.Required("media_id")
 	}
 
-	var media model.ProgramEventMedia
-	if err := db.WithContext(ctx).First(&media, "id = ? AND event_id = ?", mediaID, eventID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return "", errs.NotFound("program event media", mediaID)
+	media, err := store.MediaByID(ctx, eventID, mediaID)
+	if err != nil {
+		if errors.Is(err, ErrMediaNotFound) {
+			return "", domainerr.ResourceNotFound("program event media", mediaID)
 		}
-		return "", errs.Internal(err)
+		return "", err
 	}
-	result := db.WithContext(ctx).Delete(&model.ProgramEventMedia{}, "id = ? AND event_id = ?", mediaID, eventID)
-	if result.Error != nil {
-		return "", errs.Internal(result.Error)
+	deleted, err := store.DeleteMedia(ctx, eventID, mediaID)
+	if err != nil {
+		return "", err
 	}
-	if result.RowsAffected == 0 {
-		return "", errs.NotFound("program event media", mediaID)
+	if !deleted {
+		return "", domainerr.ResourceNotFound("program event media", mediaID)
 	}
 	if media.IsPrimary {
-		if err := promoteProgramEventMediaPrimary(ctx, db, media.EventID, media.Role); err != nil {
+		if err := promoteProgramEventMediaPrimary(ctx, store, media.EventID, media.Role); err != nil {
 			return "", err
 		}
 	}
-	if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media_"+media.ID); err != nil {
+	if err := store.ReleaseMediaBinding(ctx, eventID, media.ID); err != nil {
 		return "", err
 	}
 	return media.FileID, nil
@@ -407,43 +338,40 @@ func deleteProgramEventMedia(ctx context.Context, db *gorm.DB, mediaAssets Media
 
 func reorderProgramEventMedia(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	eventID string,
 	role string,
-	mediaIDs []string,
+	requestedIDs []string,
 ) error {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
-		return errs.Required("event_id")
+		return domainerr.Required("event_id")
 	}
 	normalizedRole, err := normalizeProgramEventMediaRole(role)
 	if err != nil {
 		return err
 	}
 
-	orderedIDs := make([]string, 0, len(mediaIDs))
-	seen := make(map[string]struct{}, len(mediaIDs))
-	for _, mediaID := range mediaIDs {
+	orderedIDs := make([]string, 0, len(requestedIDs))
+	seen := make(map[string]struct{}, len(requestedIDs))
+	for _, mediaID := range requestedIDs {
 		mediaID = strings.TrimSpace(mediaID)
 		if mediaID == "" {
-			return errs.Required("media_id")
+			return domainerr.Required("media_id")
 		}
 		if _, ok := seen[mediaID]; ok {
-			return errs.InvalidArgument("media_ids", "duplicate program event media id")
+			return domainerr.InvalidField("media_ids", "duplicate program event media id")
 		}
 		seen[mediaID] = struct{}{}
 		orderedIDs = append(orderedIDs, mediaID)
 	}
 
-	var existing []model.ProgramEventMedia
-	if err := db.WithContext(ctx).
-		Where("event_id = ? AND role = ?", eventID, normalizedRole).
-		Order("sort_order ASC, created_at ASC").
-		Find(&existing).Error; err != nil {
-		return errs.Internal(err)
+	existing, err := store.RoleMedia(ctx, eventID, normalizedRole)
+	if err != nil {
+		return err
 	}
 	if len(existing) != len(orderedIDs) {
-		return errs.InvalidArgument("media_ids", "program event media order must include every item")
+		return domainerr.InvalidField("media_ids", "program event media order must include every item")
 	}
 	existingIDs := make(map[string]struct{}, len(existing))
 	for _, media := range existing {
@@ -451,178 +379,58 @@ func reorderProgramEventMedia(
 	}
 	for _, mediaID := range orderedIDs {
 		if _, ok := existingIDs[mediaID]; !ok {
-			return errs.InvalidArgument("media_ids", "program event media id does not belong to event")
+			return domainerr.InvalidField("media_ids", "program event media id does not belong to event")
 		}
 	}
 	if len(orderedIDs) == 0 {
 		return nil
 	}
-	currentIDs := make([]string, len(existing))
-	for index := range existing {
-		currentIDs[index] = existing[index].ID
-	}
-	if sameStringSlice(currentIDs, orderedIDs) {
+	if sameStringSlice(mediaIDs(existing), orderedIDs) {
 		return nil
 	}
 
 	now := time.Now().UTC()
-	if err := db.WithContext(ctx).Model(&model.ProgramEventMedia{}).
-		Where("event_id = ? AND role = ?", eventID, normalizedRole).
-		Updates(structured.Fields{
-			"is_primary": false,
-			"updated_at": now,
-		}).Error; err != nil {
-		return errs.Internal(err)
+	if err := store.ClearPrimaryMedia(ctx, eventID, normalizedRole, now); err != nil {
+		return err
 	}
 	for index, mediaID := range orderedIDs {
-		result := db.WithContext(ctx).Model(&model.ProgramEventMedia{}).
-			Where("id = ? AND event_id = ? AND role = ?", mediaID, eventID, normalizedRole).
-			Updates(structured.Fields{
-				"sort_order": int32(index),
-				"is_primary": index == 0,
-				"updated_at": now,
-			})
-		if result.Error != nil {
-			return errs.Internal(result.Error)
+		placed, err := store.PlaceMedia(ctx, eventID, normalizedRole, mediaID, int32(index), now)
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected == 0 {
-			return errs.InvalidArgument("media_ids", "program event media id does not belong to event")
+		if !placed {
+			return domainerr.InvalidField("media_ids", "program event media id does not belong to event")
 		}
 	}
 	return nil
 }
 
-func loadProgramEventPrimaryMediaFileID(ctx context.Context, db *gorm.DB, eventID, role string) (string, error) {
-	var row struct {
-		FileID string `gorm:"column:file_id"`
+func mediaIDs(media []Media) []string {
+	ids := make([]string, len(media))
+	for index := range media {
+		ids[index] = media[index].ID
 	}
-	if err := db.WithContext(ctx).Raw(`SELECT file_id::text FROM program_event_media WHERE event_id = ? AND role = ? ORDER BY is_primary DESC, sort_order ASC, created_at ASC LIMIT 1`, eventID, role).Scan(&row).Error; err != nil {
-		return "", errs.Internal(err)
-	}
-	return row.FileID, nil
+	return ids
 }
 
-func loadProgramEventMediaIDs(ctx context.Context, db *gorm.DB, eventID, role string) ([]string, error) {
-	var rows []model.ProgramEventMedia
-	if err := db.WithContext(ctx).Where("event_id = ? AND role = ?", eventID, role).Order("sort_order ASC, created_at ASC").Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	ids := make([]string, len(rows))
-	for index := range rows {
-		ids[index] = rows[index].ID
-	}
-	return ids, nil
-}
-
-func sameStringSlice(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func sameProgramEventMedia(left, right model.ProgramEventMedia) bool {
+func sameProgramEventMedia(left, right Media) bool {
 	return left.FileID == right.FileID && left.Role == right.Role && left.IsPrimary == right.IsPrimary && left.SortOrder == right.SortOrder && sameNullableString(left.Alt, right.Alt) && sameNullableString(left.Caption, right.Caption)
 }
 
-func deleteDefaultProgramEventPosterMedia(ctx context.Context, db *gorm.DB, mediaAssets MediaAssets, eventID string) error {
+func deleteDefaultProgramEventPosterMedia(ctx context.Context, store Store, eventID string) error {
 	if strings.TrimSpace(eventID) == "" {
-		return errs.Required("event_id")
+		return domainerr.Required("event_id")
 	}
-	var media []model.ProgramEventMedia
-	if err := db.WithContext(ctx).
-		Where("event_id = ? AND role = ?", eventID, "poster").
-		Find(&media).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if err := db.WithContext(ctx).
-		Where("event_id = ? AND role = ?", eventID, "poster").
-		Delete(&model.ProgramEventMedia{}).Error; err != nil {
-		return errs.Internal(err)
+	media, err := store.DeleteRoleMedia(ctx, eventID, "poster")
+	if err != nil {
+		return err
 	}
 	for _, row := range media {
-		if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media_"+row.ID); err != nil {
+		if err := store.ReleaseMediaBinding(ctx, eventID, row.ID); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func loadProgramEventMedia(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventMedia, error) {
-	var rows []model.ProgramEventMedia
-	if err := db.WithContext(ctx).
-		Where("event_id = ?", eventID).
-		Order("role ASC, is_primary DESC, sort_order ASC, created_at ASC").
-		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	result := make([]*managev1.ProgramEventMedia, 0, len(rows))
-	for i := range rows {
-		result = append(result, &managev1.ProgramEventMedia{
-			Id:        rows[i].ID,
-			FileId:    rows[i].FileID,
-			Role:      rows[i].Role,
-			SortOrder: rows[i].SortOrder,
-			IsPrimary: rows[i].IsPrimary,
-			Alt:       rows[i].Alt,
-			Caption:   rows[i].Caption,
-			CreatedAt: timestamppb.New(rows[i].CreatedAt),
-			UpdatedAt: timestamppb.New(rows[i].UpdatedAt),
-		})
-	}
-	return result, nil
-}
-
-func loadProgramEventPrimaryPosterFileID(ctx context.Context, db *gorm.DB, eventID string) (*string, error) {
-	var row struct {
-		FileID string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).Raw(
-		`SELECT file_id::text
-		 FROM program_event_media
-		 WHERE event_id = ? AND role = 'poster'
-		 ORDER BY is_primary DESC, sort_order ASC, created_at ASC
-		 LIMIT 1`,
-		eventID,
-	).Scan(&row).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if row.FileID == "" {
-		return nil, nil
-	}
-	return &row.FileID, nil
-}
-
-func loadProgramEventDefaultPosterFileIDs(ctx context.Context, db *gorm.DB, eventIDs []string) (map[string]*string, error) {
-	result := make(map[string]*string, len(eventIDs))
-	if len(eventIDs) == 0 {
-		return result, nil
-	}
-	var rows []struct {
-		EventID string `gorm:"column:event_id"`
-		FileID  string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).Raw(
-		`SELECT DISTINCT ON (event_id)
-		     event_id::text,
-		     file_id::text
-		 FROM program_event_media
-		 WHERE event_id::text IN ? AND role = 'poster'
-		 ORDER BY event_id, is_primary DESC, sort_order ASC, created_at ASC`,
-		eventIDs,
-	).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	for i := range rows {
-		fileID := rows[i].FileID
-		result[rows[i].EventID] = &fileID
-	}
-	return result, nil
 }
 
 func normalizeProgramEventMediaRole(role string) (string, error) {
@@ -634,46 +442,14 @@ func normalizeProgramEventMediaRole(role string) (string, error) {
 	case "poster", "gallery", "lineup", "sponsor", "social", "venue":
 		return role, nil
 	default:
-		return "", errs.InvalidArgument("role", "unsupported program event media role")
+		return "", domainerr.InvalidField("role", "unsupported program event media role")
 	}
 }
 
-func hasProgramEventMediaPrimary(ctx context.Context, db *gorm.DB, eventID string, role string) (bool, error) {
-	query := db.WithContext(ctx).Model(&model.ProgramEventMedia{}).
-		Where("event_id = ? AND role = ? AND is_primary = TRUE", eventID, role)
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+func promoteProgramEventMediaPrimary(ctx context.Context, store Store, eventID string, role string) error {
+	replacement, found, err := store.FirstMedia(ctx, eventID, role)
+	if err != nil || !found {
+		return err
 	}
-	return count > 0, nil
-}
-
-func clearProgramEventMediaPrimary(ctx context.Context, db *gorm.DB, eventID string, role string) error {
-	query := db.WithContext(ctx).Model(&model.ProgramEventMedia{}).
-		Where("event_id = ? AND role = ?", eventID, role)
-	if err := query.Updates(structured.Fields{
-		"is_primary": false,
-		"updated_at": time.Now().UTC(),
-	}).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
-}
-
-func promoteProgramEventMediaPrimary(ctx context.Context, db *gorm.DB, eventID string, role string) error {
-	query := db.WithContext(ctx).Where("event_id = ? AND role = ?", eventID, role)
-	var replacement model.ProgramEventMedia
-	if err := query.Order("sort_order ASC, created_at ASC").First(&replacement).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil
-		}
-		return errs.Internal(err)
-	}
-	if err := db.WithContext(ctx).Model(&replacement).Updates(structured.Fields{
-		"is_primary": true,
-		"updated_at": time.Now().UTC(),
-	}).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return store.MarkMediaPrimary(ctx, replacement.ID, time.Now().UTC())
 }

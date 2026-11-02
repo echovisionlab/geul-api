@@ -2,137 +2,106 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
-func escapePgroongaQuery(q string) string {
-	replacer := strings.NewReplacer(
-		`\`, `\\`,
-		`'`, `''`,
-		`*`, `\*`,
-		`+`, `\+`,
-		`(`, `\(`,
-		`)`, `\)`,
-		`[`, `\[`,
-		`]`, `\]`,
-	)
-	return replacer.Replace(q)
+// GetMapPlaceQuery names a Map Place.
+type GetMapPlaceQuery struct {
+	ID string
+}
+
+// GetMapPlacesByIDsQuery names Map Places to read in the requested order;
+// missing IDs are omitted.
+type GetMapPlacesByIDsQuery struct {
+	IDs []string
+}
+
+// SearchMapPlacesQuery finds Map Places whose name matches Query.
+type SearchMapPlacesQuery struct {
+	Query string
+	// Limit is 10 when not positive and at most 50.
+	Limit int32
+}
+
+// ListMapPlacesAdminQuery pages Map Places for administrators.
+type ListMapPlacesAdminQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 20 when not positive.
+	Limit  int32
+	Offset int32
 }
 
 // GetMapPlace retrieves a single map place by ID.
-func (s *MapPlaceService) GetMapPlace(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMapPlaceRequest],
-) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
+func (s *Service) GetMapPlace(ctx context.Context, query GetMapPlaceQuery) (_ MapPlaceView, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", query.ID))
+
+	if query.ID == "" {
+		return MapPlaceView{}, domainerr.Required("id")
+	}
+
+	var view MapPlaceView
+	err := s.units.Read(ctx, func(store Store) error {
+		place, err := store.MapPlace(ctx, query.ID)
+		if errors.Is(err, ErrMapPlaceNotFound) {
+			return domainerr.ResourceNotFound("map place", query.ID)
 		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
-
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
-	}
-
-	var place model.MapPlace
-	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&place).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("map place", req.Msg.Id)
+		if err != nil {
+			return err
 		}
-		return nil, errs.Internal(err)
+		views, err := mapPlaceViews(ctx, store, []MapPlace{place})
+		if err != nil {
+			return err
+		}
+		view = views[0]
+		return nil
+	})
+	return view, err
+}
+
+// GetMapPlacesByIDs retrieves multiple map places by IDs.
+func (s *Service) GetMapPlacesByIDs(ctx context.Context, query GetMapPlacesByIDsQuery) ([]MapPlaceView, error) {
+	if len(query.IDs) == 0 {
+		return []MapPlaceView{}, nil
 	}
 
-	users, err := s.resolveMembersForPlaces(ctx, []model.MapPlace{place})
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	proto, err := s.toProtoWithMembers(ctx, &place, users)
+	var projected []MapPlaceView
+	err := s.units.Read(ctx, func(store Store) error {
+		places, err := store.MapPlacesByID(ctx, query.IDs)
+		if err != nil {
+			return err
+		}
+		projected, err = mapPlaceViews(ctx, store, places)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(proto), nil
-}
-
-// GetMapPlacesByIds retrieves multiple map places by IDs (public)
-func (s *MapPlaceService) GetMapPlacesByIds(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMapPlacesByIdsRequest],
-) (_ *connect.Response[managev1.GetMapPlacesByIdsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlacesByIds", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
-	if len(req.Msg.Ids) == 0 {
-		return connect.NewResponse(&managev1.GetMapPlacesByIdsResponse{
-			Places: []*managev1.MapPlace{},
-		}), nil
-	}
-
-	var places []model.MapPlace
-	if err := s.db.WithContext(ctx).Where("id IN ?", req.Msg.Ids).Find(&places).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	users, err := s.resolveMembersForPlaces(ctx, places)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Create a map for ordered response
-	placeMap := make(map[string]*managev1.MapPlace)
-	for i := range places {
-		proto, err := s.toProtoWithMembers(ctx, &places[i], users)
-		if err != nil {
-			return nil, err
-		}
-		placeMap[places[i].ID] = proto
+	byID := make(map[string]MapPlaceView, len(projected))
+	for _, place := range projected {
+		byID[place.Place.ID] = place
 	}
 
 	// Return in the same order as requested
-	result := make([]*managev1.MapPlace, 0, len(req.Msg.Ids))
-	for _, id := range req.Msg.Ids {
-		if p, ok := placeMap[id]; ok {
-			result = append(result, p)
+	result := make([]MapPlaceView, 0, len(query.IDs))
+	for _, id := range query.IDs {
+		if place, ok := byID[id]; ok {
+			result = append(result, place)
 		}
 	}
-
-	return connect.NewResponse(&managev1.GetMapPlacesByIdsResponse{
-		Places: result,
-	}), nil
+	return result, nil
 }
 
-// SearchMapPlaces searches map places by name using pgroonga (public)
-func (s *MapPlaceService) SearchMapPlaces(
-	ctx context.Context,
-	req *connect.Request[managev1.SearchMapPlacesRequest],
-) (_ *connect.Response[managev1.SearchMapPlacesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SearchMapPlaces", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
-	limit := int(req.Msg.Limit)
+// SearchMapPlaces searches map places by name.
+func (s *Service) SearchMapPlaces(ctx context.Context, query SearchMapPlacesQuery) ([]MapPlace, error) {
+	limit := int(query.Limit)
 	if limit <= 0 {
 		limit = 10
 	}
@@ -140,107 +109,41 @@ func (s *MapPlaceService) SearchMapPlaces(
 		limit = 50
 	}
 
-	query := strings.TrimSpace(req.Msg.Query)
-	if query == "" {
-		return connect.NewResponse(&managev1.SearchMapPlacesResponse{
-			Places: []*managev1.MapPlaceBasic{},
-		}), nil
+	text := strings.TrimSpace(query.Query)
+	if text == "" {
+		return []MapPlace{}, nil
 	}
 
-	var places []model.MapPlace
-
-	// Use pgroonga for full-text search
-	// Escape special characters for pgroonga query
-	escapedQuery := escapePgroongaQuery(query)
-	err := s.db.WithContext(ctx).
-		Where("name &@~ ?", escapedQuery).
-		Order("name ASC").
-		Limit(limit).
-		Find(&places).Error
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	result := make([]*managev1.MapPlaceBasic, len(places))
-	for i := range places {
-		result[i] = s.toBasicProto(&places[i])
-	}
-
-	return connect.NewResponse(&managev1.SearchMapPlacesResponse{
-		Places: result,
-	}), nil
+	var places []MapPlace
+	err := s.units.Read(ctx, func(store Store) (err error) {
+		places, err = store.SearchMapPlaces(ctx, text, limit)
+		return err
+	})
+	return places, err
 }
 
 // ListMapPlacesAdmin lists all map places with pagination (admin)
-func (s *MapPlaceService) ListMapPlacesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMapPlacesAdminRequest],
-) (_ *connect.Response[managev1.ListMapPlacesAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListMapPlacesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+func (s *Service) ListMapPlacesAdmin(ctx context.Context, query ListMapPlacesAdminQuery) (Page[MapPlaceView], error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return Page[MapPlaceView]{}, err
 	}
-	limit := 20
-	offset := 0
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = int(req.Msg.Pagination.Limit)
-		}
-		offset = int(req.Msg.Pagination.Offset)
+	page := ListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: 20, Offset: query.Offset}
+	if query.Limit > 0 {
+		page.Limit = query.Limit
 	}
 
-	query := s.db.WithContext(ctx).Model(&model.MapPlace{})
-	var err error
-	query, err = mapPlaceFilterConfig.ApplyFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count total
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply sorting with whitelist validation
-	query, err = mapPlaceSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch with pagination
-	var places []model.MapPlace
-	if err := query.
-		Offset(offset).
-		Limit(limit).
-		Find(&places).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	users, err := s.resolveMembersForPlaces(ctx, places)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	result := make([]*managev1.MapPlace, len(places))
-	for i := range places {
-		result[i], err = s.toProtoWithMembers(ctx, &places[i], users)
+	var listed Page[MapPlaceView]
+	err := s.units.Read(ctx, func(store Store) error {
+		places, total, err := store.ListMapPlaces(ctx, page)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-
-	return connect.NewResponse(&managev1.ListMapPlacesAdminResponse{
-		Places:     result,
-		Pagination: (queryutil.Pagination{Limit: int32(limit), Offset: int32(offset)}).BuildResponse(total),
-	}), nil
+		items, err := mapPlaceViews(ctx, store, places)
+		if err != nil {
+			return err
+		}
+		listed = Page[MapPlaceView]{Items: items, Pagination: paginationOf(page.Limit, page.Offset, total)}
+		return nil
+	})
+	return listed, err
 }
-
-// CreateMapPlace creates a new map place (author+)

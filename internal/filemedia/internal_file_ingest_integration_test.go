@@ -13,7 +13,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -68,9 +69,9 @@ func (p *fileIngestFinalizerRecordingTranscoder) RegisterTranscodeVideo(
 
 func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Projection finalizer track")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Projection finalizer track")
 
 	oldFile := seedFileIngestFinalizerFile(t, stack, nil)
 	attemptID := uuid.NewString()
@@ -89,18 +90,16 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 
 	asyncPublisher := &hardCutAsyncPublisher{}
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		transcoder,
-		stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: transcoder})
 	request := &intrav1.AttachTrackOriginalAudioRequest{
 		TrackId:               trackID,
 		VerifiedFileId:        newFile.ID,
@@ -108,7 +107,7 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 		ExpectedCurrentFileId: &oldFile.ID,
 	}
 
-	internalService := NewInternalFileIngestService(files)
+	internalService := NewInternalConnectHandler(files)
 	succeededResponse, err := internalService.AttachTrackOriginalAudio(t.Context(), connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_APPLIED, succeededResponse.Msg.GetResult())
@@ -145,9 +144,9 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 
 func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Stale projection track")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Stale projection track")
 
 	expected := seedFileIngestFinalizerFile(t, stack, nil)
 	current := seedFileIngestFinalizerFile(t, stack, nil)
@@ -161,14 +160,18 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 		EntityType: &entityType, EntityID: trackID,
 	}).Error)
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB, runtimeS3Client(t, stack), &hardCutAsyncPublisher{},
-		stack.S3MediaBucket, stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		transcoder, stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
 
-	response, err := NewInternalFileIngestService(files).AttachTrackOriginalAudio(
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: transcoder})
+
+	response, err := NewInternalConnectHandler(files).AttachTrackOriginalAudio(
 		t.Context(),
 		connect.NewRequest(&intrav1.AttachTrackOriginalAudioRequest{
 			TrackId: trackID, VerifiedFileId: projected.ID, IngestAttemptId: attemptID,
@@ -190,7 +193,7 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 
 func seedFileIngestFinalizerFile(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	attemptID *string,
 ) model.File {
 	t.Helper()

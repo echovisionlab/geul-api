@@ -6,30 +6,28 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
-type formTranslationInterchangeDomain interface {
-	LoadTranslationInterchangeTarget(
-		context.Context, *gorm.DB, string, string, *core.ExtractionPlan,
-	) (formdomain.TranslationInterchangeTarget, error)
-	ApplyTranslationInterchange(
-		context.Context, *gorm.DB, formdomain.TranslationInterchangeMutation,
-	) (formdomain.TranslationInterchangeResult, error)
-}
-
+// FormInterchange maps Translation application's generic XLIFF command to
+// the Form-owned lock, CAS, exact locale write and Audit.
 type FormInterchange struct {
-	domain formTranslationInterchangeDomain
+	audit domainaudit.Appender
 }
 
-func NewFormInterchange(domain formTranslationInterchangeDomain) *FormInterchange {
-	if domain == nil {
-		panic("Form translation interchange domain is required")
+// NewFormInterchange returns the Form interchange port; it appends
+// locale-content records through audit.
+func NewFormInterchange(audit domainaudit.Appender) *FormInterchange {
+	if audit == nil {
+		panic("Form translation interchange audit is required")
 	}
-	return &FormInterchange{domain: domain}
+	return &FormInterchange{audit: audit}
 }
 
 func (a *FormInterchange) LoadTranslationInterchangeTarget(
@@ -47,7 +45,7 @@ func (a *FormInterchange) LoadTranslationInterchangeTarget(
 			"target", "Form translation interchange identity does not match the route",
 		)
 	}
-	state, err := a.domain.LoadTranslationInterchangeTarget(ctx, db, entityID, locale, plan)
+	state, err := formdomain.LoadTranslationInterchangeTarget(ctx, formStore(db, nil), entityID, locale, plan)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
@@ -65,9 +63,9 @@ func (a *FormInterchange) ApplyTranslationInterchange(
 	if err := validateScalarInterchangeApply(command, string(core.KindForm)); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := a.domain.ApplyTranslationInterchange(ctx, db, formdomain.TranslationInterchangeMutation{
+	result, err := formdomain.ApplyTranslationInterchange(ctx, formpostgres.Bind(db, formpostgres.Ports{}, a.audit), formdomain.TranslationInterchangeMutation{
 		FormID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: formInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 	})
@@ -80,4 +78,17 @@ func (a *FormInterchange) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*FormInterchange)(nil)
+// formInterchangeMode names the Form import mode of mode; an unknown mode
+// stays unknown for the Form to reject.
+func formInterchangeMode(mode application.InterchangeMode) formdomain.InterchangeMode {
+	switch mode {
+	case application.InterchangeModePatch:
+		return formdomain.InterchangePatch
+	case application.InterchangeModeReplace:
+		return formdomain.InterchangeReplace
+	default:
+		return 0
+	}
+}
+
+var _ translationpostgres.InterchangeRegistry = (*FormInterchange)(nil)

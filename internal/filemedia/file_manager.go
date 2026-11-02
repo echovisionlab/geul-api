@@ -4,24 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -37,19 +31,19 @@ const (
 func fileManagerAuthority(ctx context.Context) (*auth.UserInfo, policyv1.Can, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.IdentityID == "" {
-		return nil, policyv1.Can{}, errs.AuthenticationRequired()
+		return nil, policyv1.Can{}, domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, policyv1.Can{}, errs.AccountBanned()
+		return nil, policyv1.Can{}, domainerr.AccountBanned()
 	}
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return nil, policyv1.Can{}, errs.Internal(err)
+		return nil, policyv1.Can{}, err
 	}
 	return user, can, nil
 }
 
-func requireFileManagerAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func requireFileManagerAdmin(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) (*auth.UserInfo, error) {
 	user, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -60,81 +54,14 @@ func requireFileManagerAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) (
 	return user, nil
 }
 
-type fileManagerCatalogRow struct {
-	ItemType        string    `gorm:"column:item_type"`
-	ID              string    `gorm:"column:id"`
-	ParentID        *string   `gorm:"column:parent_id"`
-	Name            string    `gorm:"column:name"`
-	Extension       *string   `gorm:"column:extension"`
-	MimeType        *string   `gorm:"column:mime_type"`
-	FileSize        *int64    `gorm:"column:file_size"`
-	DurationSeconds *int32    `gorm:"column:duration_seconds"`
-	MemberID        *string   `gorm:"column:member_id"`
-	CreatedAt       time.Time `gorm:"column:created_at"`
-	UpdatedAt       time.Time `gorm:"column:updated_at"`
-	Total           int64     `gorm:"column:total"`
-	FolderPath      []byte    `gorm:"column:folder_path"`
-}
+type fileManagerCatalogRow = domain.CatalogRow
 
 type fileManagerPathSegmentJSON struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-type fileUsageRow struct {
-	FileID        string  `gorm:"column:file_id"`
-	Domain        string  `gorm:"column:domain"`
-	EntityID      string  `gorm:"column:entity_id"`
-	ReferencePath string  `gorm:"column:reference_path"`
-	BlockID       *string `gorm:"column:block_id"`
-	BlockType     *string `gorm:"column:block_type"`
-	Title         *string `gorm:"column:label"`
-	Link          *string `gorm:"-"`
-}
-
-// fileUsageUnionSQL is the read projection for product references. Deletion
-// authority remains fileAttachmentReferenceRegistry; this projection only
-// supplies File Manager usage details and preflight summaries.
-const fileUsageUnionSQL = `
-SELECT file_id, 'artist' AS domain, artist_id::text AS entity_id, 'editor' AS reference_path, NULL::text AS block_id, NULL::text AS block_type, NULL::text AS label FROM artist_file
-UNION ALL SELECT file_id, 'release', release_id::text, 'files', NULL::text, NULL::text, NULL::text FROM release_file
-UNION ALL SELECT cba.file_id, 'post', p.id::text, cba.reference_path, cb.id::text, cb.kind::text, COALESCE(NULLIF(pt.title, ''), NULLIF(p.slug, ''), p.id::text) FROM content_block_attachment cba JOIN content_block cb ON cb.id = cba.block_id JOIN post p ON p.content_document_id = cb.document_id LEFT JOIN post_translation pt ON pt.entity_id = p.id AND pt.locale = p.source_locale WHERE cba.selector_kind = 'active'
-UNION ALL SELECT cba.file_id, 'page', p.id::text, cba.reference_path, cb.id::text, cb.kind::text, COALESCE(NULLIF(pt.title, ''), NULLIF(p.slug, ''), p.id::text) FROM content_block_attachment cba JOIN content_block cb ON cb.id = cba.block_id JOIN page p ON p.content_document_id = cb.document_id LEFT JOIN page_translation pt ON pt.entity_id = p.id AND pt.locale = p.source_locale WHERE cba.selector_kind = 'active'
-UNION ALL SELECT cba.file_id, 'work', w.id::text, cba.reference_path, cb.id::text, cb.kind::text, COALESCE(NULLIF(wt.title, ''), NULLIF(w.slug, ''), w.id::text) FROM content_block_attachment cba JOIN content_block cb ON cb.id = cba.block_id JOIN work w ON w.content_document_id = cb.document_id LEFT JOIN work_translation wt ON wt.entity_id = w.id AND wt.locale = w.source_locale WHERE cba.selector_kind = 'active'
-UNION ALL SELECT cba.file_id, 'program_event', pe.id::text, cba.reference_path, cb.id::text, cb.kind::text, COALESCE(NULLIF(pe.title, ''), NULLIF(pe.slug, ''), pe.id::text) FROM content_block_attachment cba JOIN content_block cb ON cb.id = cba.block_id JOIN program_event pe ON pe.content_document_id = cb.document_id WHERE cba.selector_kind = 'active'
-UNION ALL SELECT file_id, 'program_event', event_id::text, role::text, NULL::text, NULL::text, NULL::text FROM program_event_media
-UNION ALL SELECT audio_original_file_id, 'track', id::text, 'audio_original', NULL::text, NULL::text, title::text FROM track WHERE audio_original_file_id IS NOT NULL
-UNION ALL SELECT logo_light_file_id, 'client', id::text, 'logo_light', NULL::text, NULL::text, name::text FROM client WHERE logo_light_file_id IS NOT NULL
-UNION ALL SELECT logo_dark_file_id, 'client', id::text, 'logo_dark', NULL::text, NULL::text, name::text FROM client WHERE logo_dark_file_id IS NOT NULL
-UNION ALL SELECT logo_light_file_id, 'label', id::text, 'logo_light', NULL::text, NULL::text, NULL::text FROM label WHERE logo_light_file_id IS NOT NULL
-UNION ALL SELECT logo_dark_file_id, 'label', id::text, 'logo_dark', NULL::text, NULL::text, NULL::text FROM label WHERE logo_dark_file_id IS NOT NULL
-UNION ALL SELECT s.featured_image_file_id, 'series', s.id::text, 'featured_image', NULL::text, NULL::text, COALESCE(NULLIF(st.title, ''), NULLIF(s.slug, ''), s.id::text) FROM series s LEFT JOIN series_translation st ON st.entity_id = s.id AND st.locale = s.source_locale WHERE s.featured_image_file_id IS NOT NULL
-UNION ALL SELECT p.featured_image_file_id, 'post', p.id::text, 'featured_image', NULL::text, NULL::text, COALESCE(NULLIF(pt.title, ''), NULLIF(p.slug, ''), p.id::text) FROM post p LEFT JOIN post_translation pt ON pt.entity_id = p.id AND pt.locale = p.source_locale WHERE p.featured_image_file_id IS NOT NULL
-UNION ALL SELECT p.featured_image_file_id, 'page', p.id::text, 'featured_image', NULL::text, NULL::text, COALESCE(NULLIF(pt.title, ''), NULLIF(p.slug, ''), p.id::text) FROM page p LEFT JOIN page_translation pt ON pt.entity_id = p.id AND pt.locale = p.source_locale WHERE p.featured_image_file_id IS NOT NULL
-UNION ALL SELECT w.featured_image_file_id, 'work', w.id::text, 'featured_image', NULL::text, NULL::text, COALESCE(NULLIF(wt.title, ''), NULLIF(w.slug, ''), w.id::text) FROM work w LEFT JOIN work_translation wt ON wt.entity_id = w.id AND wt.locale = w.source_locale WHERE w.featured_image_file_id IS NOT NULL
-UNION ALL SELECT featured_image_file_id, 'form', id::text, 'featured_image', NULL::text, NULL::text, NULL::text FROM form WHERE featured_image_file_id IS NOT NULL
-UNION ALL SELECT image_file_id, 'map_place', id::text, 'image', NULL::text, NULL::text, name::text FROM map_place WHERE image_file_id IS NOT NULL
-UNION ALL SELECT poster_file_id, 'program_event', id::text, 'series_poster', NULL::text, NULL::text, title::text FROM program_event_series WHERE poster_file_id IS NOT NULL
-UNION ALL SELECT logo_full_light_file_id, 'site_settings', id::text, 'logo_full_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_full_light_file_id IS NOT NULL
-UNION ALL SELECT logo_full_dark_file_id, 'site_settings', id::text, 'logo_full_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_full_dark_file_id IS NOT NULL
-UNION ALL SELECT logo_symbol_light_file_id, 'site_settings', id::text, 'logo_symbol_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_symbol_light_file_id IS NOT NULL
-UNION ALL SELECT logo_symbol_dark_file_id, 'site_settings', id::text, 'logo_symbol_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_symbol_dark_file_id IS NOT NULL
-UNION ALL SELECT logo_email_light_file_id, 'site_settings', id::text, 'logo_email_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_email_light_file_id IS NOT NULL
-UNION ALL SELECT logo_email_dark_file_id, 'site_settings', id::text, 'logo_email_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_email_dark_file_id IS NOT NULL
-UNION ALL SELECT favicon_file_id, 'site_settings', id::text, 'favicon', NULL::text, NULL::text, NULL::text FROM site_settings WHERE favicon_file_id IS NOT NULL
-UNION ALL SELECT site_og_background_file_id, 'site_settings', id::text, 'site_og_background', NULL::text, NULL::text, NULL::text FROM site_settings WHERE site_og_background_file_id IS NOT NULL
-UNION ALL SELECT privacy_og_background_file_id, 'site_settings', id::text, 'privacy_og_background', NULL::text, NULL::text, NULL::text FROM site_settings WHERE privacy_og_background_file_id IS NOT NULL
-UNION ALL SELECT terms_og_background_file_id, 'site_settings', id::text, 'terms_og_background', NULL::text, NULL::text, NULL::text FROM site_settings WHERE terms_og_background_file_id IS NOT NULL
-UNION ALL SELECT file_id, 'site_settings', site_setting_id::text, 'loader', NULL::text, NULL::text, NULL::text FROM site_setting_loader_file
-UNION ALL SELECT output_file_id, CASE entity_type WHEN 'TRANSCODE_ENTITY_TYPE_POST' THEN 'post' WHEN 'TRANSCODE_ENTITY_TYPE_PAGE' THEN 'page' WHEN 'TRANSCODE_ENTITY_TYPE_WORK' THEN 'work' ELSE 'unspecified' END, COALESCE(entity_id::text, id::text), 'mesh_optimization_output', NULL::text, NULL::text, NULL::text FROM mesh_optimization_candidate WHERE status IN ('pending', 'processing', 'ready')
-`
-
-func lockFileFolderHierarchy(tx *gorm.DB) error {
-	if tx.Dialector.Name() != "postgres" {
-		return nil
-	}
-	return tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended('public.file_folder.hierarchy', 0))").Error
-}
+type fileUsageRow = domain.FileUsageRow
 
 func normalizeFileManagerUUID(value, field string, optional bool) (*string, error) {
 	value = strings.TrimSpace(value)
@@ -143,7 +70,7 @@ func normalizeFileManagerUUID(value, field string, optional bool) (*string, erro
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil {
-		return nil, errs.InvalidArgument(field, "must be a UUID")
+		return nil, domainerr.InvalidField(field, "must be a UUID")
 	}
 	normalized := parsed.String()
 	return &normalized, nil
@@ -153,10 +80,10 @@ func normalizeFileManagerName(value, field string) (string, error) {
 	value = strings.TrimSpace(value)
 	length := utf8.RuneCountInString(value)
 	if length < 1 || length > 255 {
-		return "", errs.InvalidArgument(field, "must contain 1 to 255 characters")
+		return "", domainerr.InvalidField(field, "must contain 1 to 255 characters")
 	}
 	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
-		return "", errs.InvalidArgument(field, "must not be '.', '..', or contain a path separator")
+		return "", domainerr.InvalidField(field, "must not be '.', '..', or contain a path separator")
 	}
 	return value, nil
 }
@@ -171,21 +98,21 @@ func fileManagerPageSize(value int32, maximum int) int {
 	return int(value)
 }
 
-func decodeFileManagerPageToken(token *string) (int, error) {
-	if token == nil || strings.TrimSpace(*token) == "" {
+func decodeFileManagerPageToken(token string) (int, error) {
+	if strings.TrimSpace(token) == "" {
 		return 0, nil
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(*token))
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	parts := strings.Split(string(decoded), ":")
 	if len(parts) != 2 || parts[0] != "v1" {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	offset, err := strconv.Atoi(parts[1])
 	if err != nil || offset < 0 {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	return offset, nil
 }
@@ -195,38 +122,23 @@ func encodeFileManagerPageToken(offset int) *string {
 	return &value
 }
 
-func (s *FileService) requireFileManagerFolder(ctx context.Context, folderID *string) error {
+func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string) error {
 	if folderID == nil {
 		return nil
 	}
-	var count int64
-	if err := s.db.WithContext(ctx).Table("file_folder").Where("id = ?", *folderID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if count == 0 {
-		return errs.NotFound("folder", *folderID)
-	}
-	return nil
+	return s.units.Read(ctx, func(store Store) error {
+		exists, err := store.FolderExists(ctx, *folderID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return domainerr.ResourceNotFound("folder", *folderID)
+		}
+		return nil
+	})
 }
 
-func fileManagerSortClause(field managev1.FileManagerSortField, order commonv1.SortOrder, prefix string) string {
-	direction := "ASC"
-	if order == commonv1.SortOrder_SORT_ORDER_DESC {
-		direction = "DESC"
-	}
-	column := "LOWER(" + prefix + "name)"
-	switch field {
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_CREATED_AT:
-		column = prefix + "created_at"
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT:
-		column = prefix + "updated_at"
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_FILE_SIZE:
-		column = "COALESCE(" + prefix + "file_size, 0)"
-	}
-	return "CASE WHEN " + prefix + "item_type = 'folder' THEN 0 ELSE 1 END ASC, " + column + " " + direction + ", " + prefix + "id ASC"
-}
-
-func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, error) {
+func fileManagerFolderPath(raw []byte) ([]*FolderPathSegment, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -234,158 +146,52 @@ func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, erro
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, err
 	}
-	path := make([]*managev1.FileManagerPathSegment, 0, len(decoded))
+	path := make([]*FolderPathSegment, 0, len(decoded))
 	for _, segment := range decoded {
-		path = append(path, &managev1.FileManagerPathSegment{Id: segment.ID, Name: segment.Name})
+		path = append(path, &FolderPathSegment{ID: segment.ID, Name: segment.Name})
 	}
 	return path, nil
 }
 
-func (s *FileService) ListFileManagerItems(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFileManagerItemsRequest],
-) (_ *connect.Response[managev1.ListFileManagerItemsResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileManagerItems", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	return s.listFileManagerItems(ctx, req, true)
+// ListFileManagerItemsQuery lists one File library folder, or searches the
+// library when Query is set.
+type ListFileManagerItemsQuery struct {
+	FolderID           string
+	UploadedByMemberID string
+	Query              string
+	MimeTypePrefix     string
+	PageToken          string
+	PageSize           int32
+	SortField          LibrarySortField
+	SortOrder          SortOrder
 }
 
-func (s *FileService) listFileManagerItems(
+// FileManagerItemPage is one page of File library items.
+type FileManagerItemPage struct {
+	Items         []*LibraryItem
+	NextPageToken *string
+	Total         int64
+}
+
+func (s *Service) ListFileManagerItems(ctx context.Context, query ListFileManagerItemsQuery) (FileManagerItemPage, error) {
+	return s.listFileManagerItems(ctx, query, true)
+}
+
+func (s *Service) listFileManagerItems(
 	ctx context.Context,
-	req *connect.Request[managev1.ListFileManagerItemsRequest],
+	req ListFileManagerItemsQuery,
 	allowChangedRetry bool,
-) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
-		return nil, err
+) (FileManagerItemPage, error) {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+		return FileManagerItemPage{}, err
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.GetFolderId(), "folder_id", true)
+	filter, err := s.fileManagerCatalogFilter(ctx, req)
 	if err != nil {
-		return nil, err
+		return FileManagerItemPage{}, err
 	}
-	uploaderID, err := normalizeFileManagerUUID(req.Msg.GetUploadedByMemberId(), "uploaded_by_member_id", true)
+	rows, err := s.queryFileManagerCatalog(ctx, filter)
 	if err != nil {
-		return nil, err
-	}
-	offset, err := decodeFileManagerPageToken(req.Msg.PageToken)
-	if err != nil {
-		return nil, err
-	}
-	query := strings.TrimSpace(req.Msg.GetQuery())
-	mimePrefix := strings.TrimSpace(strings.ToLower(req.Msg.GetMimeTypePrefix()))
-	includeFolders := mimePrefix == "" && uploaderID == nil
-	if query == "" || folderID != nil {
-		if err := s.requireFileManagerFolder(ctx, folderID); err != nil {
-			return nil, err
-		}
-	}
-	pageSizeMaximum := fileManagerMaxDirectoryPageSize
-	if query != "" {
-		pageSizeMaximum = fileManagerMaxSearchPageSize
-	}
-	pageSize := fileManagerPageSize(req.Msg.PageSize, pageSizeMaximum)
-	parent := ""
-	if folderID != nil {
-		parent = *folderID
-	}
-	uploader := ""
-	if uploaderID != nil {
-		uploader = *uploaderID
-	}
-
-	const directoryCatalogSQL = `WITH catalog AS (
-		SELECT 'folder'::text AS item_type, id, parent_id, name, NULL::text AS extension,
-		       NULL::text AS mime_type, NULL::bigint AS file_size, NULL::integer AS duration_seconds,
-		       created_by_member_id AS member_id, created_at, updated_at
-		  FROM file_folder
-		 WHERE ? AND ((? = '' AND parent_id IS NULL) OR parent_id::text = ?)
-		UNION ALL
-		SELECT 'file'::text, id, folder_id, file_name, extension, mime_type, file_size,
-		       duration_seconds, uploaded_by_member_id, created_at, updated_at
-		  FROM file
-		 WHERE delete_requested_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM mesh_optimization_candidate moc WHERE moc.output_file_id = file.id)
-		   AND ((? = '' AND folder_id IS NULL) OR folder_id::text = ?)
-		   AND (? = '' OR mime_type ILIKE ? || '%%')
-		   AND (? = '' OR uploaded_by_member_id::text = ?)
-	)
-	SELECT *, COUNT(*) OVER() AS total, '[]'::jsonb AS folder_path
-	  FROM catalog ORDER BY %s LIMIT ? OFFSET ?`
-
-	const searchCatalogSQL = `WITH RECURSIVE search_scope AS (
-		SELECT id
-		  FROM file_folder
-		 WHERE id::text = ?
-		UNION ALL
-		SELECT child.id
-		  FROM file_folder child
-		  JOIN search_scope parent ON child.parent_id = parent.id
-	), catalog AS (
-		SELECT 'folder'::text AS item_type, id, parent_id, name, NULL::text AS extension,
-		       NULL::text AS mime_type, NULL::bigint AS file_size, NULL::integer AS duration_seconds,
-		       created_by_member_id AS member_id, created_at, updated_at
-		  FROM file_folder
-		 WHERE ? AND name ILIKE '%%' || ? || '%%'
-		   AND (? = '' OR (id IN (SELECT id FROM search_scope) AND id::text <> ?))
-		UNION ALL
-		SELECT 'file'::text, id, folder_id, file_name, extension, mime_type, file_size,
-		       duration_seconds, uploaded_by_member_id, created_at, updated_at
-		  FROM file
-		 WHERE delete_requested_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM mesh_optimization_candidate moc WHERE moc.output_file_id = file.id)
-		   AND (file_name || '.' || extension) ILIKE '%%' || ? || '%%'
-		   AND (? = '' OR folder_id IN (SELECT id FROM search_scope))
-		   AND (? = '' OR mime_type ILIKE ? || '%%')
-		   AND (? = '' OR uploaded_by_member_id::text = ?)
-	), paged AS (
-		SELECT *, COUNT(*) OVER() AS total FROM catalog ORDER BY %s LIMIT ? OFFSET ?
-	), path_walk AS (
-		SELECT paged.item_type, paged.id AS item_id, folder.id AS folder_id, folder.parent_id,
-		       folder.name, 1 AS depth
-		  FROM paged
-		  JOIN file_folder folder
-		    ON folder.id = CASE WHEN paged.item_type = 'folder' THEN paged.id ELSE paged.parent_id END
-		UNION ALL
-		SELECT path_walk.item_type, path_walk.item_id, parent.id, parent.parent_id,
-		       parent.name, path_walk.depth + 1
-		  FROM path_walk
-		  JOIN file_folder parent ON parent.id = path_walk.parent_id
-	), paths AS (
-		SELECT item_type, item_id,
-		       jsonb_agg(jsonb_build_object('id', folder_id::text, 'name', name) ORDER BY depth DESC) AS folder_path
-		  FROM path_walk
-		 GROUP BY item_type, item_id
-	)
-	SELECT paged.*, COALESCE(paths.folder_path, '[]'::jsonb) AS folder_path
-	  FROM paged
-	  LEFT JOIN paths ON paths.item_type = paged.item_type AND paths.item_id = paged.id
-	 ORDER BY %s`
-
-	sortClause := fileManagerSortClause(req.Msg.SortField, req.Msg.SortOrder, "")
-	var rows []fileManagerCatalogRow
-	var queryResult *gorm.DB
-	if query == "" {
-		sql := fmt.Sprintf(directoryCatalogSQL, sortClause)
-		queryResult = s.db.WithContext(ctx).Raw(sql,
-			includeFolders, parent, parent,
-			parent, parent, mimePrefix, mimePrefix, uploader, uploader,
-			pageSize, offset,
-		).Scan(&rows)
-	} else {
-		sql := fmt.Sprintf(searchCatalogSQL, sortClause, fileManagerSortClause(req.Msg.SortField, req.Msg.SortOrder, "paged."))
-		queryResult = s.db.WithContext(ctx).Raw(sql,
-			parent,
-			includeFolders, query, parent, parent,
-			query, parent,
-			mimePrefix, mimePrefix, uploader, uploader,
-			pageSize, offset,
-		).Scan(&rows)
-	}
-	if err := queryResult.Error; err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 
 	memberIDs := make([]string, 0, len(rows))
@@ -398,65 +204,144 @@ func (s *FileService) listFileManagerItems(
 			fileIDs = append(fileIDs, row.ID)
 		}
 	}
-	memberSummaries, err := requireMemberSummaries(s.memberSummaries)
+	memberSummaries := s.memberSummaries
+	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
-		return nil, err
-	}
-	members, err := memberSummaries.Load(ctx, normalizedSortedFileIDs(memberIDs))
-	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	usageCounts, err := s.loadVisibleFileUsageCounts(ctx, fileIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	fencedFiles, _, changed, err := s.finalizeFileManagerDeliveries(ctx, rows, members, usageCounts, nil)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	if changed {
 		if allowChangedRetry {
 			return s.listFileManagerItems(ctx, req, false)
 		}
-		return nil, errs.DependencyUnavailable("file catalog")
+		return FileManagerItemPage{}, domainerr.DependencyUnavailable("file catalog")
 	}
 
-	items := make([]*managev1.FileManagerItem, 0, len(rows))
-	for _, row := range rows {
-		folderPath, pathErr := fileManagerFolderPath(row.FolderPath)
-		if pathErr != nil {
-			return nil, errs.Internal(pathErr)
-		}
-		if row.ItemType == "folder" {
-			folder := &managev1.FileFolder{
-				Id: row.ID, ParentId: row.ParentID, Name: row.Name,
-				CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
-			}
-			if row.MemberID != nil {
-				folder.CreatedByMember = members[*row.MemberID]
-			}
-			items = append(items, &managev1.FileManagerItem{
-				Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FOLDER,
-				Item: &managev1.FileManagerItem_Folder{Folder: folder}, FolderPath: folderPath,
-			})
-			continue
-		}
-		file := fencedFiles[row.ID]
-		if file == nil {
-			return nil, errs.DependencyUnavailable("file catalog")
-		}
-		items = append(items, &managev1.FileManagerItem{
-			Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FILE,
-			Item: &managev1.FileManagerItem_File{File: file}, FolderPath: folderPath,
-		})
+	items, err := fileManagerItemsFromCatalog(rows, members, fencedFiles)
+	if err != nil {
+		return FileManagerItemPage{}, err
 	}
 	total := int64(0)
 	if len(rows) > 0 {
 		total = rows[0].Total
 	}
 	var next *string
-	if int64(offset+len(rows)) < total {
-		next = encodeFileManagerPageToken(offset + len(rows))
+	if int64(filter.offset+len(rows)) < total {
+		next = encodeFileManagerPageToken(filter.offset + len(rows))
 	}
-	return connect.NewResponse(&managev1.ListFileManagerItemsResponse{Items: items, NextPageToken: next, Total: total}), nil
+	return FileManagerItemPage{Items: items, NextPageToken: next, Total: total}, nil
+}
+
+// fileManagerCatalogFilter is a validated File Manager listing: a directory
+// when query is empty, a search under the folder otherwise.
+type fileManagerCatalogFilter struct {
+	parent         string
+	uploader       string
+	query          string
+	mimePrefix     string
+	includeFolders bool
+	sortField      LibrarySortField
+	sortOrder      SortOrder
+	pageSize       int
+	offset         int
+}
+
+func (s *Service) fileManagerCatalogFilter(ctx context.Context, req ListFileManagerItemsQuery) (fileManagerCatalogFilter, error) {
+	folderID, err := normalizeFileManagerUUID(req.FolderID, "folder_id", true)
+	if err != nil {
+		return fileManagerCatalogFilter{}, err
+	}
+	uploaderID, err := normalizeFileManagerUUID(req.UploadedByMemberID, "uploaded_by_member_id", true)
+	if err != nil {
+		return fileManagerCatalogFilter{}, err
+	}
+	offset, err := decodeFileManagerPageToken(req.PageToken)
+	if err != nil {
+		return fileManagerCatalogFilter{}, err
+	}
+	query := strings.TrimSpace(req.Query)
+	mimePrefix := strings.TrimSpace(strings.ToLower(req.MimeTypePrefix))
+	if query == "" || folderID != nil {
+		if err := s.requireFileManagerFolder(ctx, folderID); err != nil {
+			return fileManagerCatalogFilter{}, err
+		}
+	}
+	pageSizeMaximum := fileManagerMaxDirectoryPageSize
+	if query != "" {
+		pageSizeMaximum = fileManagerMaxSearchPageSize
+	}
+	filter := fileManagerCatalogFilter{
+		query: query, mimePrefix: mimePrefix, includeFolders: mimePrefix == "" && uploaderID == nil,
+		sortField: req.SortField, sortOrder: req.SortOrder,
+		pageSize: fileManagerPageSize(req.PageSize, pageSizeMaximum), offset: offset,
+	}
+	if folderID != nil {
+		filter.parent = *folderID
+	}
+	if uploaderID != nil {
+		filter.uploader = *uploaderID
+	}
+	return filter, nil
+}
+
+// fileManagerItemsFromCatalog renders catalog rows in order, with each File
+// as the delivery fence built it.
+func fileManagerItemsFromCatalog(
+	rows []fileManagerCatalogRow,
+	members map[string]MemberSummary,
+	fencedFiles map[string]*LibraryFile,
+) ([]*LibraryItem, error) {
+	items := make([]*LibraryItem, 0, len(rows))
+	for _, row := range rows {
+		folderPath, pathErr := fileManagerFolderPath(row.FolderPath)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		if row.ItemType == "folder" {
+			folder := &FolderView{
+				ID: row.ID, ParentID: row.ParentID, Name: row.Name,
+				CreatedAt: &row.CreatedAt, UpdatedAt: &row.UpdatedAt,
+			}
+			if row.MemberID != nil {
+				folder.CreatedByMember = memberSummaryForID(members, *row.MemberID)
+			}
+			items = append(items, &LibraryItem{
+				Type:   domain.LibraryItemFolder,
+				Folder: folder, FolderPath: folderPath,
+			})
+			continue
+		}
+		file := fencedFiles[row.ID]
+		if file == nil {
+			return nil, domainerr.DependencyUnavailable("file catalog")
+		}
+		items = append(items, &LibraryItem{
+			Type: domain.LibraryItemFile,
+			File: file, FolderPath: folderPath,
+		})
+	}
+	return items, nil
+}
+
+func (s *Service) queryFileManagerCatalog(ctx context.Context, filter fileManagerCatalogFilter) ([]fileManagerCatalogRow, error) {
+	sort := domain.CatalogSortName
+	switch filter.sortField {
+	case LibrarySortCreatedAt:
+		sort = domain.CatalogSortCreated
+	case LibrarySortUpdatedAt:
+		sort = domain.CatalogSortUpdated
+	case LibrarySortFileSize:
+		sort = domain.CatalogSortSize
+	}
+	query := domain.CatalogQuery{Parent: filter.parent, Uploader: filter.uploader, Query: filter.query, MimePrefix: filter.mimePrefix, IncludeFolders: filter.includeFolders, SortField: sort, Descending: filter.sortOrder == SortDesc, PageSize: filter.pageSize, Offset: filter.offset}
+	var rows []fileManagerCatalogRow
+	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.Catalog(ctx, query); return err })
+	return rows, err
 }

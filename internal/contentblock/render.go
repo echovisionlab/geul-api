@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
 	"unicode"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -589,9 +587,6 @@ func safeLink(value string) (string, error) {
 	}
 	decoded, decodeErr := url.PathUnescape(value)
 	if decodeErr != nil || strings.IndexFunc(decoded, unicode.IsControl) >= 0 {
-		if decodeErr != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.safeLink", "outcome", "failed", failurecause.Attr(decodeErr))
-		}
 		return "", fmt.Errorf("%w: unsafe link encoding", ErrInvalidMutation)
 	}
 	parsed, err := url.Parse(value)
@@ -602,9 +597,6 @@ func safeLink(value string) (string, error) {
 		return value, nil
 	}
 	if err != nil || parsed.Scheme == "" {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.safeLink", "outcome", "failed", failurecause.Attr(err))
-		}
 		return "", fmt.Errorf("%w: link requires an absolute URI", ErrInvalidMutation)
 	}
 	switch strings.ToLower(parsed.Scheme) {
@@ -722,12 +714,10 @@ func renderFile(
 	}
 	blockID, err := uuid.Parse(rawBlockID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "contentblock", "operation", "contentblock.renderFile", "outcome", "failed", failurecause.Attr(err))
 		return MaterializedContent{}, fmt.Errorf("%w: invalid File Block UUID", ErrInvalidMutation)
 	}
 	fileID, err := uuid.Parse(base.GetAttachment().GetActiveFileId())
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "contentblock", "operation", "contentblock.renderFile", "outcome", "failed", failurecause.Attr(err))
 		return MaterializedContent{}, fmt.Errorf("%w: invalid active File UUID", ErrFileReference)
 	}
 	if resolver == nil {
@@ -778,9 +768,6 @@ func renderFile(
 func safePublicAssetURL(value string) (*url.URL, error) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.safePublicAssetURL", "outcome", "failed", failurecause.Attr(err))
-		}
 		return nil, fmt.Errorf("%w: File render target must be an absolute HTTPS URL", ErrFileReference)
 	}
 	return parsed, nil

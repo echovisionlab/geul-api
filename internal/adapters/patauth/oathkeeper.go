@@ -118,9 +118,10 @@ func oathkeeperBearer(request *http.Request) (string, bool) {
 }
 
 func (handler *OathkeeperHandler) fail(writer http.ResponseWriter, request *http.Request, status int, err error, token string) {
-	// Private values are redacted even if a dependency includes them in an
-	// error. Never attach request headers or bearer values to log records.
-	slog.WarnContext(request.Context(), "Oathkeeper PAT verification failed", failurecause.Attr(err, token, handler.serviceSecret), "status", status)
+	// The HTTP request record logs the cause with the status. Private values
+	// are redacted even if a dependency includes them in an error. Never
+	// attach request headers or bearer values to log records.
+	failurecause.RecorderFrom(request.Context()).Record(failurecause.Of(err, token, handler.serviceSecret))
 	if status == http.StatusUnauthorized {
 		writer.Header().Set("WWW-Authenticate", `Bearer realm="Oathkeeper PAT"`)
 	}

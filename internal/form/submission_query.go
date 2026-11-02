@@ -2,153 +2,114 @@ package form
 
 import (
 	"context"
-	"log/slog"
+	"errors"
+	"time"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
-func (s *FormService) ListFormSubmissions(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFormSubmissionsRequest],
-) (rpcResponse *connect.Response[managev1.ListFormSubmissionsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "ListFormSubmissions", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// ListFormSubmissionsQuery lists a Form's submissions. Search matches the
+// submitted data; the creation bounds are inclusive from and exclusive
+// before.
+type ListFormSubmissionsQuery struct {
+	FormID          string
+	Search          string
+	CountryCode     string
+	CreatedAtFrom   *time.Time
+	CreatedAtBefore *time.Time
+	Page            Page
+	Sorts           []*commonv1.SortSpec
+}
 
-	// Keep behavior consistent with other submission endpoints:
-	// unknown form IDs should return not_found (including admins).
-	var formCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Form{}).
-		Where("id = ?", req.Msg.FormId).
-		Count(&formCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if formCount == 0 {
-		return nil, errs.NotFound("form", req.Msg.FormId)
-	}
-	if err := s.requireFormAction(ctx, req.Msg.FormId, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("form", req.Msg.FormId)
-		}
-		return nil, err
-	}
+// GetFormSubmissionQuery reads one submission with its Form's schema.
+type GetFormSubmissionQuery struct {
+	ID string
+}
 
-	query := s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", req.Msg.FormId)
-	query, err := applyFormSubmissionFilters(query, req.Msg)
+// SubmissionPage is one page of a Form's submissions.
+type SubmissionPage struct {
+	Submissions []Submission
+	Pagination  Pagination
+}
+
+// SubmissionWithSchema is one submission with its Form's source schema and
+// title.
+type SubmissionWithSchema struct {
+	Submission Submission
+	FormSchema []byte
+	FormTitle  string
+}
+
+// ListFormSubmissions returns a page of submissions of a Form the caller
+// manages and records the personal data access.
+func (s *Service) ListFormSubmissions(ctx context.Context, query ListFormSubmissionsQuery) (SubmissionPage, error) {
+	// An unknown Form is not found for administrators too, as for every
+	// submission read.
+	if err := s.requireExistingFormAction(ctx, query.FormID, formActionManage, domainerr.ResourceNotFound("form", query.FormID)); err != nil {
+		return SubmissionPage{}, err
+	}
+	list, err := formSubmissionList(query)
 	if err != nil {
-		return nil, err
+		return SubmissionPage{}, err
 	}
-	pageQuery, err := applyFormSubmissionSort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	var submissions []model.FormSubmission
+	pagination := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.PaginationConfig{DefaultLimit: 50, MaxLimit: 100})
+	list.Limit, list.Offset = pagination.Limit, pagination.Offset
+	var page SubmissionPage
 	var total int64
-
-	// Count and page from the same filtered query.
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		page.Submissions, total, err = store.ListSubmissions(ctx, list)
+		return err
+	}); err != nil {
+		return SubmissionPage{}, err
 	}
-
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.PaginationConfig{
-		DefaultLimit: 50,
-		MaxLimit:     100,
-	})
-
-	if err := pageQuery.
-		Limit(int(pagination.Limit)).
-		Offset(int(pagination.Offset)).
-		Find(&submissions).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.personalDataAccess.AppendFormSubmissions(ctx, query.FormID); err != nil {
+		return SubmissionPage{}, securityaccess.Unavailable().WithCause(err)
 	}
-
-	protoSubmissions := make([]*managev1.FormSubmission, len(submissions))
-	for i := range submissions {
-		protoSubmissions[i] = s.toProtoSubmission(&submissions[i])
+	page.Pagination = Pagination{
+		Total:   int32(total),
+		Limit:   pagination.Limit,
+		Offset:  pagination.Offset,
+		HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
 	}
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmissions(ctx, req.Msg.FormId); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListFormSubmissionsResponse{
-		Submissions: protoSubmissions,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   pagination.Limit,
-			Offset:  pagination.Offset,
-			HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
-		},
-	}), nil
+	return page, nil
 }
 
-// GetFormSubmissionStats returns aggregate submission stats for a form (admin only).
-func (s *FormService) GetFormSubmissionWithSchema(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFormSubmissionRequest],
-) (rpcResponse *connect.Response[managev1.FormSubmissionWithSchema], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
+// GetFormSubmissionWithSchema returns one submission of a Form the caller manages with
+// the Form's source schema and records the personal data access.
+func (s *Service) GetFormSubmissionWithSchema(ctx context.Context, query GetFormSubmissionQuery) (SubmissionWithSchema, error) {
+	notFound := domainerr.New(domainerr.NotFound, "", "submission not found")
+	var submission Submission
+	var form Form
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if submission, err = store.FindSubmission(ctx, query.ID); err != nil {
+			if errors.Is(err, ErrSubmissionNotFound) {
+				return notFound
+			}
+			return err
 		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionWithSchema", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	var submission model.FormSubmission
-	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("submission not found")
-		}
-		return nil, errs.Internal(err)
+		form, err = store.FindForm(ctx, ByID, submission.FormID)
+		return formNotFound(err, domainerr.New(domainerr.NotFound, "", "form not found"))
+	}); err != nil {
+		return SubmissionWithSchema{}, err
 	}
-
-	// Get the form to include schema
-	var form model.Form
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", submission.FormID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("form not found")
-		}
-		return nil, errs.Internal(err)
+	if err := s.requireVisibleFormAction(ctx, form.ID, formActionManage, notFound); err != nil {
+		return SubmissionWithSchema{}, err
 	}
-	if err := s.requireFormAction(ctx, form.ID, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFoundMsg("submission not found")
-		}
-		return nil, err
+	var result SubmissionWithSchema
+	if err := s.units.Read(ctx, func(store Store) error {
+		schema, sourceTitle, err := loadFormSourceSchema(ctx, store, form.ID)
+		result = SubmissionWithSchema{Submission: submission, FormSchema: schema, FormTitle: resolveFormTitle(sourceTitle)}
+		return err
+	}); err != nil {
+		return SubmissionWithSchema{}, err
 	}
-
-	formSchema, sourceTitle, err := loadFormSourceSchema(ctx, s.db, form.ID)
-	if err != nil {
-		return nil, err
+	if err := s.personalDataAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
+		return SubmissionWithSchema{}, securityaccess.Unavailable().WithCause(err)
 	}
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
-		}
-	}
-
-	return connect.NewResponse(&managev1.FormSubmissionWithSchema{
-		Submission: s.toProtoSubmission(&submission),
-		FormSchema: formSchema,
-		FormTitle:  resolveFormTitle(sourceTitle),
-	}), nil
+	return result, nil
 }
-
-// DeleteFormSubmission deletes a submission (admin only)

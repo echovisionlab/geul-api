@@ -2,372 +2,268 @@ package application
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"slices"
+	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/lib/pq"
 )
 
-var translationJobSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"requested_at":  "requested_at",
-		"updated_at":    "updated_at",
-		"target_locale": "target_locale",
-		"status":        "status",
-	},
-	DefaultSort: "updated_at DESC, id ASC",
+// Deps are the collaborators of the Translation use cases; all are required.
+type Deps struct {
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
+	// Plans builds extraction plans by each owning domain's rules.
+	Plans DomainPlans
+	// XLIFFFiles stores XLIFF exports and reads verified XLIFF uploads.
+	XLIFFFiles TranslationXLIFFFiles
 }
 
-type translationServicePublisher interface {
-	// The job and its durable queue command must become visible together.
-	EnqueueTranslationGenerateWithDB(context.Context, *gorm.DB, *managev1.TranslationGenerateEvent) error
-	PublishTranslationLifecycle(ctx context.Context, event *managev1.TranslationLifecycleEvent) error
-	// content.updated is scheduled only in the owning mutation transaction.
-	contentsignal.Publisher
+func (d Deps) validate() error {
+	return requireDeps("translation", map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil,
+		"Audit": d.Audit == nil, "Plans": d.Plans == nil, "XLIFFFiles": d.XLIFFFiles == nil,
+	})
 }
 
-type TranslationService struct {
-	managev1connect.UnimplementedTranslationServiceHandler
-	db                 *gorm.DB
-	publisher          translationServicePublisher
-	spiceDB            *auth.SpiceDBClient
-	cdnDomain          string
-	now                func() time.Time
-	auditWriter        domainaudit.Appender
-	contentBlocks      *contentblock.Store
-	ogPlanner          *og.Planner
-	ogRefresher        *og.Refresher
-	metrics            translationMetrics
-	domains            DomainRegistry
-	xliffFiles         TranslationXLIFFFiles
-	interchangeDomains TranslationInterchangeDomains
-}
-
-type TranslationServiceOption func(*TranslationService)
-
-func WithTranslationServiceContentBlockStore(store *contentblock.Store) TranslationServiceOption {
-	return func(service *TranslationService) { service.contentBlocks = store }
-}
-
-func WithTranslationServiceDomainRegistry(registry DomainRegistry) TranslationServiceOption {
-	return func(service *TranslationService) { service.domains = registry }
-}
-
-// NewAuditedTranslationService creates a TranslationService whose durable
-// provider and source-locale mutations require an in-transaction Domain Audit
-// append.
-func NewAuditedTranslationService(
-	db *gorm.DB,
-	publisher translationServicePublisher,
-	cdnDomain string,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-	ogPlanner *og.Planner,
-	ogRefresher *og.Refresher,
-	options ...TranslationServiceOption,
-) *TranslationService {
-	if auditWriter == nil {
-		panic("translation provider audit writer is required")
-	}
-	service := NewTranslationService(db, publisher, cdnDomain, spiceDB, ogPlanner, ogRefresher, options...)
-	service.auditWriter = auditWriter
-	return service
-}
-
-func NewTranslationService(
-	db *gorm.DB,
-	publisher translationServicePublisher,
-	cdnDomain string,
-	spiceDB *auth.SpiceDBClient,
-	ogPlanner *og.Planner,
-	ogRefresher *og.Refresher,
-	options ...TranslationServiceOption,
-) *TranslationService {
-	dependencycheck.New("TranslationService").
-		RequireNotNil(db, "db").
-		RequireNotNil(publisher, "publisher").
-		Validate()
-
-	if spiceDB == nil {
-		panic("translation SpiceDB client is required")
-	}
-	if ogPlanner == nil {
-		panic("translation OG planner is required")
-	}
-	if ogRefresher == nil {
-		panic("translation OG refresher is required")
-	}
-	service := &TranslationService{
-		db:          db,
-		publisher:   publisher,
-		spiceDB:     spiceDB,
-		cdnDomain:   cdnDomain,
-		now:         dbtime.Now,
-		ogPlanner:   ogPlanner,
-		ogRefresher: ogRefresher,
-		metrics:     newTranslationMetrics(),
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
+func requireDeps(name string, absent map[string]bool) error {
+	var missing []string
+	for field, isAbsent := range absent {
+		if isAbsent {
+			missing = append(missing, field)
 		}
 	}
-	return service
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New(name + " dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-func (s *TranslationService) ListTranslationLocales(
-	ctx context.Context,
-	_ *connect.Request[managev1.ListTranslationLocalesRequest],
-) (_ *connect.Response[managev1.ListTranslationLocalesResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationLocales")
-		}
-	}()
+// Service holds the Translation use cases: locales, settings, providers,
+// entity translations, jobs and XLIFF interchange. Connect and MCP adapters
+// translate their requests into its commands and queries.
+type Service struct {
+	units      mutation.UnitOfWork[Store]
+	spiceDB    mutation.Authorizer
+	now        func() time.Time
+	metrics    translationMetrics
+	plans      DomainPlans
+	xliffFiles TranslationXLIFFFiles
+	mutations  *mutation.StoreRunner[Store]
+}
+
+// NewService returns the Translation use cases over deps.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		units: deps.Units, spiceDB: deps.SpiceDB, now: dbtime.Now, metrics: newTranslationMetrics(),
+		plans: deps.Plans, xliffFiles: deps.XLIFFFiles, mutations: mutations,
+	}, nil
+}
+
+// ListTranslationLocales lists every runtime locale to an administrator and
+// the enabled ones to any other authenticated principal.
+func (s *Service) ListTranslationLocales(ctx context.Context) ([]Locale, error) {
 	user := auth.GetUser(ctx)
 	isAdmin := false
 	if user != nil && user.Authenticated {
 		var err error
 		isAdmin, err = checkSpiceDBAdmin(ctx, user, s.spiceDB)
 		if err != nil {
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 	}
 	if !isAdmin && (user == nil || !user.Authenticated) {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
-
-	catalog := localization.NewCatalog(s.db)
-	var locales []localization.RuntimeLocale
-	var err error
-	if isAdmin {
-		locales, err = catalog.All(ctx)
-	} else {
-		locales, err = catalog.Enabled(ctx)
-	}
+	var locales []Locale
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		locales, err = store.Locales(ctx, !isAdmin)
+		return err
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
-	resp := &managev1.ListTranslationLocalesResponse{
-		Locales: make([]*managev1.TranslationLocale, 0, len(locales)),
-	}
-	for _, locale := range locales {
-		resp.Locales = append(resp.Locales, toProtoTranslationLocale(locale))
-	}
-	return connect.NewResponse(resp), nil
+	return locales, nil
 }
 
-func (s *TranslationService) GetTranslationOverview(
-	ctx context.Context,
-	_ *connect.Request[managev1.GetTranslationOverviewRequest],
-) (_ *connect.Response[managev1.GetTranslationOverviewResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetTranslationOverview")
-		}
-	}()
+// Overview is the administrator's translation coverage summary.
+type Overview struct {
+	Stats        OverviewStats
+	LocaleHealth []LocaleHealth
+	EntityHealth []EntityHealth
+}
+
+// GetTranslationOverview summarizes locale and entity translation coverage.
+func (s *Service) GetTranslationOverview(ctx context.Context) (Overview, error) {
 	if err := requireTranslationAdmin(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return Overview{}, err
 	}
-
-	stats, err := s.getTranslationOverviewStats(ctx)
+	var overview Overview
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if overview.Stats, err = store.OverviewStats(ctx); err != nil {
+			return err
+		}
+		if overview.LocaleHealth, err = store.LocaleHealth(ctx); err != nil {
+			return err
+		}
+		overview.EntityHealth, err = store.EntityHealth(ctx)
+		return err
+	})
 	if err != nil {
-		return nil, err
+		return Overview{}, err
 	}
-	localeHealth, err := s.listTranslationLocaleHealth(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entityHealth, err := s.listTranslationEntityHealth(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.GetTranslationOverviewResponse{
-		Stats:        stats,
-		LocaleHealth: localeHealth,
-		EntityHealth: entityHealth,
-	}), nil
+	return overview, nil
 }
 
-func (s *TranslationService) GetTranslationSettings(
-	ctx context.Context,
-	_ *connect.Request[managev1.GetTranslationSettingsRequest],
-) (_ *connect.Response[managev1.GetTranslationSettingsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetTranslationSettings")
-		}
-	}()
+// SettingsView is the runtime translation settings and whether a provider
+// can generate translations now.
+type SettingsView struct {
+	Settings                 translation.RuntimeSettings
+	GenerationEnabled        bool
+	GenerationDisabledReason *string
+}
+
+// GetTranslationSettings reads the runtime translation settings.
+func (s *Service) GetTranslationSettings(ctx context.Context) (SettingsView, error) {
 	can, canErr := policyv1.TranslationSettings.View()
 	if err := s.requireTranslationPlatformCan(ctx, can, canErr); err != nil {
-		return nil, err
+		return SettingsView{}, err
 	}
-
-	settings, err := loadTranslationRuntimeSettings(ctx, s.db)
+	var settings translation.RuntimeSettings
+	var generationEnabled bool
+	// Reading the settings inserts the default singleton when it is missing.
+	err := s.units.ReadCurrent(ctx, func(store Store) error {
+		var err error
+		if settings, err = store.RuntimeSettings(ctx); err != nil {
+			return err
+		}
+		generationEnabled, err = hasAvailableTranslationProvider(ctx, store)
+		return err
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SettingsView{}, err
 	}
-	generationEnabled, err := hasAvailableTranslationProvider(ctx, s.db)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	resp := &managev1.GetTranslationSettingsResponse{
-		Settings:          toProtoTranslationSettings(settings),
-		GenerationEnabled: generationEnabled,
-	}
+	view := SettingsView{Settings: settings, GenerationEnabled: generationEnabled}
 	if !generationEnabled {
 		reason := translationProviderUnavailableMessage
-		resp.GenerationDisabledReason = &reason
+		view.GenerationDisabledReason = &reason
 	}
-	return connect.NewResponse(resp), nil
+	return view, nil
 }
 
-func (s *TranslationService) UpdateTranslationSettings(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateTranslationSettingsRequest],
-) (_ *connect.Response[managev1.UpdateTranslationSettingsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
+// UpdateTranslationSettingsCommand patches the runtime translation settings.
+// UpdateMask names the fields to change; BaseSettings are the settings the
+// caller last read, from which a protected-terms patch is derived.
+type UpdateTranslationSettingsCommand struct {
+	Settings     *translation.RuntimeSettings
+	BaseSettings *translation.RuntimeSettings
+	UpdateMask   *fieldmaskpb.FieldMask
+}
+
+type settingsUpdate struct {
+	settings translationRuntimeSettings
+	fields   []string
+}
+
+// UpdateTranslationSettings applies the masked settings fields.
+func (s *Service) UpdateTranslationSettings(ctx context.Context, command UpdateTranslationSettingsCommand) (translation.RuntimeSettings, error) {
+	var stored translation.RuntimeSettings
+	updated, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[settingsUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			stored, err = store.LockRuntimeSettings(ctx)
+			return err
+		},
+		Access: mutation.FreshAdminCan(policyv1.TranslationSettings.Update()),
+		Change: func(ctx context.Context, store Store) (settingsUpdate, error) {
+			return updateTranslationRuntimeSettings(ctx, store, stored, command)
+		},
+		Audit: func(update settingsUpdate) mutation.Audit {
+			if len(update.fields) == 0 {
+				return mutation.Unchanged()
 			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "UpdateTranslationSettings")
-		}
-	}()
-	settingsCan, err := policyv1.TranslationSettings.Update()
+			return mutation.RequestAudit(sharedtelemetry.AuditTranslationSettingsUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewTranslationSettingsUpdatedAuditRecord(metadata, update.fields)
+			})
+		},
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return translation.RuntimeSettings{}, err
 	}
-	updated, err := s.updateTranslationRuntimeSettings(ctx, settingsCan, req.Msg)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.UpdateTranslationSettingsResponse{
-		Settings: toProtoTranslationSettings(updated),
-	}), nil
+	return updated.settings, nil
 }
 
-func requireTranslationAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
+func updateTranslationRuntimeSettings(
+	ctx context.Context,
+	store Store,
+	stored translation.RuntimeSettings,
+	command UpdateTranslationSettingsCommand,
+) (settingsUpdate, error) {
+	current, err := normalizeTranslationRuntimeSettings(stored)
+	if err != nil {
+		return settingsUpdate{}, err
+	}
+	requested, err := applyTranslationRuntimeSettingsUpdate(current, command)
+	if err != nil {
+		return settingsUpdate{}, domainerr.InvalidField("settings", err.Error())
+	}
+	fields := translationRuntimeSettingsChangedFields(current, requested)
+	if len(fields) == 0 {
+		return settingsUpdate{settings: current}, nil
+	}
+	var change SettingsChange
+	if current.DefaultLocale != requested.DefaultLocale {
+		change.DefaultLocale = &requested.DefaultLocale
+	}
+	if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
+		change.ProtectedTerms, change.TermsChanged = requested.ProtectedTerms, true
+	}
+	updatedAt, err := store.UpdateRuntimeSettings(ctx, change)
+	if err != nil {
+		return settingsUpdate{}, err
+	}
+	requested.UpdatedAt = &updatedAt
+	return settingsUpdate{settings: requested, fields: fields}, nil
+}
+
+func requireTranslationAdmin(ctx context.Context, spiceDB mutation.Authorizer) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	isAdmin, err := checkSpiceDBAdmin(ctx, user, spiceDB)
 	if err != nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !isAdmin {
-		return errs.AdminRequired()
+		return domainerr.AdminRequired()
 	}
 	return nil
-}
-
-func (s *TranslationService) updateTranslationRuntimeSettings(
-	ctx context.Context,
-	settingsCan policyv1.Can,
-	request *managev1.UpdateTranslationSettingsRequest,
-) (translationRuntimeSettings, error) {
-	var updated translationRuntimeSettings
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var row model.TranslationSettings
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = 1").Error; err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, settingsCan); err != nil {
-			return err
-		}
-		current, err := normalizeTranslationRuntimeSettings(translationRuntimeSettings{
-			DefaultLocale:  row.DefaultLocale,
-			ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
-			UpdatedAt:      &row.UpdatedAt,
-		})
-		if err != nil {
-			return err
-		}
-		requested, err := applyTranslationRuntimeSettingsUpdate(current, request)
-		if err != nil {
-			return errs.InvalidArgument("settings", err.Error())
-		}
-		fields := translationRuntimeSettingsChangedFields(current, requested)
-		if len(fields) == 0 {
-			updated = current
-			return nil
-		}
-		now := tx.NowFunc().UTC()
-		updates := map[string]any{"updated_at": now}
-		if current.DefaultLocale != requested.DefaultLocale {
-			updates["default_locale"] = requested.DefaultLocale
-		}
-		if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
-			updates["protected_terms"] = pq.Array(requested.ProtectedTerms)
-		}
-		if err := tx.Model(&row).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditTranslationSettingsUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewTranslationSettingsUpdatedAuditRecord(metadata, fields)
-			}); err != nil {
-				return err
-			}
-		}
-		requested.UpdatedAt = &row.UpdatedAt
-		updated = requested
-		return nil
-	})
-	return updated, err
 }
 
 func translationRuntimeSettingsChangedFields(current, requested translationRuntimeSettings) []string {
@@ -381,69 +277,61 @@ func translationRuntimeSettingsChangedFields(current, requested translationRunti
 	return fields
 }
 
-func (s *TranslationService) ListTranslationJobs(
-	ctx context.Context,
-	req *connect.Request[managev1.ListTranslationJobsRequest],
-) (_ *connect.Response[managev1.ListTranslationJobsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationJobs")
-		}
-	}()
-	if err := s.authorizeTranslationJobList(ctx, req.Msg.Filters); err != nil {
-		return nil, err
-	}
-
-	var jobs []model.TranslationJob
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.TranslationJob{})
-	query, err := applyTranslationJobFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	limit, offset := queryutil.NormalizePaginationParams(req.Msg.Pagination)
-	query, err = applyTranslationJobSort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&jobs).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	resp := &managev1.ListTranslationJobsResponse{
-		Jobs:       make([]*managev1.TranslationJob, 0, len(jobs)),
-		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total},
-	}
-	for _, job := range jobs {
-		if err := validateTranslationJobRequester(&job); err != nil {
-			return nil, errs.Internal(err)
-		}
-		resp.Jobs = append(resp.Jobs, toProtoTranslationJob(job))
-	}
-	return connect.NewResponse(resp), nil
+// Pagination is where a page sits among every match.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
 }
 
-func applyTranslationJobSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.DB, error) {
-	query, err := translationJobSortConfig.ApplySort(query, sorts)
+func paginationOf(page queryutil.Pagination, total int64) Pagination {
+	response := page.BuildResponse(total)
+	return Pagination{Total: response.Total, Limit: response.Limit, Offset: response.Offset, HasMore: response.HasMore}
+}
+
+// ListTranslationJobsQuery lists in-flight translation jobs. An
+// administrator reads every job; another principal must filter to exactly
+// one entity it may read.
+type ListTranslationJobsQuery struct {
+	// Limit defaults to 20 and is capped at 100.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// JobPage is one page of translation jobs.
+type JobPage struct {
+	Jobs       []Job
+	Pagination Pagination
+}
+
+// ListTranslationJobs lists translation jobs.
+func (s *Service) ListTranslationJobs(ctx context.Context, query ListTranslationJobsQuery) (JobPage, error) {
+	if err := s.authorizeTranslationJobList(ctx, query.Filters); err != nil {
+		return JobPage{}, err
+	}
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var jobs []Job
+	var total int64
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		jobs, total, err = store.ListJobs(ctx, JobListQuery{
+			Filters: query.Filters, Sorts: query.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
+		})
+		return err
+	})
 	if err != nil {
-		return nil, err
+		return JobPage{}, err
 	}
-	if len(sorts) != 0 {
-		// Explicit sort fields can tie. Preserve a unique order across offset
-		// pages just as the default sort does.
-		query = query.Order("id ASC")
+	for index := range jobs {
+		if err := ValidateJobRequester(&jobs[index]); err != nil {
+			return JobPage{}, err
+		}
 	}
-	return query, nil
+	if jobs == nil {
+		jobs = []Job{}
+	}
+	return JobPage{Jobs: jobs, Pagination: paginationOf(pagination, total)}, nil
 }

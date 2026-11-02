@@ -2,67 +2,65 @@ package post
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// PostService implements the PostService Connect handler
-func (s *PostService) CheckSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckSlugAvailableResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CheckSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
-	if _, err := s.authz.MustAuthenticate(ctx); err != nil {
-		return nil, err
-	}
-
-	excludePostID := strings.TrimSpace(ptrStringValue(req.Msg.ExcludePostId))
-	if err := s.authorizeSlugExclusion(ctx, excludePostID); err != nil {
-		return nil, err
-	}
-	available, err := CheckSlugAvailable(ctx, s.db, req.Msg.Slug, excludePostID)
-	if err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.CheckSlugAvailableResponse{
-		Available: available,
-	}), nil
+// CheckSlugAvailableQuery asks whether Slug is free for a new Post, or for
+// ExcludePostID's own Post.
+type CheckSlugAvailableQuery struct {
+	Slug          string
+	ExcludePostID *string
 }
 
-func (s *PostService) authorizeSlugExclusion(ctx context.Context, postID string) error {
+// CheckSlugAvailable reports whether the slug is unclaimed by both a Post
+// and the shared Page route namespace.
+func (s *Service) CheckSlugAvailable(ctx context.Context, query CheckSlugAvailableQuery) (bool, error) {
+	if user := auth.GetUser(ctx); user == nil || !user.Authenticated || user.MemberID == "" {
+		return false, domainerr.AuthenticationRequired()
+	}
+	excludePostID := strings.TrimSpace(ptrStringValue(query.ExcludePostID))
+	if err := s.authorizeSlugExclusion(ctx, excludePostID); err != nil {
+		return false, err
+	}
+	return readStore(ctx, s, func(store Store) (bool, error) { return checkSlugAvailable(ctx, store, query.Slug, excludePostID) })
+}
+
+// checkSlugAvailable reports whether slug is unclaimed by both a Post and the
+// shared Page route namespace. excludePostID is the Post currently being
+// edited and must already have passed authorization.
+func checkSlugAvailable(ctx context.Context, store Store, slug, excludePostID string) (bool, error) {
+	if strings.Contains(slug, "/") {
+		return false, domainerr.InvalidField("slug", "must not contain '/'")
+	}
+	taken, err := store.SlugTaken(ctx, slug, excludePostID)
+	if err != nil {
+		return false, err
+	}
+	if taken {
+		return false, nil
+	}
+	return store.RouteAvailable(ctx, slug)
+}
+
+func (s *Service) authorizeSlugExclusion(ctx context.Context, postID string) error {
 	if postID == "" {
 		return nil
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var post model.Post
-		err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Where("id = ?", postID).First(&post).Error
-		if err == gorm.ErrRecordNotFound {
-			return errs.NotFoundMsg("post not found")
+	return s.readLocked(ctx, mutation.Checked(func(ctx context.Context, store Store) error {
+		stored, err := store.KeyShareLockPost(ctx, postID)
+		if errors.Is(err, ErrPostNotFound) {
+			return domainerr.New(domainerr.NotFound, "", "post not found")
 		}
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
-		_, err = requirePostActionForStatus(ctx, s.spiceDB, post.ID, post.Status, policyv1.Post.Edit)
+		_, err = requirePostActionForStatus(ctx, s.spiceDB, stored.ID, stored.Status, policyv1.Post.Edit)
 		return err
-	})
+	}), func(context.Context, Store) error { return nil })
 }
-
-// ListMyPosts returns posts for the authenticated user

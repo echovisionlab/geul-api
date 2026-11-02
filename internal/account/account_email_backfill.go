@@ -2,7 +2,6 @@ package account
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -42,12 +41,7 @@ func (s *AccountEmailService) BackfillMemberEmailProjection(
 			result.Processed++
 			if _, err := s.SyncMemberEmailProjection(ctx, identity.ID, nil, nil); err != nil {
 				result.Failed++
-				var upstreamError *auth.KratosHTTPError
-				privateBody := ""
-				if errors.As(err, &upstreamError) {
-					privateBody = upstreamError.Body
-				}
-				slog.ErrorContext(ctx, "failed to backfill Member email projection", "identity_id", identity.ID, "failure_cause", failurecause.Message(err, privateBody))
+				slog.ErrorContext(ctx, "failed to backfill Member email projection", "identity_id", identity.ID, "failure_cause", failurecause.Message(err))
 				continue
 			}
 			result.Synced++

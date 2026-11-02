@@ -7,17 +7,21 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
-func multipartSessionChunkSize(session model.UploadSession) int64 {
-	if session.ChunkSize > 0 {
-		return int64(session.ChunkSize)
+func multipartSessionChunkSize(session domain.UploadSession) int64 {
+	return effectiveMultipartChunkSize(session.ChunkSize)
+}
+func effectiveMultipartChunkSize(size int32) int64 {
+	if size > 0 {
+		return int64(size)
 	}
 	return int64(chunkSize)
 }
@@ -34,44 +38,38 @@ func expectedMultipartPartSize(fileSize int64, chunkSize int64, partNumber int32
 	return end - start
 }
 
-func validateMultipartPartContentLength(session model.UploadSession, partNumber int32, contentLength int64) error {
+func validateMultipartPartContentLength(session domain.UploadSession, partNumber int32, contentLength int64) error {
 	if contentLength <= 0 {
-		return errs.InvalidArgument("content_length", "upload part content length is required")
+		return domainerr.InvalidField("content_length", "upload part content length is required")
 	}
 
 	expectedSize := expectedMultipartPartSize(session.FileSize, multipartSessionChunkSize(session), partNumber)
 	if expectedSize <= 0 {
-		return errs.InvalidArgument("part_number", "upload part is outside the expected multipart range")
+		return domainerr.InvalidField("part_number", "upload part is outside the expected multipart range")
 	}
 	if contentLength != expectedSize {
-		return errs.InvalidArgument(
-			"content_length",
-			fmt.Sprintf("upload part size %d does not match expected %d", contentLength, expectedSize),
-		)
+		return domainerr.InvalidField("content_length", fmt.Sprintf("upload part size %d does not match expected %d", contentLength, expectedSize))
 	}
 
 	return nil
 }
 
-func validateMultipartCompletionParts(session model.UploadSession, parts []model.UploadPart) error {
-	if session.TotalParts <= 0 || int32(len(parts)) != session.TotalParts {
-		return errs.FailedPrecondition("uploaded part count does not match expected multipart count")
+func validateMultipartCompletionParts(fileSize, partSize int64, totalParts int32, parts []domain.UploadPart) error {
+	if totalParts <= 0 || int32(len(parts)) != totalParts {
+		return domainerr.Precondition("uploaded part count does not match expected multipart count")
 	}
 
-	chunkSize := multipartSessionChunkSize(session)
 	for i, part := range parts {
 		expectedPartNumber := int32(i + 1)
 		if part.PartNumber != expectedPartNumber {
-			return errs.FailedPrecondition("uploaded part numbers do not form the required multipart sequence")
+			return domainerr.Precondition("uploaded part numbers do not form the required multipart sequence")
 		}
 		if strings.TrimSpace(part.ETag) == "" {
-			return errs.FailedPrecondition("uploaded part is missing its object-store identity")
+			return domainerr.Precondition("uploaded part is missing its object-store identity")
 		}
-		expectedSize := expectedMultipartPartSize(session.FileSize, chunkSize, part.PartNumber)
+		expectedSize := expectedMultipartPartSize(fileSize, partSize, part.PartNumber)
 		if expectedSize <= 0 || part.Size != expectedSize {
-			return errs.FailedPrecondition(
-				fmt.Sprintf("uploaded part %d size does not match expected multipart size", part.PartNumber),
-			)
+			return domainerr.Precondition(fmt.Sprintf("uploaded part %d size does not match expected multipart size", part.PartNumber))
 		}
 	}
 
@@ -104,7 +102,7 @@ func readMultipartSniffPrefix(reader io.Reader, contentLength int64) ([]byte, io
 
 func readMultipartUploadBody(reader io.Reader, contentLength int64) ([]byte, error) {
 	if contentLength < 0 {
-		return nil, errs.InvalidArgument("content_length", "upload part content length is required")
+		return nil, domainerr.InvalidField("content_length", "upload part content length is required")
 	}
 
 	body, err := io.ReadAll(reader)
@@ -119,7 +117,7 @@ func readMultipartUploadBody(reader io.Reader, contentLength int64) ([]byte, err
 	return body, nil
 }
 
-func toCompletedParts(parts []model.UploadPart) []types.CompletedPart {
+func toCompletedParts(parts []domain.UploadPart) []types.CompletedPart {
 	completed := make([]types.CompletedPart, len(parts))
 	for i, part := range parts {
 		completed[i] = types.CompletedPart{
@@ -130,18 +128,18 @@ func toCompletedParts(parts []model.UploadPart) []types.CompletedPart {
 	return completed
 }
 
-func uploadPartInfos(parts []model.UploadPart) []*managev1.UploadPartInfo {
-	partInfos := make([]*managev1.UploadPartInfo, 0, len(parts))
+func uploadPartInfos(parts []domain.UploadPart) []*UploadedPart {
+	partInfos := make([]*UploadedPart, 0, len(parts))
 	for _, part := range parts {
-		partInfos = append(partInfos, &managev1.UploadPartInfo{
+		partInfos = append(partInfos, &UploadedPart{
 			PartNumber: part.PartNumber,
-			Etag:       part.ETag,
+			ETag:       part.ETag,
 		})
 	}
 	return partInfos
 }
 
-func uploadPartModelNumbers(parts []model.UploadPart) []int32 {
+func uploadPartModelNumbers(parts []domain.UploadPart) []int32 {
 	partNumbers := make([]int32, 0, len(parts))
 	for _, part := range parts {
 		partNumbers = append(partNumbers, part.PartNumber)
@@ -178,7 +176,7 @@ func formatAllowedExtensions(allowed []string) string {
 			continue
 		}
 
-		ext := strings.ToUpper(model.GetExtensionFromMime(normalized))
+		ext := strings.ToUpper(mediamime.GetExtensionFromMime(normalized))
 		if ext == "BIN" {
 			parts := strings.Split(normalized, "/")
 			if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
@@ -306,14 +304,14 @@ func validateMultipartCompletionMime(
 	requestAllowed, canonicalReq := isMimeAllowed(requestedMime, allowedSet)
 	detectedAllowed, canonicalDetected := isMimeAllowed(detectedMime, allowedSet)
 	if !requestAllowed || !detectedAllowed {
-		return "", errs.InvalidArgument("mime_type", mimeMismatchMessage(requestedMime, detectedMime, allowed))
+		return "", domainerr.InvalidField("mime_type", mimeMismatchMessage(requestedMime, detectedMime, allowed))
 	}
 
 	if canonicalReq == canonicalDetected {
 		return canonicalDetected, nil
 	}
 
-	return "", errs.InvalidArgument("mime_type", mimeMismatchMessage(requestedMime, canonicalDetected, allowed))
+	return "", domainerr.InvalidField("mime_type", mimeMismatchMessage(requestedMime, canonicalDetected, allowed))
 }
 
 func detectCanonicalMime(body []byte, allowedSet map[string]struct{}) string {

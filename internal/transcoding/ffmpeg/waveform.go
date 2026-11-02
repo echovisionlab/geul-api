@@ -59,7 +59,7 @@ func (e *Executor) generateWaveformPeaks(
 		return nil, err
 	}
 
-	slog.Debug("Extracted waveform peaks",
+	slog.DebugContext(ctx, "Extracted waveform peaks",
 		"input", inputPath,
 		"channels", channels,
 		"points", opts.NumSamples,

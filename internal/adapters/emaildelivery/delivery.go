@@ -7,13 +7,17 @@ import (
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/member"
@@ -41,7 +45,7 @@ func (s *CampaignDeliveryStore) NeedsDelivery(ctx context.Context, recipientID s
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("campaign delivery database is required")
 	}
-	return campaign.CampaignDeliveryRecipientNeedsDelivery(ctx, s.db, recipientID)
+	return campaign.CampaignDeliveryRecipientNeedsDelivery(ctx, campaignpostgres.Bind(s.db, campaignpostgres.Ports{}, nil), recipientID)
 }
 
 func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID string) (string, bool, error) {
@@ -49,7 +53,12 @@ func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID s
 		return "", false, fmt.Errorf("campaign delivery database is required")
 	}
 	claimID := uuid.NewString()
-	claimed, err := campaign.ClaimCampaignDeliveryRecipient(ctx, s.db, recipientID, claimID)
+	claimed := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		claimed, err = campaign.ClaimCampaignDeliveryRecipient(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil), recipientID, claimID)
+		return err
+	})
 	if err != nil || !claimed {
 		return "", false, err
 	}
@@ -60,7 +69,9 @@ func (s *CampaignDeliveryStore) ReleaseDeliveryClaim(ctx context.Context, recipi
 	if s == nil || s.db == nil {
 		return fmt.Errorf("campaign delivery database is required")
 	}
-	return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, s.db, recipientID, claimID)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil), recipientID, claimID)
+	})
 }
 
 func (s *CampaignDeliveryStore) MarkClaimedResult(
@@ -74,9 +85,11 @@ func (s *CampaignDeliveryStore) MarkClaimedResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, claimID, status, providerMessageID, errorType, s.metrics,
-	)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, claimID, status, providerMessageID, errorType, s.metrics,
+		)
+	})
 }
 
 func (s *CampaignDeliveryStore) MarkResult(
@@ -89,35 +102,29 @@ func (s *CampaignDeliveryStore) MarkResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, status, providerMessageID, errorType, s.metrics,
-	)
+	if strings.TrimSpace(recipientID) == "" {
+		// A direct send has no Campaign recipient to record.
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, status, providerMessageID, errorType, s.metrics,
+		)
+	})
 }
 
 func (s *SuppressionStore) Find(ctx context.Context, recipient string) (*emaildelivery.Suppression, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	row, err := emaildelivery.GetActiveEmailSuppression(ctx, s.db, recipient)
-	if err != nil || row == nil {
-		return nil, err
-	}
-	return &emaildelivery.Suppression{Reason: row.Reason}, nil
+	return emaildelivery.FindActiveSuppression(ctx, emaildeliverypostgres.NewStore(s.db), recipient)
 }
 
 func (s *SuppressionStore) Lookup(ctx context.Context, recipients []string) (map[string]emaildelivery.Suppression, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	rows, err := emaildelivery.LookupActiveEmailSuppressionsByEmail(ctx, s.db, recipients)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]emaildelivery.Suppression, len(rows))
-	for address, row := range rows {
-		result[address] = emaildelivery.Suppression{Reason: row.Reason}
-	}
-	return result, nil
+	return emaildelivery.LookupActiveSuppressions(ctx, emaildeliverypostgres.NewStore(s.db), recipients)
 }
 
 type BulkCampaignStore struct {
@@ -147,7 +154,9 @@ func (s *BulkCampaignStore) Materialize(ctx context.Context, runID string) error
 	if s == nil || s.db == nil || s.spiceDB == nil {
 		return fmt.Errorf("bulk campaign materialization dependencies are required")
 	}
-	return campaign.MaterializeCampaignDeliveryRun(ctx, s.db, s.spiceDB, runID)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MaterializeCampaignDeliveryRun(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{SpiceDB: s.spiceDB}, s.audit), runID)
+	})
 }
 
 func (s *BulkCampaignStore) ListPending(
@@ -159,13 +168,16 @@ func (s *BulkCampaignStore) ListPending(
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("bulk campaign delivery database is required")
 	}
-	jobs, err := campaign.ListPendingCampaignDeliveryRecipients(ctx, s.db, runID, afterID, batchSize)
+	jobs, err := campaign.ListPendingCampaignDeliveryRecipients(ctx, campaignpostgres.Bind(s.db, campaignpostgres.Ports{}, nil), runID, afterID, batchSize)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]emaildelivery.BulkDelivery, 0, len(jobs))
 	for _, job := range jobs {
-		command, _ := s.BuildCommand(job)
+		command, _, err := s.buildCommand(job)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to decode campaign delivery template data", "failure_cause", failurecause.Message(err), "run_id", job.Run.ID, "message_id", job.Recipient.ID, "template_type", campaign.EmailDeliveryRunTemplateType(job.Run))
+		}
 		result = append(result, emaildelivery.BulkDelivery{
 			RecipientID: job.Recipient.ID, RecipientEmail: job.Recipient.RecipientEmail,
 			TemplateType: campaign.EmailDeliveryRunTemplateType(job.Run), Command: command,
@@ -183,25 +195,35 @@ func (s *BulkCampaignStore) MarkResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("bulk campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, status, "", errorType, s.metrics,
-	)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, status, "", errorType, s.metrics,
+		)
+	})
 }
 
 func (s *BulkCampaignStore) BuildCommand(
 	delivery campaign.CampaignDeliveryRecipientJob,
 ) (*managev1.SendEmailEvent, bool) {
+	command, ok, _ := s.buildCommand(delivery)
+	return command, ok
+}
+
+// buildCommand also returns why the run's template data could not be decoded;
+// the recipient is then blocked without a command.
+func (s *BulkCampaignStore) buildCommand(
+	delivery campaign.CampaignDeliveryRecipientJob,
+) (*managev1.SendEmailEvent, bool, error) {
 	recipient := delivery.Recipient
 	run := delivery.Run
 	templateType := campaign.EmailDeliveryRunTemplateType(run)
 	referenceID := campaign.EmailDeliveryRunReferenceID(run)
 	templateData, err := campaign.CampaignDeliveryRunTemplateData(run)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to decode campaign delivery template data", "failure_cause", failurecause.Message(err), "run_id", run.ID, "message_id", recipient.ID, "template_type", templateType)
-		return nil, false
+		return nil, false, err
 	}
 	if _, persisted := templateData["recipient_email"]; persisted {
-		return nil, false
+		return nil, false, nil
 	}
 	templateData["recipient_email"] = recipient.RecipientEmail
 
@@ -210,7 +232,7 @@ func (s *BulkCampaignStore) BuildCommand(
 	case campaign.BulkEmailContextNewsletterSubscription, campaign.BulkEmailContextAccountCurrent:
 		if recipient.IdentityID == nil || strings.TrimSpace(*recipient.IdentityID) == "" ||
 			recipient.MemberID == nil || strings.TrimSpace(*recipient.MemberID) == "" {
-			return nil, false
+			return nil, false, nil
 		}
 		if strings.TrimSpace(s.tokenSigningSecret) != "" {
 			token := crypto.GenerateSignedToken(
@@ -222,7 +244,7 @@ func (s *BulkCampaignStore) BuildCommand(
 			)
 		}
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 
 	deliveryRecipientID := recipient.ID
@@ -240,7 +262,7 @@ func (s *BulkCampaignStore) BuildCommand(
 	case campaign.BulkEmailContextAccountCurrent:
 		command.RecipientContext = email.AccountSelectedPrimaryEmailContext(*recipient.IdentityID)
 	}
-	return command, command.GetRecipientContext() != nil
+	return command, command.GetRecipientContext() != nil, nil
 }
 
 type CampaignEmailRenderer interface {
@@ -276,17 +298,18 @@ func (r *Renderer) Render(
 			targetLocale = *normalized
 		}
 	}
+	store := emaildeliverypostgres.NewStore(r.db)
 	if targetLocale == "" {
-		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, r.db, job.GetRecipient())
+		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, store, job.GetRecipient())
 	}
 	if targetLocale == "" {
-		targetLocale = emaildelivery.LookupEmailIdentityLocale(ctx, r.db, emaildelivery.EmailRecipientContextIdentityID(job))
+		targetLocale = emaildelivery.LookupEmailIdentityLocale(ctx, store, emaildelivery.EmailRecipientContextIdentityID(job))
 	}
 	if err := emailauthoring.ValidateAutomaticEmailTemplateData(job.GetTemplateType(), job.GetTemplateData()); err != nil {
 		return nil, err
 	}
 	templateData := emaildelivery.BuildEmailRenderData(
-		ctx, r.db, r.cdnURL, r.siteOrigin, targetLocale, job.GetTemplateData(),
+		ctx, store, r.cdnURL, r.siteOrigin, targetLocale, job.GetTemplateData(),
 	)
 	return r.renderTemplate(ctx, job, targetLocale, templateData)
 }
@@ -317,7 +340,7 @@ func (r *Renderer) renderTemplate(
 			}
 			return r.campaignRenderer.RenderCampaignEmail(ctx, r.db, campaignID, targetLocale, templateData)
 		}
-		return email.RenderTemplateForLocale(ctx, r.db, job.GetTemplateType(), targetLocale, templateData)
+		return email.RenderTemplateForLocale(ctx, emailauthoringpostgres.NewRenderingStore(r.db), job.GetTemplateType(), targetLocale, templateData)
 	}
 
 	var recipient model.CampaignDeliveryRecipient
@@ -330,7 +353,7 @@ func (r *Renderer) renderTemplate(
 		First(&run, "id = ?", recipient.RunID).Error; err != nil {
 		return nil, err
 	}
-	if err := campaign.ValidateEmailDeliveryRenderDefinition(run); err != nil {
+	if err := campaign.ValidateEmailDeliveryRenderDefinition(campaignpostgres.DeliveryRunFromRow(run)); err != nil {
 		return nil, fmt.Errorf("invalid durable email delivery definition: %w", err)
 	}
 	rendered, err := email.RenderCampaignSnapshotForLocale(run.RenderSnapshot, targetLocale, templateData)

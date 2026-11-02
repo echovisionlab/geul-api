@@ -7,6 +7,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	authenticationdomain "github.com/echovisionlab/geul-api/internal/authentication"
 	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"gorm.io/gorm"
 )
 
@@ -58,21 +59,21 @@ func (adapter *LoginMemberProvisioner) ValidateExistingLink(
 }
 
 type RegistrationReuseHoldChecker struct {
-	db *gorm.DB
+	members member.EmailReuseReader
 }
 
 func NewRegistrationReuseHoldChecker(db *gorm.DB) *RegistrationReuseHoldChecker {
 	if db == nil {
 		panic("registration reuse-hold database is required")
 	}
-	return &RegistrationReuseHoldChecker{db: db}
+	return &RegistrationReuseHoldChecker{members: memberpostgres.NewStore(db)}
 }
 
 func (adapter *RegistrationReuseHoldChecker) RegistrationEmailReuseBlocked(
 	ctx context.Context,
 	email string,
 ) (bool, error) {
-	return member.RegistrationEmailReuseBlocked(ctx, adapter.db, email)
+	return member.RegistrationEmailReuseBlocked(ctx, adapter.members, email)
 }
 
 var (

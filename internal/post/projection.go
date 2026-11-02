@@ -2,193 +2,83 @@ package post
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/google/uuid"
 )
 
-// PostService implements the PostService Connect handler
-func (s *PostService) ListMyPosts(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMyPostsRequest],
-) (_ *connect.Response[managev1.ListMyPostsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListMyPosts", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
-	var posts []model.Post
-	var total int64
-
-	query, err := s.authorizedPostListQuery(ctx)
+// ListMyPosts returns the Posts the caller may edit.
+func (s *Service) ListMyPosts(ctx context.Context, query ListPostsQuery) (PostPage, error) {
+	scope, err := s.authorizedPostScope(ctx)
 	if err != nil {
-		return nil, err
+		return PostPage{}, err
 	}
-
-	// 1. Handle join filters directly (category_id, tag_id require subqueries)
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		switch f.GetField() {
-		case "category_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id IN ?)", f.GetValues())
-			}
-		case "tag_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id IN ?)", f.GetValues())
-			}
-		default:
-			remainingFilters = append(remainingFilters, f)
+	page, err := s.listPostPage(ctx, query, ListQuery{Scope: &scope, Series: true})
+	if err != nil {
+		return PostPage{}, err
+	}
+	if page.contents, err = s.hydratePostContentProjections(ctx, page.posts); err != nil {
+		return PostPage{}, err
+	}
+	if err := s.loadPostListProjections(ctx, &page); err != nil {
+		return PostPage{}, err
+	}
+	views := make([]View, len(page.posts))
+	for i := range page.posts {
+		if views[i], err = s.projectListedPost(page, i); err != nil {
+			return PostPage{}, err
 		}
 	}
-
-	// 2. Apply remaining filters using FilterConfig (status, series_id, published_at)
-	query, err = PostAdminFilterConfig.ApplyFilters(query, remainingFilters)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = postSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Load posts with relations
-	if err := query.
-		Preload("Categories").
-		Preload("Tags").
-		Preload("Series").
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Find(&posts).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.overlayPostSourceLocaleDocuments(ctx, posts); err != nil {
-		return nil, err
-	}
-	if err := s.hydratePostContentProjections(ctx, posts); err != nil {
-		return nil, err
-	}
-	readyOgAssets, err := s.loadReadyPostOgAssets(ctx, posts)
-	if err != nil {
-		return nil, err
-	}
-	authorMembers, err := s.loadPostAuthorMembers(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-
-	featuredDeliveries, err := s.loadPostPublicFeaturedImageDeliveries(ctx, posts)
-	if err != nil {
-		return nil, err
-	}
-	authorities, err := s.loadCurrentPostAuthorities(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-
-	protoPosts := make([]*managev1.Post, len(posts))
-	for i := range posts {
-		protoPosts[i], err = s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
-			readyOgAssets,
-			posts[i].SourceLocaleOgAssetID,
-			posts[i].OgAssetID,
-		), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID])
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListMyPostsResponse{
-		Posts: protoPosts,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return PostPage{Posts: views, Pagination: page.pagination()}, nil
 }
 
-// Helper methods
-
-func (s *PostService) overlayPostSourceLocaleDocument(
-	ctx context.Context,
-	post *model.Post,
-) error {
-	state, err := loadRequiredPostSourceLocaleDocumentState(ctx, s.db, post.ID)
+func (s *Service) overlayPostSourceLocaleDocument(ctx context.Context, stored *Post) error {
+	states, err := readStore(ctx, s, func(store Store) (map[string]SourceLocaleState, error) {
+		return store.SourceLocaleStates(ctx, []string{stored.ID})
+	})
 	if err != nil {
 		return err
 	}
-	overlayPostSourceLocaleDocument(post, state)
+	state, ok := states[stored.ID]
+	if !ok {
+		return domainerr.ResourceNotFound("post_translation", stored.ID)
+	}
+	OverlaySourceLocale(stored, state)
 	return nil
 }
 
-func (s *PostService) overlayPostSourceLocaleDocuments(
-	ctx context.Context,
-	posts []model.Post,
-) error {
-	sourceStates, err := loadPostSourceLocaleDocumentStates(ctx, s.db, collectManagePostIDs(posts))
+func (s *Service) overlayPostSourceLocaleDocuments(ctx context.Context, posts []Post) error {
+	sourceStates, err := readStore(ctx, s, func(store Store) (map[string]SourceLocaleState, error) {
+		return store.SourceLocaleStates(ctx, collectManagePostIDs(posts))
+	})
 	if err != nil {
 		return err
 	}
 	for i := range posts {
-		state := sourceStates[posts[i].ID]
-		if state == nil {
-			return errs.NotFound("post_translation", posts[i].ID)
+		state, ok := sourceStates[posts[i].ID]
+		if !ok {
+			return domainerr.ResourceNotFound("post_translation", posts[i].ID)
 		}
-		overlayPostSourceLocaleDocument(&posts[i], state)
+		OverlaySourceLocale(&posts[i], state)
 	}
 	return nil
 }
 
-func (s *PostService) loadReadyPostOgAssets(
-	ctx context.Context,
-	posts []model.Post,
-) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyPostOgAssets(ctx context.Context, posts []Post) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(posts)*2)
 	for i := range posts {
 		candidates = append(
@@ -197,80 +87,66 @@ func (s *PostService) loadReadyPostOgAssets(
 			posts[i].OgAssetID,
 		)
 	}
-	return loadReadyManageOgAssetRefs(ctx, s.db, s.cdnDomain, candidates...)
+	return s.loadReadyManageOgAssetRefs(ctx, candidates...)
 }
 
-func (s *PostService) postResponseWithReadyOg(
-	ctx context.Context,
-	post *model.Post,
-) (*connect.Response[managev1.Post], error) {
-	if err := s.hydratePostContentProjection(ctx, post); err != nil {
-		return nil, err
-	}
-	ogAsset, err := readyManageOgAssetRef(
-		ctx,
-		s.db,
-		s.cdnDomain,
-		post.SourceLocaleOgAssetID,
-		post.OgAssetID,
-	)
+// postView is the editor read of stored: its content, ready OG image,
+// authors, featured image and the actions the caller may take.
+func (s *Service) postView(ctx context.Context, stored Post) (View, error) {
+	content, err := s.hydratePostContentProjection(ctx, &stored)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	authors, err := s.loadPostAuthorMembers(ctx, []string{post.ID})
+	ogAsset, err := s.readyManageOgAssetRef(ctx, stored.SourceLocaleOgAssetID, stored.OgAssetID)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	featuredDelivery, err := s.resolveAuthorizedPostFeaturedImage(ctx, post)
+	authors, err := s.loadPostAuthorMembers(ctx, []string{stored.ID})
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{post.ID})
+	featuredDelivery, err := s.resolveAuthorizedPostFeaturedImage(ctx, &stored)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	protoPost, err := s.toProtoPostWithProjection(
-		post,
-		ogAsset,
-		authors[post.ID],
-		featuredDelivery,
-		authorities[post.ID],
-	)
+	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{stored.ID})
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	return connect.NewResponse(protoPost), nil
+	return postViewWithProjection(stored, content, ogAsset, authors[stored.ID], featuredDelivery, authorities[stored.ID])
 }
 
-func (s *PostService) hydratePostContentProjection(ctx context.Context, post *model.Post) error {
-	if post == nil {
-		return errs.InternalMsg("Post is required")
+// postContent is the content projection a manage read attaches to a Post.
+type postContent struct {
+	document   *contentv1.RichTextDocument
+	blockMedia []*fileref.BlockMediaItem
+}
+
+// hydratePostContentProjection reads the Post's source-locale document and
+// its block media, and records the document revision on stored.
+func (s *Service) hydratePostContentProjection(ctx context.Context, stored *Post) (postContent, error) {
+	if strings.TrimSpace(stored.SourceLocale) == "" {
+		return postContent{}, domainerr.Precondition("Post source locale is not initialized")
 	}
-	if s.contentBlocks == nil {
-		return errs.InternalMsg("Post content Block store is not configured")
-	}
-	if strings.TrimSpace(post.SourceLocale) == "" {
-		return errs.FailedPrecondition("Post source locale is not initialized")
-	}
-	documentID, err := loadPostContentDocumentID(ctx, s.db, post.ID)
+	documentID, err := readStore(ctx, s, func(store Store) (uuid.UUID, error) {
+		return loadPostContentDocumentID(ctx, store, stored.ID)
+	})
 	if err != nil {
-		return err
+		return postContent{}, err
 	}
-	if s.mediaHydrator == nil {
-		return errs.InternalMsg("Post Block media hydrator is not configured")
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := lockPostContentDocumentRoot(ctx, tx, post.ID, documentID, true)
+	var content postContent
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := lockPostContentDocumentRoot(ctx, store, stored.ID, documentID, true)
 		if err != nil {
 			return err
 		}
-		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, root.Status); err != nil {
+		if _, err := requirePostViewForStatus(ctx, s.spiceDB, stored.ID, root.Status); err != nil {
 			return err
 		}
-		if root.SourceLocale != post.SourceLocale {
-			return errs.FailedPrecondition("Post source locale changed; reload before reading")
+		if root.SourceLocale != stored.SourceLocale {
+			return domainerr.Precondition("Post source locale changed; reload before reading")
 		}
-		snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, post.SourceLocale)
+		snapshot, err := store.LockedContentSnapshot(ctx, documentID, stored.SourceLocale)
 		if err != nil {
 			return normalizePostContentBlockError(err)
 		}
@@ -278,60 +154,55 @@ func (s *PostService) hydratePostContentProjection(ctx context.Context, post *mo
 		if err != nil {
 			return normalizePostContentBlockError(err)
 		}
-		mediaItems, err := loadPostBlockMedia(ctx, tx, post.ID, documentID, auth.GetUser(ctx), s.mediaLoader, s.mediaHydrator)
+		mediaItems, err := store.BlockMedia(ctx, stored.ID, documentID, auth.GetUser(ctx))
 		if err != nil {
 			return err
 		}
-		post.ContentDocument = document
-		post.ContentRevision = snapshot.Document.Revision.String()
-		post.BlockMedia = mediaItems
+		stored.ContentRevision = snapshot.Document.Revision.String()
+		content = postContent{document: document, blockMedia: mediaItems}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
+	return content, err
 }
 
-func (s *PostService) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {
+func (s *Service) hydratePostContentProjections(ctx context.Context, posts []Post) ([]postContent, error) {
+	contents := make([]postContent, len(posts))
 	for i := range posts {
-		if err := s.hydratePostContentProjection(ctx, &posts[i]); err != nil {
-			return err
+		var err error
+		if contents[i], err = s.hydratePostContentProjection(ctx, &posts[i]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return contents, nil
 }
 
-// LoadLocalizedPostContentProjectionForPublic materializes a selected locale
-// only after the public caller has completed Post view authorization.
-func LoadLocalizedPostContentProjectionForPublic(
+// LoadLocalizedContent materializes a selected locale of a Post's content
+// document, in store's snapshot, only after the public caller has completed
+// Post view authorization.
+func LoadLocalizedContent(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
+	store ContentReads,
 	postID string,
 	locale string,
 ) (*contentv1.LocalizedRichTextDocument, string, error) {
-	if db == nil || store == nil {
-		return nil, "", errs.InternalMsg("Post content projection dependencies are required")
-	}
-	var sourceState struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("post").Select("source_locale").Where("id = ?::uuid", postID).
-		Take(&sourceState).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, "", errs.NotFound("post", postID)
+	sourceLocale, err := store.SourceLocale(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return nil, "", domainerr.ResourceNotFound("post", postID)
 		}
-		return nil, "", errs.Internal(err)
+		return nil, "", err
 	}
-	if strings.TrimSpace(sourceState.SourceLocale) == "" {
-		return nil, "", errs.FailedPrecondition("Post source locale is not initialized")
+	if strings.TrimSpace(sourceLocale) == "" {
+		return nil, "", domainerr.Precondition("Post source locale is not initialized")
 	}
 	if strings.TrimSpace(locale) == "" {
-		locale = sourceState.SourceLocale
+		locale = sourceLocale
 	}
-	documentID, err := loadPostContentDocumentID(ctx, db, postID)
+	documentID, err := loadPostContentDocumentID(ctx, store, postID)
 	if err != nil {
 		return nil, "", err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, sourceState.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return nil, "", normalizePostContentBlockError(err)
 	}
@@ -342,58 +213,50 @@ func LoadLocalizedPostContentProjectionForPublic(
 	return document, snapshot.Document.Revision.String(), nil
 }
 
-func (s *PostService) toProtoPostWithProjection(
-	p *model.Post,
-	ogAsset *commonv1.AssetRef,
-	authors []*commonv1.MemberSummary,
-	featuredImage *commonv1.MediaDelivery,
+func postViewWithProjection(
+	stored Post,
+	content postContent,
+	ogAsset *mediaasset.Reference,
+	authors []*memberref.Summary,
+	featuredImage *fileref.Delivery,
 	authority PostAuthority,
-) (*managev1.Post, error) {
-	post, err := s.toProtoPost(p, ogAsset)
-	if err != nil {
-		return nil, err
+) (View, error) {
+	if err := stored.DocumentLayout.validateStored(); err != nil {
+		return View{}, err
 	}
-	post.AuthorMembers = authors
-	post.FeaturedImageDelivery = featuredImage
-	post.AllowedActions = postAllowedActions(p.ID, p.Status, authority)
-	return post, nil
+	return View{
+		Post: stored, Document: content.document, BlockMedia: content.blockMedia, OgAsset: ogAsset,
+		Authors: authors, FeaturedImage: featuredImage,
+		Actions: postAllowedActions(stored.ID, stored.Status, authority),
+	}, nil
 }
 
-func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
-	result := make(map[string][]*commonv1.MemberSummary, len(postIDs))
+func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*memberref.Summary, error) {
+	result := make(map[string][]*memberref.Summary, len(postIDs))
 	if len(postIDs) == 0 {
 		return result, nil
 	}
-	type row struct {
-		PostID   string `gorm:"column:post_id"`
-		MemberID string `gorm:"column:member_id"`
+	links, err := readStore(ctx, s, func(store Store) ([]AuthorLink, error) { return store.AuthorLinks(ctx, postIDs) })
+	if err != nil {
+		return nil, fmt.Errorf("load post authors: %w", err)
 	}
-	var rows []row
-	if err := s.db.WithContext(ctx).
-		Table("post_author").
-		Select("post_id, member_id").
-		Where("post_id IN ?", postIDs).
-		Order("post_id ASC, created_at ASC, member_id ASC").
-		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load post authors: %w", err))
-	}
-	memberIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		memberIDs = append(memberIDs, row.MemberID)
+	memberIDs := make([]string, 0, len(links))
+	for _, link := range links {
+		memberIDs = append(memberIDs, link.MemberID)
 	}
 	summaries, err := s.members.LoadMemberSummaries(ctx, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	for _, row := range rows {
-		if summary := summaries[row.MemberID]; summary != nil {
-			result[row.PostID] = append(result[row.PostID], summary)
+	for _, link := range links {
+		if summary := summaries[link.MemberID]; summary != nil {
+			result[link.PostID] = append(result[link.PostID], summary)
 		}
 	}
 	return result, nil
 }
 
-func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []string) (map[string]PostAuthority, error) {
+func (s *Service) loadCurrentPostAuthorities(ctx context.Context, postIDs []string) (map[string]PostAuthority, error) {
 	result := make(map[string]PostAuthority, len(postIDs))
 	principal := auth.GetUser(ctx)
 	if principal == nil || len(postIDs) == 0 {
@@ -401,13 +264,11 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	wanted := make(map[string]struct{}, len(postIDs))
 	for _, id := range postIDs {
@@ -432,8 +293,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	for _, item := range lookups {
 		ids, err := s.spiceDB.LookupResources(ctx, item.lookup, actor)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		for _, id := range ids {
 			if _, ok := wanted[id]; !ok {
@@ -442,7 +302,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 			authority := result[id]
 			can, err := item.action(id)
 			if err != nil {
-				return nil, errs.Internal(err)
+				return nil, err
 			}
 			authority.add(can)
 			result[id] = authority
@@ -453,7 +313,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 
 func lookupPostResources(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB Authorizer,
 	actor policyv1.Actor,
 	lookups ...policyv1.ResourceLookup,
 ) ([]string, error) {
@@ -461,8 +321,7 @@ func lookupPostResources(
 	for _, lookup := range lookups {
 		ids, err := spiceDB.LookupResources(ctx, lookup, actor)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.lookupPostResources", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		for _, id := range ids {
 			seen[id] = struct{}{}
@@ -475,156 +334,28 @@ func lookupPostResources(
 	return result, nil
 }
 
-func (s *PostService) loadPostCommentCounts(ctx context.Context, postIDs []string) (map[string]int32, error) {
-	result := make(map[string]int32, len(postIDs))
+func (s *Service) loadPostCommentCounts(ctx context.Context, postIDs []string) (map[string]int32, error) {
 	if len(postIDs) == 0 {
-		return result, nil
+		return make(map[string]int32, len(postIDs)), nil
 	}
-	type row struct {
-		PostID string `gorm:"column:post_id"`
-		Count  int64  `gorm:"column:comment_count"`
-	}
-	var rows []row
-	if err := s.db.WithContext(ctx).Table("comment").
-		Select("post_id, COUNT(*) AS comment_count").
-		Where("post_id IN ?", postIDs).
-		Group("post_id").
-		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	for _, row := range rows {
-		result[row.PostID] = int32(row.Count)
-	}
-	return result, nil
+	return readStore(ctx, s, func(store Store) (map[string]int32, error) { return store.CommentCounts(ctx, postIDs) })
 }
 
-// postSortConfig defines allowed sort fields for posts
-var postSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"created_at":   "created_at",
-		"updated_at":   "updated_at",
-		"published_at": "published_at",
-		"title":        PostSourceTitleSQL,
-		"status":       "status",
-	},
-	DefaultSort: "published_at DESC NULLS LAST, created_at DESC",
+func (s *Service) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+	return readStore(ctx, s, func(store Store) (*string, error) { return normalizeMapPlaceIDWithStore(ctx, store, raw) })
 }
 
-// toProtoPost converts a model.Post to protobuf Post (Domain Object -> DTO)
-// Note: Author is not populated here - use toProtoPostWithAuthor for that
-func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
-	documentLayout, err := p.DocumentLayout.Proto()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	post := &managev1.Post{
-		Id:                    p.ID,
-		Title:                 p.Title,
-		SourceLocale:          p.SourceLocale,
-		Document:              p.ContentDocument,
-		Revision:              p.ContentRevision,
-		ConfigurationRevision: p.ConfigurationRevision,
-		BlockMedia:            p.BlockMedia,
-		Status:                managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
-		CommentsEnabled:       p.CommentsEnabled,
-		DocumentLayout:        documentLayout,
-		CreatedAt:             timestamppb.New(p.CreatedAt),
-		OgAsset:               ogAsset,
-	}
-
-	if p.Slug != nil {
-		post.Slug = p.Slug
-	}
-	if p.Summary != nil {
-		post.Summary = p.Summary
-	}
-	if p.PublishedAt != nil {
-		post.PublishedAt = timestamppb.New(*p.PublishedAt)
-	}
-	if p.ScheduledAt != nil {
-		post.ScheduledAt = timestamppb.New(*p.ScheduledAt)
-	}
-	if p.ScheduledTimeZone != nil {
-		post.ScheduledTimeZone = p.ScheduledTimeZone
-	}
-	if !p.UpdatedAt.IsZero() {
-		post.UpdatedAt = timestamppb.New(p.UpdatedAt)
-	}
-	if p.SeriesOrder != nil {
-		post.SeriesOrder = p.SeriesOrder
-	}
-	if p.MapPlaceID != nil {
-		post.MapPlaceId = p.MapPlaceID
-	}
-	// Convert categories
-	if len(p.Categories) > 0 {
-		post.Categories = make([]*managev1.Category, len(p.Categories))
-		for i, cat := range p.Categories {
-			post.Categories[i] = &managev1.Category{
-				Id:        cat.ID,
-				Name:      cat.Name,
-				CreatedAt: timestamppb.New(cat.CreatedAt),
-				Slug:      &cat.Slug,
-			}
-			if cat.Description != nil {
-				post.Categories[i].Description = cat.Description
-			}
-		}
-	}
-
-	// Convert tags
-	if len(p.Tags) > 0 {
-		post.Tags = make([]*managev1.Tag, len(p.Tags))
-		for i, tag := range p.Tags {
-			post.Tags[i] = &managev1.Tag{
-				Id:        tag.ID,
-				Name:      tag.Name,
-				CreatedAt: timestamppb.New(tag.CreatedAt),
-				Slug:      &tag.Slug,
-			}
-		}
-	}
-
-	// Convert series
-	if p.Series != nil {
-		post.Series = &managev1.Series{
-			Id:           p.Series.ID,
-			SourceLocale: p.Series.SourceLocale,
-			Title:        p.Series.Title,
-			Status:       p.Series.Status,
-			CreatedAt:    timestamppb.New(p.Series.CreatedAt),
-			Slug:         p.Series.Slug,
-		}
-		if p.Series.Description != nil {
-			post.Series.Description = p.Series.Description
-		}
-	}
-
-	return post, nil
-}
-
-func (s *PostService) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+func normalizeMapPlaceIDWithStore(ctx context.Context, store Store, raw string) (*string, error) {
 	mapPlaceID := strings.TrimSpace(raw)
 	if mapPlaceID == "" {
 		return nil, nil
 	}
-
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Table("map_place").
-		Where("id = ?", mapPlaceID).
-		Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
+	exists, err := store.MapPlaceExists(ctx, mapPlaceID)
+	if err != nil {
+		return nil, err
 	}
-	if count == 0 {
-		return nil, errs.InvalidArgument("map_place_id", "map place does not exist")
+	if !exists {
+		return nil, domainerr.InvalidField("map_place_id", "map place does not exist")
 	}
-
 	return &mapPlaceID, nil
 }
-
-// ============================================================================
-// Version History
-// ============================================================================
-
-// ListPostVersions returns a paginated list of version snapshots for a post.

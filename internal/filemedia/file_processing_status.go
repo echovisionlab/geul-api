@@ -4,25 +4,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/transcode"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
 type fileProcessingSnapshot struct {
-	Status     commonv1.MediaProcessingStatus
+	Status     ProcessingStatus
 	Percentage *int32
-}
-
-type failedTranscodeJobRow struct {
-	FileID string `gorm:"column:file_id"`
-	Count  int64  `gorm:"column:failure_count"`
-}
-
-type failedWaveformJobRow struct {
-	FileID string `gorm:"column:file_id"`
-	Count  int64  `gorm:"column:failure_count"`
 }
 
 func resolveFileProcessingSnapshot(
@@ -43,19 +30,19 @@ func resolveFileProcessingSnapshot(
 		)
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+		Status: ProcessingReady,
 	}
 }
 
 func resolveVideoProcessingSnapshot(hasHLS bool, transcodeFailures int64) fileProcessingSnapshot {
 	if hasHLS {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY}
+		return fileProcessingSnapshot{Status: ProcessingReady}
 	}
 	if transcodeFailures > 0 {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED}
+		return fileProcessingSnapshot{Status: ProcessingFailed}
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING, Percentage: new(int32(0)),
+		Status: ProcessingActive, Percentage: new(int32(0)),
 	}
 }
 
@@ -68,19 +55,19 @@ func resolveAudioProcessingSnapshot(
 ) fileProcessingSnapshot {
 	completed := countCompletedAudioDerivatives(hasHLS, hasWaveform, hasSpectrogram)
 	if completed == 3 {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY}
+		return fileProcessingSnapshot{Status: ProcessingReady}
 	}
 	transcodeFailed := (!hasHLS || !hasSpectrogram) && transcodeFailures > 0
 	waveformFailed := !hasWaveform && waveformFailures > 0
 	if transcodeFailed || waveformFailed {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED}
+		return fileProcessingSnapshot{Status: ProcessingFailed}
 	}
 	percentage := int32(0)
 	if completed > 0 {
 		percentage = (completed*100 + 1) / 3
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING, Percentage: new(percentage),
+		Status: ProcessingActive, Percentage: new(percentage),
 	}
 }
 
@@ -94,10 +81,13 @@ func countCompletedAudioDerivatives(hasHLS, hasWaveform, hasSpectrogram bool) in
 	return completed
 }
 
-func (s *FileService) populateFileProcessingStatus(
+func (s *Service) populateFileProcessingStatus(
 	ctx context.Context,
-	responses map[string]*commonv1.MediaDelivery,
+	responses map[string]*Delivery,
 ) error {
+	return s.populateFileProcessingStatusWithReader(ctx, s.units, responses)
+}
+func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileStoreReader, responses map[string]*Delivery) error {
 	if len(responses) == 0 {
 		return nil
 	}
@@ -109,92 +99,39 @@ func (s *FileService) populateFileProcessingStatus(
 			continue
 		}
 		switch {
-		case strings.HasPrefix(normalizeMimeType(response.GetMimeType()), "audio/"):
+		case strings.HasPrefix(normalizeMimeType(response.MimeType), "audio/"):
 			audioIDs = append(audioIDs, fileID)
-		case strings.HasPrefix(normalizeMimeType(response.GetMimeType()), "video/"):
+		case strings.HasPrefix(normalizeMimeType(response.MimeType), "video/"):
 			videoIDs = append(videoIDs, fileID)
 		}
 	}
 
-	audioTranscodeFailures, err := s.loadFailedTranscodeJobsByFileIDs(ctx, audioIDs, eventpkg.QueueTranscoderAudio)
-	if err != nil {
-		return err
-	}
-	videoTranscodeFailures, err := s.loadFailedTranscodeJobsByFileIDs(ctx, videoIDs, eventpkg.QueueTranscoderVideo)
-	if err != nil {
-		return err
-	}
-	waveformFailures, err := s.loadFailedWaveformJobsByFileIDs(ctx, audioIDs)
-	if err != nil {
-		return err
-	}
+	var failures domain.ProcessingFailureCounts
+	if len(audioIDs)+len(videoIDs) > 0 {
+		if err := reader.Read(ctx, func(store Store) error {
+			var err error
+			failures, err = store.DeliveryProcessingFailures(ctx, audioIDs, videoIDs)
+			return err
+		}); err != nil {
+			return err
+		}
 
+	}
 	for fileID, response := range responses {
 		if response == nil {
 			continue
 		}
 		snapshot := resolveFileProcessingSnapshot(
-			response.GetMimeType(),
-			response.GetPlayback() != nil && response.GetPlayback().GetUrl() != "",
-			response.GetWaveform() != nil && response.GetWaveform().GetUrl() != "",
-			response.GetSpectrogram() != nil && response.GetSpectrogram().GetUrl() != "",
-			audioTranscodeFailures[fileID]+videoTranscodeFailures[fileID],
-			waveformFailures[fileID],
+			response.MimeType,
+			response.Playback != nil && response.Playback.URL != "",
+			response.Waveform != nil && response.Waveform.URL != "",
+			response.Spectrogram != nil && response.Spectrogram.URL != "",
+			failures.Audio[fileID]+failures.Video[fileID],
+			failures.Waveform[fileID],
 		)
 		response.ProcessingStatus = snapshot.Status
 		response.ProcessingPercentage = snapshot.Percentage
 	}
 
 	return nil
-}
-
-func (s *FileService) loadFailedTranscodeJobsByFileIDs(
-	ctx context.Context,
-	fileIDs []string,
-	queueName string,
-) (map[string]int64, error) {
-	result := make(map[string]int64, len(fileIDs))
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-
-	var rows []failedTranscodeJobRow
-	if err := s.db.WithContext(ctx).
-		Model(&model.TranscodeJob{}).
-		Select("file_id, COUNT(*) AS failure_count").
-		Where("file_id IN ? AND queue_name = ? AND status = ?", fileIDs, queueName, "TRANSCODE_JOB_STATUS_FAILED_TERMINAL").
-		Group("file_id").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	for _, row := range rows {
-		result[row.FileID] = row.Count
-	}
-	return result, nil
-}
-
-func (s *FileService) loadFailedWaveformJobsByFileIDs(
-	ctx context.Context,
-	fileIDs []string,
-) (map[string]int64, error) {
-	result := make(map[string]int64, len(fileIDs))
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-
-	var rows []failedWaveformJobRow
-	if err := s.db.WithContext(ctx).
-		Model(&model.WaveformJob{}).
-		Select("file_id, COUNT(*) AS failure_count").
-		Where("file_id IN ? AND status = ? AND cancel_requested = false", fileIDs, transcode.WaveformJobStatusFailed).
-		Group("file_id").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	for _, row := range rows {
-		result[row.FileID] = row.Count
-	}
-	return result, nil
 }

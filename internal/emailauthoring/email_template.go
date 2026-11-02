@@ -2,296 +2,124 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
-	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // templateKeyRegex validates the format of template keys
 var templateKeyRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var previewPlaceholderRegex = regexp.MustCompile(`{{\s*([^\s{}]+)\s*}}`)
 
-// emailTemplateSortConfig defines allowed sort fields for email templates
-var emailTemplateSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"name":       "name",
-		"key":        "key",
-		"created_at": "created_at",
-		"updated_at": "updated_at",
-		"is_active":  "is_active",
-		"is_system":  "is_system",
-	},
-	DefaultSort: "name ASC",
+// ListEmailTemplatesQuery pages through Email Templates for administrators.
+type ListEmailTemplatesQuery struct {
+	// Limit defaults to 20 and is capped at 100.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
 }
 
-type emailTemplateBaseRow struct {
-	ID                string                       `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	ContentDocumentID *string                      `gorm:"column:content_document_id;type:uuid;not null"`
-	SourceLocale      string                       `gorm:"column:source_locale;type:text;not null;default:en"`
-	Key               string                       `gorm:"column:key;type:varchar(100);uniqueIndex;not null"`
-	Name              string                       `gorm:"column:name;type:varchar(255);not null"`
-	Description       *string                      `gorm:"column:description;type:text"`
-	Variables         model.EmailTemplateVariables `gorm:"column:variables;type:jsonb;default:'[]'"`
-	IsSystem          bool                         `gorm:"column:is_system;default:false"`
-	IsActive          bool                         `gorm:"column:is_active"`
-	EventKey          *string                      `gorm:"column:event_key;type:varchar(100);uniqueIndex"`
-	LayoutID          *string                      `gorm:"column:layout_id;type:uuid"`
-	CreatedAt         time.Time                    `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt         *time.Time                   `gorm:"column:updated_at;default:now()"`
+// EmailTemplatePage is one page of Email Templates and the total of every
+// match.
+type EmailTemplatePage struct {
+	Templates []Template
+	Page      queryutil.Pagination
+	Total     int64
 }
 
-func (emailTemplateBaseRow) TableName() string {
-	return "email_template"
-}
-
-func createEmailTemplateBaseRow(ctx context.Context, tx *gorm.DB, template *model.EmailTemplate) error {
-	baseRow := &emailTemplateBaseRow{
-		ContentDocumentID: template.ContentDocumentID,
-		SourceLocale:      template.SourceLocale,
-		Key:               template.Key,
-		Name:              template.Name,
-		Description:       template.Description,
-		Variables:         template.Variables,
-		IsSystem:          template.IsSystem,
-		IsActive:          template.IsActive,
-		EventKey:          template.EventKey,
-		LayoutID:          template.LayoutID,
-		CreatedAt:         template.CreatedAt,
-		UpdatedAt:         template.UpdatedAt,
-	}
-
-	if err := tx.WithContext(ctx).
-		Omit("ID").
-		Clauses(clause.Returning{}).
-		Create(baseRow).Error; err != nil {
-		return err
-	}
-
-	template.ID = baseRow.ID
-	template.CreatedAt = baseRow.CreatedAt
-	template.UpdatedAt = baseRow.UpdatedAt
-	return nil
-}
-
-// EmailTemplateService implements the EmailTemplateService Connect handler
-type EmailTemplateService struct {
-	managev1connect.UnimplementedEmailTemplateServiceHandler
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	publisher     EmailPublisher
-	runtime       EmailTemplateRuntime
-	cdnDomain     string
-	siteOrigin    string
-	auditWriter   domainaudit.Appender
-	contentBlocks *contentblock.Store
-	renderData    EmailRenderDataBuilder
-	references    CampaignDeliveryReferences
-}
-
-type EmailTemplateServiceOption func(*EmailTemplateService)
-
-func WithEmailTemplateContentBlockStore(store *contentblock.Store) EmailTemplateServiceOption {
-	return func(service *EmailTemplateService) {
-		service.contentBlocks = store
-	}
-}
-
-func WithEmailTemplateRenderDataBuilder(builder EmailRenderDataBuilder) EmailTemplateServiceOption {
-	return func(service *EmailTemplateService) { service.renderData = builder }
-}
-
-func WithEmailTemplateCampaignDeliveryReferences(references CampaignDeliveryReferences) EmailTemplateServiceOption {
-	return func(service *EmailTemplateService) { service.references = references }
-}
-
-func (s *EmailTemplateService) buildEmailRenderData(ctx context.Context, requestedLocale string, input map[string]string) map[string]string {
-	if s.renderData != nil {
-		return s.renderData.BuildEmailRenderData(ctx, s.db, s.cdnDomain, s.siteOrigin, requestedLocale, input)
-	}
-	input["site_origin"] = s.siteOrigin
-	return input
-}
-
-// NewAuditedEmailTemplateService creates an EmailTemplateService whose
-// authoritative authoring mutations append Domain Audit in the same database
-// transaction.
-func NewAuditedEmailTemplateService(db *gorm.DB, publisher EmailPublisher, runtime EmailTemplateRuntime, cdnDomain, siteOrigin string, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient, options ...EmailTemplateServiceOption) *EmailTemplateService {
-	if auditWriter == nil {
-		panic("email template audit writer is required")
-	}
-	service := NewEmailTemplateService(db, publisher, runtime, cdnDomain, siteOrigin, spiceDB, options...)
-	service.auditWriter = auditWriter
-	return service
-}
-
-// NewEmailTemplateService creates a new EmailTemplateService
-func NewEmailTemplateService(db *gorm.DB, publisher EmailPublisher, runtime EmailTemplateRuntime, cdnDomain, siteOrigin string, spiceDB *auth.SpiceDBClient, options ...EmailTemplateServiceOption) *EmailTemplateService {
-	dependencycheck.MustNotNil(db, "db")
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dependencycheck.MustNotNil(runtime, "Email Template runtime")
-	service := &EmailTemplateService{
-		db:         db,
-		spiceDB:    spiceDB,
-		publisher:  publisher,
-		runtime:    runtime,
-		cdnDomain:  cdnDomain,
-		siteOrigin: strings.TrimRight(strings.TrimSpace(siteOrigin), "/"),
-	}
-	for _, option := range options {
-		option(service)
-	}
-	return service
-}
-
-func (s *EmailTemplateService) requireEmailTemplateCan(
-	ctx context.Context,
-	can policyv1.Can,
-	canErr error,
-) (policyv1.Can, error) {
-	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
-	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
-}
-
-// ListEmailTemplatesAdmin returns all email templates with pagination (admin)
-func (s *EmailTemplateService) ListEmailTemplatesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListEmailTemplatesAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListEmailTemplatesAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "ListEmailTemplatesAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+// ListEmailTemplates returns one page of Email Templates with their delivery
+// run counts.
+func (s *Service) ListEmailTemplates(ctx context.Context, query ListEmailTemplatesQuery) (EmailTemplatePage, error) {
 	can, canErr := policyv1.EmailTemplate.List()
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
-		return nil, err
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return EmailTemplatePage{}, err
 	}
-
-	var templates []model.EmailTemplate
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.EmailTemplate{})
-
-	// Apply filters using FilterConfig
-	query, err := EmailTemplateFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	page := EmailTemplatePage{Page: queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)}
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		page.Templates, page.Total, err = store.ListTemplates(ctx, ListQuery{Filters: query.Filters, Sorts: query.Sorts, Page: page.Page})
+		if err != nil {
+			return err
+		}
+		return loadTemplateReferenceCounts(ctx, store, page.Templates)
+	})
 	if err != nil {
-		return nil, err
+		return EmailTemplatePage{}, err
 	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply sorting
-	query, err = emailTemplateSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply pagination
-	pg := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-
-	if err := pg.Apply(query).Find(&templates).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	templatePointers := make([]*model.EmailTemplate, 0, len(templates))
-	for i := range templates {
-		templatePointers = append(templatePointers, &templates[i])
-	}
-	if err := loadEmailTemplateReferenceCounts(ctx, s.db, s.references, templatePointers); err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoTemplates := make([]*managev1.EmailTemplate, 0, len(templates))
-	for i := range templates {
-		protoTemplates = append(protoTemplates, toProtoEmailTemplate(&templates[i]))
-	}
-
-	return connect.NewResponse(&managev1.ListEmailTemplatesAdminResponse{
-		Templates:  protoTemplates,
-		Pagination: pg.BuildResponse(total),
-	}), nil
+	return page, nil
 }
 
-// GetEmailTemplate retrieves an email template by ID (admin)
-func (s *EmailTemplateService) GetEmailTemplate(
-	ctx context.Context,
-	req *connect.Request[managev1.GetEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.EmailTemplate], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
+// GetEmailTemplateQuery reads one Email Template.
+type GetEmailTemplateQuery struct {
+	ID string
+}
+
+// TemplateDocument is an Email Template with its source document.
+type TemplateDocument struct {
+	Template
+	Projection TemplateEditorProjection
+}
+
+// GetEmailTemplate returns the Email Template with its source subject and
+// document.
+func (s *Service) GetEmailTemplate(ctx context.Context, query GetEmailTemplateQuery) (TemplateDocument, error) {
+	can, canErr := policyv1.EmailTemplate.View(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return TemplateDocument{}, err
+	}
+	var document TemplateDocument
+	// The source document share-locks its rows, so the read is not read
+	// only.
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		template, err := findTemplate(ctx, store, query.ID)
+		if err != nil {
+			return err
 		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "GetEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
-		return nil, err
-	}
-
-	var template model.EmailTemplate
-	if err := s.db.WithContext(ctx).First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("email template", req.Msg.Id)
+		templates := []Template{template}
+		if err := loadTemplateReferenceCounts(ctx, store, templates); err != nil {
+			return err
 		}
-		return nil, errs.Internal(err)
-	}
-	if err := loadEmailTemplateReferenceCounts(
-		ctx,
-		s.db,
-		s.references,
-		[]*model.EmailTemplate{&template},
-	); err != nil {
-		return nil, errs.Internal(err)
-	}
+		template = templates[0]
+		sourceLocale, err := loadTemplateSourceLocale(ctx, store, template.ID, false)
+		if err != nil {
+			return err
+		}
+		if template.Subject, err = loadTemplateSourceSubject(ctx, store, template.ID, sourceLocale); err != nil {
+			return err
+		}
+		document, err = templateWithDocument(ctx, store, template)
+		return err
+	})
+	return document, err
+}
 
-	sourceContext, err := loadCampaignEmailSourceContext(ctx, s.db, emailTemplateContentEntity, template.ID)
-	if err != nil {
-		return nil, err
+// findTemplate reads the template, answering a missing one as not found.
+func findTemplate(ctx context.Context, store Store, templateID string) (Template, error) {
+	template, err := store.FindTemplate(ctx, templateID)
+	if errors.Is(err, ErrTemplateNotFound) {
+		return Template{}, domainerr.ResourceNotFound("email template", templateID)
 	}
-	subject, err := loadCampaignEmailSourceSubject(ctx, s.db, emailTemplateContentEntity, template.ID, sourceContext.SourceLocale)
+	return template, err
+}
+
+// templateWithDocument adds the template's source document to it.
+func templateWithDocument(ctx context.Context, store Store, template Template) (TemplateDocument, error) {
+	projection, err := loadTemplateEditorProjection(ctx, store, template.ID)
 	if err != nil {
-		return nil, err
+		return TemplateDocument{}, err
 	}
-	template.Subject = subject
-	protoTemplate, err := s.toProtoEmailTemplateWithDocument(ctx, &template)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoTemplate), nil
+	return TemplateDocument{Template: template, Projection: projection}, nil
 }
 
 // validateTemplateKey validates the format of a template key.
@@ -342,249 +170,198 @@ func validateEmailTemplateEventKey(eventKey string) error {
 	return fmt.Errorf("unsupported email event")
 }
 
-func persistNewEmailTemplateSourceMetadata(
-	ctx context.Context,
-	tx *gorm.DB,
-	template *model.EmailTemplate,
-	sourceLocale string,
-	now time.Time,
-) error {
-	if err := tx.WithContext(ctx).Exec(
-		`INSERT INTO email_template_translation (
-			entity_id, locale, subject, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?)`,
-		template.ID, sourceLocale, template.Subject, now, now,
-	).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+// CreateEmailTemplateCommand creates a custom Email Template.
+type CreateEmailTemplateCommand struct {
+	Key          string
+	Name         string
+	Subject      string
+	SourceLocale string
+	Description  *string
 }
 
-// CreateEmailTemplate creates a new email template (admin)
-func (s *EmailTemplateService) CreateEmailTemplate(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.EmailTemplate], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "CreateEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	templateCan, err := policyv1.EmailTemplate.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
+// newEmailTemplate checks the command and returns the template it creates,
+// its source locale normalized.
+func (s *Service) newEmailTemplate(command CreateEmailTemplateCommand) (Template, error) {
+	if err := validateTemplateKey(command.Key); err != nil {
+		return Template{}, domainerr.InvalidField("key", err.Error())
 	}
+	if err := validateTemplateName(command.Name); err != nil {
+		return Template{}, domainerr.InvalidField("name", err.Error())
+	}
+	if err := validateTemplateSubject(command.Subject); err != nil {
+		return Template{}, domainerr.InvalidField("subject", err.Error())
+	}
+	sourceLocale := strings.TrimSpace(command.SourceLocale)
+	if sourceLocale == "" {
+		return Template{}, domainerr.Required("source_locale")
+	}
+	normalizedSourceLocale := s.locales.NormalizeSupportedLocale(sourceLocale)
+	if normalizedSourceLocale == nil {
+		return Template{}, domainerr.InvalidField("source_locale", "unsupported locale")
+	}
+	now := dbtime.Now()
+	template := Template{
+		Key:          command.Key,
+		Name:         strings.TrimSpace(command.Name),
+		Subject:      strings.TrimSpace(command.Subject),
+		SourceLocale: *normalizedSourceLocale,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    &now,
+	}
+	if command.Description != nil {
+		description := strings.TrimSpace(*command.Description)
+		template.Description = &description
+	}
+	return template, nil
+}
 
-	var template *model.EmailTemplate
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, templateCan); err != nil {
-			return err
-		}
-		if s.contentBlocks == nil {
-			return errs.InternalMsg("Email Template content Block store is not configured")
-		}
-		if err := validateTemplateKey(req.Msg.Key); err != nil {
-			return errs.InvalidArgument("key", err.Error())
-		}
-		if err := validateTemplateName(req.Msg.Name); err != nil {
-			return errs.InvalidArgument("name", err.Error())
-		}
-		if err := validateTemplateSubject(req.Msg.Subject); err != nil {
-			return errs.InvalidArgument("subject", err.Error())
-		}
-		sourceLocale := strings.TrimSpace(req.Msg.SourceLocale)
-		if sourceLocale == "" {
-			return errs.Required("source_locale")
-		}
-		normalizedSourceLocale := s.runtime.NormalizeSupportedLocale(sourceLocale)
-		if normalizedSourceLocale == nil {
-			return errs.InvalidArgument("source_locale", "unsupported locale")
-		}
-		sourceLocale = *normalizedSourceLocale
-
-		now := dbtime.Now()
-		template = &model.EmailTemplate{
-			Key:          req.Msg.Key,
-			Name:         strings.TrimSpace(req.Msg.Name),
-			Subject:      strings.TrimSpace(req.Msg.Subject),
-			SourceLocale: sourceLocale,
-			IsSystem:     false,
-			IsActive:     true,
-			CreatedAt:    now,
-			UpdatedAt:    &now,
-		}
-		if req.Msg.Description != nil {
-			trimmedDesc := strings.TrimSpace(*req.Msg.Description)
-			template.Description = &trimmedDesc
-		}
-		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
-			Profile:      emailContentProfile,
-			SourceLocale: sourceLocale,
-		})
-		if err != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
-		}
-		documentID := document.Document.ID.String()
-		template.ContentDocumentID = &documentID
-		if err := createEmailTemplateBaseRow(ctx, tx, template); err != nil {
-			return err
-		}
-		if err := persistNewEmailTemplateSourceMetadata(ctx, tx, template, sourceLocale, now); err != nil {
-			return err
-		}
-		if err := appendEmailTemplateCreatedAudit(ctx, tx, s.auditWriter, template.ID); err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.EmailTemplate.TouchPolicy(template.ID)
-		if err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.EmailTemplate.DeletePolicy(template.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{touchPolicy},
-			[]policyv1.RelationshipMutation{deletePolicy},
-		)
+// CreateEmailTemplate creates a custom Email Template with an empty source
+// document and grants its policy.
+func (s *Service) CreateEmailTemplate(ctx context.Context, command CreateEmailTemplateCommand) (TemplateDocument, error) {
+	template, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Template, Store]{
+		Access: mutation.FreshAdminCan(policyv1.EmailTemplate.Create()),
+		Change: func(ctx context.Context, store Store) (Template, error) {
+			template, err := s.newEmailTemplate(command)
+			if err != nil {
+				return Template{}, err
+			}
+			created, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
+				Profile: emailContentProfile, SourceLocale: template.SourceLocale,
+			})
+			if err != nil {
+				return Template{}, emailTemplateContent.NormalizeContentBlockError(err)
+			}
+			documentID := created.Document.ID.String()
+			template.ContentDocumentID = &documentID
+			if err := store.InsertTemplate(ctx, &template); err != nil {
+				return Template{}, err
+			}
+			subject := template.Subject
+			_, err = store.InsertLocale(ctx, template.ID, template.SourceLocale, &subject, template.CreatedAt)
+			return template, err
+		},
+		Audit: func(template Template) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditEmailTemplateCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewEmailTemplateCreatedAuditRecord(metadata, template.ID)
+			})
+		},
+		Relationships: func(template Template) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyLifecycle(policyv1.EmailTemplate.TouchPolicy, policyv1.EmailTemplate.DeletePolicy, template.ID)
+		},
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			return nil, errs.AlreadyExists("template", "key", req.Msg.Key)
+		if errors.Is(err, ErrTemplateKeyTaken) {
+			return TemplateDocument{}, domainerr.Duplicate("template", "key", command.Key)
 		}
-		return nil, errs.Wrap(err)
+		return TemplateDocument{}, err
 	}
-	protoTemplate, err := s.toProtoEmailTemplateWithDocument(ctx, template)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoTemplate), nil
+	var document TemplateDocument
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		document, err = templateWithDocument(ctx, store, template)
+		return err
+	})
+	return document, err
 }
 
-// UpdateEmailTemplate updates an email template (admin)
-func (s *EmailTemplateService) UpdateEmailTemplate(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.UpdateEmailTemplateResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "UpdateEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	templateCan, err := policyv1.EmailTemplate.Edit(req.Msg.Id)
+// policyLifecycle returns the relationship batch that grants a created
+// resource's policy and its exact inverse; a deletion swaps the two.
+func policyLifecycle(
+	touch func(string) (policyv1.RelationshipMutation, error),
+	remove func(string) (policyv1.RelationshipMutation, error),
+	id string,
+) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	touchPolicy, err := touch(id)
 	if err != nil {
-		return nil, errs.InvalidArgument("id", err.Error())
+		return nil, nil, err
 	}
-
-	template, changed, err := s.applyEmailTemplateUpdate(ctx, req.Msg, templateCan)
+	deletePolicy, err := remove(id)
 	if err != nil {
-		return nil, mapEmailTemplateUpdateError(err, req.Msg.Id)
+		return nil, nil, err
 	}
-	if template.UpdatedAt == nil {
-		return nil, errs.InternalMsg("email template updated_at is missing")
-	}
-	return connect.NewResponse(&managev1.UpdateEmailTemplateResponse{
-		Id:          template.ID,
-		Changed:     changed,
-		Name:        template.Name,
-		Description: template.Description,
-		IsActive:    template.IsActive,
-		LayoutId:    template.LayoutID,
-		UpdatedAt:   timestamppb.New(*template.UpdatedAt),
-	}), nil
+	return []policyv1.RelationshipMutation{touchPolicy}, []policyv1.RelationshipMutation{deletePolicy}, nil
+}
+
+// DeleteEmailTemplateCommand deletes an Email Template.
+type DeleteEmailTemplateCommand struct {
+	ID string
 }
 
 // DeleteEmailTemplate permanently deletes an unmapped template that is not
 // referenced by scheduled or sending work. Terminal delivery history keeps its
 // immutable render snapshot and source-version metadata while detaching the
 // mutable authoring-row identity.
-func (s *EmailTemplateService) DeleteEmailTemplate(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.DeleteResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "DeleteEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	templateCan, err := policyv1.EmailTemplate.Delete(req.Msg.Id)
-	if err != nil {
-		return nil, errs.InvalidArgument("id", err.Error())
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		var template model.EmailTemplate
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("email template", req.Msg.Id)
-			}
+func (s *Service) DeleteEmailTemplate(ctx context.Context, command DeleteEmailTemplateCommand) error {
+	var template Template
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			template, err = lockTemplateForUpdate(ctx, store, command.ID)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, templateCan); err != nil {
-			return err
-		}
-		if s.contentBlocks == nil {
-			return errs.InternalMsg("Email Template content Block store is not configured")
-		}
-		if template.EventKey != nil && strings.TrimSpace(*template.EventKey) != "" {
-			return errs.FailedPrecondition(
-				"email template must be explicitly unmapped before deletion",
-			)
-		}
-		if err := ensureEmailTemplateMutableForActiveDelivery(ctx, tx, s.references, template.ID); err != nil {
-			return err
-		}
-		if err := s.references.DetachTemplateHistory(ctx, tx, template.ID); err != nil {
-			return err
-		}
-		documentID, err := loadCampaignEmailContentDocumentID(ctx, tx, emailTemplateContentEntity, template.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.contentBlocks.DeleteDocument(
-			ctx,
-			tx,
-			documentID,
-			campaignEmailDeleteContentFence(s.references, emailTemplateContentEntity, template.ID),
-		); err != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
-		}
-		if err := tx.WithContext(ctx).Delete(&template).Error; err != nil {
-			return err
-		}
-		if err := appendEmailTemplateDeletedAudit(ctx, tx, s.auditWriter, template.ID); err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.EmailTemplate.DeletePolicy(template.ID)
-		if err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.EmailTemplate.TouchPolicy(template.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{deletePolicy},
-			[]policyv1.RelationshipMutation{touchPolicy},
-		)
+		},
+		Access: mutation.FreshAdminCan(policyv1.EmailTemplate.Delete(command.ID)),
+		Change: func(ctx context.Context, store Store) (string, error) {
+			return template.ID, deleteLockedEmailTemplate(ctx, store, template)
+		},
+		Audit: func(templateID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditEmailTemplateDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewEmailTemplateDeletedAuditRecord(metadata, templateID)
+			})
+		},
+		Relationships: func(templateID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			apply, compensate, err := policyLifecycle(policyv1.EmailTemplate.TouchPolicy, policyv1.EmailTemplate.DeletePolicy, templateID)
+			return compensate, apply, err
+		},
 	})
-	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
 }
 
-// GetEventMappings returns all event-to-template mappings (admin)
+func deleteLockedEmailTemplate(ctx context.Context, store Store, template Template) error {
+	if template.EventKey != nil && strings.TrimSpace(*template.EventKey) != "" {
+		return domainerr.Precondition("email template must be explicitly unmapped before deletion")
+	}
+	if err := store.RequireTemplateMutable(ctx, template.ID); err != nil {
+		return err
+	}
+	if err := store.DetachTemplateHistory(ctx, template.ID); err != nil {
+		return err
+	}
+	documentID, err := loadTemplateContentDocument(ctx, store, template.ID, false)
+	if err != nil {
+		return err
+	}
+	if err := store.DeleteContentDocument(ctx, documentID, emailTemplateContentFence(store, template.ID)); err != nil {
+		return emailTemplateContent.NormalizeContentBlockError(err)
+	}
+	return store.DeleteTemplate(ctx, template.ID)
+}
+
+// lockTemplateForUpdate locks the template, answering a missing one as not
+// found.
+func lockTemplateForUpdate(ctx context.Context, store Store, templateID string) (Template, error) {
+	template, err := store.LockTemplate(ctx, templateID)
+	if errors.Is(err, ErrTemplateNotFound) {
+		return Template{}, domainerr.ResourceNotFound("email template", templateID)
+	}
+	return template, err
+}
+
+// loadTemplateReferenceCounts sets each template's delivery run count.
+func loadTemplateReferenceCounts(ctx context.Context, store Store, templates []Template) error {
+	ids := make([]string, 0, len(templates))
+	for index := range templates {
+		templates[index].DeliveryRunCount = 0
+		ids = append(ids, templates[index].ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	counts, err := store.TemplateDeliveryRunCounts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for index := range templates {
+		templates[index].DeliveryRunCount = counts[templates[index].ID]
+	}
+	return nil
+}

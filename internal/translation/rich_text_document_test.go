@@ -3,7 +3,6 @@ package translation
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +26,7 @@ func TestRichTextDocumentPlanAndCandidatePreserveBlockIdentity(t *testing.T) {
 			},
 		},
 	}
-	job := &model.TranslationJob{
+	job := &JobIdentity{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}
 
@@ -69,7 +68,7 @@ func TestRichTextDocumentPlanCanProtectTitleInsteadOfTranslatingIt(t *testing.T)
 			}}},
 		},
 	}
-	plan, err := BuildRichTextExtractionPlan(&model.TranslationJob{
+	plan, err := BuildRichTextExtractionPlan(&JobIdentity{
 		EntityType: "program_event", EntityID: "event-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.NoError(t, err)
@@ -89,7 +88,7 @@ func TestRichTextDocumentPlanKeepsExplicitEmptyUnitBesideTranslatableUnit(t *tes
 			}}),
 		}},
 	}}
-	plan, err := BuildRichTextExtractionPlan(&model.TranslationJob{
+	plan, err := BuildRichTextExtractionPlan(&JobIdentity{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.NoError(t, err)
@@ -106,7 +105,7 @@ func TestRichTextDocumentPlanRejectsAllExplicitEmptyUnits(t *testing.T) {
 			paragraphBlock("empty-a"), paragraphBlock("empty-b"),
 		}},
 	}}
-	_, err := BuildRichTextExtractionPlan(&model.TranslationJob{
+	_, err := BuildRichTextExtractionPlan(&JobIdentity{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.ErrorIs(t, err, ErrNoTranslatableUnits)

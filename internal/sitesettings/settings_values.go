@@ -1,17 +1,10 @@
 package sitesettings
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
-
-	"google.golang.org/protobuf/types/known/structpb"
-
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 var defaultSettings = siteSettingObject{
@@ -52,6 +45,39 @@ var (
 	siteSettingAnalyticsPattern = regexp.MustCompile(`^(G|UA|GT)-[A-Z0-9]+$`)
 )
 
+// textSettings are the stored text settings, keyed by setting.
+var textSettings = map[string]func(*Settings) *string{
+	"site_title":       func(s *Settings) *string { return &s.SiteTitle },
+	"company_name":     func(s *Settings) *string { return &s.CompanyName },
+	"company_address":  func(s *Settings) *string { return &s.CompanyAddress },
+	"tax_id":           func(s *Settings) *string { return &s.TaxID },
+	"legal_email":      func(s *Settings) *string { return &s.LegalEmail },
+	"contact_email":    func(s *Settings) *string { return &s.ContactEmail },
+	"primary_color":    func(s *Settings) *string { return &s.PrimaryColor },
+	"meta_description": func(s *Settings) *string { return &s.MetaDescription },
+}
+
+// optionalTextSettings are the nullable text settings: File, Page and Menu
+// references and the analytics identifier. An empty value reads as unset.
+var optionalTextSettings = map[string]func(*Settings) **string{
+	"logo_full_light_file_id":       func(s *Settings) **string { return &s.LogoFullLightFileID },
+	"logo_full_dark_file_id":        func(s *Settings) **string { return &s.LogoFullDarkFileID },
+	"logo_symbol_light_file_id":     func(s *Settings) **string { return &s.LogoSymbolLightFileID },
+	"logo_symbol_dark_file_id":      func(s *Settings) **string { return &s.LogoSymbolDarkFileID },
+	"logo_email_light_file_id":      func(s *Settings) **string { return &s.LogoEmailLightFileID },
+	"logo_email_dark_file_id":       func(s *Settings) **string { return &s.LogoEmailDarkFileID },
+	"favicon_file_id":               func(s *Settings) **string { return &s.FaviconFileID },
+	"site_og_background_file_id":    func(s *Settings) **string { return &s.SiteOgBackgroundFileID },
+	"privacy_og_background_file_id": func(s *Settings) **string { return &s.PrivacyOgBackgroundFileID },
+	"terms_og_background_file_id":   func(s *Settings) **string { return &s.TermsOgBackgroundFileID },
+	"homepage_page_id":              func(s *Settings) **string { return &s.HomepagePageID },
+	"menu_header_id":                func(s *Settings) **string { return &s.MenuHeaderID },
+	"menu_secondary_id":             func(s *Settings) **string { return &s.MenuSecondaryID },
+	"menu_footer_id":                func(s *Settings) **string { return &s.MenuFooterID },
+	"menu_avatar_dropdown_id":       func(s *Settings) **string { return &s.MenuAvatarDropdownID },
+	"google_analytics_id":           func(s *Settings) **string { return &s.GoogleAnalyticsID },
+}
+
 func isSiteSettingMenuReference(key string) bool {
 	switch key {
 	case "menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id":
@@ -61,21 +87,11 @@ func isSiteSettingMenuReference(key string) bool {
 	}
 }
 
-func siteSettingReferenceValue(settings *model.SiteSettings, key string) *string {
-	switch key {
-	case "homepage_page_id":
-		return settings.HomepagePageID
-	case "menu_header_id":
-		return settings.MenuHeaderID
-	case "menu_secondary_id":
-		return settings.MenuSecondaryID
-	case "menu_footer_id":
-		return settings.MenuFooterID
-	case "menu_avatar_dropdown_id":
-		return settings.MenuAvatarDropdownID
-	default:
+func siteSettingReferenceValue(settings *Settings, key string) *string {
+	if key != "homepage_page_id" && !isSiteSettingMenuReference(key) {
 		return nil
 	}
+	return *optionalTextSettings[key](settings)
 }
 
 func validateSiteSettingEmail(key, value string) error {
@@ -85,47 +101,30 @@ func validateSiteSettingEmail(key, value string) error {
 	return fmt.Errorf("%s must be a valid email address", key)
 }
 
-func jsonColumnToMap(raw []byte, key string, emptyDefault bool) siteSettingObject {
+// jsonColumnToMap decodes a stored JSON object column. An undecodable column
+// yields the empty fallback together with the decode error, so a read that
+// serves the fallback can log it.
+func jsonColumnToMap(raw []byte, emptyDefault bool) (siteSettingObject, error) {
 	if len(raw) == 0 {
 		if emptyDefault {
-			return siteSettingObject{}
+			return siteSettingObject{}, nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	var result siteSettingObject
 	if err := json.Unmarshal(raw, &result); err != nil {
-		slog.WarnContext(context.Background(), "failed to unmarshal site setting JSON column",
-			"key", key,
-			"failure_cause", failurecause.Message(err))
 		if emptyDefault {
-			return siteSettingObject{}
+			return siteSettingObject{}, err
 		}
-		return nil
+		return nil, err
 	}
 
 	if result == nil && emptyDefault {
-		return siteSettingObject{}
+		return siteSettingObject{}, nil
 	}
 
-	return result
-}
-
-func jsonColumnToStruct(raw []byte, key string) *structpb.Struct {
-	m := jsonColumnToMap(raw, key, false)
-	if len(m) == 0 {
-		return nil
-	}
-
-	st, err := structpb.NewStruct(m)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to convert site setting JSON to protobuf struct",
-			"key", key,
-			"failure_cause", failurecause.Message(err))
-		return nil
-	}
-
-	return st
+	return result, nil
 }
 
 func optionalString(v *string) siteSettingValue {
@@ -189,7 +188,6 @@ func parseJSONObjectBytes(value siteSettingValue, nullable bool) ([]byte, error)
 
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.parseJSONObjectBytes", "outcome", "failed", failurecause.Attr(err))
 		return nil, fmt.Errorf("expected JSON object")
 	}
 
@@ -207,9 +205,6 @@ func parseOgImageConfigRoot(raw []byte) (siteSettingObject, error) {
 	root := siteSettingObject{}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &root); err != nil || root == nil {
-			if err != nil {
-				slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "decode_og_image_config", "outcome", "failed", failurecause.Attr(err))
-			}
 			return nil, fmt.Errorf("stored og_image_config must be a JSON object")
 		}
 	}
@@ -230,16 +225,13 @@ func parseOgImageConfigRoot(raw []byte) (siteSettingObject, error) {
 	return root, nil
 }
 
-func applyOgImageConfigSection(settings *model.SiteSettings, section string, value siteSettingValue) error {
+func applyOgImageConfigSection(settings *Settings, section string, value siteSettingValue) error {
 	payload, err := parseJSONObjectBytes(value, false)
 	if err != nil {
 		return fmt.Errorf("og_image_config.%s: %w", section, err)
 	}
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.applyOgImageConfigSection", "outcome", "failed", failurecause.Attr(err))
-		}
 		return fmt.Errorf("og_image_config.%s must be a JSON object", section)
 	}
 	root, err := parseOgImageConfigRoot(settings.OGImageConfig)
@@ -254,118 +246,60 @@ func applyOgImageConfigSection(settings *model.SiteSettings, section string, val
 	return nil
 }
 
-func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, bool) {
+// settingValue returns the comparable value of a setting. Comparisons treat an
+// undecodable stored value as its fallback; GetSetting, which serves the
+// value, logs the decode error.
+func settingValue(settings *Settings, key string) (siteSettingValue, bool) {
+	value, known, _ := decodedSettingValue(settings, key)
+	return value, known
+}
+
+// decodedSettingValue is settingValue with the error that replaced an
+// undecodable stored value by its fallback.
+func decodedSettingValue(settings *Settings, key string) (siteSettingValue, bool, error) {
+	if field, ok := textSettings[key]; ok {
+		return *field(settings), true, nil
+	}
+	if field, ok := optionalTextSettings[key]; ok {
+		return optionalString(*field(settings)), true, nil
+	}
 	switch key {
-	case "site_title":
-		return settings.SiteTitle, true
-	case "company_name":
-		return settings.CompanyName, true
-	case "company_address":
-		return settings.CompanyAddress, true
-	case "tax_id":
-		return settings.TaxID, true
-	case "legal_email":
-		return settings.LegalEmail, true
-	case "contact_email":
-		return settings.ContactEmail, true
 	case "social_links":
-		return jsonColumnToMap(settings.SocialLinks, "social_links", true), true
-	case "logo_full_light_file_id":
-		return optionalString(settings.LogoFullLightFileID), true
-	case "logo_full_dark_file_id":
-		return optionalString(settings.LogoFullDarkFileID), true
-	case "logo_symbol_light_file_id":
-		return optionalString(settings.LogoSymbolLightFileID), true
-	case "logo_symbol_dark_file_id":
-		return optionalString(settings.LogoSymbolDarkFileID), true
-	case "logo_email_light_file_id":
-		return optionalString(settings.LogoEmailLightFileID), true
-	case "logo_email_dark_file_id":
-		return optionalString(settings.LogoEmailDarkFileID), true
-	case "favicon_file_id":
-		return optionalString(settings.FaviconFileID), true
-	case "site_og_background_file_id":
-		return optionalString(settings.SiteOgBackgroundFileID), true
-	case "privacy_og_background_file_id":
-		return optionalString(settings.PrivacyOgBackgroundFileID), true
-	case "terms_og_background_file_id":
-		return optionalString(settings.TermsOgBackgroundFileID), true
-	case "primary_color":
-		return settings.PrimaryColor, true
+		value, err := jsonColumnToMap(settings.SocialLinks, true)
+		return value, true, err
 	case "default_comments_enabled":
-		return settings.DefaultCommentsEnabled, true
-	case "homepage_page_id":
-		return optionalString(settings.HomepagePageID), true
-	case "menu_header_id":
-		return optionalString(settings.MenuHeaderID), true
-	case "menu_secondary_id":
-		return optionalString(settings.MenuSecondaryID), true
-	case "menu_footer_id":
-		return optionalString(settings.MenuFooterID), true
-	case "menu_avatar_dropdown_id":
-		return optionalString(settings.MenuAvatarDropdownID), true
-	case "meta_description":
-		return settings.MetaDescription, true
-	case "google_analytics_id":
-		return optionalString(settings.GoogleAnalyticsID), true
+		return settings.DefaultCommentsEnabled, true, nil
 	case "og_image_config":
-		return jsonColumnToMap(settings.OGImageConfig, "og_image_config", false), true
+		value, err := jsonColumnToMap(settings.OGImageConfig, false)
+		return value, true, err
 	case "og_image_config.home", "og_image_config.content":
 		root, err := parseOgImageConfigRoot(settings.OGImageConfig)
 		if err != nil {
-			slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "load_og_image_config_section", "outcome", "failed", failurecause.Attr(err), "key", key)
-			return nil, true
+			return nil, true, err
 		}
 		section := strings.TrimPrefix(key, "og_image_config.")
-		return root[section], true
+		return root[section], true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
-func (s *SiteSettingService) applySettingValue(settings *model.SiteSettings, key string, value siteSettingValue) error {
+func applySettingValue(settings *Settings, key string, value siteSettingValue) error {
 	switch key {
-	case "site_title", "company_name", "company_address", "tax_id", "meta_description":
-		return applyRequiredStringSiteSetting(settings, key, value)
-	case "legal_email", "contact_email":
-		return applyEmailSiteSetting(settings, key, value)
+	case "legal_email", "contact_email", "primary_color", "google_analytics_id":
+		return applyValidatedTextSetting(settings, key, value)
 	case "social_links":
 		v, err := parseJSONObjectBytes(value, false)
 		if err != nil {
 			return err
 		}
 		settings.SocialLinks = v
-	case "logo_full_light_file_id", "logo_full_dark_file_id",
-		"logo_symbol_light_file_id", "logo_symbol_dark_file_id",
-		"logo_email_light_file_id", "logo_email_dark_file_id",
-		"favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id",
-		"terms_og_background_file_id", "homepage_page_id", "menu_header_id",
-		"menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id":
-		return applyOptionalStringSiteSetting(settings, key, value)
-	case "primary_color":
-		v, err := parseString(value)
-		if err != nil {
-			return err
-		}
-		if !siteSettingHexColorPattern.MatchString(v) {
-			return fmt.Errorf("primary_color must be a six-digit hex color")
-		}
-		settings.PrimaryColor = v
 	case "default_comments_enabled":
 		v, err := parseBool(value)
 		if err != nil {
 			return err
 		}
 		settings.DefaultCommentsEnabled = v
-	case "google_analytics_id":
-		v, err := parseOptionalString(value)
-		if err != nil {
-			return err
-		}
-		if v != nil && !siteSettingAnalyticsPattern.MatchString(*v) {
-			return fmt.Errorf("google_analytics_id must be a valid Google Analytics identifier")
-		}
-		settings.GoogleAnalyticsID = v
 	case "og_image_config":
 		v, err := parseJSONObjectBytes(value, true)
 		if err != nil {
@@ -377,85 +311,58 @@ func (s *SiteSettingService) applySettingValue(settings *model.SiteSettings, key
 	case "og_image_config.content":
 		return applyOgImageConfigSection(settings, "content", value)
 	default:
-		return fmt.Errorf("invalid setting key: %s", key)
+		return applyTextSetting(settings, key, value)
 	}
-
 	return nil
 }
 
-func applyRequiredStringSiteSetting(settings *model.SiteSettings, key string, value siteSettingValue) error {
+// applyTextSetting stores a text or optional text setting that has no format
+// of its own.
+func applyTextSetting(settings *Settings, key string, value siteSettingValue) error {
+	if field, ok := textSettings[key]; ok {
+		parsed, err := parseString(value)
+		if err != nil {
+			return err
+		}
+		*field(settings) = parsed
+		return nil
+	}
+	if field, ok := optionalTextSettings[key]; ok {
+		parsed, err := parseOptionalString(value)
+		if err != nil {
+			return err
+		}
+		*field(settings) = parsed
+		return nil
+	}
+	return fmt.Errorf("invalid setting key: %s", key)
+}
+
+// applyValidatedTextSetting stores a text setting whose value has a format.
+func applyValidatedTextSetting(settings *Settings, key string, value siteSettingValue) error {
+	if key == "google_analytics_id" {
+		v, err := parseOptionalString(value)
+		if err != nil {
+			return err
+		}
+		if v != nil && !siteSettingAnalyticsPattern.MatchString(*v) {
+			return fmt.Errorf("google_analytics_id must be a valid Google Analytics identifier")
+		}
+		settings.GoogleAnalyticsID = v
+		return nil
+	}
 	parsed, err := parseString(value)
 	if err != nil {
 		return err
 	}
-	switch key {
-	case "site_title":
-		settings.SiteTitle = parsed
-	case "company_name":
-		settings.CompanyName = parsed
-	case "company_address":
-		settings.CompanyAddress = parsed
-	case "tax_id":
-		settings.TaxID = parsed
-	case "meta_description":
-		settings.MetaDescription = parsed
+	if key == "primary_color" && !siteSettingHexColorPattern.MatchString(parsed) {
+		return fmt.Errorf("primary_color must be a six-digit hex color")
 	}
-	return nil
-}
-
-func applyEmailSiteSetting(settings *model.SiteSettings, key string, value siteSettingValue) error {
-	parsed, err := parseString(value)
-	if err != nil {
-		return err
+	if key != "primary_color" {
+		if err := validateSiteSettingEmail(key, parsed); err != nil {
+			return err
+		}
 	}
-	if err := validateSiteSettingEmail(key, parsed); err != nil {
-		return err
-	}
-	switch key {
-	case "legal_email":
-		settings.LegalEmail = parsed
-	case "contact_email":
-		settings.ContactEmail = parsed
-	}
-	return nil
-}
-
-func applyOptionalStringSiteSetting(settings *model.SiteSettings, key string, value siteSettingValue) error {
-	parsed, err := parseOptionalString(value)
-	if err != nil {
-		return err
-	}
-	switch key {
-	case "logo_full_light_file_id":
-		settings.LogoFullLightFileID = parsed
-	case "logo_full_dark_file_id":
-		settings.LogoFullDarkFileID = parsed
-	case "logo_symbol_light_file_id":
-		settings.LogoSymbolLightFileID = parsed
-	case "logo_symbol_dark_file_id":
-		settings.LogoSymbolDarkFileID = parsed
-	case "logo_email_light_file_id":
-		settings.LogoEmailLightFileID = parsed
-	case "logo_email_dark_file_id":
-		settings.LogoEmailDarkFileID = parsed
-	case "favicon_file_id":
-		settings.FaviconFileID = parsed
-	case "site_og_background_file_id":
-		settings.SiteOgBackgroundFileID = parsed
-	case "privacy_og_background_file_id":
-		settings.PrivacyOgBackgroundFileID = parsed
-	case "terms_og_background_file_id":
-		settings.TermsOgBackgroundFileID = parsed
-	case "homepage_page_id":
-		settings.HomepagePageID = parsed
-	case "menu_header_id":
-		settings.MenuHeaderID = parsed
-	case "menu_secondary_id":
-		settings.MenuSecondaryID = parsed
-	case "menu_footer_id":
-		settings.MenuFooterID = parsed
-	case "menu_avatar_dropdown_id":
-		settings.MenuAvatarDropdownID = parsed
-	}
+	*textSettings[key](settings) = parsed
 	return nil
 }

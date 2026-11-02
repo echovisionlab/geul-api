@@ -7,7 +7,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	emailauthoringdomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -24,13 +26,9 @@ func (*Runtime) ResolveLocalizedTemplate(
 	template model.EmailTemplate,
 	locale string,
 ) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, db, template, locale)
-	return resolved, err
-}
-
-func (*Runtime) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
-	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
-	return layout, err
+	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailauthoringpostgres.NewRenderingStore(db), emailauthoringpostgres.TemplateFromRow(template), locale)
+	template.Subject, template.ContentHTML = resolved.Subject, resolved.ContentHTML
+	return template, err
 }
 
 func (*Runtime) NormalizeSupportedLocale(value string) *string {
@@ -45,8 +43,14 @@ func (*Runtime) BuildEmailRenderData(
 	locale string,
 	input map[string]string,
 ) map[string]string {
-	return emaildelivery.BuildEmailRenderData(ctx, db, cdnDomain, siteOrigin, locale, input)
+	return emaildelivery.BuildEmailRenderData(ctx, emaildeliverypostgres.NewStore(db), cdnDomain, siteOrigin, locale, input)
 }
 
-var _ emailauthoringdomain.EmailTemplateRuntime = (*Runtime)(nil)
-var _ emailauthoringdomain.EmailRenderDataBuilder = (*Runtime)(nil)
+var (
+	_ emailauthoringpostgres.Rendering      = (*Runtime)(nil)
+	_ emailauthoringdomain.LocaleNormalizer = (*Runtime)(nil)
+)
+
+func (*Runtime) CheckTestSendReadiness(ctx context.Context, db *gorm.DB, recipient string) error {
+	return email.CheckTestSendReadiness(ctx, emaildeliverypostgres.NewDeliveryReadStore(db), recipient)
+}

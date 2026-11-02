@@ -3,71 +3,72 @@ package legal
 import (
 	"context"
 	"errors"
-	"log/slog"
 
-	"gorm.io/gorm"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// LoadTranslationInterchangeAIDocumentWithDB projects one locale after the
+// LoadTranslationInterchangeAIDocument projects one locale after the
 // Translation application has locked and authorized the Legal history root in
-// the same caller-owned transaction.
-func (s *AIDocumentService) LoadTranslationInterchangeAIDocumentWithDB(
+// the transaction joined binds.
+func (s *AIDocumentService) LoadTranslationInterchangeAIDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	entityType string,
 	entityID string,
 	locale string,
 ) (AIDocument, error) {
-	if s == nil || s.contentBlocks == nil || tx == nil {
-		return AIDocument{}, errs.DependencyUnavailable("Legal translation interchange")
-	}
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocument{}, err
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, false)
+	kind, err := legalKind(entityType)
 	if err != nil {
+		return AIDocument{}, err
+	}
+	if _, err := loadLegalContentDocumentRoot(ctx, joined.Store, kind, entityID, false); err != nil {
 		return AIDocument{}, err
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.MemberID == "" {
-		return AIDocument{}, errs.AuthenticationRequired()
+		return AIDocument{}, domainerr.AuthenticationRequired()
 	}
-	document, _, err := s.loadAIDocumentAfterAuthorization(
-		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(),
+	document, _, err := loadAIDocumentAfterAuthorization(
+		ctx, joined.Store, kind, entityID, locale, principal.MemberID.String(),
 	)
 	return document, err
 }
 
-// ExecuteTranslationInterchangeMutationWithDB is the Legal-owned XLIFF write
-// seam called after Translation has performed the lifecycle-aware mutation
-// preflight in this transaction. It re-locks current facts, compiles under the
-// lock, enforces aggregate CAS, persists and appends Audit. Generic Translation
-// owns the single OG request after this method reports a changed locale.
-func (s *AIDocumentService) ExecuteTranslationInterchangeMutationWithDB(
+// ExecuteTranslationInterchangeMutation is the Legal-owned XLIFF write seam
+// called after Translation has performed the lifecycle-aware mutation
+// preflight in the transaction joined binds. It re-locks current facts,
+// compiles under the lock, enforces aggregate CAS, persists and appends
+// Audit. Generic Translation owns the single OG request after this method
+// reports a changed locale.
+func (s *AIDocumentService) ExecuteTranslationInterchangeMutation(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	entityType string,
 	entityID string,
 	locale string,
 	compiler AIDocumentMutationCompiler,
 ) (AIDocumentMutationResult, error) {
-	if s == nil || s.contentBlocks == nil || s.legalOG == nil || s.auditWriter == nil || tx == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Legal translation interchange")
-	}
 	if compiler == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Legal translation interchange compiler")
+		return AIDocumentMutationResult{}, domainerr.DependencyUnavailable("Legal translation interchange compiler")
 	}
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, true)
+	kind, err := legalKind(entityType)
+	if err != nil {
+		return AIDocumentMutationResult{}, err
+	}
+	root, err := loadLegalContentDocumentRoot(ctx, joined.Store, kind, entityID, true)
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
@@ -75,61 +76,31 @@ func (s *AIDocumentService) ExecuteTranslationInterchangeMutationWithDB(
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	result, err := s.compileAndApplyAIDocumentMutationWithDB(
-		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(), compiler, false, true,
+	result, err := compileAndApplyAIDocumentMutation(
+		ctx, joined.Store, root, kind, entityID, locale, principal.MemberID.String(), compiler, false, true,
 	)
+	if err == nil {
+		err = recordInterchange(ctx, joined, result)
+	}
 	return legalAIDocumentResult(entityType, result, err)
 }
 
-func (s *AIDocumentService) executeAIDocumentMutationWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
-	entityID string,
-	locale string,
-	compiler AIDocumentMutationCompiler,
-	requestSavedOG bool,
-	allowAuthoritativeTargetReplacement bool,
-) (legalAIDocumentApplyResult, error) {
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, true)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, err
+// recordInterchange appends the interchange's locale content record and
+// signals the change in the Translation application's transaction.
+func recordInterchange(ctx context.Context, joined Joined, result legalAIDocumentApplyResult) error {
+	if change := result.localeChange; change != nil {
+		if err := domainaudit.AppendMember(ctx, nil, joined.Audit, change.memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record); err != nil {
+			return err
+		}
 	}
-	principal, err := requireLegalAIPrincipal(ctx)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, legalAIDocumentMutationAccessError(entityType, entityID, err)
-	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, errs.Internal(err)
-	}
-	if !active {
-		return legalAIDocumentApplyResult{}, errs.NotFound(entityType, entityID)
-	}
-	policy, err := legalDocumentPolicyForType(entityType)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, err
-	}
-	if err := requireLegalPermission(
-		ctx,
-		s.spiceDB,
-		entityType,
-		entityID,
-		legalMutationAction(policy, root.Status, legalActionEdit),
-	); err != nil {
-		return legalAIDocumentApplyResult{}, legalAIDocumentMutationAccessError(entityType, entityID, err)
-	}
-	return s.compileAndApplyAIDocumentMutationWithDB(
-		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(), compiler, requestSavedOG,
-		allowAuthoritativeTargetReplacement,
-	)
+	return result.publish(ctx, joined.Store)
 }
 
-func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
+func compileAndApplyAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	root legalContentDocumentRoot,
-	entityType string,
+	store Store,
+	root Root,
+	kind *policyKind,
 	entityID string,
 	locale string,
 	memberID string,
@@ -137,8 +108,8 @@ func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
 	requestSavedOG bool,
 	allowAuthoritativeTargetReplacement bool,
 ) (legalAIDocumentApplyResult, error) {
-	state, sourceLocale, err := s.loadAIDocumentAfterAuthorization(
-		ctx, tx, root, entityType, entityID, locale, memberID,
+	state, sourceLocale, err := loadAIDocumentAfterAuthorization(
+		ctx, store, kind, entityID, locale, memberID,
 	)
 	if err != nil {
 		return legalAIDocumentApplyResult{}, err
@@ -152,8 +123,8 @@ func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
 	); err != nil {
 		return legalAIDocumentApplyResult{}, err
 	}
-	result, err := s.applyAIDocumentAfterAuthorizationInTransaction(
-		ctx, tx, root, state, sourceLocale, mutation, requestSavedOG,
+	result, err := applyAIDocumentAfterAuthorization(
+		ctx, store, root, kind, state, sourceLocale, mutation, requestSavedOG,
 	)
 	result.CurrentDocumentRevision = state.Revision
 	return result, err
@@ -165,34 +136,32 @@ func legalAIDocumentResult(
 	err error,
 ) (AIDocumentMutationResult, error) {
 	if err == nil {
-		return AIDocumentMutationResult{
-			Revision: result.Content.DocumentRevision.String(), TargetRevision: result.TargetRevision,
-			Changed: result.Content.Changed,
-		}, nil
+		return result.output(), nil
 	}
 	var compilerErr *legalAIDocumentCompilerError
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
-	var revisionConflict *AIDocumentRevisionConflict
+	var revisionConflict *aidocument.RevisionConflict
 	switch {
 	case errors.As(err, &compilerErr):
 		return AIDocumentMutationResult{}, compilerErr.cause
 	case errors.As(err, &stale):
-		slog.Warn("Legal document revision conflicted", failurecause.Attr(err), "entity_type", entityType)
-		return AIDocumentMutationResult{}, &AIDocumentRevisionConflict{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
+		return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 "Legal AI document revision changed; reload before saving",
 		}
 	case errors.As(err, &targetConflict):
-		slog.Warn("Legal document target revision conflicted", failurecause.Attr(err), "entity_type", entityType)
 		var currentTargetRevision *string
 		if targetConflict.CurrentExists {
 			current := targetConflict.CurrentRevision
 			currentTargetRevision = &current
 		}
-		return AIDocumentMutationResult{}, &AIDocumentRevisionConflict{
-			Kind:                  AIDocumentTargetRevisionConflict,
-			CurrentRevision:       result.CurrentDocumentRevision,
-			CurrentTargetRevision: currentTargetRevision,
+		return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: result.CurrentDocumentRevision,
+			CurrentTargetRevision:   currentTargetRevision,
+			Message:                 "Legal AI document revision changed; reload before saving",
 		}
 	case errors.As(err, &revisionConflict):
 		return AIDocumentMutationResult{}, revisionConflict

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +42,7 @@ func TestWorkVersionProtoFormatting(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	version, err := (&WorkService{}).toProtoWorkVersion(&model.WorkVersion{
+	version, err := workVersionView(&Version{
 		ID: "work-version-1", Version: 4, Title: &title, Summary: &summary,
 		ContentSnapshot:      snapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},
@@ -53,8 +52,8 @@ func TestWorkVersionProtoFormatting(t *testing.T) {
 	digest := sha256.Sum256(snapshot)
 	require.Equal(t, fmt.Sprintf("%x", digest[:]), version.CanonicalHash)
 	require.Equal(t, []string{"member-1", "member-2"}, []string{
-		version.Contributors[0].MemberId,
-		version.Contributors[1].MemberId,
+		version.Contributors[0].MemberID,
+		version.Contributors[1].MemberID,
 	})
 }
 

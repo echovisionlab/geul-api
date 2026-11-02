@@ -8,10 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -24,7 +21,7 @@ type mediaProcessingDerivative struct {
 }
 
 type mediaProcessingSnapshot struct {
-	File                model.File
+	File                File
 	Derivatives         map[string]mediaProcessingDerivative
 	HLSProgress         int32
 	SpectrogramProgress int32
@@ -65,7 +62,7 @@ func (h *Handlers) publishMediaProcessingLifecycle(
 
 	snapshot, err := h.loadMediaProcessingSnapshot(ctx, options.FileID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrFileNotFound) {
 			return nil
 		}
 		return err
@@ -77,12 +74,7 @@ func (h *Handlers) publishMediaProcessingLifecycle(
 	}
 
 	if err := h.publisher.PublishMediaProcessingLifecycle(ctx, event); err != nil {
-		slog.Error("Failed to publish media processing lifecycle",
-			"fileId", options.FileID,
-			"status", event.Status.String(),
-			failurecause.Attr(err),
-		)
-		return err
+		return failurecause.WithAttrs(err, slog.String("lifecycle_status", event.Status.String()))
 	}
 
 	return nil
@@ -165,19 +157,17 @@ func (h *Handlers) resolveMediaProcessingLifecycleIdentity(
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
 		return mediaProcessingLifecycleIdentity{}, true, nil
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK:
-		var track model.Track
-		if err := h.db.WithContext(ctx).
-			Select("id", "release_id").
-			Where("id = ?", entityID).
-			Take(&track).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return mediaProcessingLifecycleIdentity{}, false, nil
-			}
+		var releaseID string
+		var found bool
+		if err := h.read(ctx, func(store Store) (err error) {
+			releaseID, found, err = store.TrackRelease(ctx, entityID)
+			return err
+		}); err != nil || !found {
 			return mediaProcessingLifecycleIdentity{}, false, err
 		}
 		return mediaProcessingLifecycleIdentity{
-			TrackID:   track.ID,
-			ReleaseID: track.ReleaseID,
+			TrackID:   entityID,
+			ReleaseID: releaseID,
 		}, true, nil
 	default:
 		return mediaProcessingLifecycleIdentity{}, false, nil
@@ -188,46 +178,45 @@ func (h *Handlers) loadMediaProcessingSnapshot(
 	ctx context.Context,
 	fileID string,
 ) (mediaProcessingSnapshot, error) {
-	var file model.File
-	if err := h.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		return mediaProcessingSnapshot{}, err
-	}
+	var snapshot mediaProcessingSnapshot
+	err := h.read(ctx, func(store Store) error {
+		file, err := store.ProcessingFile(ctx, fileID)
+		if err != nil {
+			return err
+		}
+		derivatives, err := store.ReadyDerivatives(ctx, fileID)
+		if err != nil {
+			return err
+		}
+		transcodeJobs, err := store.FileTranscodeJobs(ctx, fileID)
+		if err != nil {
+			return err
+		}
+		waveformJobs, err := store.FileWaveformJobs(ctx, fileID)
+		if err != nil {
+			return err
+		}
+		snapshot = newMediaProcessingSnapshot(file, derivatives, transcodeJobs, waveformJobs)
+		return nil
+	})
+	return snapshot, err
+}
 
+func newMediaProcessingSnapshot(
+	file File,
+	derivatives []Derivative,
+	transcodeJobs []transcodestate.Job,
+	waveformJobs []transcodestate.WaveformJob,
+) mediaProcessingSnapshot {
 	snapshot := mediaProcessingSnapshot{
 		File:        file,
 		Derivatives: make(map[string]mediaProcessingDerivative),
-	}
-
-	var derivatives []struct {
-		Type              string  `gorm:"column:type"`
-		AssetID           *string `gorm:"column:asset_id"`
-		MediaGenerationID *string `gorm:"column:media_generation_id"`
-	}
-	if err := h.db.WithContext(ctx).
-		Table("file_derivative AS fd").
-		Select("fd.type", "fd.asset_id", "fd.media_generation_id").
-		Joins("LEFT JOIN public_asset AS pa ON pa.id = fd.asset_id").
-		Joins("LEFT JOIN media_generation AS mg ON mg.id = fd.media_generation_id").
-		Where("fd.file_id = ?", fileID).
-		Where(`(
-			(fd.asset_id IS NOT NULL AND pa.status = ?)
-			OR (fd.media_generation_id IS NOT NULL AND mg.status = ?)
-		)`, model.PublicAssetStatusReady, model.MediaGenerationStatusReady).
-		Find(&derivatives).Error; err != nil {
-		return mediaProcessingSnapshot{}, err
 	}
 	for _, derivative := range derivatives {
 		snapshot.Derivatives[derivative.Type] = mediaProcessingDerivative{
 			AssetID:           derivative.AssetID,
 			MediaGenerationID: derivative.MediaGenerationID,
 		}
-	}
-
-	var transcodeJobs []model.TranscodeJob
-	if err := h.db.WithContext(ctx).
-		Where("file_id = ?", fileID).
-		Find(&transcodeJobs).Error; err != nil {
-		return mediaProcessingSnapshot{}, err
 	}
 	for _, job := range transcodeJobs {
 		if snapshot.isAudio() && job.QueueName != eventpkg.QueueTranscoderAudio {
@@ -249,13 +238,6 @@ func (h *Handlers) loadMediaProcessingSnapshot(
 			int32(job.SpectrogramProgress),
 		)
 	}
-
-	var waveformJobs []model.WaveformJob
-	if err := h.db.WithContext(ctx).
-		Where("file_id = ?", fileID).
-		Find(&waveformJobs).Error; err != nil {
-		return mediaProcessingSnapshot{}, err
-	}
 	for _, job := range waveformJobs {
 		if job.Status == transcodestate.WaveformJobStatusCancelled ||
 			job.Status == transcodestate.WaveformJobStatusCompleted {
@@ -276,8 +258,7 @@ func (h *Handlers) loadMediaProcessingSnapshot(
 	if snapshot.hasDerivative(managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM) {
 		snapshot.WaveformProgress = 100
 	}
-
-	return snapshot, nil
+	return snapshot
 }
 
 func (s mediaProcessingSnapshot) isAudio() bool {

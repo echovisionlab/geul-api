@@ -14,8 +14,8 @@ import (
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,18 +23,18 @@ import (
 // ReleaseInterchange keeps Release-owned credit notes and typed Content Blocks
 // in one XLIFF target mutation and one caller-owned transaction.
 type ReleaseInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewReleaseInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *ReleaseInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Release translation interchange Audit dependencies are required")
 	}
-	return &ReleaseInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &ReleaseInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 type releaseInterchangeTarget struct {
@@ -86,21 +86,20 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
 		RequestedByMemberID: memberID,
 	}
-	if err := releasedomain.ApplyTypedTranslationInterchangeCandidateWithDB(
+	if err := releasedomain.ApplyTypedTranslationInterchangeCandidate(
 		ctx,
-		db,
-		store,
-		job,
+		releaseStore(db, store),
+		releaseTranslationJob(job),
 		candidate,
 		core.EntryWrite{Now: command.Now.UTC()},
 		command.ExpectedRevision,
-		command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		command.Mode == application.InterchangeModeReplace,
 	); err != nil {
 		var conflict *core.TargetRevisionConflict
 		if errors.As(err, &conflict) {
 			return application.TranslationInterchangeApplyResult{}, connect.NewError(connect.CodeAborted, errors.New("translation target revision changed; reload before importing"))
 		}
-		return application.TranslationInterchangeApplyResult{}, err
+		return application.TranslationInterchangeApplyResult{}, releaseConnectError(err)
 	}
 	after, err := loadReleaseInterchangeTarget(
 		ctx, db, store, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
@@ -111,7 +110,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 	changed := after.state.Revision != current.state.Revision
 	if changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditReleaseUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditReleaseUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -135,9 +134,9 @@ func loadReleaseInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindRelease)); err != nil {
 		return releaseInterchangeTarget{}, err
 	}
-	target, err := releasedomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
+	target, err := releasedomain.LoadTypedTranslationInterchangeTarget(ctx, releaseStore(db, store), entityID, locale)
 	if err != nil {
-		return releaseInterchangeTarget{}, err
+		return releaseInterchangeTarget{}, releaseConnectError(err)
 	}
 	creative, err := projectCreativeInterchangeTarget(plan, target.Exists, target.Revision, target.Document)
 	if err != nil {
@@ -179,11 +178,11 @@ func buildReleaseInterchangeCandidate(
 	if err != nil {
 		return nil, err
 	}
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if command.Mode == application.InterchangeModePatch {
 		ensureReleasePatchBlocks(candidate.ContentBlockLocaleOverlay, current.localized, command.Source.ContentBlockDocument)
 	}
 	candidate.ReleaseCreditNotes = make(map[string]string)
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if command.Mode == application.InterchangeModePatch {
 		for creditID, value := range current.creditNotes {
 			candidate.ReleaseCreditNotes[creditID] = value
 		}
@@ -227,4 +226,4 @@ func ensureReleasePatchBlocks(
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*ReleaseInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*ReleaseInterchange)(nil)

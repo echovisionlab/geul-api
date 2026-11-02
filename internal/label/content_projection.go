@@ -2,125 +2,161 @@ package label
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-type labelSourceAuthority struct {
-	SourceLocale string `gorm:"column:source_locale"`
+// loadLabelSourceLocale reads the Label's source locale; a missing Label
+// answers not found.
+func loadLabelSourceLocale(ctx context.Context, store Store, labelID string, lock RowLock) (string, error) {
+	locale, err := store.SourceLocale(ctx, labelID, lock)
+	if errors.Is(err, ErrLabelNotFound) {
+		return "", domainerr.ResourceNotFound("label", labelID)
+	}
+	return locale, err
 }
 
-type labelLocaleTitle struct {
-	Locale    string    `gorm:"column:locale"`
-	Title     *string   `gorm:"column:title"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
-}
-
-func loadLabelSourceAuthority(ctx context.Context, db *gorm.DB, labelID string, lock string) (labelSourceAuthority, error) {
-	var state labelSourceAuthority
-	query := db.WithContext(ctx).Table("label").Select("source_locale").Where("id = ?", labelID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	if err := query.Take(&state).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return labelSourceAuthority{}, errs.NotFound("label", labelID)
-		}
-		return labelSourceAuthority{}, errs.Internal(err)
-	}
-	return state, nil
-}
-
-func loadLabelLocaleTitles(ctx context.Context, db *gorm.DB, labelID string) ([]labelLocaleTitle, error) {
-	var rows []labelLocaleTitle
-	if err := db.WithContext(ctx).Table("label_translation").Select("locale", "title", "updated_at").Where("entity_id = ?", labelID).Order("locale ASC").Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	return rows, nil
-}
-
-func loadLabelContentSnapshot(ctx context.Context, tx *gorm.DB, store *contentblock.Store, labelID string) (contentblock.Snapshot, labelSourceAuthority, error) {
-	if store == nil {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.Internal(errors.New("label content Block store is not configured"))
-	}
-	var row struct {
-		DocumentID *uuid.UUID `gorm:"column:content_document_id"`
-	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).Select("content_document_id").Where("id = ?", labelID).Take(&row).Error; err != nil {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.Internal(err)
-	}
-	if row.DocumentID == nil || *row.DocumentID == uuid.Nil {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.FailedPrecondition("label content document is not initialized")
-	}
-	source, err := loadLabelSourceAuthority(ctx, tx, labelID, "SHARE")
+// loadLabelContentSnapshot share-locks the Label's document reference and
+// source locale and reads its content document.
+func loadLabelContentSnapshot(ctx context.Context, store Store, labelID string) (contentblock.Snapshot, string, error) {
+	documentID, err := store.ContentDocumentID(ctx, labelID, ShareLock)
 	if err != nil {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, err
+		return contentblock.Snapshot{}, "", err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, *row.DocumentID, source.SourceLocale)
+	if documentID == nil || *documentID == uuid.Nil {
+		return contentblock.Snapshot{}, "", domainerr.Precondition("label content document is not initialized")
+	}
+	sourceLocale, err := loadLabelSourceLocale(ctx, store, labelID, ShareLock)
 	if err != nil {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, normalizeLabelContentBlockError(err)
+		return contentblock.Snapshot{}, "", err
 	}
-	if strings.TrimSpace(snapshot.SourceLocale) != source.SourceLocale {
-		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.Internal(errors.New("label content document source locale does not match label source locale"))
+	snapshot, err := store.LockedContentSnapshot(ctx, *documentID, sourceLocale)
+	if err != nil {
+		return contentblock.Snapshot{}, "", normalizeLabelContentBlockError(err)
 	}
-	return snapshot, source, nil
+	if strings.TrimSpace(snapshot.SourceLocale) != sourceLocale {
+		return contentblock.Snapshot{}, "", errors.New("label content document source locale does not match label source locale")
+	}
+	return snapshot, sourceLocale, nil
 }
 
 type labelContentBootstrap struct {
-	Snapshot contentblock.Snapshot
-	Source   labelSourceAuthority
+	Snapshot     contentblock.Snapshot
+	SourceLocale string
 }
 
-func loadLabelContentBlockBootstrap(ctx context.Context, db *gorm.DB, store *contentblock.Store, spiceDB *auth.SpiceDBClient, labelID string, resourceType intrav1.CollaborationResourceType, principalMessage *intrav1.CollaborationPrincipal, loadMetadata func(context.Context, *gorm.DB) error) (labelContentBootstrap, error) {
-	if principalMessage == nil {
-		return labelContentBootstrap{}, errs.AuthenticationRequired()
-	}
-	if store == nil {
-		return labelContentBootstrap{}, errs.Internal(errors.New("label content Block store is not configured"))
+// loadLabelContentBlockBootstrap resolves the collaboration session's
+// principal, requires Edit, and reads the Label's document and loadMetadata
+// in one snapshot.
+func (s *Service) loadLabelContentBlockBootstrap(ctx context.Context, labelID string, sessionID string, loadMetadata func(context.Context, Store) error) (labelContentBootstrap, error) {
+	if sessionID == "" {
+		return labelContentBootstrap{}, errAuthenticationRequired
 	}
 	var output labelContentBootstrap
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, tx, principalMessage.GetSessionId())
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		principal, err := store.ResolveSessionPrincipal(ctx, sessionID)
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			return errs.AuthenticationRequired()
+			return errAuthenticationRequired
 		}
 		if err != nil {
-			return errs.Internal(fmt.Errorf("resolve Label collaboration principal: %w", err))
+			return fmt.Errorf("resolve Label collaboration principal: %w", err)
 		}
 		if principal == nil || !principal.Authenticated {
-			return errs.AuthenticationRequired()
+			return errAuthenticationRequired
 		}
 		if principal.Banned {
-			return errs.AccountBanned()
+			return domainerr.Denied("account is banned")
 		}
 		if !principal.Onboarded {
-			return errs.NoPermission("edit", "label")
+			return domainerr.Denied("no permission to edit this label")
 		}
-		if err := requireLabelCollaborationEdit(ctx, spiceDB, resourceType, labelID, principal); err != nil {
+		if err := requireLabelCollaborationEdit(ctx, s.spiceDB, labelID, principal); err != nil {
 			return err
 		}
-		snapshot, source, err := loadLabelContentSnapshot(ctx, tx, store, labelID)
+		snapshot, sourceLocale, err := loadLabelContentSnapshot(ctx, store, labelID)
 		if err != nil {
 			return err
 		}
-		if loadMetadata != nil {
-			if err := loadMetadata(ctx, tx); err != nil {
-				return err
-			}
+		if err := loadMetadata(ctx, store); err != nil {
+			return err
 		}
-		output = labelContentBootstrap{Snapshot: snapshot, Source: source}
+		output = labelContentBootstrap{Snapshot: snapshot, SourceLocale: sourceLocale}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return output, err
+}
+
+type labelManageContentProjection struct {
+	Document    *contentv1.RichTextDocument
+	Revision    string
+	SourceTitle string
+}
+
+// loadCreativeManageContentProjection reads the Label's source-locale
+// document and title in one snapshot, after loadRoot reads the root row.
+func (s *Service) loadCreativeManageContentProjection(ctx context.Context, labelID string, loadRoot func(context.Context, Store) error) (labelManageContentProjection, error) {
+	var projection labelManageContentProjection
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		if err := loadRoot(ctx, store); err != nil {
+			return err
+		}
+		snapshot, sourceLocale, err := loadLabelContentSnapshot(ctx, store, labelID)
+		if err != nil {
+			return err
+		}
+		document, err := contentblock.SnapshotToRichTextDocument(snapshot)
+		if err != nil {
+			return normalizeLabelContentBlockError(err)
+		}
+		title, err := store.LocaleTitleText(ctx, labelID, sourceLocale)
+		if err != nil {
+			if errors.Is(err, ErrLocaleNotFound) {
+				return domainerr.ResourceNotFound("label_translation", labelID)
+			}
+			return err
+		}
+		projection = labelManageContentProjection{
+			Document: document, Revision: snapshot.Document.Revision.String(),
+			SourceTitle: title,
+		}
+		return nil
+	})
+	return projection, err
+}
+
+// initializeCreativeContentDocument replaces the new Label's empty content
+// document with input, when the create request carries one.
+func initializeCreativeContentDocument(
+	ctx context.Context,
+	store Store,
+	labelID string,
+	sourceLocale string,
+	created contentblock.Snapshot,
+	input *contentv1.RichTextDocument,
+) (contentblock.Result, error) {
+	if input == nil {
+		return contentblock.Result{}, nil
+	}
+	if input.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT {
+		return contentblock.Result{}, domainerr.InvalidField("document.profile", "must be compact")
+	}
+	if strings.TrimSpace(input.GetSourceLocale()) != sourceLocale {
+		return contentblock.Result{}, domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
+	}
+	replace, err := contentblock.ReplaceFromRichTextProto(created.Document.ID, created.Document.Revision, input)
+	if err != nil {
+		return contentblock.Result{}, normalizeLabelContentBlockError(err)
+	}
+	result, err := store.ReplaceContentSnapshot(ctx, replace, labelContentCreationFence(labelID, sourceLocale))
+	if err != nil {
+		return contentblock.Result{}, normalizeLabelContentBlockError(err)
+	}
+	return result, nil
 }

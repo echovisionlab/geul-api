@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -156,7 +157,7 @@ func TestHandleFileDeleteMessageRoutesMalformedPayloadDirectlyToDLQ(t *testing.T
 		Body:        []byte("private/object/key owner@example.test"),
 		ContentType: "text/plain",
 	})
-	require.EqualError(t, err, "invalid file delete event: invalid file delete payload: unsupported encoding")
+	require.ErrorContains(t, err, "invalid file delete event: invalid file delete payload: unsupported encoding: proto:")
 	require.NotContains(t, err.Error(), "private/object/key")
 	require.NotContains(t, err.Error(), "owner@example.test")
 	class, terminal := mq.TerminalDeliveryErrorClass(err)
@@ -169,7 +170,7 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	generationID := uuid.NewString()
 	generationPrefix, err := mediaauth.MediaHLSObjectPrefix(file.ID, generationID)
@@ -181,7 +182,7 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}).Error)
 	var requests []string
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodDelete:
@@ -196,13 +197,11 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 		}
 	}))
-	publisher := &bulkEmailUnitPublisher{}
 	handlers := &Handlers{
-		publisher:        publisher,
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
+		files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
 	}
 
-	err = handlers.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{
+	err = handlers.files.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{
 		FileId:   file.ID,
 		Original: original,
 		Generations: []*commonv1.MediaGenerationWriteTarget{{
@@ -215,9 +214,13 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Table("file").Where("id = ?", file.ID).Count(&count).Error)
 	require.Zero(t, count)
-	require.Empty(t, publisher.publishedEvents)
 	require.Len(t, requests, 3)
 	require.Contains(t, requests, "DELETE /media/"+original.GetObjectKey()+"?x-id=DeleteObject")
+
+	// A redelivery after finalization is an idempotent no-op and does not need
+	// another storage request.
+	require.NoError(t, handlers.files.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original}))
+	require.Len(t, requests, 3)
 }
 
 func TestHandleFileDeleteRejectsCleanupOnlyTargetsBeforeStorage(t *testing.T) {
@@ -227,13 +230,13 @@ func TestHandleFileDeleteRejectsCleanupOnlyTargetsBeforeStorage(t *testing.T) {
 	_, assetTarget := seedWorkerCleanupAsset(t, db, file.ID)
 	_, generationTarget := seedWorkerCleanupGeneration(t, db, file.ID)
 	storageCalled := false
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		storageCalled = true
 	}))
 	authorization := newInMemoryFileAuthorizationDeletion()
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, authorization)}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, authorization)}
 
-	err := handlers.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{
+	err := handlers.files.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{
 		FileId: file.ID, Assets: []*commonv1.AssetWriteTarget{assetTarget},
 		Generations: []*commonv1.MediaGenerationWriteTarget{generationTarget},
 	})
@@ -246,16 +249,16 @@ func TestHandleFileDeleteRejectsIncompleteFullGenerationSetBeforeStorage(t *test
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
 	_, _ = seedWorkerCleanupGeneration(t, db, file.ID)
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
 
-	err = handlers.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original})
+	err = handlers.files.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original})
 	require.ErrorIs(t, err, filemediaapplication.ErrInvalidFileDeleteTarget)
 	require.False(t, storageCalled)
 }
@@ -271,7 +274,7 @@ func TestHandleFileDeleteMessageRoutesCleanupOnlyPayloadToTerminalDLQ(t *testing
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
@@ -317,7 +320,7 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 			db := newFileDeleteWorkerUnitDB(t)
 			if tt.name == "original" {
 				file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-				original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+				original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 				require.NoError(t, err)
 				tt.event = &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 			} else {
@@ -330,20 +333,17 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 					tt.event = &managev1.FileDeleteEvent{FileId: file.ID, Generations: []*commonv1.MediaGenerationWriteTarget{target}}
 				}
 			}
-			s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/xml")
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = fmt.Fprint(w, `<Error><Code>InternalError</Code><Message>injected failure</Message></Error>`)
 			}))
-			publisher := &bulkEmailUnitPublisher{}
 			handlers := &Handlers{
-				publisher:        publisher,
-				fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, nil),
+				files: newWorkerFileMediaRuntime(db, s3Client, nil),
 			}
 
-			err := handlers.HandleFileDelete(context.Background(), tt.event)
+			err := handlers.files.HandleFileDelete(context.Background(), tt.event)
 			require.Error(t, err)
-			require.Empty(t, publisher.publishedEvents)
 		})
 	}
 }
@@ -351,10 +351,10 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "audio/wav", "wav")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -363,20 +363,20 @@ func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	authorization := newInMemoryFileAuthorizationDeletion()
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, authorization)}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, authorization)}
 	require.NoError(t, db.Exec(`
 		CREATE TRIGGER fail_file_delete BEFORE DELETE ON file
 		BEGIN SELECT RAISE(ABORT, 'injected finalization failure'); END
 	`).Error)
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	require.Error(t, handlers.HandleFileDelete(t.Context(), event))
+	require.Error(t, handlers.files.HandleFileDelete(t.Context(), event))
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 	require.NotNil(t, retained.DeleteRequestedAt)
 	require.Len(t, authorization.restored, 1)
 	require.NoError(t, db.Exec("DROP TRIGGER fail_file_delete").Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 	require.Equal(t, 2, deleteCalls, "S3 delete must be safely repeated after a finalization crash")
 	require.Len(t, authorization.deleted, 2)
@@ -385,27 +385,27 @@ func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *
 func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "model/gltf-binary", "glb")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		INSERT INTO mesh_optimization_candidate (id, source_file_id, status, selected_at)
 		VALUES (?, ?, ?, NULL)
 	`, uuid.NewString(), file.ID, model.MeshOptimizationCandidateStatusCancelled).Error)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodDelete, r.Method)
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	err = handlers.HandleFileDelete(t.Context(), event)
+	err = handlers.files.HandleFileDelete(t.Context(), event)
 	require.ErrorContains(t, err, "pending mesh optimization result")
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 	require.NoError(t, db.Exec("DELETE FROM mesh_optimization_candidate WHERE source_file_id = ?", file.ID).Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 	require.Equal(t, 2, deleteCalls, "S3 deletion remains idempotent while source finalization waits for a late result")
 }
@@ -413,7 +413,7 @@ func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testi
 func TestHandleFileDeleteDefersStorageUntilTranscodeWriterFinishes(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	eventID := uuid.NewString()
 	require.NoError(t, db.Exec(`
@@ -421,21 +421,21 @@ func TestHandleFileDeleteDefersStorageUntilTranscodeWriterFinishes(t *testing.T)
 		VALUES (?, ?, ?)
 	`, eventID, file.ID, transcodestate.StatusCancelled).Error)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	err = handlers.HandleFileDelete(t.Context(), event)
+	err = handlers.files.HandleFileDelete(t.Context(), event)
 	require.ErrorContains(t, err, "pending transcode")
 	require.Zero(t, deleteCalls, "storage deletion must not race an allocated transcode writer")
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 
 	require.NoError(t, db.Exec("DELETE FROM transcode_job WHERE event_id = ?", eventID).Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.Equal(t, 1, deleteCalls)
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 }
@@ -590,23 +590,4 @@ func seedWorkerCleanupGeneration(
 	return generation, &commonv1.MediaGenerationWriteTarget{
 		GenerationId: generation.ID, FileId: generation.FileID, ObjectPrefix: generation.ObjectPrefix,
 	}
-}
-
-func newFileDeleteTestS3Client(t *testing.T, handler http.Handler) *s3.Client {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	awsConfig := aws.Config{
-		Region:      "us-east-1",
-		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		HTTPClient:  server.Client(),
-		Retryer: func() aws.Retryer {
-			return aws.NopRetryer{}
-		},
-	}
-	return s3.NewFromConfig(awsConfig, func(options *s3.Options) {
-		options.BaseEndpoint = aws.String(server.URL)
-		options.UsePathStyle = true
-	})
 }

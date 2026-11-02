@@ -2,568 +2,205 @@ package public
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/structpb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mapcluster"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
+
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// WorkService implements the public WorkService.
-type WorkService struct {
-	openv1connect.UnimplementedWorkServiceHandler
-	db         *gorm.DB
-	spiceDB    *auth.SpiceDBClient
-	blockMedia workdomain.ContentBlockMediaHydrator
-	assets     MediaResolver
-	members    MemberSummaryLoader
-	mapPlaces  MapPlaceProjector
-	blocks     *contentblock.Store
+// ContentBlockMediaHydrator is the public Work media boundary. Public File
+// delivery owns its separate share/public policy evaluation.
+type ContentBlockMediaHydrator interface {
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
-type WorkServiceOption func(*WorkService)
+// MediaResolver is the Work public-read projection supplied by its runtime
+// adapter.
+type MediaResolver interface {
+	ResolveReadyOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
+	ResolveReadyAssetForSourceFile(context.Context, string, ...string) *mediaasset.Reference
+	ResolveArtistImageAsset(context.Context, string) *mediaasset.Reference
+}
 
 type MemberSummaryLoader interface {
-	LoadPublicMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadPublicMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
-type MapPlaceProjector interface {
-	Basic(*model.MapPlace) *openv1.MapPlaceBasic
+// Deps are the collaborators of the public Work reads; all are required.
+type Deps struct {
+	Units      mutation.UnitOfWork[Store] // workpublicpostgres.NewUnits
+	SpiceDB    authz.AuthorizationDecisionChecker
+	BlockMedia ContentBlockMediaHydrator
+	Assets     MediaResolver
+	Members    MemberSummaryLoader
 }
 
-func WithWorkContentBlockStore(store *contentblock.Store) WorkServiceOption {
-	return func(s *WorkService) {
-		s.blocks = store
-	}
-}
-
-type normalizedWorkMapViewport struct {
-	West             float64
-	South            float64
-	East             float64
-	North            float64
-	Zoom             float64
-	WidthPx          float64
-	HeightPx         float64
-	ClusterRadiusPx  float64
-	MinClusterPoints int
-	FullLongitude    bool
-	FullLatitude     bool
-}
-
-type workMapFeatureRow struct {
-	WorkID       string  `gorm:"column:work_id"`
-	WorkTitle    string  `gorm:"column:work_title"`
-	WorkSlug     *string `gorm:"column:work_slug"`
-	PlaceID      string  `gorm:"column:place_id"`
-	PlaceName    string  `gorm:"column:place_name"`
-	PlaceAddress string  `gorm:"column:place_address"`
-	PlaceLat     float64 `gorm:"column:place_lat"`
-	PlaceLng     float64 `gorm:"column:place_lng"`
-}
-
-type workPublicClientRow struct {
-	ID          string
-	Name        string
-	Website     *string
-	LightFileID *string `gorm:"column:light_file_id"`
-	DarkFileID  *string `gorm:"column:dark_file_id"`
-}
-
-type workPublicRelationsSnapshot struct {
-	CreditGroups []model.WorkCreditGroup
-	Credits      []model.WorkCredit
-	Clients      []workPublicClientRow
-}
-
-type workMapPlaceGroup struct {
-	PlaceID          string
-	Name             string
-	Address          string
-	Lat              float64
-	Lng              float64
-	WorkCount        int32
-	PrimaryWorkID    string
-	PrimaryWorkSlug  *string
-	PrimaryWorkTitle string
-	Order            int
-}
-
-// NewWorkService creates a new public WorkService
-func NewWorkService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	blockMedia workdomain.ContentBlockMediaHydrator,
-	assets MediaResolver,
-	members MemberSummaryLoader,
-	mapPlaces MapPlaceProjector,
-	options ...WorkServiceOption,
-) *WorkService {
-	if db == nil || spiceDB == nil || blockMedia == nil || assets == nil || members == nil || mapPlaces == nil {
-		panic("public Work service dependencies are required")
-	}
-	service := &WorkService{
-		db:         db,
-		spiceDB:    spiceDB,
-		blockMedia: blockMedia,
-		assets:     assets,
-		members:    members,
-		mapPlaces:  mapPlaces,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "BlockMedia": d.BlockMedia == nil, "Assets": d.Assets == nil,
+		"Members": d.Members == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
 		}
 	}
-	return service
-}
-
-func isPublicWorkStatus(status string) bool {
-	return status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() ||
-		status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()
-}
-
-func publicWorkStatusValues() []string {
-	return []string{
-		managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("public Work dependencies are required: " + strings.Join(missing, ", "))
 	}
+	return nil
 }
 
-func applyPublicWorkFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
-	query = query.Where("work.status IN ?", publicWorkStatusValues())
-	return workFilterConfig.ApplyFilters(query, filters)
+// Service holds the public Work reads.
+type Service struct {
+	units      mutation.UnitOfWork[Store]
+	spiceDB    authz.AuthorizationDecisionChecker
+	blockMedia ContentBlockMediaHydrator
+	assets     MediaResolver
+	members    MemberSummaryLoader
 }
 
-// Get retrieves a work by slug or ID
-// - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
-// - share_token allows access to draft works
-// - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *WorkService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetWorkRequest],
-) (_ *connect.Response[openv1.GetWorkResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	return s.buildWorkResponse(ctx, req)
-}
-
-// List returns published and archived works.
-func (s *WorkService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListWorksRequest],
-) (_ *connect.Response[openv1.ListWorksResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var works []model.Work
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Work{})
-
-	// Apply filters using FilterConfig
-	query, err := applyPublicWorkFilters(query, req.Msg.Filters)
-	if err != nil {
+// NewService validates deps and returns the public Work reads.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-
-	// Count total before pagination
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply sorting using SortConfig
-	query, err = WorkSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply pagination
-	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
-		20,
-	)
-	query = queryutil.ApplyPagination(query, pagination)
-
-	if err := query.Find(&works).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := s.overlayRequiredSourceStatesForPublicWorks(ctx, works); err != nil {
-		return nil, err
-	}
-
-	localizedSelections, err := publiccontent.ResolveBatch(
-		ctx,
-		s.db,
-		workLocalizationSpec,
-		collectWorkIDs(works),
-		req.Header().Get("Accept-Language"),
-	)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve work summary localizations", failurecause.Attr(err))
-	}
-
-	// Convert to proto summaries
-	summaries := make([]*openv1.WorkSummary, 0, len(works))
-	for _, work := range works {
-		summaries = append(summaries, s.toWorkSummary(ctx, &work, localizedSelections[work.ID]))
-	}
-
-	return connect.NewResponse(&openv1.ListWorksResponse{
-		Works: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   pagination.Limit,
-			Offset:  pagination.Offset,
-			HasMore: pagination.Offset+int32(len(works)) < int32(total),
-		},
-	}), nil
+	return &Service{
+		units: deps.Units, spiceDB: deps.SpiceDB, blockMedia: deps.BlockMedia, assets: deps.Assets, members: deps.Members,
+	}, nil
 }
 
-// ListMapFeatures returns server-clustered map data for published and archived works in the current viewport.
-func (s *WorkService) ListMapFeatures(
-	ctx context.Context,
-	req *connect.Request[openv1.ListWorkMapFeaturesRequest],
-) (_ *connect.Response[openv1.ListWorkMapFeaturesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListMapFeatures", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	viewport, err := normalizeWorkMapViewport(req.Msg.Viewport)
-	if err != nil {
-		return nil, err
-	}
-
-	var rows []workMapFeatureRow
-	query := s.db.WithContext(ctx).
-		Model(&model.Work{}).
-		Select(`
-			work.id AS work_id,
-			`+workdomain.WorkSourceTitleSQL("work")+` AS work_title,
-			work.slug AS work_slug,
-			map_place.id AS place_id,
-			map_place.name AS place_name,
-			map_place.address AS place_address,
-			map_place.lat AS place_lat,
-			map_place.lng AS place_lng
-		`).
-		Joins("JOIN map_place ON map_place.id = work.map_place_id").
-		Where("map_place.lat BETWEEN ? AND ?", viewport.South, viewport.North)
-
-	if viewport.FullLongitude {
-		// World-wrapping viewport: longitude filter would incorrectly exclude visible places.
-	} else if viewport.West <= viewport.East {
-		query = query.Where("map_place.lng BETWEEN ? AND ?", viewport.West, viewport.East)
-	} else {
-		query = query.Where("(map_place.lng >= ? OR map_place.lng <= ?)", viewport.West, viewport.East)
-	}
-
-	query, err = applyPublicWorkFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-
-	query, err = WorkSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := s.requireSourceRowsForPublicWorkMap(ctx, rows); err != nil {
-		return nil, err
-	}
-
-	placeGroups := buildWorkMapPlaceGroups(rows)
-	clusters, items := clusterWorkMapPlaceGroups(placeGroups, viewport)
-
-	return connect.NewResponse(&openv1.ListWorkMapFeaturesResponse{
-		Clusters: clusters,
-		Items:    items,
-	}), nil
+// GetWorkQuery reads a published or archived Work by ID or slug. A draft is
+// visible to a caller with view permission or through its share link.
+// AcceptLanguage picks the displayed locale.
+type GetWorkQuery struct {
+	Slug           string
+	ShareToken     string
+	SharePassword  string
+	AcceptLanguage string
 }
 
-// buildWorkResponse builds a GetWorkResponse with the work
-func (s *WorkService) buildWorkResponse(
-	ctx context.Context,
-	req *connect.Request[openv1.GetWorkRequest],
-) (*connect.Response[openv1.GetWorkResponse], error) {
-	if s.blocks == nil {
-		return nil, errs.InternalMsg("Work content Block store is not configured")
-	}
-	work := &model.Work{}
-	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{}
-	var localization publiccontent.Selection
-	var document *contentv1.LocalizedRichTextDocument
-	var revision string
-	var blockMedia []*contentv1.ContentBlockMediaItem
-	var relations workPublicRelationsSnapshot
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
-			Preload("MapPlace")
-		var loadErr error
-		if workdomain.IsValidUUID(req.Msg.Slug) {
-			loadErr = query.First(work, "id = ?", req.Msg.Slug).Error
-		} else {
-			loadErr = query.First(work, "slug = ?", req.Msg.Slug).Error
-		}
-		if loadErr != nil {
-			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("work not found")
-			}
-			return errs.Internal(loadErr)
-		}
-		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
-			ResourceType: "work",
-			ResourceID:   work.ID,
-			Status:       work.Status,
-			Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
-		}
-		if !isPublicWorkStatus(work.Status) {
-			allowed, permissionErr := hasDraftWorkView(ctx, s.spiceDB, work.ID)
-			if permissionErr != nil {
-				return errs.Internal(fmt.Errorf("check work draft view permission: %w", permissionErr))
-			}
-			if allowed {
-				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-				if user := auth.GetUser(ctx); user != nil {
-					mediaAuthorization.IdentityID = user.IdentityID.String()
-					mediaAuthorization.MemberID = user.MemberID.String()
-				}
-			} else {
-				link, accessErr := requireDraftShareLinkAccess(
-					ctx, tx, optionalStringValue(req.Msg.ShareToken), req.Msg.GetSharePassword(),
-					managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, work.ID, "work",
-				)
-				if accessErr != nil {
-					return accessErr
-				}
-				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-				mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-			}
-		}
-		documentID, loadErr := workdomain.LoadWorkContentDocumentIDForPublicRead(ctx, tx, work.ID)
-		if loadErr != nil {
-			return loadErr
-		}
-		mediaAuthorization.DocumentID = documentID.String()
-		sourceState, loadErr := workdomain.LoadWorkSourceLocaleDocumentStateForPublic(ctx, tx, work.ID)
-		if loadErr != nil {
-			return loadErr
-		}
-		if sourceState == nil {
-			return errs.InternalMsg("Work source locale is not initialized")
-		}
-		workdomain.OverlayWorkSourceLocaleDocumentForPublic(work, sourceState)
-		localization, loadErr = publiccontent.Resolve(ctx, tx, workLocalizationSpec, work.ID, req.Header().Get("Accept-Language"))
-		if loadErr != nil {
-			return errs.Internal(loadErr)
-		}
-		localization, loadErr = publiccontent.ResolveOGConsistency(
-			ctx, tx, workLocalizationSpec, work.ID, localization,
-			func(ctx context.Context, assetID string) (bool, error) {
-				return s.assets.IsReadyAsset(ctx, tx, assetID)
-			},
-		)
-		if loadErr != nil {
-			return errs.Internal(loadErr)
-		}
-		document, revision, blockMedia, loadErr =
-			workdomain.LoadLocalizedWorkContentProjectionForPublic(
-				ctx,
-				tx,
-				s.blocks,
-				work.ID,
-				documentID,
-				localization.DisplayedLocale,
-			)
-		if loadErr != nil {
-			return loadErr
-		}
-		relations, loadErr = s.loadWorkPublicRelationsSnapshot(ctx, tx, work)
-		return loadErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return nil, err
-	}
-	blockMedia, err = s.blockMedia.HydrateAuthorizedContentBlockMedia(
-		mediaasset.WithContentDownloadOwnerAuthorization(ctx, mediaAuthorization), blockMedia,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	protoWork := &openv1.Work{
-		Id:        work.ID,
-		Title:     work.Title,
-		Type:      openv1.WorkType(openv1.WorkType_value[work.Type]),
-		Year:      work.Year,
-		Month:     work.Month,
-		IsPresent: work.IsPresent,
-		Featured:  work.Featured,
-		Status:    openv1.WorkStatus(openv1.WorkStatus_value[work.Status]),
-		CreatedAt: timestamppb.New(work.CreatedAt),
-		UpdatedAt: timestamppb.New(work.UpdatedAt),
-		Document:  document,
-		Revision:  revision,
-	}
-
-	if work.Slug != nil {
-		protoWork.Slug = work.Slug
-	}
-	if work.Summary != nil {
-		protoWork.Summary = work.Summary
-	}
-	if localization.Title != nil {
-		protoWork.Title = *localization.Title
-	}
-	protoWork.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
-	if work.PublishedAt != nil {
-		protoWork.PublishedAt = timestamppb.New(*work.PublishedAt)
-	}
-	if work.MapPlaceID != nil {
-		protoWork.MapPlaceId = work.MapPlaceID
-		protoWork.LocationPlace = s.mapPlaces.Basic(work.MapPlace)
-	}
-	if work.UntilYear != nil {
-		protoWork.UntilYear = work.UntilYear
-	}
-	if work.UntilMonth != nil {
-		protoWork.UntilMonth = work.UntilMonth
-	}
-	workSourceOgAssetID := work.OgAssetID
-	if localization.OmitSourceOgFallback {
-		workSourceOgAssetID = nil
-	}
-	protoWork.OgAsset, err = s.assets.ResolveReadyOGAsset(ctx, workSourceOgAssetID, localization.OgAssetID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if imageAsset := s.getWorkFeaturedImageAssetForSourceFile(ctx, work.FeaturedImageFileID); imageAsset != nil {
-		protoWork.FeaturedImageAsset = imageAsset
-	}
-
-	// Metadata
-	if work.Metadata != nil {
-		metadata, err := structpb.NewStruct(work.Metadata)
-		if err == nil {
-			protoWork.Metadata = metadata
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "convert_public_work_metadata", failurecause.Attr(err), "work_id", work.ID)
-			}
-		}
-	}
-
-	if localization.Summary != nil {
-		protoWork.Summary = localization.Summary
-	}
-
-	// OG image key
-	// Get credit groups and credits with artist/user details
-	protoWork.CreditGroups = workCreditGroupsToProto(relations.CreditGroups)
-	// Get credits with artist/Member details.
-	protoWork.Credits, err = s.getWorkCredits(ctx, relations.Credits)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Get clients
-	protoWork.Clients = s.getWorkClients(ctx, relations.Clients)
-
-	return connect.NewResponse(&openv1.GetWorkResponse{
-		Work:       protoWork,
-		BlockMedia: blockMedia,
-	}), nil
+// ListWorksQuery lists published and archived Works.
+type ListWorksQuery struct {
+	Limit          int32
+	Offset         int32
+	Filters        []*commonv1.FilterSpec
+	Sorts          []*commonv1.SortSpec
+	AcceptLanguage string
 }
 
-// toWorkSummary converts a work to a summary (no content)
-func (s *WorkService) toWorkSummary(
-	ctx context.Context,
-	work *model.Work,
-	localization publiccontent.Selection,
-) *openv1.WorkSummary {
-	summary := &openv1.WorkSummary{
-		Id:        work.ID,
-		Title:     work.Title,
-		Type:      openv1.WorkType(openv1.WorkType_value[work.Type]),
-		Year:      work.Year,
-		Month:     work.Month,
-		IsPresent: work.IsPresent,
-		Featured:  work.Featured,
-		Status:    openv1.WorkStatus(openv1.WorkStatus_value[work.Status]),
-	}
-
-	if work.Slug != nil {
-		summary.Slug = work.Slug
-	}
-	if work.Summary != nil {
-		summary.Summary = work.Summary
-	}
-	if localization.Summary != nil {
-		summary.Summary = localization.Summary
-	}
-	if localization.Title != nil {
-		summary.Title = *localization.Title
-	}
-	if work.PublishedAt != nil {
-		summary.PublishedAt = timestamppb.New(*work.PublishedAt)
-	}
-	if work.MapPlaceID != nil {
-		summary.MapPlaceId = work.MapPlaceID
-	}
-	if work.UntilYear != nil {
-		summary.UntilYear = work.UntilYear
-	}
-	if work.UntilMonth != nil {
-		summary.UntilMonth = work.UntilMonth
-	}
-
-	if imageAsset := s.getWorkFeaturedImageAssetForSourceFile(ctx, work.FeaturedImageFileID); imageAsset != nil {
-		summary.FeaturedImageAsset = imageAsset
-	}
-	return summary
+// ListWorkMapFeaturesQuery clusters the mapped Works in Viewport.
+type ListWorkMapFeaturesQuery struct {
+	Viewport *Viewport
+	Filters  []*commonv1.FilterSpec
+	Sorts    []*commonv1.SortSpec
 }
 
-func collectWorkIDs(works []model.Work) []string {
+// Pagination is where a page sits among every match.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
+// Summary is a public Work as a list shows it, in its displayed locale.
+type Summary struct {
+	Work          workdomain.Work
+	Title         string
+	Summary       *string
+	FeaturedImage *mediaasset.Reference
+}
+
+// WorkPage is one page of public Work summaries.
+type WorkPage struct {
+	Works      []Summary
+	Pagination Pagination
+}
+
+// MapFeatures are the clustered and individual places of a map read.
+type MapFeatures struct {
+	Clusters []MapCluster
+	Items    []MapItem
+}
+
+// Credit is a public credit with its Artist and Member, when they resolve.
+type Credit struct {
+	Credit workdomain.Credit
+	Artist *CreditArtist
+	Member *memberref.Summary
+}
+
+// CreditArtist is a credited Artist with its image.
+type CreditArtist struct {
+	ID    string
+	Name  string
+	Slug  *string
+	Image *mediaasset.Reference
+}
+
+// Client is a client of a public Work with its logos.
+type Client struct {
+	ID        string
+	Name      string
+	Website   *string
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
+}
+
+// Detail is a public Work with its displayed locale, content and
+// relations.
+type Detail struct {
+	Work          Work
+	Title         string
+	Summary       *string
+	Localization  publiccontent.Selection
+	OgAsset       *mediaasset.Reference
+	FeaturedImage *mediaasset.Reference
+	Document      *contentv1.LocalizedRichTextDocument
+	Revision      string
+	CreditGroups  []workdomain.CreditGroup
+	Credits       []Credit
+	Clients       []Client
+	BlockMedia    []*fileref.BlockMediaItem
+}
+
+func isPublicWorkStatus(status workdomain.Status) bool {
+	return status == workdomain.StatusPublished || status == workdomain.StatusArchived
+}
+
+// PublicStatuses are the statuses a public read lists.
+func PublicStatuses() []string {
+	return []string{string(workdomain.StatusPublished), string(workdomain.StatusArchived)}
+}
+
+func collectWorkIDs(works []workdomain.Work) []string {
 	ids := make([]string, 0, len(works))
 	for _, work := range works {
 		ids = append(ids, work.ID)
@@ -571,279 +208,322 @@ func collectWorkIDs(works []model.Work) []string {
 	return ids
 }
 
-func (s *WorkService) overlayRequiredSourceStatesForPublicWorks(
-	ctx context.Context,
-	works []model.Work,
-) error {
-	if len(works) == 0 {
-		return nil
+// List returns published and archived works.
+func (s *Service) List(ctx context.Context, request ListWorksQuery) (WorkPage, error) {
+	pagination := queryutil.GetPaginationParams(request.Limit, request.Offset, 20)
+	var works []workdomain.Work
+	var total int64
+	var sourceStates map[string]workdomain.SourceDocument
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if works, total, err = store.ListWorks(ctx, ListPage{
+			Filters: request.Filters, Sorts: request.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
+		}); err != nil {
+			return err
+		}
+		if len(works) == 0 {
+			return nil
+		}
+		sourceStates, err = store.SourceDocuments(ctx, collectWorkIDs(works))
+		return err
+	}); err != nil {
+		return WorkPage{}, err
+	}
+	summaries := make([]Summary, 0, len(works))
+	for _, work := range works {
+		sourceState, ok := sourceStates[work.ID]
+		if !ok {
+			return WorkPage{}, fmt.Errorf("missing work source locale row for public list item %s", work.ID)
+		}
+		summaries = append(summaries, Summary{Work: work, Title: optionalText(sourceState.Title), Summary: sourceState.Summary})
 	}
 
-	sourceStates, err := workdomain.LoadWorkSourceLocaleDocumentStatesForPublic(ctx, s.db, collectWorkIDs(works))
-	if err != nil {
+	var localizedSelections map[string]publiccontent.Selection
+	if err := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		localizedSelections, err = store.ResolveLocalizations(ctx, collectWorkIDs(works), request.AcceptLanguage)
 		return err
+	}); err != nil {
+		slog.ErrorContext(ctx, "Work summary localization lookup failed; listing works without localization", "domain", "work", "operation", "resolve_summary_localizations", failurecause.Attr(err))
 	}
-	for i := range works {
-		sourceState := sourceStates[works[i].ID]
-		if sourceState == nil {
-			slog.Error("missing work source locale row for public list item", "workId", works[i].ID)
-			return errs.InternalMsg("internal server error")
+
+	for i := range summaries {
+		localization := localizedSelections[summaries[i].Work.ID]
+		if localization.Summary != nil {
+			summaries[i].Summary = localization.Summary
 		}
-		workdomain.OverlayWorkSourceLocaleDocumentForPublic(&works[i], sourceState)
+		if localization.Title != nil {
+			summaries[i].Title = *localization.Title
+		}
+		summaries[i].FeaturedImage = s.getWorkFeaturedImageAssetForSourceFile(ctx, summaries[i].Work.FeaturedImageFileID)
 	}
-	return nil
+
+	return WorkPage{
+		Works: summaries,
+		Pagination: Pagination{
+			Total:   int32(total),
+			Limit:   pagination.Limit,
+			Offset:  pagination.Offset,
+			HasMore: pagination.Offset+int32(len(works)) < int32(total),
+		},
+	}, nil
 }
 
-func (s *WorkService) requireSourceRowsForPublicWorkMap(
-	ctx context.Context,
-	rows []workMapFeatureRow,
-) error {
-	if len(rows) == 0 {
-		return nil
+func optionalText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+// ListMapFeatures returns server-clustered map data for published and archived works in the current viewport.
+func (s *Service) ListMapFeatures(ctx context.Context, request ListWorkMapFeaturesQuery) (MapFeatures, error) {
+	viewport, err := normalizeWorkMapViewport(request.Viewport)
+	if err != nil {
+		return MapFeatures{}, err
 	}
 
+	var rows []MapFeatureRow
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.MapFeatures(ctx, MapBounds{
+			West: viewport.West, South: viewport.South, East: viewport.East, North: viewport.North,
+			FullLongitude: viewport.FullLongitude,
+		}, request.Filters, request.Sorts)
+		if err != nil || len(rows) == 0 {
+			return err
+		}
+		return requireSourceRowsForPublicWorkMap(ctx, store, rows)
+	}); err != nil {
+		return MapFeatures{}, err
+	}
+
+	placeGroups := buildWorkMapPlaceGroups(rows)
+	clusters, items := clusterWorkMapPlaceGroups(placeGroups, viewport)
+	return MapFeatures{Clusters: clusters, Items: items}, nil
+}
+
+func requireSourceRowsForPublicWorkMap(ctx context.Context, store Store, rows []MapFeatureRow) error {
 	workIDs := collectWorkMapIDs(rows)
-	sourceStates, err := workdomain.LoadWorkSourceLocaleDocumentStatesForPublic(ctx, s.db, workIDs)
+	sourceStates, err := store.SourceDocuments(ctx, workIDs)
 	if err != nil {
 		return err
 	}
 	for _, workID := range workIDs {
-		if sourceStates[workID] == nil {
-			slog.Error("missing work source locale row for public map item", "workId", workID)
-			return errs.InternalMsg("internal server error")
+		if _, ok := sourceStates[workID]; !ok {
+			return fmt.Errorf("missing work source locale row for public map item %s", workID)
 		}
 	}
 	return nil
 }
 
-func normalizeWorkMapViewport(viewport *openv1.WorkMapViewport) (normalizedWorkMapViewport, error) {
-	if viewport == nil || viewport.Bounds == nil {
-		return normalizedWorkMapViewport{}, errs.InvalidArgument("viewport", "viewport bounds are required")
-	}
-
-	south := mapcluster.Clamp(viewport.Bounds.South, -85, 85)
-	north := mapcluster.Clamp(viewport.Bounds.North, -85, 85)
-	if north < south {
-		south, north = north, south
-	}
-
-	west := mapcluster.NormalizeLongitude(viewport.Bounds.West)
-	east := mapcluster.NormalizeLongitude(viewport.Bounds.East)
-
-	zoom := viewport.Zoom
-	if math.IsNaN(zoom) || math.IsInf(zoom, 0) {
-		return normalizedWorkMapViewport{}, errs.InvalidArgument("viewport.zoom", "zoom must be finite")
-	}
-	// Signed MapLibre zooms down to the renderer's minimum are valid with
-	// measured dimensions. Preserve legacy defaults for missing-size inputs
-	// at zoom zero or below, and for zooms below the supported minimum.
-	if zoom < mapcluster.MinViewportZoom || (zoom <= 0 && (viewport.WidthPx <= 0 || viewport.HeightPx <= 0)) {
-		zoom = 1.5
-	}
-
-	widthPx := float64(viewport.WidthPx)
-	if widthPx <= 0 {
-		widthPx = 1280
-	}
-
-	heightPx := float64(viewport.HeightPx)
-	if heightPx <= 0 {
-		heightPx = 720
-	}
-
-	clusterRadiusPx := float64(viewport.ClusterRadiusPx)
-	if clusterRadiusPx <= 0 {
-		clusterRadiusPx = mapcluster.DefaultMapClusterRadiusPxForZoom(zoom, widthPx)
-	}
-
-	worldScale := mapcluster.WorldTileSize * math.Pow(2, zoom)
-	fullLongitude := widthPx >= worldScale-1
-	fullLatitude := heightPx >= worldScale-1
-
-	minClusterPoints := int(viewport.MinClusterPoints)
-	if minClusterPoints <= 0 {
-		minClusterPoints = mapcluster.MapClusterDefaultMinPoints
-	}
-
-	if fullLongitude {
-		west = -180
-		east = 180
-	}
-	if fullLatitude {
-		south = -85
-		north = 85
-	}
-
-	return normalizedWorkMapViewport{
-		West:             west,
-		South:            south,
-		East:             east,
-		North:            north,
-		Zoom:             zoom,
-		WidthPx:          widthPx,
-		HeightPx:         heightPx,
-		ClusterRadiusPx:  clusterRadiusPx,
-		MinClusterPoints: minClusterPoints,
-		FullLongitude:    fullLongitude,
-		FullLatitude:     fullLatitude,
-	}, nil
+// publicWorkSnapshot is a Work and its relations read in one snapshot.
+type publicWorkSnapshot struct {
+	work               Work
+	title              string
+	summary            *string
+	ogAssetID          *string
+	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
+	localization       publiccontent.Selection
+	document           Document
+	creditGroups       []workdomain.CreditGroup
+	credits            []workdomain.Credit
+	clients            []workdomain.ClientRow
 }
 
-func buildWorkMapPlaceGroups(
-	rows []workMapFeatureRow,
-) []*workMapPlaceGroup {
-	placeByID := make(map[string]*workMapPlaceGroup, len(rows))
-	ordered := make([]*workMapPlaceGroup, 0, len(rows))
-
-	for idx, row := range rows {
-		group, ok := placeByID[row.PlaceID]
-		if !ok {
-			group = &workMapPlaceGroup{
-				PlaceID:          row.PlaceID,
-				Name:             row.PlaceName,
-				Address:          row.PlaceAddress,
-				Lat:              row.PlaceLat,
-				Lng:              row.PlaceLng,
-				PrimaryWorkID:    row.WorkID,
-				PrimaryWorkSlug:  row.WorkSlug,
-				PrimaryWorkTitle: row.WorkTitle,
-				Order:            idx,
-			}
-			placeByID[row.PlaceID] = group
-			ordered = append(ordered, group)
-		}
-		group.WorkCount++
+// Get retrieves a work by slug or ID
+// - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
+// - share_token allows access to draft works
+// - authenticated accounts with the exact SpiceDB view permission can access drafts
+func (s *Service) Get(ctx context.Context, query GetWorkQuery) (Detail, error) {
+	var snapshot publicWorkSnapshot
+	if err := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		snapshot, err = s.loadPublicWorkSnapshot(ctx, store, query)
+		return err
+	}); err != nil {
+		return Detail{}, err
 	}
-
-	return ordered
-}
-
-func collectWorkMapIDs(rows []workMapFeatureRow) []string {
-	ids := make([]string, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		if _, ok := seen[row.WorkID]; ok {
-			continue
-		}
-		seen[row.WorkID] = struct{}{}
-		ids = append(ids, row.WorkID)
-	}
-	return ids
-}
-
-func clusterWorkMapPlaceGroups(
-	placeGroups []*workMapPlaceGroup,
-	viewport normalizedWorkMapViewport,
-) ([]*openv1.WorkMapCluster, []*openv1.WorkMapItem) {
-	if len(placeGroups) == 0 {
-		return nil, nil
-	}
-
-	parameters := mapcluster.MapClusterParameters{
-		Zoom:             viewport.Zoom,
-		RadiusPx:         viewport.ClusterRadiusPx,
-		MinClusterPoints: viewport.MinClusterPoints,
-	}
-	components := mapcluster.ClusterMapPlaceGroups(
-		placeGroups,
-		parameters,
-		func(group *workMapPlaceGroup) (float64, float64) { return group.Lat, group.Lng },
-		func(group *workMapPlaceGroup) int32 { return group.WorkCount },
+	blockMedia, err := s.blockMedia.HydrateAuthorizedContentBlockMedia(
+		mediaasset.WithContentDownloadOwnerAuthorization(ctx, snapshot.mediaAuthorization), snapshot.document.BlockMedia,
 	)
-
-	clusters := make([]*openv1.WorkMapCluster, 0, len(components))
-	items := make([]*openv1.WorkMapItem, 0, len(placeGroups))
-	for index, component := range components {
-		if component.ShouldRenderItems(parameters) {
-			for _, group := range component.Groups {
-				items = append(items, workMapItem(group))
-			}
-			continue
-		}
-		clusters = append(clusters, &openv1.WorkMapCluster{
-			Id:              fmt.Sprintf("cluster-%d", index+1),
-			Lat:             component.Lat,
-			Lng:             component.Lng,
-			PlaceCount:      int32(len(component.Groups)),
-			WorkCount:       component.Count,
-			MinBreakoutZoom: component.MinBreakoutZoom,
-			Bounds: &openv1.WorkMapBounds{
-				West: component.West, South: component.South,
-				East: component.East, North: component.North,
-			},
-		})
+	if err != nil {
+		return Detail{}, err
 	}
-	return clusters, items
+	detail, err := s.projectPublicWork(ctx, snapshot)
+	if err != nil {
+		return Detail{}, err
+	}
+	detail.BlockMedia = blockMedia
+	return detail, nil
 }
 
-func workMapItem(group *workMapPlaceGroup) *openv1.WorkMapItem {
-	return &openv1.WorkMapItem{
-		PlaceId:          group.PlaceID,
-		Name:             group.Name,
-		Address:          group.Address,
-		Lat:              group.Lat,
-		Lng:              group.Lng,
-		WorkCount:        group.WorkCount,
-		PrimaryWorkId:    group.PrimaryWorkID,
-		PrimaryWorkSlug:  group.PrimaryWorkSlug,
-		PrimaryWorkTitle: group.PrimaryWorkTitle,
+func (s *Service) loadPublicWorkSnapshot(ctx context.Context, store Store, query GetWorkQuery) (publicWorkSnapshot, error) {
+	var snapshot publicWorkSnapshot
+	work, err := store.FindWork(ctx, query.Slug, workdomain.IsValidUUID(query.Slug))
+	if errors.Is(err, workdomain.ErrWorkNotFound) {
+		return snapshot, domainerr.New(domainerr.NotFound, "", "work not found")
 	}
-}
-
-func workCreditGroupsToProto(groups []model.WorkCreditGroup) []*openv1.WorkCreditGroup {
-	protoGroups := make([]*openv1.WorkCreditGroup, 0, len(groups))
-	for _, group := range groups {
-		protoGroups = append(protoGroups, &openv1.WorkCreditGroup{
-			Id:   group.ID,
-			Name: group.Name,
-		})
+	if err != nil {
+		return snapshot, err
 	}
-
-	return protoGroups
-}
-
-func (s *WorkService) loadWorkPublicRelationsSnapshot(
-	ctx context.Context,
-	tx *gorm.DB,
-	work *model.Work,
-) (workPublicRelationsSnapshot, error) {
-	snapshot := workPublicRelationsSnapshot{}
-	// These two legacy projections intentionally suppress read errors. Isolate
-	// them with savepoints so a failed optional read does not poison the RR tx.
-	if err := tx.Transaction(func(savepoint *gorm.DB) error {
-		return savepoint.WithContext(ctx).
-			Where("work_id = ?", work.ID).
-			Order("sort_order ASC").
-			Order("id ASC").
-			Find(&snapshot.CreditGroups).Error
-	}); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_credit_groups", failurecause.Attr(err), "work_id", work.ID)
+	snapshot.work = work
+	if snapshot.mediaAuthorization, err = s.authorizePublicWork(ctx, store, work.Work, query); err != nil {
+		return snapshot, err
 	}
-
-	if err := tx.WithContext(ctx).
-		Where("work_id = ?", work.ID).
-		Order("sort_order ASC").
-		Find(&snapshot.Credits).Error; err != nil {
-		return workPublicRelationsSnapshot{}, errs.Internal(err)
+	documentID, err := store.ContentDocumentID(ctx, work.ID)
+	if err != nil {
+		return snapshot, err
 	}
-
-	if err := tx.Transaction(func(savepoint *gorm.DB) error {
-		return savepoint.WithContext(ctx).
-			Table("work_client wc").
-			Select("c.id, c.name, c.website, c.logo_light_file_id AS light_file_id, c.logo_dark_file_id AS dark_file_id").
-			Joins("JOIN client c ON c.id = wc.client_id").
-			Where("wc.work_id = ?", work.ID).
-			Order("wc.sort_order ASC").
-			Scan(&snapshot.Clients).Error
-	}); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_clients", failurecause.Attr(err), "work_id", work.ID)
+	snapshot.mediaAuthorization.DocumentID = documentID.String()
+	sourceStates, err := store.SourceDocuments(ctx, []string{work.ID})
+	if err != nil {
+		return snapshot, err
 	}
-
+	sourceState, ok := sourceStates[work.ID]
+	if !ok {
+		return snapshot, errors.New("Work source locale is not initialized")
+	}
+	snapshot.title, snapshot.summary, snapshot.ogAssetID = optionalText(sourceState.Title), sourceState.Summary, sourceState.OgAssetID
+	if snapshot.localization, err = store.ResolveLocalization(ctx, work.ID, query.AcceptLanguage); err != nil {
+		return snapshot, err
+	}
+	if snapshot.localization, err = store.ResolveOGConsistency(ctx, work.ID, snapshot.localization); err != nil {
+		return snapshot, err
+	}
+	if snapshot.document, err = store.Document(ctx, work.ID, documentID, snapshot.localization.DisplayedLocale); err != nil {
+		return snapshot, err
+	}
+	if snapshot.creditGroups, err = store.CreditGroups(ctx, work.ID); err != nil {
+		slog.ErrorContext(ctx, "Public Work credit group lookup failed; serving work without credit groups", "domain", "work", "operation", "load_credit_groups", failurecause.Attr(err), "work_id", work.ID)
+	}
+	if snapshot.credits, err = store.Credits(ctx, work.ID); err != nil {
+		return publicWorkSnapshot{}, err
+	}
+	if snapshot.clients, err = store.Clients(ctx, work.ID); err != nil {
+		slog.ErrorContext(ctx, "Public Work client lookup failed; serving work without clients", "domain", "work", "operation", "load_clients", failurecause.Attr(err), "work_id", work.ID)
+	}
 	return snapshot, nil
 }
 
+// authorizePublicWork returns how the reader may download the Work's
+// media: as the public, as a viewer of the draft, or through its share link.
+func (s *Service) authorizePublicWork(
+	ctx context.Context,
+	store Store,
+	work workdomain.Work,
+	query GetWorkQuery,
+) (mediaasset.ContentDownloadOwnerAuthorization, error) {
+	authorization := mediaasset.ContentDownloadOwnerAuthorization{
+		ResourceType: "work",
+		ResourceID:   work.ID,
+		Status:       string(work.Status),
+		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
+	}
+	if isPublicWorkStatus(work.Status) {
+		return authorization, nil
+	}
+	allowed, err := hasDraftWorkView(ctx, s.spiceDB, work.ID)
+	if err != nil {
+		return authorization, fmt.Errorf("check work draft view permission: %w", err)
+	}
+	if allowed {
+		authorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+		if user := auth.GetUser(ctx); user != nil {
+			authorization.IdentityID = user.IdentityID.String()
+			authorization.MemberID = user.MemberID.String()
+		}
+		return authorization, nil
+	}
+	link, err := requireDraftShareLinkAccess(ctx, store, query.ShareToken, query.SharePassword, work.ID, "work")
+	if err != nil {
+		return authorization, err
+	}
+	authorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+	authorization.ShareLink = link.Witness
+	return authorization, nil
+}
+
+func hasDraftWorkView(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker, workID string) (bool, error) {
+	user := auth.GetUser(ctx)
+	if user == nil || !user.Authenticated || user.Banned || strings.TrimSpace(user.IdentityID.String()) == "" {
+		return false, nil
+	}
+	can, err := policyv1.Work.View(workID)
+	if err != nil {
+		return false, err
+	}
+	decision, err := auth.AuthorizationDecision(ctx, can)
+	if err != nil {
+		return false, err
+	}
+	return spiceDB.Can(ctx, decision)
+}
+
+func requireDraftShareLinkAccess(
+	ctx context.Context,
+	store Store,
+	shareToken string,
+	sharePassword string,
+	entityID string,
+	entityName string,
+) (ShareLink, error) {
+	if shareToken == "" {
+		return ShareLink{}, domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	link, found, err := store.ShareLink(ctx, shareToken, entityID, time.Now())
+	if err != nil {
+		return ShareLink{}, fmt.Errorf("validate %s share link: %w", entityName, err)
+	}
+	if !found {
+		return ShareLink{}, domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	if link.PasswordHash == nil {
+		return link, nil
+	}
+	if sharePassword == "" {
+		return ShareLink{}, domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	match, err := crypto.NewPasswordHasher(nil).Verify(sharePassword, *link.PasswordHash)
+	if err != nil {
+		return ShareLink{}, fmt.Errorf("validate %s share link: %w", entityName, err)
+	}
+	if !match {
+		return ShareLink{}, domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	return link, nil
+}
+
+func (s *Service) projectPublicWork(ctx context.Context, snapshot publicWorkSnapshot) (Detail, error) {
+	localization := snapshot.localization
+	detail := Detail{
+		Work: snapshot.work, Title: snapshot.title, Summary: snapshot.summary, Localization: localization,
+		Document: snapshot.document.Document, Revision: snapshot.document.Revision, CreditGroups: snapshot.creditGroups,
+	}
+	if localization.Title != nil {
+		detail.Title = *localization.Title
+	}
+	workSourceOgAssetID := snapshot.ogAssetID
+	if localization.OmitSourceOgFallback {
+		workSourceOgAssetID = nil
+	}
+	var err error
+	if detail.OgAsset, err = s.assets.ResolveReadyOGAsset(ctx, workSourceOgAssetID, localization.OgAssetID); err != nil {
+		return Detail{}, err
+	}
+	detail.FeaturedImage = s.getWorkFeaturedImageAssetForSourceFile(ctx, snapshot.work.FeaturedImageFileID)
+	if localization.Summary != nil {
+		detail.Summary = localization.Summary
+	}
+	if detail.Credits, err = s.getWorkCredits(ctx, snapshot.credits); err != nil {
+		return Detail{}, err
+	}
+	detail.Clients = s.getWorkClients(ctx, snapshot.clients)
+	return detail, nil
+}
+
 // getWorkCredits gets work credits with artist/Member details.
-func (s *WorkService) getWorkCredits(ctx context.Context, credits []model.WorkCredit) ([]*openv1.WorkCredit, error) {
+func (s *Service) getWorkCredits(ctx context.Context, credits []workdomain.Credit) ([]Credit, error) {
 	memberIDs := make([]string, 0, len(credits))
 	for _, credit := range credits {
 		if credit.MemberID != nil {
@@ -855,94 +535,69 @@ func (s *WorkService) getWorkCredits(ctx context.Context, credits []model.WorkCr
 		return nil, err
 	}
 
-	protoCredits := make([]*openv1.WorkCredit, 0, len(credits))
+	views := make([]Credit, 0, len(credits))
 	for _, credit := range credits {
-		pc := &openv1.WorkCredit{
-			Id: credit.ID,
-		}
-
-		if credit.GroupID != nil {
-			pc.GroupId = credit.GroupID
-		}
-		if credit.Name != nil {
-			pc.Name = credit.Name
-		}
-		if credit.CreditRole != nil {
-			pc.CreditRole = credit.CreditRole
-		}
-
+		view := Credit{Credit: credit}
 		if credit.ArtistID != nil {
-			pc.Artist = s.loadPublicCreditArtist(ctx, *credit.ArtistID)
+			view.Artist = s.loadPublicCreditArtist(ctx, *credit.ArtistID)
 		}
-
 		if credit.MemberID != nil {
-			pc.Member = memberSummaries[*credit.MemberID]
+			view.Member = memberSummaries[*credit.MemberID]
 		}
-
-		protoCredits = append(protoCredits, pc)
+		views = append(views, view)
 	}
-
-	return protoCredits, nil
+	return views, nil
 }
 
-func (s *WorkService) loadPublicCreditArtist(ctx context.Context, artistID string) *openv1.CreditArtist {
-	var artist struct {
-		ID   string  `gorm:"column:id"`
-		Name string  `gorm:"column:name"`
-		Slug *string `gorm:"column:slug"`
-	}
-	if err := s.db.WithContext(ctx).
-		Table("artist").
-		Select("artist.id, "+workdomain.ArtistSourceTitleSQL("artist")+" AS name, artist.slug").
-		Where("artist.id = ?", artistID).
-		Scan(&artist).Error; err != nil || artist.ID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadPublicCreditArtist", failurecause.Attr(err), "artist_id", artistID)
-		}
+func (s *Service) loadPublicCreditArtist(ctx context.Context, artistID string) *CreditArtist {
+	var artist CreditArtistRow
+	var found bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		artist, found, err = store.CreditArtist(ctx, artistID)
+		return err
+	}); err != nil {
+		slog.ErrorContext(ctx, "Public Work credit artist lookup failed; serving credit without artist", "domain", "work", "operation", "load_credit_artist", failurecause.Attr(err), "artist_id", artistID)
 		return nil
 	}
-	result := &openv1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug}
-	result.ImageAsset = s.getArtistImageAsset(ctx, artist.ID)
-	return result
+	if !found {
+		return nil
+	}
+	return &CreditArtist{ID: artist.ID, Name: artist.Name, Slug: artist.Slug, Image: s.assets.ResolveArtistImageAsset(ctx, artist.ID)}
 }
 
-func (s *WorkService) getWorkFeaturedImageAssetForSourceFile(
-	ctx context.Context,
-	sourceFileID *string,
-) *commonv1.AssetRef {
+func (s *Service) getWorkFeaturedImageAssetForSourceFile(ctx context.Context, sourceFileID *string) *mediaasset.Reference {
 	if sourceFileID == nil {
 		return nil
 	}
 	return s.assets.ResolveReadyAssetForSourceFile(ctx, *sourceFileID, "image")
 }
 
-func (s *WorkService) getArtistImageAsset(ctx context.Context, artistID string) *commonv1.AssetRef {
-	return s.assets.ResolveArtistImageAsset(ctx, artistID)
-}
-
-// getWorkClients fetches clients associated with a work
-func (s *WorkService) getWorkClients(ctx context.Context, rows []workPublicClientRow) []*openv1.WorkClient {
+// getWorkClients resolves the logos of a Work's clients.
+func (s *Service) getWorkClients(ctx context.Context, rows []workdomain.ClientRow) []Client {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	clients := make([]*openv1.WorkClient, 0, len(rows))
+	clients := make([]Client, 0, len(rows))
 	for _, row := range rows {
-		client := &openv1.WorkClient{
-			Id:   row.ID,
-			Name: row.Name,
-		}
-		if row.Website != nil {
-			client.Website = row.Website
-		}
+		client := Client{ID: row.ID, Name: row.Name, Website: row.Website}
 		if row.LightFileID != nil {
-			client.LogoLightAsset = s.assets.ResolveReadyAssetForSourceFile(ctx, *row.LightFileID, "logo")
+			client.LightLogo = s.assets.ResolveReadyAssetForSourceFile(ctx, *row.LightFileID, "logo")
 		}
 		if row.DarkFileID != nil {
-			client.LogoDarkAsset = s.assets.ResolveReadyAssetForSourceFile(ctx, *row.DarkFileID, "logo")
+			client.DarkLogo = s.assets.ResolveReadyAssetForSourceFile(ctx, *row.DarkFileID, "logo")
 		}
 		clients = append(clients, client)
 	}
 
 	return clients
+}
+
+// mapPlaceOf is the Work's projected Map Place, nil when it has none.
+func mapPlaceOf(work Work) *openv1.MapPlaceBasic {
+	if work.MapPlaceID == nil {
+		return nil
+	}
+	return work.MapPlace
 }

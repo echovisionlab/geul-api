@@ -2,193 +2,260 @@ package work
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// workSortConfig defines allowed sort fields for works
-func (s *WorkService) GetWorkCredits(
-	ctx context.Context,
-	req *connect.Request[managev1.GetWorkCreditsRequest],
-) (_ *connect.Response[managev1.GetWorkCreditsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "GetWorkCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+type GetWorkCreditsQuery struct{ WorkID string }
 
-	// Verify work exists
-	var work model.Work
-	if err := s.db.WithContext(ctx).
-		Where("id = ?", req.Msg.WorkId).
-		First(&work).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
-		}
-		return nil, errs.Internal(err)
+// MoveWorkCreditItemCommand moves one group or credit next to an anchor of
+// the latest order. A credit move names its target group; an empty one
+// moves it out of every group.
+type MoveWorkCreditItemCommand struct {
+	WorkID        string
+	Kind          CreditItemKind
+	ItemID        string
+	TargetGroupID *string
+	After         *OrderItem
+	Before        *OrderItem
+}
+
+type CreateWorkCreditGroupCommand struct{ WorkID, Name string }
+
+// UpdateWorkCreditGroupCommand renames a credit group; a nil Name keeps it.
+type UpdateWorkCreditGroupCommand struct {
+	GroupID string
+	Name    *string
+}
+
+type DeleteWorkCreditGroupCommand struct{ GroupID string }
+
+// AddWorkCreditCommand credits an Artist, a Member or a plain name.
+type AddWorkCreditCommand struct {
+	WorkID     string
+	GroupID    *string
+	ArtistID   *string
+	MemberID   *string
+	Name       *string
+	CreditRole *string
+}
+
+// UpdateWorkCreditCommand moves a credit to GroupID, an empty one leaving
+// every group, and sets its role. A nil field is left alone.
+type UpdateWorkCreditCommand struct {
+	CreditID   string
+	GroupID    *string
+	CreditRole *string
+}
+
+type DeleteWorkCreditCommand struct{ CreditID string }
+
+// CreditArtist is a credited Artist with its ready image.
+type CreditArtist struct {
+	ID         string
+	Name       string
+	Slug       *string
+	ImageAsset *mediaasset.Reference
+}
+
+// CreditView is a credit with its Artist and Member, when they resolve.
+type CreditView struct {
+	Credit Credit
+	Artist *CreditArtist
+	Member *memberref.Summary
+}
+
+// Credits is a Work's attribution: its groups, credits and their order.
+type Credits struct {
+	Groups  []CreditGroup
+	Credits []CreditView
+	Order   []OrderItem
+}
+
+// CreditMove is the credit order after a move.
+type CreditMove struct {
+	Items   []OrderItem
+	Changed bool
+}
+
+// GetWorkCredits returns Work attribution for the Site Admin management surface.
+func (s *Service) GetWorkCredits(ctx context.Context, query GetWorkCreditsQuery) (Credits, error) {
+	work, err := s.findWork(ctx, query.WorkID)
+	if err != nil {
+		return Credits{}, err
 	}
 	if err := requireWorkPermission(ctx, s.spiceDB, work, policyv1.Work.View, workAuthorizationRead); err != nil {
-		return nil, err
+		return Credits{}, err
 	}
-
-	var groups []model.WorkCreditGroup
-	var credits []model.WorkCredit
+	var groups []CreditGroup
+	var credits []Credit
 	var order []workCreditOrderEntry
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.read(ctx, func(store Store) error {
 		var err error
-		groups, credits, order, err = loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
+		groups, credits, order, err = loadWorkCreditRows(ctx, store, query.WorkID)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}); err != nil {
-		return nil, errs.Wrap(err)
+	}); err != nil {
+		return Credits{}, err
 	}
-
-	protoGroups := make([]*managev1.WorkCreditGroup, len(groups))
-	for i, g := range groups {
-		protoGroups[i] = s.toProtoCreditGroup(&g)
-	}
-
-	protoCredits := make([]*managev1.WorkCredit, len(credits))
+	views := make([]CreditView, len(credits))
 	for i := range credits {
-		protoCredits[i] = s.toProtoCredit(ctx, &credits[i])
+		views[i] = s.creditView(ctx, credits[i])
 	}
-	return connect.NewResponse(&managev1.GetWorkCreditsResponse{
-		Groups:  protoGroups,
-		Credits: protoCredits,
-		Order:   protoWorkCreditOrder(order),
-	}), nil
+	return Credits{Groups: groups, Credits: views, Order: workCreditOrderItems(order)}, nil
+}
+
+// workCreditAudit names the record of one credit group or credit change.
+func workCreditAudit(workID, itemID string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+	return workUpdatedAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewWorkCreditAuditRecord(metadata, workID, itemID, operation)
+	})
+}
+
+// workCreditChange is the outcome of a credit mutation.
+type workCreditChange struct {
+	workID    string
+	itemID    string
+	operation sharedtelemetry.AuditItemOperation
+	changed   bool
+}
+
+func (change workCreditChange) audit() mutation.Audit {
+	if !change.changed {
+		return mutation.Unchanged()
+	}
+	return workCreditAudit(change.workID, change.itemID, change.operation)
+}
+
+// runWorkCreditChange runs change under the Work's manage authority, the
+// root locked first, and records its credit item.
+func (s *Service) runWorkCreditChange(ctx context.Context, workID string, change func(context.Context, Store) (workCreditChange, error)) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[workCreditChange, Store]{
+		Access: lockedWork(workID, policyv1.Work.Manage, nil),
+		Change: change,
+		Audit:  workCreditChange.audit,
+	})
+	return err
 }
 
 // MoveWorkCreditItem applies one stable move intent against the latest Work
 // credit order, so concurrent moves to different items compose under the Work
 // aggregate lock.
-func (s *WorkService) MoveWorkCreditItem(
-	ctx context.Context,
-	req *connect.Request[managev1.MoveWorkCreditItemRequest],
-) (_ *connect.Response[managev1.MoveWorkCreditItemResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "MoveWorkCreditItem", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if strings.TrimSpace(req.Msg.ItemId) == "" {
-		return nil, errs.InvalidArgument("item_id", "cannot be empty")
+func (s *Service) MoveWorkCreditItem(ctx context.Context, command MoveWorkCreditItemCommand) (CreditMove, error) {
+	if err := validateWorkCreditMove(command); err != nil {
+		return CreditMove{}, err
 	}
-	switch req.Msg.Kind {
-	case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP:
-		if req.Msg.TargetGroupId != nil {
-			return nil, errs.InvalidArgument("target_group_id", "must be omitted for a group move")
-		}
-	case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT:
-		if req.Msg.TargetGroupId == nil {
-			return nil, errs.InvalidArgument("target_group_id", "is required for a credit move")
-		}
-	default:
-		return nil, errs.InvalidArgument("kind", "must identify a group or credit")
-	}
-	if workCreditAnchorIsSelf(req.Msg.After, req.Msg.Kind, req.Msg.ItemId) ||
-		workCreditAnchorIsSelf(req.Msg.Before, req.Msg.Kind, req.Msg.ItemId) {
-		return nil, errs.InvalidArgument("anchor", "cannot reference the moved item")
-	}
-
-	var result *managev1.MoveWorkCreditItemResponse
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, req.Msg.WorkId); err != nil {
-			return err
-		}
-		groups, credits, currentOrder, err := loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
+	var result CreditMove
+	err := s.runWorkCreditChange(ctx, command.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: command.WorkID, itemID: command.ItemID, operation: sharedtelemetry.AuditItemOperationUpdated}
+		currentOrder, nextOrder, err := planWorkCreditMove(ctx, store, command)
 		if err != nil {
-			return err
+			return change, err
 		}
-
-		var nextOrder []workCreditOrderEntry
-		switch req.Msg.Kind {
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP:
-			if !hasWorkCreditGroup(groups, req.Msg.ItemId) {
-				return errs.NotFound("credit_group", req.Msg.ItemId)
-			}
-			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, nil, req.Msg.After, req.Msg.Before,
-			); err != nil {
-				return err
-			}
-			var changed bool
-			nextOrder, changed = moveWorkCreditGroupOrder(currentOrder, req.Msg.ItemId, req.Msg.After, req.Msg.Before)
-			if !changed {
-				result = &managev1.MoveWorkCreditItemResponse{Items: protoWorkCreditOrder(currentOrder)}
-				return nil
-			}
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT:
-			if !hasWorkCredit(credits, req.Msg.ItemId) {
-				return errs.NotFound("credit", req.Msg.ItemId)
-			}
-			var targetGroupID *string
-			requestedGroupID := strings.TrimSpace(*req.Msg.TargetGroupId)
-			if requestedGroupID != "" {
-				if !hasWorkCreditGroup(groups, requestedGroupID) {
-					return errs.NotFound("credit_group", requestedGroupID)
-				}
-				targetGroupID = &requestedGroupID
-			}
-			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before,
-			); err != nil {
-				return err
-			}
-			var changed bool
-			nextOrder, changed = moveWorkCreditOrder(currentOrder, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before)
-			if !changed {
-				result = &managev1.MoveWorkCreditItemResponse{Items: protoWorkCreditOrder(currentOrder)}
-				return nil
-			}
+		if nextOrder == nil {
+			result = CreditMove{Items: workCreditOrderItems(currentOrder)}
+			return change, nil
 		}
-
-		if err := persistWorkCreditOrder(ctx, tx, req.Msg.WorkId, nextOrder); err != nil {
-			return err
+		if err := persistWorkCreditOrder(ctx, store, command.WorkID, nextOrder); err != nil {
+			return change, err
 		}
-		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(
-				metadata,
-				req.Msg.WorkId,
-				req.Msg.ItemId,
-				sharedtelemetry.AuditItemOperationUpdated,
-			)
-		}); err != nil {
-			return err
-		}
-		result = &managev1.MoveWorkCreditItemResponse{Items: protoWorkCreditOrder(nextOrder), Changed: true}
-		return nil
+		result = CreditMove{Items: workCreditOrderItems(nextOrder), Changed: true}
+		change.changed = true
+		return change, nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+		return CreditMove{}, err
 	}
-	return connect.NewResponse(result), nil
+	return result, nil
 }
 
-func workCreditAnchorIsSelf(anchor *managev1.WorkCreditOrderItem, kind managev1.WorkCreditItemKind, itemID string) bool {
-	return anchor != nil && anchor.Kind == kind && anchor.Id == itemID
+func validateWorkCreditMove(command MoveWorkCreditItemCommand) error {
+	if strings.TrimSpace(command.ItemID) == "" {
+		return domainerr.InvalidField("item_id", "cannot be empty")
+	}
+	switch command.Kind {
+	case CreditItemGroup:
+		if command.TargetGroupID != nil {
+			return domainerr.InvalidField("target_group_id", "must be omitted for a group move")
+		}
+	case CreditItemCredit:
+		if command.TargetGroupID == nil {
+			return domainerr.InvalidField("target_group_id", "is required for a credit move")
+		}
+	default:
+		return domainerr.InvalidField("kind", "must identify a group or credit")
+	}
+	if workCreditAnchorIsSelf(command.After, command.Kind, command.ItemID) ||
+		workCreditAnchorIsSelf(command.Before, command.Kind, command.ItemID) {
+		return domainerr.InvalidField("anchor", "cannot reference the moved item")
+	}
+	return nil
 }
 
-func hasWorkCreditGroup(groups []model.WorkCreditGroup, groupID string) bool {
+// planWorkCreditMove returns the latest order and the order after the move,
+// nil when the move changes nothing.
+func planWorkCreditMove(ctx context.Context, store Store, command MoveWorkCreditItemCommand) ([]workCreditOrderEntry, []workCreditOrderEntry, error) {
+	groups, credits, currentOrder, err := loadWorkCreditRows(ctx, store, command.WorkID)
+	if err != nil {
+		return nil, nil, err
+	}
+	targetGroupID, err := workCreditMoveTargetGroup(groups, credits, command)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateWorkCreditMoveAnchors(
+		ctx, store, currentOrder, command.Kind, command.ItemID, targetGroupID, command.After, command.Before,
+	); err != nil {
+		return nil, nil, err
+	}
+	var nextOrder []workCreditOrderEntry
+	var changed bool
+	if command.Kind == CreditItemGroup {
+		nextOrder, changed = moveWorkCreditGroupOrder(currentOrder, command.ItemID, command.After, command.Before)
+	} else {
+		nextOrder, changed = moveWorkCreditOrder(currentOrder, command.ItemID, targetGroupID, command.After, command.Before)
+	}
+	if !changed {
+		return currentOrder, nil, nil
+	}
+	return currentOrder, nextOrder, nil
+}
+
+func workCreditMoveTargetGroup(groups []CreditGroup, credits []Credit, command MoveWorkCreditItemCommand) (*string, error) {
+	if command.Kind == CreditItemGroup {
+		if !hasWorkCreditGroup(groups, command.ItemID) {
+			return nil, domainerr.ResourceNotFound("credit_group", command.ItemID)
+		}
+		return nil, nil
+	}
+	if !hasWorkCredit(credits, command.ItemID) {
+		return nil, domainerr.ResourceNotFound("credit", command.ItemID)
+	}
+	requested := strings.TrimSpace(*command.TargetGroupID)
+	if requested == "" {
+		return nil, nil
+	}
+	if !hasWorkCreditGroup(groups, requested) {
+		return nil, domainerr.ResourceNotFound("credit_group", requested)
+	}
+	return &requested, nil
+}
+
+func workCreditAnchorIsSelf(anchor *OrderItem, kind CreditItemKind, itemID string) bool {
+	return anchor != nil && anchor.Kind == kind && anchor.ID == itemID
+}
+
+func hasWorkCreditGroup(groups []CreditGroup, groupID string) bool {
 	for _, group := range groups {
 		if group.ID == groupID {
 			return true
@@ -197,7 +264,7 @@ func hasWorkCreditGroup(groups []model.WorkCreditGroup, groupID string) bool {
 	return false
 }
 
-func hasWorkCredit(credits []model.WorkCredit, creditID string) bool {
+func hasWorkCredit(credits []Credit, creditID string) bool {
 	for _, credit := range credits {
 		if credit.ID == creditID {
 			return true
@@ -206,580 +273,391 @@ func hasWorkCredit(credits []model.WorkCredit, creditID string) bool {
 	return false
 }
 
-// =============================================================================
-// Admin Methods (all works, requires admin role)
-// =============================================================================
-
-// ListWorksAdmin returns a paginated list of all works with stats
-func (s *WorkService) CreateWorkCreditGroup(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.WorkCreditGroup], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Verify work exists
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
-		}
-		return nil, errs.Internal(err)
+// CreateWorkCreditGroup appends a credit group to a Work.
+func (s *Service) CreateWorkCreditGroup(ctx context.Context, command CreateWorkCreditGroupCommand) (CreditGroup, error) {
+	if err := s.requireStoredWork(ctx, command.WorkID); err != nil {
+		return CreditGroup{}, err
 	}
-
-	name, err := validateWorkCreditGroupName(req.Msg.Name)
+	name, err := validateWorkCreditGroupName(command.Name)
 	if err != nil {
-		return nil, err
+		return CreditGroup{}, err
 	}
-
-	group := model.WorkCreditGroup{
-		WorkID: req.Msg.WorkId,
-		Name:   name,
-	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
-			return err
-		}
-		_, _, order, err := loadWorkCreditRows(ctx, tx, group.WorkID)
+	group := CreditGroup{WorkID: command.WorkID, Name: name}
+	err = s.runWorkCreditChange(ctx, group.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: group.WorkID, operation: sharedtelemetry.AuditItemOperationCreated}
+		_, _, order, err := loadWorkCreditRows(ctx, store, group.WorkID)
 		if err != nil {
-			return err
+			return change, err
 		}
 		group.SortOrder = 0
-		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}}}).Create(&group).Error; err != nil {
-			return err
+		if err := store.InsertCreditGroup(ctx, &group); err != nil {
+			return change, err
 		}
-		order = append(order, workCreditOrderEntry{
-			kind: managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP,
-			id:   group.ID,
-		})
-		if err := persistWorkCreditOrder(ctx, tx, group.WorkID, order); err != nil {
-			return err
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationCreated)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+		order = append(order, workCreditOrderEntry{kind: CreditItemGroup, id: group.ID})
+		change.itemID, change.changed = group.ID, true
+		return change, persistWorkCreditOrder(ctx, store, group.WorkID, order)
+	})
+	if err != nil {
+		return CreditGroup{}, err
 	}
-
-	return connect.NewResponse(s.toProtoCreditGroup(&group)), nil
+	return group, nil
 }
 
-// UpdateWorkCreditGroup updates a credit group
-func (s *WorkService) UpdateWorkCreditGroup(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.WorkCreditGroup], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+// loadWorkCreditGroup reads a credit group and answers a missing one or its
+// missing Work before the mutation locks them.
+func (s *Service) loadWorkCreditGroup(ctx context.Context, groupID string) (CreditGroup, error) {
+	var group CreditGroup
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		group, err = store.FindCreditGroup(ctx, groupID)
+		if errors.Is(err, ErrCreditGroupNotFound) {
+			return domainerr.ResourceNotFound("credit_group", groupID)
 		}
-	}()
-
-	// Get group to find work ID
-	var group model.WorkCreditGroup
-	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("credit_group", req.Msg.GroupId)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := RequireExists(ctx, s.db, group.WorkID); err != nil {
-		return nil, err
-	}
-
-	updates := structured.Fields{}
-	if req.Msg.Name != nil {
-		name, err := validateWorkCreditGroupName(*req.Msg.Name)
 		if err != nil {
-			return nil, err
-		}
-		updates["name"] = name
-	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("credit_group", group.ID)
-			}
-			return err
-		}
-		if name, ok := updates["name"].(string); ok && name == group.Name {
-			delete(updates, "name")
-		}
-		if len(updates) == 0 {
-			return nil
-		}
-		if err := tx.Model(&group).Updates(updates).Error; err != nil {
-			return err
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationUpdated)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(s.toProtoCreditGroup(&group)), nil
+		return requireWorkExists(ctx, store, group.WorkID)
+	})
+	return group, err
 }
 
-// DeleteWorkCreditGroup deletes a credit group
-func (s *WorkService) DeleteWorkCreditGroup(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Get group to find work ID
-	var group model.WorkCreditGroup
-	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("credit_group", req.Msg.GroupId)
-		}
-		return nil, errs.Internal(err)
+// lockWorkCreditGroup locks the group of a locked Work.
+func lockWorkCreditGroup(ctx context.Context, store Store, group *CreditGroup) error {
+	locked, err := store.LockCreditGroup(ctx, group.ID, group.WorkID)
+	if errors.Is(err, ErrCreditGroupNotFound) {
+		return domainerr.ResourceNotFound("credit_group", group.ID)
 	}
-
-	if err := RequireExists(ctx, s.db, group.WorkID); err != nil {
-		return nil, err
+	if err != nil {
+		return err
 	}
+	*group = locked
+	return nil
+}
 
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("credit_group", group.ID)
-			}
-			return err
-		}
-		groups, credits, order, err := loadWorkCreditRows(ctx, tx, group.WorkID)
+// UpdateWorkCreditGroup renames a credit group.
+func (s *Service) UpdateWorkCreditGroup(ctx context.Context, command UpdateWorkCreditGroupCommand) (CreditGroup, error) {
+	group, err := s.loadWorkCreditGroup(ctx, command.GroupID)
+	if err != nil {
+		return CreditGroup{}, err
+	}
+	var rename *string
+	if command.Name != nil {
+		name, err := validateWorkCreditGroupName(*command.Name)
 		if err != nil {
-			return err
+			return CreditGroup{}, err
+		}
+		rename = &name
+	}
+	err = s.runWorkCreditChange(ctx, group.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: group.WorkID, itemID: group.ID, operation: sharedtelemetry.AuditItemOperationUpdated}
+		if err := lockWorkCreditGroup(ctx, store, &group); err != nil {
+			return change, err
+		}
+		if rename == nil || *rename == group.Name {
+			return change, nil
+		}
+		change.changed = true
+		return change, store.RenameCreditGroup(ctx, group.ID, *rename)
+	})
+	if err != nil {
+		return CreditGroup{}, err
+	}
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		group, err = store.FindCreditGroup(ctx, command.GroupID)
+		return err
+	}); err != nil {
+		return CreditGroup{}, err
+	}
+	return group, nil
+}
+
+// DeleteWorkCreditGroup deletes a credit group; its credits leave every
+// group in place.
+func (s *Service) DeleteWorkCreditGroup(ctx context.Context, command DeleteWorkCreditGroupCommand) error {
+	group, err := s.loadWorkCreditGroup(ctx, command.GroupID)
+	if err != nil {
+		return err
+	}
+	return s.runWorkCreditChange(ctx, group.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: group.WorkID, itemID: group.ID, operation: sharedtelemetry.AuditItemOperationDeleted}
+		if err := lockWorkCreditGroup(ctx, store, &group); err != nil {
+			return change, err
+		}
+		groups, credits, order, err := loadWorkCreditRows(ctx, store, group.WorkID)
+		if err != nil {
+			return change, err
 		}
 		if !hasWorkCreditGroup(groups, group.ID) {
-			return errs.NotFound("credit_group", group.ID)
+			return change, domainerr.ResourceNotFound("credit_group", group.ID)
 		}
-		for index := range order {
-			if order[index].kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT &&
-				order[index].groupID != nil && *order[index].groupID == group.ID {
-				order[index].groupID = nil
-			}
+		if err := ungroupWorkCredits(ctx, store, group, credits, order); err != nil {
+			return change, err
 		}
-		for _, credit := range credits {
-			if credit.GroupID != nil && *credit.GroupID == group.ID {
-				if err := tx.Model(&model.WorkCredit{}).
-					Where("id = ? AND work_id = ?", credit.ID, group.WorkID).
-					Update("group_id", nil).Error; err != nil {
-					return err
-				}
-			}
+		if err := store.DeleteCreditGroup(ctx, group.ID); err != nil {
+			return change, err
 		}
-		if err := tx.Delete(&group).Error; err != nil {
-			return err
-		}
-		order = removeWorkCreditOrderEntry(order, managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP, group.ID)
-		if err := persistWorkCreditOrder(ctx, tx, group.WorkID, order); err != nil {
-			return err
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationDeleted)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
+		order = removeWorkCreditOrderEntry(order, CreditItemGroup, group.ID)
+		change.changed = true
+		return change, persistWorkCreditOrder(ctx, store, group.WorkID, order)
+	})
 }
 
-// AddWorkCredit adds a credit to a work
-func (s *WorkService) AddWorkCredit(
-	ctx context.Context,
-	req *connect.Request[managev1.AddWorkCreditRequest],
-) (_ *connect.Response[managev1.WorkCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "AddWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+// ungroupWorkCredits moves the credits of group out of every group, in
+// order and in their rows.
+func ungroupWorkCredits(ctx context.Context, store Store, group CreditGroup, credits []Credit, order []workCreditOrderEntry) error {
+	for index := range order {
+		if order[index].kind == CreditItemCredit &&
+			order[index].groupID != nil && *order[index].groupID == group.ID {
+			order[index].groupID = nil
 		}
-	}()
-
-	// Verify work exists
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
+	}
+	for _, credit := range credits {
+		if credit.GroupID == nil || *credit.GroupID != group.ID {
+			continue
 		}
-		return nil, errs.Internal(err)
-	}
-
-	credit := model.WorkCredit{WorkID: req.Msg.WorkId}
-
-	if req.Msg.GroupId != nil {
-		credit.GroupID = req.Msg.GroupId
-	}
-	if req.Msg.ArtistId != nil {
-		credit.ArtistID = req.Msg.ArtistId
-	}
-	if req.Msg.MemberId != nil {
-		credit.MemberID = req.Msg.MemberId
-	}
-	if req.Msg.Name != nil {
-		credit.Name = req.Msg.Name
-	}
-	if req.Msg.CreditRole != nil {
-		credit.CreditRole = req.Msg.CreditRole
-	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
+		if err := store.UngroupCredit(ctx, credit.ID, group.WorkID); err != nil {
 			return err
 		}
-		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
-		if err != nil {
-			return err
-		}
-		if credit.GroupID != nil {
-			if err := validateCreditGroupOwnershipWithDB(ctx, tx, credit.WorkID, *credit.GroupID); err != nil {
-				return err
-			}
-		}
-		credit.SortOrder = 0
-		if req.Msg.MemberId != nil {
-			if err := authorizationtarget.LockReferences(ctx, tx, []authorizationtarget.Reference{{
-				MemberID: *req.Msg.MemberId,
-				Field:    "member_id",
-			}}); err != nil {
-				return err
-			}
-		}
-		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}}}).Create(&credit).Error; err != nil {
-			return err
-		}
-		order = insertWorkCreditAtGroupEnd(order, workCreditOrderEntry{
-			kind:    managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
-			id:      credit.ID,
-			groupID: cloneGroupID(credit.GroupID),
-		})
-		if err := persistWorkCreditOrder(ctx, tx, credit.WorkID, order); err != nil {
-			return err
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationCreated)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(s.toProtoCredit(ctx, &credit)), nil
-}
-
-// UpdateWorkCredit updates a credit
-func (s *WorkService) UpdateWorkCredit(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateWorkCreditRequest],
-) (_ *connect.Response[managev1.WorkCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Get credit to find work ID
-	var credit model.WorkCredit
-	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("credit", req.Msg.CreditId)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := RequireExists(ctx, s.db, credit.WorkID); err != nil {
-		return nil, err
-	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("credit", credit.ID)
-			}
-			return err
-		}
-
-		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
-		if err != nil {
-			return err
-		}
-		updates := structured.Fields{}
-		var targetGroupID *string
-		groupChanged := false
-		if req.Msg.GroupId != nil {
-			requestedGroupID := strings.TrimSpace(*req.Msg.GroupId)
-			if requestedGroupID != "" {
-				if err := validateCreditGroupOwnershipWithDB(ctx, tx, credit.WorkID, requestedGroupID); err != nil {
-					return err
-				}
-				targetGroupID = &requestedGroupID
-			}
-			groupChanged = !sameOptionalString(credit.GroupID, targetGroupID)
-			if groupChanged {
-				updates["group_id"] = targetGroupID
-			}
-		}
-		if req.Msg.CreditRole != nil && (credit.CreditRole == nil || *req.Msg.CreditRole != *credit.CreditRole) {
-			updates["credit_role"] = *req.Msg.CreditRole
-		}
-		if len(updates) == 0 {
-			return nil
-		}
-		if err := tx.Model(&credit).Updates(updates).Error; err != nil {
-			return err
-		}
-		if groupChanged {
-			order, _ = moveWorkCreditOrder(order, credit.ID, targetGroupID, nil, nil)
-			if err := persistWorkCreditOrder(ctx, tx, credit.WorkID, order); err != nil {
-				return err
-			}
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationUpdated)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	// Reload
-	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(s.toProtoCredit(ctx, &credit)), nil
-}
-
-// DeleteWorkCredit deletes a credit
-func (s *WorkService) DeleteWorkCredit(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteWorkCreditRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Get credit to find work ID
-	var credit model.WorkCredit
-	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("credit", req.Msg.CreditId)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := RequireExists(ctx, s.db, credit.WorkID); err != nil {
-		return nil, err
-	}
-
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("credit", credit.ID)
-			}
-			return err
-		}
-		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
-		if err != nil {
-			return err
-		}
-		if err := tx.Delete(&credit).Error; err != nil {
-			return err
-		}
-		order = removeWorkCreditOrderEntry(order, managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, credit.ID)
-		if err := persistWorkCreditOrder(ctx, tx, credit.WorkID, order); err != nil {
-			return err
-		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationDeleted)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
-}
-
-// ListMyCreditedWorks returns work-credit rows where the current user is directly credited
-// or credited via artists they manage.
-func validateWorkCreditGroupName(name string) (string, error) {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return "", errs.InvalidArgument("name", "cannot be empty")
-	}
-	if len(trimmed) > 100 {
-		return "", errs.InvalidArgument("name", "must be at most 100 characters")
-	}
-	return trimmed, nil
-}
-
-func validateCreditGroupOwnershipWithDB(ctx context.Context, db *gorm.DB, workID, groupID string) error {
-	var count int64
-	if err := db.WithContext(ctx).
-		Model(&model.WorkCreditGroup{}).
-		Where("id = ? AND work_id = ?", groupID, workID).
-		Count(&count).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if count == 0 {
-		return errs.InvalidArgument("group_id", "must belong to this work")
 	}
 	return nil
 }
 
-// toProtoCreditGroup converts a model.WorkCreditGroup to protobuf WorkCreditGroup
-func (s *WorkService) toProtoCreditGroup(g *model.WorkCreditGroup) *managev1.WorkCreditGroup {
-	return &managev1.WorkCreditGroup{
-		Id:     g.ID,
-		WorkId: g.WorkID,
-		Name:   g.Name,
+// AddWorkCredit adds a credit at the end of its group.
+func (s *Service) AddWorkCredit(ctx context.Context, command AddWorkCreditCommand) (CreditView, error) {
+	if err := s.requireStoredWork(ctx, command.WorkID); err != nil {
+		return CreditView{}, err
 	}
-}
-
-// toProtoCredit converts a model.WorkCredit to protobuf WorkCredit
-func (s *WorkService) toProtoCredit(ctx context.Context, c *model.WorkCredit) *managev1.WorkCredit {
-	credit := &managev1.WorkCredit{
-		Id: c.ID,
+	credit := Credit{
+		WorkID: command.WorkID, GroupID: command.GroupID, ArtistID: command.ArtistID,
+		MemberID: command.MemberID, Name: command.Name, CreditRole: command.CreditRole,
 	}
-
-	if c.GroupID != nil {
-		credit.GroupId = c.GroupID
-	}
-	if c.Name != nil {
-		credit.Name = c.Name
-	}
-	if c.CreditRole != nil {
-		credit.CreditRole = c.CreditRole
-	}
-
-	// Get artist info if artist_id is set
-	if c.ArtistID != nil {
-		credit.Artist = s.loadWorkCreditArtist(ctx, *c.ArtistID)
-	}
-
-	if c.MemberID != nil {
-		if s.members == nil {
-			return credit
+	err := s.runWorkCreditChange(ctx, credit.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: credit.WorkID, operation: sharedtelemetry.AuditItemOperationCreated}
+		_, _, order, err := loadWorkCreditRows(ctx, store, credit.WorkID)
+		if err != nil {
+			return change, err
 		}
-		summaries, err := s.members.LoadMemberSummaries(ctx, []string{*c.MemberID})
-		if err == nil {
-			credit.Member = summaries[*c.MemberID]
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "toProtoCredit", failurecause.Attr(err), "work_id", c.WorkID, "credit_id", c.ID)
+		if credit.GroupID != nil {
+			if err := validateCreditGroupOwnership(ctx, store, credit.WorkID, *credit.GroupID); err != nil {
+				return change, err
 			}
 		}
-	}
-
-	return credit
-}
-
-type workCreditArtistRow struct {
-	ID          string
-	Name        string
-	Slug        *string
-	ImageFileID *string `gorm:"column:image_file_id"`
-}
-
-func (s *WorkService) loadWorkCreditArtist(ctx context.Context, artistID string) *managev1.CreditArtist {
-	var artist workCreditArtistRow
-	err := s.db.WithContext(ctx).
-		Table("artist").
-		Select("artist.id, "+ArtistSourceTitleSQL("artist")+" AS name, artist.slug, artist_image.file_id AS image_file_id").
-		Joins(`
-			LEFT JOIN LATERAL (
-				SELECT artist_file.file_id
-				FROM artist_file
-				WHERE artist_file.artist_id = artist.id
-				ORDER BY artist_file.sort_order ASC, artist_file.created_at ASC
-				LIMIT 1
-			) artist_image ON TRUE
-		`).
-		Where("artist.id = ?", artistID).
-		Scan(&artist).Error
-	if err != nil || artist.ID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadWorkCreditArtist", failurecause.Attr(err), "artist_id", artistID)
+		credit.SortOrder = 0
+		if command.MemberID != nil {
+			if err := store.LockCreditMember(ctx, *command.MemberID); err != nil {
+				return change, err
+			}
 		}
+		if err := store.InsertCredit(ctx, &credit); err != nil {
+			return change, err
+		}
+		order = insertWorkCreditAtGroupEnd(order, workCreditOrderEntry{
+			kind:    CreditItemCredit,
+			id:      credit.ID,
+			groupID: cloneGroupID(credit.GroupID),
+		})
+		change.itemID, change.changed = credit.ID, true
+		return change, persistWorkCreditOrder(ctx, store, credit.WorkID, order)
+	})
+	if err != nil {
+		return CreditView{}, err
+	}
+	return s.creditView(ctx, credit), nil
+}
+
+// loadWorkCredit reads a credit and answers a missing one or its missing
+// Work before the mutation locks them.
+func (s *Service) loadWorkCredit(ctx context.Context, creditID string) (Credit, error) {
+	var credit Credit
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		credit, err = store.FindCredit(ctx, creditID)
+		if errors.Is(err, ErrCreditNotFound) {
+			return domainerr.ResourceNotFound("credit", creditID)
+		}
+		if err != nil {
+			return err
+		}
+		return requireWorkExists(ctx, store, credit.WorkID)
+	})
+	return credit, err
+}
+
+// lockWorkCredit locks the credit of a locked Work.
+func lockWorkCredit(ctx context.Context, store Store, credit *Credit) error {
+	locked, err := store.LockCredit(ctx, credit.ID, credit.WorkID)
+	if errors.Is(err, ErrCreditNotFound) {
+		return domainerr.ResourceNotFound("credit", credit.ID)
+	}
+	if err != nil {
+		return err
+	}
+	*credit = locked
+	return nil
+}
+
+// UpdateWorkCredit moves a credit to another group or sets its role.
+func (s *Service) UpdateWorkCredit(ctx context.Context, command UpdateWorkCreditCommand) (CreditView, error) {
+	credit, err := s.loadWorkCredit(ctx, command.CreditID)
+	if err != nil {
+		return CreditView{}, err
+	}
+	err = s.runWorkCreditChange(ctx, credit.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: credit.WorkID, itemID: credit.ID, operation: sharedtelemetry.AuditItemOperationUpdated}
+		if err := lockWorkCredit(ctx, store, &credit); err != nil {
+			return change, err
+		}
+		_, _, order, err := loadWorkCreditRows(ctx, store, credit.WorkID)
+		if err != nil {
+			return change, err
+		}
+		update, err := planWorkCreditUpdate(ctx, store, credit, command)
+		if err != nil || !update.changed() {
+			return change, err
+		}
+		if err := store.UpdateCredit(ctx, credit.ID, update.groupChanged, update.targetGroupID, update.role); err != nil {
+			return change, err
+		}
+		change.changed = true
+		if !update.groupChanged {
+			return change, nil
+		}
+		order, _ = moveWorkCreditOrder(order, credit.ID, update.targetGroupID, nil, nil)
+		return change, persistWorkCreditOrder(ctx, store, credit.WorkID, order)
+	})
+	if err != nil {
+		return CreditView{}, err
+	}
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		credit, err = store.FindCredit(ctx, command.CreditID)
+		return err
+	}); err != nil {
+		return CreditView{}, err
+	}
+	return s.creditView(ctx, credit), nil
+}
+
+// workCreditUpdate is what an update writes to the locked credit.
+type workCreditUpdate struct {
+	targetGroupID *string
+	groupChanged  bool
+	role          *string
+}
+
+func (update workCreditUpdate) changed() bool { return update.groupChanged || update.role != nil }
+
+// planWorkCreditUpdate returns what command writes to the locked credit.
+func planWorkCreditUpdate(ctx context.Context, store Store, credit Credit, command UpdateWorkCreditCommand) (workCreditUpdate, error) {
+	var update workCreditUpdate
+	if command.GroupID != nil {
+		if requested := strings.TrimSpace(*command.GroupID); requested != "" {
+			if err := validateCreditGroupOwnership(ctx, store, credit.WorkID, requested); err != nil {
+				return workCreditUpdate{}, err
+			}
+			update.targetGroupID = &requested
+		}
+		update.groupChanged = !sameOptionalString(credit.GroupID, update.targetGroupID)
+	}
+	if command.CreditRole != nil && (credit.CreditRole == nil || *command.CreditRole != *credit.CreditRole) {
+		role := *command.CreditRole
+		update.role = &role
+	}
+	return update, nil
+}
+
+// DeleteWorkCredit deletes a credit.
+func (s *Service) DeleteWorkCredit(ctx context.Context, command DeleteWorkCreditCommand) error {
+	credit, err := s.loadWorkCredit(ctx, command.CreditID)
+	if err != nil {
+		return err
+	}
+	return s.runWorkCreditChange(ctx, credit.WorkID, func(ctx context.Context, store Store) (workCreditChange, error) {
+		change := workCreditChange{workID: credit.WorkID, itemID: credit.ID, operation: sharedtelemetry.AuditItemOperationDeleted}
+		if err := lockWorkCredit(ctx, store, &credit); err != nil {
+			return change, err
+		}
+		_, _, order, err := loadWorkCreditRows(ctx, store, credit.WorkID)
+		if err != nil {
+			return change, err
+		}
+		if err := store.DeleteCredit(ctx, credit.ID); err != nil {
+			return change, err
+		}
+		order = removeWorkCreditOrderEntry(order, CreditItemCredit, credit.ID)
+		change.changed = true
+		return change, persistWorkCreditOrder(ctx, store, credit.WorkID, order)
+	})
+}
+
+func validateWorkCreditGroupName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", domainerr.InvalidField("name", "cannot be empty")
+	}
+	if len(trimmed) > 100 {
+		return "", domainerr.InvalidField("name", "must be at most 100 characters")
+	}
+	return trimmed, nil
+}
+
+func validateCreditGroupOwnership(ctx context.Context, store Store, workID, groupID string) error {
+	owned, err := store.CreditGroupInWork(ctx, workID, groupID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return domainerr.InvalidField("group_id", "must belong to this work")
+	}
+	return nil
+}
+
+// creditView resolves a credit's Artist and Member. A failed lookup is
+// logged and leaves it unresolved.
+func (s *Service) creditView(ctx context.Context, credit Credit) CreditView {
+	view := CreditView{Credit: credit}
+	if credit.ArtistID != nil {
+		view.Artist = s.loadWorkCreditArtist(ctx, *credit.ArtistID)
+	}
+	if credit.MemberID != nil {
+		summaries, err := s.members.LoadMemberSummaries(ctx, []string{*credit.MemberID})
+		if err == nil {
+			view.Member = summaries[*credit.MemberID]
+		} else {
+			slog.ErrorContext(ctx, "Work credit member lookup failed; serving credit without member summary", "domain", "work", "operation", "load_credit_member_summaries", failurecause.Attr(err), "work_id", credit.WorkID, "credit_id", credit.ID)
+		}
+	}
+	return view
+}
+
+func (s *Service) loadWorkCreditArtist(ctx context.Context, artistID string) *CreditArtist {
+	var artist CreditArtistRow
+	var found bool
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		artist, found, err = store.CreditArtist(ctx, artistID)
+		return err
+	}); err != nil {
+		slog.ErrorContext(ctx, "Work credit artist lookup failed; serving credit without artist", "domain", "work", "operation", "load_credit_artist", failurecause.Attr(err), "artist_id", artistID)
 		return nil
 	}
-	creditArtist := &managev1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug}
+	if !found {
+		return nil
+	}
+	creditArtist := &CreditArtist{ID: artist.ID, Name: artist.Name, Slug: artist.Slug}
 	s.assignWorkCreditArtistImage(ctx, creditArtist, artist)
 	return creditArtist
 }
 
-func (s *WorkService) assignWorkCreditArtistImage(
-	ctx context.Context,
-	creditArtist *managev1.CreditArtist,
-	artist workCreditArtistRow,
-) {
+func (s *Service) assignWorkCreditArtistImage(ctx context.Context, creditArtist *CreditArtist, artist CreditArtistRow) {
 	if artist.ImageFileID == nil {
 		return
 	}
-	asset, err := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *artist.ImageFileID, "image")
+	asset, err := s.readyFileAsset(ctx, *artist.ImageFileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx,
-			"Failed to resolve credited artist image asset",
-			"artistId", artist.ID, "fileId", *artist.ImageFileID, failurecause.Attr(err),
-		)
+		slog.ErrorContext(ctx, "Work credit artist image resolution failed; serving artist without image", "domain", "work", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artist.ID, "file_id", *artist.ImageFileID)
 		return
 	}
 	creditArtist.ImageAsset = asset
 }
-
-// getWorkClients returns the clients associated with a work

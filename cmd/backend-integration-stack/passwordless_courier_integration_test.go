@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,32 +19,50 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/account"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
+
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
+
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
+
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
+
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // MAIL-01: pinned Kratos login, registration, and verification triggers each
 // reach one provider-neutral queue event through the authenticated ingress.
+
 func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -53,9 +72,9 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, hookServer.Close()) })
 
-	stack, err := testutil.StartBackendIntegrationStackWithOptions(
+	stack, err := runtimetest.StartBackendIntegrationStackWithOptions(
 		ctx,
-		testutil.BackendIntegrationStackOptions{HookBaseURL: hookBaseURL},
+		runtimetest.BackendIntegrationStackOptions{HookBaseURL: hookBaseURL},
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
@@ -66,43 +85,43 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	hookPublisher := &controlledHookEmailPublisher{delegate: publisher}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
-	accountEmailChangeLifecycle := account.NewAuditedAccountEmailChangeLifecycle(
-		stack.Postgres.DB,
+	accountUnits, err := accountpostgres.NewUnits(stack.Postgres.DB, accountpostgres.Ports{
+		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
+		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: publisher,
+	})
+	require.NoError(t, err)
+	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
+		accountUnits,
 		stack.KratosClient,
-		hookPublisher,
-		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
+		accountpostgres.EmailCommands{Publisher: hookPublisher},
 	)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
-		emaildelivery.NewEmailCourierService(
+		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(
 			publisher,
 			stack.KratosClient,
 			emaildeliveryadapter.NewAuthIssuanceAuthority(
-				[]byte(testutil.IntegrationTokenSigningSecret),
+				[]byte(runtimetest.IntegrationTokenSigningSecret),
 				issuanceLimiter,
 				accountEmailChangeLifecycle,
 			),
 			15*time.Minute,
 			emaildelivery.WithVerificationUIURL("https://www.example.test/verify"),
-		),
+		)),
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
-	registrationMembers := member.NewMemberProvisioner(
-		stack.Postgres.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
-		directRoles,
-	)
+	emails := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{WelcomeEmails: publisher, WelcomeRecipients: emails})
+	require.NoError(t, err)
+	registrationMembers := member.NewMemberProvisioner(memberUnits, stack.KratosClient, stack.SpiceDBClient, emails, directRoles)
+	loginRoles, err := authentication.NewService(authentication.Deps{
+		Units: authenticationpostgres.NewUnits(stack.Postgres.DB), SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: directRoles, Sessions: authenticationpostgres.NewSessions(stack.Postgres.DB),
+	})
+	require.NoError(t, err)
 	loginHooks := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(
-			stack.Postgres.DB,
-			stack.SpiceDBClient,
-			telemetryWriter,
-			directRoles,
-		),
+		loginRoles,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(stack.Postgres.DB),
@@ -112,11 +131,10 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		accountEmailChangeLifecycle,
 	)
 	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
 		telemetryWriter,
-		hookPublisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: hookPublisher},
 	)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
 	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
@@ -308,21 +326,27 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		500*time.Millisecond,
 	)
 	onboardingNickname := fmt.Sprintf("RegisteredMember%d", time.Now().UnixNano())
-	memberService := member.NewAuditedMemberService(
-		stack.Postgres.DB,
-		"",
-		stack.SpiceDBClient,
-		stack.KratosClient,
-		backendIntegrationNoopFileDeleter{},
-		"https://www.example.test",
-		publisher,
-		apitelemetry.NewDurableWriter(stack.Postgres.DB),
-		member.WithAccountSummaryReader(memberadapter.AccountSummaryReader{}),
-		member.WithAccountEmailProjection(memberadapter.AccountEmailProjection{}),
-	)
+	accounts, err := account.NewService(account.Deps{
+		Units: accountUnits, SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{}, Identity: stack.KratosClient,
+		Emails:  accountpostgres.EmailCommands{Publisher: publisher},
+		Members: accountpostgres.MemberAuthorizations(stack.Postgres.DB, accountadapter.MemberDeletion{}, stack.SpiceDBClient),
+		Audit:   apitelemetry.NewDurableWriter(stack.Postgres.DB),
+	})
+	require.NoError(t, err)
+	memberService, err := member.NewService(member.Deps{
+		Units:       memberUnits,
+		SpiceDB:     stack.SpiceDBClient,
+		Fence:       identitystate.PostgresFence{},
+		Identity:    stack.KratosClient,
+		AvatarFiles: backendIntegrationAvatarFiles{},
+		Accounts:    memberadapter.Accounts{Accounts: accounts},
+		Audit:       apitelemetry.NewDurableWriter(stack.Postgres.DB),
+		SiteOrigin:  "https://www.example.test",
+	})
+	require.NoError(t, err)
 	onboardingRequestContext, err := sharedtelemetry.NewPublicRequestContext("127.0.0.1")
 	require.NoError(t, err)
-	onboardingResponse, err := memberService.CompleteMyOnboarding(
+	onboardingResponse, err := member.NewConnectHandler(memberService).CompleteMyOnboarding(
 		auth.WithUser(sharedtelemetry.WithRequestContext(ctx, onboardingRequestContext), &auth.UserInfo{
 			IdentityID:    auth.IdentityID(registeredSession.Session.Identity.ID),
 			MemberID:      auth.MemberID(provisionedMember.ID),
@@ -356,7 +380,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	testutil.SeedKratosVerifiableEmailFixture(t, stack.Postgres.DB, loginIdentity.ID, loginEmail, true, time.Now().UTC())
+	orytest.SeedKratosVerifiableEmailFixture(t, stack.Postgres.DB, loginIdentity.ID, loginEmail, true, time.Now().UTC())
 	submitNativeCodeRequest(t, stack.KratosPublicURL, "login", structured.Fields{
 		"csrf_token": "",
 		"identifier": loginEmail,
@@ -408,20 +432,20 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	)
 }
 
-type backendIntegrationNoopFileDeleter struct{}
+type backendIntegrationAvatarFiles struct{}
 
-func (backendIntegrationNoopFileDeleter) DeleteFileByID(context.Context, string) error {
-	return nil
+func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*memberref.Asset, error) {
+	return nil, errors.New("the courier stack does not promote avatars")
 }
 
 func serveBackendIntegrationKratosProxy(
 	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
+	stack *runtimetest.BackendIntegrationStack,
 ) (string, *authentication.AuthCodeIssuanceLimiter) {
 	t.Helper()
 	limiter := authentication.NewAuthCodeIssuanceLimiter(
-		stack.Postgres.DB,
-		[]byte(testutil.IntegrationTokenSigningSecret),
+		authenticationpostgres.NewUnits(stack.Postgres.DB),
+		[]byte(runtimetest.IntegrationTokenSigningSecret),
 		authentication.AuthCodeIssuanceLimits{
 			Cooldown:        time.Millisecond,
 			AddressHourly:   100,
@@ -432,7 +456,7 @@ func serveBackendIntegrationKratosProxy(
 	proxy, err := authentication.NewKratosPublicProxy(
 		stack.KratosPublicURL,
 		limiter,
-		[]byte(testutil.IntegrationTokenSigningSecret),
+		[]byte(runtimetest.IntegrationTokenSigningSecret),
 	)
 	require.NoError(t, err)
 	server := httptest.NewServer(proxy)
@@ -613,7 +637,7 @@ func assertPinnedKratosRegistrationCodeFlowSurface(t *testing.T, body, messageTy
 
 func assertPinnedKratosEmailChangeFlow(
 	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
+	stack *runtimetest.BackendIntegrationStack,
 	sessionToken string,
 	identityID string,
 	currentEmail string,
@@ -934,7 +958,7 @@ func requireBackendIntegrationEmailEvent(
 	var event *managev1.SendEmailEvent
 	queueName := backendIntegrationEmailQueue(expectedTemplateType)
 	require.Eventually(t, func() bool {
-		messages, err := testutil.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
+		messages, err := pgtest.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
 		if err != nil || len(messages) == 0 {
 			return false
 		}
@@ -947,7 +971,7 @@ func requireBackendIntegrationEmailEvent(
 		if err := proto.Unmarshal(body, &candidate); err != nil {
 			return false
 		}
-		require.NoError(t, testutil.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
+		require.NoError(t, pgtest.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
 		if candidate.GetTemplateType() != expectedTemplateType {
 			return false
 		}
@@ -963,7 +987,7 @@ func purgeBackendIntegrationEmailQueue(t *testing.T, db *sql.DB) {
 	defer cancel()
 
 	for _, queueName := range []string{eventpkg.QueueEmailAuth, eventpkg.QueueEmailSend} {
-		require.NoError(t, testutil.PurgePGMQQueue(ctx, db, queueName))
+		require.NoError(t, pgtest.PurgePGMQQueue(ctx, db, queueName))
 	}
 }
 
@@ -988,14 +1012,14 @@ func requireNoBackendIntegrationEmailEventForRecipient(
 
 	require.Never(t, func() bool {
 		for _, queueName := range []string{eventpkg.QueueEmailAuth, eventpkg.QueueEmailSend} {
-			messages, err := testutil.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
+			messages, err := pgtest.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
 			if err != nil || len(messages) == 0 {
 				continue
 			}
 			message := messages[0]
 			body, err := message.Envelope.Payload()
 			require.NoError(t, err)
-			require.NoError(t, testutil.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
+			require.NoError(t, pgtest.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
 			var event managev1.SendEmailEvent
 			require.NoError(t, proto.Unmarshal(body, &event))
 			if strings.EqualFold(

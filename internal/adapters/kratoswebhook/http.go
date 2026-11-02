@@ -1,6 +1,7 @@
 package kratoswebhook
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -25,13 +26,11 @@ type kratosHookMessageGroup struct {
 	Messages    []kratosHookMessage `json:"messages"`
 }
 
-func Decode(
-	w http.ResponseWriter,
-	r *http.Request,
-	destination structured.Value, logMessage string,
-) bool {
+// Decode reads a hook payload. A malformed payload answers 400, and the HTTP
+// request record logs the decode cause.
+func Decode(w http.ResponseWriter, r *http.Request, destination structured.Value) bool {
 	if err := json.NewDecoder(r.Body).Decode(destination); err != nil {
-		slog.WarnContext(r.Context(), logMessage, "failure_cause", failurecause.Message(err), "error_code", "hook_payload_invalid")
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return false
 	}
@@ -46,14 +45,14 @@ func RequirePost(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func WriteEmpty(w http.ResponseWriter) {
+func WriteEmpty(ctx context.Context, w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(structured.Fields{}); err != nil {
-		slog.Error("Failed to encode hook response", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Failed to encode hook response", "failure_cause", failurecause.Message(err))
 	}
 }
 
-func WriteError(w http.ResponseWriter, status int, message string, code string) {
+func WriteError(ctx context.Context, w http.ResponseWriter, status int, message string, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(kratosHookErrorResponse{
@@ -73,6 +72,6 @@ func WriteError(w http.ResponseWriter, status int, message string, code string) 
 			},
 		},
 	}); err != nil {
-		slog.Error("Failed to encode Kratos hook error response", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Failed to encode Kratos hook error response", "failure_cause", failurecause.Message(err))
 	}
 }

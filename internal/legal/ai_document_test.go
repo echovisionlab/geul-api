@@ -10,8 +10,8 @@ import (
 )
 
 func TestNewLegalAIDocumentServiceFailsClosedWithoutEveryAuthority(t *testing.T) {
-	service, err := NewAuditedAIDocumentService(nil, nil, nil, nil, nil)
-	require.Error(t, err)
+	service, err := NewAIDocumentService(AIDocumentDeps{})
+	require.EqualError(t, err, "legal AI document dependencies are required: Audit, Fence, SpiceDB, Units")
 	require.Nil(t, service)
 }
 

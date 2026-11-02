@@ -44,7 +44,7 @@ func TestConsumerCancellationResultSettlementSurvivesOverlappingShutdown(t *test
 	defer shutdown()
 	job := validAudioTranscodeJob()
 	consumer, err := NewConsumer(connection, transcodeAudioQueueConfig(), func(ctx context.Context, _ []byte) error {
-		resultCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalInputSettlementTimeout)
+		resultCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedSettlementTimeout)
 		defer cancel()
 		if err := publisher.PublishComplete(resultCtx, transcodeCompleteFor(job, false)); err != nil {
 			return jobresult.Retry(err)

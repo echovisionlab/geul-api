@@ -6,25 +6,21 @@ import (
 	"fmt"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
 type verifiedFileIngestAuthority interface {
 	revalidate(
 		context.Context,
-		*gorm.DB,
-		*FileService,
+		Store,
+		*Service,
 		string,
-		managev1.UploadType,
-		managev1.TranscodeEntityType,
+		UploadType,
+		EntityType,
 		string,
+		func(*auth.UserInfo) (bool, error),
 	) error
 }
 
@@ -35,12 +31,13 @@ type trustedSystemFileIngestAuthority struct{}
 
 func (trustedSystemFileIngestAuthority) revalidate(
 	context.Context,
-	*gorm.DB,
-	*FileService,
+	Store,
+	*Service,
 	string,
-	managev1.UploadType,
-	managev1.TranscodeEntityType,
+	UploadType,
+	EntityType,
 	string,
+	func(*auth.UserInfo) (bool, error),
 ) error {
 	return nil
 }
@@ -49,14 +46,15 @@ type requestFileIngestAuthority struct{}
 
 func (requestFileIngestAuthority) revalidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	service *FileService,
+	tx Store,
+	service *Service,
 	_ string,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
+	lockActive func(*auth.UserInfo) (bool, error),
 ) error {
-	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, entityID)
+	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, entityID, lockActive)
 }
 
 type multipartFileIngestAuthority struct {
@@ -64,7 +62,7 @@ type multipartFileIngestAuthority struct {
 	fileID   string
 }
 
-func newMultipartFileIngestAuthority(session model.UploadSession) (multipartFileIngestAuthority, error) {
+func newMultipartFileIngestAuthority(session domain.UploadSession) (multipartFileIngestAuthority, error) {
 	uploadID := strings.TrimSpace(session.UploadID)
 	fileID := strings.TrimSpace(session.FileID)
 	if uploadID == "" || fileID == "" {
@@ -75,121 +73,72 @@ func newMultipartFileIngestAuthority(session model.UploadSession) (multipartFile
 
 func (authority multipartFileIngestAuthority) revalidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	service *FileService,
+	tx Store,
+	service *Service,
 	fileID string,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
+	lockActive func(*auth.UserInfo) (bool, error),
 ) error {
 	if strings.TrimSpace(fileID) != authority.fileID {
-		return errs.FailedPrecondition("multipart completion File authority changed")
+		return domainerr.Precondition("multipart completion File authority changed")
 	}
-	var session model.UploadSession
-	result := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("upload_id = ? AND file_id = ?", authority.uploadID, authority.fileID).
-		Take(&session)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.FailedPrecondition("multipart completion upload authority no longer exists")
+	session, err := tx.UploadSession(ctx, authority.uploadID, authority.fileID, true)
+	if errors.Is(err, domain.ErrUploadSessionNotFound) {
+		return domainerr.Precondition("multipart completion upload authority no longer exists")
 	}
-	if result.Error != nil {
-		return errs.Internal(fmt.Errorf("lock multipart completion upload authority: %w", result.Error))
+	if err != nil {
+		return fmt.Errorf("lock multipart completion upload authority: %w", err)
 	}
-	if session.Status != model.UploadSessionStatusFinalizing ||
+
+	if session.Status != domain.UploadSessionStatusFinalizing ||
 		session.UploadType != uploadType.String() ||
 		uploadSessionEntityTypeToEnum(session.EntityType) != entityType ||
 		strings.TrimSpace(session.EntityID) != strings.TrimSpace(entityID) {
-		return errs.FailedPrecondition("multipart completion upload authority changed")
+		return domainerr.Precondition("multipart completion upload authority changed")
 	}
-	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, session.EntityID)
+	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, session.EntityID, lockActive)
 }
 
-func requireFreshFileIngestAuthority(
-	ctx context.Context,
-	tx *gorm.DB,
-	service *FileService,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
-	entityID string,
-) error {
+func requireFreshFileIngestAuthority(ctx context.Context, store Store, service *Service, uploadType UploadType, entityType EntityType, entityID string, lockActive func(*auth.UserInfo) (bool, error)) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
-	txService := *service
-	txService.db = tx
-	storedEntityType := ""
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-		storedEntityType = entityType.String()
+	session := domain.UploadSession{EntityID: strings.TrimSpace(entityID)}
+	if entityType != EntityUnspecified {
+		session.EntityType = new(entityType.String())
 	}
-	session := model.UploadSession{EntityID: strings.TrimSpace(entityID)}
-	if storedEntityType != "" {
-		session.EntityType = &storedEntityType
-	}
-	target, resolvedEntityID, err := txService.resolvePartUploadPermissionTarget(ctx, uploadType, session)
+	target, resolvedID, err := resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, func(ctx context.Context, id string) (string, error) {
+		rows, err := store.TrackReleaseIDs(ctx, []string{id})
+		if err != nil {
+			return "", err
+		}
+		release, ok := rows[id]
+		if !ok {
+			return "", domain.ErrUploadTrackNotFound
+		}
+		return release, nil
+	})
 	if err != nil {
 		return connectUploadPermissionValidationError(err)
 	}
-	if target.resourceType == "post" {
-		access, dependencyErr := requirePostAccess(service.postAccess)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
-		return access.RequireLockedEdit(ctx, tx, resolvedEntityID)
+	if target.resourceType == "post" || target.resourceType == "program_event" {
+		return store.RequirePolicyOwner(ctx, target.resourceType, resolvedID, true)
 	}
-	if target.resourceType == "program_event" {
-		access, dependencyErr := requireProgramEventAttachment(service.programEventAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
-		return access.RequireLockedEdit(ctx, tx, service.spiceDB, resolvedEntityID)
-	}
-	if err := lockFileIngestAuthorizationTarget(ctx, tx, target, resolvedEntityID); err != nil {
+	if err := store.LockIngestOwner(ctx, target.resourceType, resolvedID); err != nil {
 		return err
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
-		return errs.Internal(fmt.Errorf("lock File ingest principal: %w", err))
+		return fmt.Errorf("lock File ingest principal: %w", err)
 	}
 	if !active {
-		return errs.PermissionDenied("File ingest authority was revoked")
+		return domainerr.Denied("File ingest authority was revoked")
 	}
-	if err := txService.checkRoleAndSpiceDBUploadPermission(
-		ctx,
-		target,
-		resolvedEntityID,
-		principal.MemberID.String(),
-	); err != nil {
+	if err := service.checkRoleAndSpiceDBUploadPermission(ctx, target, resolvedID, principal.MemberID.String()); err != nil {
 		return connectUploadPermissionValidationError(err)
-	}
-	return nil
-}
-
-func lockFileIngestAuthorizationTarget(
-	ctx context.Context,
-	tx *gorm.DB,
-	target uploadPermissionTarget,
-	entityID string,
-) error {
-	table, ok := uploadPermissionResourceTable(target.resourceType)
-	if !ok || strings.TrimSpace(entityID) == "" {
-		return nil
-	}
-	var row struct {
-		ID string `gorm:"column:id"`
-	}
-	result := tx.WithContext(ctx).
-		Table(table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id").
-		Where("id = ?", entityID).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.NotFound(target.resourceType, entityID)
-	}
-	if result.Error != nil {
-		return errs.Internal(fmt.Errorf("lock File ingest %s target: %w", target.resourceType, result.Error))
 	}
 	return nil
 }

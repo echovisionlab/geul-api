@@ -5,11 +5,14 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -30,7 +33,7 @@ func (p *Projection) ReleasePending(ctx context.Context, tx *gorm.DB, target og.
 		Update("og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, "form", target.EntityID, []string{formOgBindingKey(locale)},
 	)
 }
@@ -59,9 +62,20 @@ func (p *Projection) Complete(
 	if result.RowsAffected == 0 {
 		return og.ErrTranslationTargetMissing
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: "form", OwnerID: target.EntityID, BindingKey: formOgBindingKey(locale),
 	})
+}
+
+// ReferencesAsset reports whether the Form row or one of its locale rows
+// points at assetID.
+func (*Projection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	var referenced bool
+	err := tx.WithContext(ctx).Raw(`SELECT EXISTS (
+		SELECT 1 FROM form WHERE og_asset_id = ?
+		UNION ALL SELECT 1 FROM form_translation WHERE og_asset_id = ?
+	)`, assetID, assetID).Scan(&referenced).Error
+	return referenced, err
 }
 
 func formOgLocale(locale *string) string {
@@ -78,4 +92,7 @@ func formOgBindingKey(locale string) string {
 	return "og_" + locale
 }
 
-var _ og.Projection = (*Projection)(nil)
+var (
+	_ ogpostgres.Projection     = (*Projection)(nil)
+	_ ogpostgres.AssetReference = (*Projection)(nil)
+)

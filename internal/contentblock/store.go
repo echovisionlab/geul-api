@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type uuidGenerator func() uuid.UUID
@@ -128,7 +129,7 @@ func (s *Store) LoadSnapshotInTransaction(
 	if err := validateLocale(sourceLocale); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: source locale: %v", ErrInvalidMutation, err)
 	}
-	state, err := s.repo.loadAggregate(ctx, tx, documentID, "SHARE")
+	state, err := s.repo.loadAggregate(ctx, tx, documentID, clause.LockingStrengthShare)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -348,7 +349,7 @@ func (s *Store) ApplyTargetLocaleBatchWithMetadata(
 	if targetLocale == domain.SourceLocale {
 		return Result{}, fmt.Errorf("%w: target locale must differ from source locale", ErrInvalidMutation)
 	}
-	before, err := s.repo.loadAggregate(ctx, tx, batch.DocumentID, "UPDATE")
+	before, err := s.repo.loadAggregate(ctx, tx, batch.DocumentID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return Result{}, err
 	}
@@ -455,7 +456,7 @@ func (s *Store) applyBatchAfterFenceWithMetadata(
 	replaceAll bool,
 	metadata MetadataMutation,
 ) (Result, error) {
-	before, err := s.repo.loadAggregate(ctx, tx, batch.DocumentID, "UPDATE")
+	before, err := s.repo.loadAggregate(ctx, tx, batch.DocumentID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return Result{}, err
 	}
@@ -505,7 +506,10 @@ func (s *Store) applyBatchAfterFenceWithMetadata(
 		if err != nil {
 			return Result{}, err
 		}
-		localesChanged = changedMutationLocales(before, after, mutation)
+		localesChanged, err = changedMutationLocales(before, after, mutation)
+		if err != nil {
+			return Result{}, err
+		}
 		if err := s.validateFileChanges(ctx, tx, before, after, mutation); err != nil {
 			return Result{}, err
 		}
@@ -685,7 +689,7 @@ func (s *Store) DeleteLocale(
 	if err := validateLocale(domain.SourceLocale); err != nil {
 		return Result{}, fmt.Errorf("%w: domain source locale: %v", ErrInvalidMutation, err)
 	}
-	document, err := s.repo.loadDocument(ctx, tx, input.DocumentID, "UPDATE")
+	document, err := s.repo.loadDocument(ctx, tx, input.DocumentID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return Result{}, err
 	}
@@ -745,7 +749,7 @@ func (s *Store) AdvanceRevision(
 	if err := validateLocale(domain.SourceLocale); err != nil {
 		return AdvanceResult{}, fmt.Errorf("%w: domain source locale: %v", ErrInvalidMutation, err)
 	}
-	document, err := s.repo.loadDocument(ctx, tx, input.DocumentID, "UPDATE")
+	document, err := s.repo.loadDocument(ctx, tx, input.DocumentID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return AdvanceResult{}, err
 	}
@@ -790,7 +794,7 @@ func (s *Store) DeleteDocument(
 	if _, err := fence(ctx, tx, documentID); err != nil {
 		return err
 	}
-	if _, err := s.repo.loadDocument(ctx, tx, documentID, "UPDATE"); err != nil {
+	if _, err := s.repo.loadDocument(ctx, tx, documentID, clause.LockingStrengthUpdate); err != nil {
 		return err
 	}
 	return s.repo.deleteDocument(ctx, tx, documentID)

@@ -2,114 +2,73 @@ package ai
 
 import (
 	"context"
-	"log/slog"
+	"errors"
+	"slices"
 	"strings"
 
-	"connectrpc.com/connect"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// Service exposes only the durable metadata-generation lifecycle. Interactive
+// Deps are the collaborators of the metadata-generation use cases; all are
+// required.
+type Deps struct {
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	// Audit is required by the mutation pipeline; metadata jobs are
+	// operational rows and append no record.
+	Audit domainaudit.Appender
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("ai dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the durable metadata-generation use cases. Interactive
 // document editing is owned by the typed AI document protocol.
 type Service struct {
-	metadataAI *MetadataJobManager
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
-var _ managev1connect.AIServiceHandler = (*Service)(nil)
-
-func NewService(metadataAI *MetadataJobManager) *Service {
-	dependencycheck.New("ai.Service").
-		RequireNotNil(metadataAI, "metadataAI").
-		Validate()
-	return &Service{metadataAI: metadataAI}
-}
-
-func (s *Service) StartMetadataGeneration(
-	ctx context.Context,
-	req *connect.Request[managev1.StartMetadataGenerationRequest],
-) (_ *connect.Response[managev1.StartMetadataGenerationResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, req.Msg.GetContext(), req.Msg.GetPrompt()), "operation", "StartMetadataGeneration")
-		}
-	}()
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.StartJob(ctx, user, req.Msg)
+// NewService returns the metadata-generation use cases over deps.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.StartMetadataGenerationResponse{Job: job}), nil
-}
-
-func (s *Service) GetMetadataGenerationJob(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMetadataGenerationJobRequest],
-) (_ *connect.Response[managev1.GetMetadataGenerationJobResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetMetadataGenerationJob")
-		}
-	}()
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.GetJobForRequester(ctx, user, req.Msg.JobId)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.GetMetadataGenerationJobResponse{Job: job}), nil
-}
-
-func (s *Service) ResolveMetadataGenerationJob(
-	ctx context.Context,
-	req *connect.Request[managev1.ResolveMetadataGenerationJobRequest],
-) (_ *connect.Response[managev1.ResolveMetadataGenerationJobResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ResolveMetadataGenerationJob")
-		}
-	}()
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.ResolveJobForRequester(ctx, user, req.Msg.JobId, req.Msg.Resolution)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ResolveMetadataGenerationJobResponse{Job: job}), nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
 func canUseAI(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	user *auth.UserInfo,
-	target *managev1.AIResourceTarget,
+	target *Target,
 ) (bool, error) {
-	if target != nil && target.Type == managev1.AIResourceType_AI_RESOURCE_TYPE_WORK {
+	if target != nil && target.Type == TargetWork {
 		return checkAIAdmin(ctx, spiceDB, user)
 	}
 	if allowed, err := checkAIAdmin(ctx, spiceDB, user); err != nil {
@@ -126,41 +85,34 @@ func canUseAI(
 	if target == nil {
 		return false, nil
 	}
-	targetID := strings.TrimSpace(target.Id)
+	targetID := strings.TrimSpace(target.ID)
 	if targetID == "" {
 		return false, nil
 	}
 
 	switch target.Type {
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_POST:
+	case TargetPost:
 		can, err := policyv1.Post.Edit(targetID)
 		if err != nil {
-			slog.WarnContext(ctx, "AI resource authorization rejected", "domain", "ai", "event", "ai.authorization.rejected", "failure_cause", failurecause.Message(err))
-			return false, nil
+			return false, nil //nolint:nilerr // a malformed target ID names no resource the requester may edit; deny it
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST:
+	case TargetArtist:
 		can, err := policyv1.Artist.Edit(targetID)
 		if err != nil {
-			slog.WarnContext(ctx, "AI resource authorization rejected", "domain", "ai", "event", "ai.authorization.rejected", "failure_cause", failurecause.Message(err))
-			return false, nil
+			return false, nil //nolint:nilerr // a malformed target ID names no resource the requester may edit; deny it
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_FORM,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE:
-		return false, nil
 	default:
+		// Pages, Forms, Releases, Labels, Campaigns and Email Templates
+		// have no per-resource metadata authority.
 		return false, nil
 	}
 }
 
 func canManageAIResource(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 	user *auth.UserInfo,
 ) (bool, error) {
@@ -170,43 +122,39 @@ func canManageAIResource(
 	return checkAICan(ctx, spiceDB, user, can)
 }
 
-func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
+func checkAIAdmin(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return checkAICan(ctx, spiceDB, user, can)
 }
 
-func checkAIAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
+func checkAIAuthor(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return checkAICan(ctx, spiceDB, user, can)
 }
 
 func checkAICan(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	user *auth.UserInfo,
 	can policyv1.Can,
 ) (bool, error) {
 	if user == nil || user.IdentityID.String() == "" {
-		return false, errs.AuthenticationRequired()
+		return false, domainerr.AuthenticationRequired()
 	}
 	authorizationCtx := auth.WithUser(ctx, user)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.AuthenticationRequired()
+		return false, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
 }

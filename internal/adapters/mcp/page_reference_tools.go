@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/form"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -16,17 +17,17 @@ const (
 	ToolPostSeriesList = "post_series_list"
 )
 
-var pageReferenceTools = []mcpserver.Tool{
-	oauthTool(ToolFormList, "List Forms", "List or search canonical Form IDs and source titles before editing a Page form section. Pass a selected id unchanged as form_id. Native status is a snapshot, not a guarantee of public form access. Continue with next_offset and the same filters. Authorization remains in the native admin list; form bodies and submissions are omitted.", formListInputJSONSchema, formListOutputJSONSchema, true, false),
-	oauthTool(ToolPostSeriesList, "List Post series", "List or search canonical Post series IDs and source titles before editing Page post list, table, or map sections. Pass a selected id unchanged as series_id. Continue with next_offset and the same filters. Authorization remains in the native admin list; content and managers are omitted.", postSeriesListInputJSONSchema, postSeriesListOutputJSONSchema, true, false),
+var pageReferenceTools = toolRegistry[PageReferenceTools]{
+	defineTool(oauthTool(ToolFormList, "List Forms", "List or search canonical Form IDs and source titles before editing a Page form section. Pass a selected id unchanged as form_id. Native status is a snapshot, not a guarantee of public form access. Continue with next_offset and the same filters. Authorization remains in the native admin list; form bodies and submissions are omitted.", formListInputJSONSchema, formListOutputJSONSchema, true, false), (*PageReferenceTools).list),
+	defineTool(oauthTool(ToolPostSeriesList, "List Post series", "List or search canonical Post series IDs and source titles before editing Page post list, table, or map sections. Pass a selected id unchanged as series_id. Continue with next_offset and the same filters. Authorization remains in the native admin list; content and managers are omitted.", postSeriesListInputJSONSchema, postSeriesListOutputJSONSchema, true, false), (*PageReferenceTools).list),
 }
 
 type FormReferenceDiscovery interface {
-	ListFormsAdmin(context.Context, *connect.Request[managev1.ListFormsAdminRequest]) (*connect.Response[managev1.ListFormsAdminResponse], error)
+	ListFormsAdmin(context.Context, form.ListFormsAdminQuery) (form.FormList, error)
 }
 
 type PostSeriesReferenceDiscovery interface {
-	ListSeriesAdmin(context.Context, *connect.Request[managev1.ListSeriesAdminRequest]) (*connect.Response[managev1.ListSeriesAdminResponse], error)
+	ListSeriesAdmin(context.Context, series.ListSeriesAdminQuery) (series.SeriesPage, error)
 }
 
 type PageReferenceTools struct {
@@ -41,28 +42,24 @@ func NewPageReferenceTools(forms FormReferenceDiscovery, series PostSeriesRefere
 	return &PageReferenceTools{forms: forms, series: series}, nil
 }
 
-func (*PageReferenceTools) ToolNames() []string {
-	return toolDefinitionNames(pageReferenceTools)
-}
+func (*PageReferenceTools) ToolNames() []string { return pageReferenceTools.names() }
 
 func (*PageReferenceTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(pageReferenceTools), nil
+	return pageReferenceTools.list(), nil
 }
 
 func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolFormList && name != ToolPostSeriesList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return pageReferenceTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *PageReferenceTools) list(ctx context.Context, name string, call toolCall[pageReferenceListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "query", "status", "limit", "offset"); err != nil {
 		return executionError(err)
 	}
-	var input struct {
-		Query  string `json:"query,omitempty"`
-		Status string `json:"status,omitempty"`
-		Limit  *int32 `json:"limit,omitempty"`
-		Offset int32  `json:"offset,omitempty"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+	var input pageReferenceListArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	limit := int32(20)
@@ -94,31 +91,32 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolFormList:
-		response, err := tools.forms.ListFormsAdmin(ctx, connect.NewRequest(&managev1.ListFormsAdminRequest{Pagination: pagination, Filters: filters}))
+		response, err := tools.forms.ListFormsAdmin(ctx, form.ListFormsAdminQuery{
+			Page: form.Page{Limit: pagination.Limit, Offset: pagination.Offset}, Filters: filters,
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Forms {
-			if item != nil {
-				projected := map[string]any{"id": item.Id, "title": item.Title, "status": item.Status.String(), "source_locale": item.SourceLocale}
-				if item.Slug != nil {
-					projected["slug"] = *item.Slug
-				}
-				items = append(items, projected)
+		responsePagination = &commonv1.PaginationResponse{Total: response.Pagination.Total, HasMore: response.Pagination.HasMore}
+		for _, item := range response.Forms {
+			listed := item.Form
+			projected := map[string]any{"id": listed.ID, "title": item.Title, "status": form.StatusMessage(listed.Status).String(), "source_locale": listed.SourceLocale}
+			if listed.Slug != nil {
+				projected["slug"] = *listed.Slug
 			}
+			items = append(items, projected)
 		}
 	case ToolPostSeriesList:
-		response, err := tools.series.ListSeriesAdmin(ctx, connect.NewRequest(&managev1.ListSeriesAdminRequest{Pagination: pagination, Filters: filters}))
+		response, err := tools.series.ListSeriesAdmin(ctx, series.ListSeriesAdminQuery{
+			Page: series.Page{Limit: pagination.Limit, Offset: pagination.Offset}, Filters: filters,
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Series {
-			if item != nil && item.Series != nil {
-				series := item.Series
-				items = append(items, map[string]any{"id": series.Id, "title": series.Title, "slug": series.Slug, "status": series.Status, "source_locale": series.SourceLocale, "post_count": item.PostCount})
-			}
+		responsePagination = &commonv1.PaginationResponse{Total: response.Total, HasMore: response.HasMore}
+		for _, item := range response.Items {
+			listed := item.Series
+			items = append(items, map[string]any{"id": listed.ID, "title": listed.Title, "slug": listed.Slug, "status": string(listed.Status), "source_locale": listed.SourceLocale, "post_count": item.PostCount})
 		}
 	}
 	output := map[string]any{"items": items, "total": responsePagination.GetTotal(), "limit": pagination.Limit, "offset": pagination.Offset, "has_more": responsePagination.GetHasMore()}
@@ -126,4 +124,11 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		output["next_offset"] = int64(pagination.Offset) + int64(pagination.Limit)
 	}
 	return contentResult(output)
+}
+
+type pageReferenceListArguments = struct {
+	Query  string `json:"query,omitempty"`
+	Status string `json:"status,omitempty"`
+	Limit  *int32 `json:"limit,omitempty"`
+	Offset int32  `json:"offset,omitempty"`
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // completionMetadataKey identifies the terminal receipt stored with a
@@ -127,13 +126,12 @@ func (c *S3Client) Download(ctx context.Context, key string, localPath string) e
 		writeErr = fmt.Errorf("failed to write file: %w", writeErr)
 	}
 	if closeErr != nil {
-		slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(closeErr), "bucket", c.bucket)
 		closeErr = fmt.Errorf("failed to close file: %w", closeErr)
 	}
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	slog.Debug("Downloaded file from S3",
+	slog.DebugContext(ctx, "Downloaded file from S3",
 		"key", key,
 		"local_path", localPath,
 		"size", written,

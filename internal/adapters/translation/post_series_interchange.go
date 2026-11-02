@@ -8,16 +8,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 type postSeriesTranslationInterchangeDomain interface {
 	LoadTranslationInterchangeTarget(
-		context.Context, *gorm.DB, string, string, *core.ExtractionPlan,
+		context.Context, seriesdomain.TranslationStore, string, string, *core.ExtractionPlan,
 	) (seriesdomain.TranslationInterchangeTarget, error)
 	ApplyTranslationInterchange(
-		context.Context, *gorm.DB, seriesdomain.TranslationInterchangeMutation,
+		context.Context, seriesdomain.TranslationStore, seriesdomain.TranslationInterchangeMutation,
 	) (seriesdomain.TranslationInterchangeResult, error)
 }
 
@@ -47,7 +49,7 @@ func (a *PostSeriesInterchange) LoadTranslationInterchangeTarget(
 			"target", "Post Series translation interchange identity does not match the route",
 		)
 	}
-	state, err := a.domain.LoadTranslationInterchangeTarget(ctx, db, entityID, locale, plan)
+	state, err := a.domain.LoadTranslationInterchangeTarget(ctx, seriespostgres.NewTranslationStore(db), entityID, locale, plan)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
@@ -65,9 +67,9 @@ func (a *PostSeriesInterchange) ApplyTranslationInterchange(
 	if err := validateScalarInterchangeApply(command, string(core.KindPostSeries)); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := a.domain.ApplyTranslationInterchange(ctx, db, seriesdomain.TranslationInterchangeMutation{
+	result, err := a.domain.ApplyTranslationInterchange(ctx, seriespostgres.NewTranslationStore(db), seriesdomain.TranslationInterchangeMutation{
 		SeriesID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: seriesInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 	})
@@ -80,4 +82,15 @@ func (a *PostSeriesInterchange) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*PostSeriesInterchange)(nil)
+func seriesInterchangeMode(mode application.InterchangeMode) seriesdomain.InterchangeMode {
+	switch mode {
+	case application.InterchangeModePatch:
+		return seriesdomain.InterchangeModePatch
+	case application.InterchangeModeReplace:
+		return seriesdomain.InterchangeModeReplace
+	default:
+		return seriesdomain.InterchangeModeUnknown
+	}
+}
+
+var _ translationpostgres.InterchangeRegistry = (*PostSeriesInterchange)(nil)

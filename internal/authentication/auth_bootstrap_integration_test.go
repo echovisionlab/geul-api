@@ -1,16 +1,21 @@
 //go:build integration
 
-package authentication
+package authentication_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -19,14 +24,9 @@ import (
 
 func TestAuthBootstrapServiceSynchronizesMissingRolesWithoutDowngradingExistingRolesIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
-	service := NewAuthBootstrapService(
-		stack.DB,
-		stack.SpiceDBClient,
-		apitelemetry.NewDurableWriter(stack.DB),
-		integrationDirectRoleTransition{},
-	)
+	stack := orytest.SetupOryStack(t)
+	orytest.ResetFirstAdminBootstrapFixture(t, stack.DB)
+	service := newIntegrationLoginRoles(t, stack, apitelemetry.NewDurableWriter(stack.DB))
 	ctx := context.Background()
 
 	first := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -72,15 +72,17 @@ func (failingAuthBootstrapAuditAppender) AppendDomainAuditInTransaction(context.
 	return errors.New("bootstrap audit unavailable")
 }
 
-func TestAuthBootstrapServiceRestoresDirectRoleAfterConfirmedCallbackRollbackIntegration(t *testing.T) {
+// A failed first-admin audit rolls the claim back before the relationship
+// write, so real SpiceDB keeps no direct role.
+func TestAuthBootstrapServiceLeavesNoDirectRoleWhenTheClaimRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
+	stack := orytest.SetupOryStack(t)
+	orytest.ResetFirstAdminBootstrapFixture(t, stack.DB)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 	subject := requireAccountIdentitySubject(t, user.IdentityID)
 	_, err := stack.SpiceDBClient.DeleteAllAccountIdentityRelationships(t.Context(), subject)
 	require.NoError(t, err)
-	service := NewAuthBootstrapService(stack.DB, stack.SpiceDBClient, failingAuthBootstrapAuditAppender{}, integrationDirectRoleTransition{})
+	service := newIntegrationLoginRoles(t, stack, failingAuthBootstrapAuditAppender{})
 
 	result, err := service.SyncLoginRole(t.Context(), user.IdentityID, user.MemberID)
 	require.Empty(t, result)
@@ -90,23 +92,16 @@ func TestAuthBootstrapServiceRestoresDirectRoleAfterConfirmedCallbackRollbackInt
 	require.False(t, found)
 }
 
-type integrationDirectRoleTransition struct{}
-
-func (integrationDirectRoleTransition) Transition(
-	subject auth.AccountIdentitySubject,
-	desired policyv1.RoleID,
-	previous policyv1.RoleID,
-	previousFound bool,
-) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
-	apply, err := account.RoleReplacementMutations(subject, desired)
-	if err != nil {
-		return nil, nil, err
-	}
-	compensate, err := account.RoleRestoreMutations(subject, previous, previousFound)
-	if err != nil {
-		return nil, nil, err
-	}
-	return apply, compensate, nil
+// newIntegrationLoginRoles runs the login role sync on the stack's
+// PostgreSQL, Kratos rows and SpiceDB, with the production role transition.
+func newIntegrationLoginRoles(t *testing.T, stack *orytest.OryStack, audit domainaudit.Appender) *authentication.Service {
+	t.Helper()
+	service, err := authentication.NewService(authentication.Deps{
+		Units: authenticationpostgres.NewUnits(stack.DB), SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{},
+		Audit: audit, Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationpostgres.NewSessions(stack.DB),
+	})
+	require.NoError(t, err)
+	return service
 }
 
 func requireAccountIdentitySubject(t *testing.T, identityID string) auth.AccountIdentitySubject {

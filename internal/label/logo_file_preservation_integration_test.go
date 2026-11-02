@@ -1,10 +1,12 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"crypto/sha256"
 	"testing"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -13,18 +15,19 @@ import (
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Label Logo Admin")
-	ctx := artistIntegrationAdminCtx(adminID)
-	fileDeleter := &recordingArtistFileDeleter{}
-	labelService := newLabelIntegrationService(t, db, adminID, fileDeleter)
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
+	ctx := labelIntegrationAdminCtx(adminID)
+	labelService := newLabelIntegrationService(t, db, adminID)
 
 	tests := []struct {
 		name    string
@@ -40,8 +43,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 				t,
 				labelService,
 				ctx,
-				"Label Logo "+tt.name+" "+integrationTestUUID(),
-				"label-logo-"+tt.name+"-"+integrationTestUUID(),
+				"Label Logo "+tt.name+" "+orytest.IntegrationUUID(),
+				"label-logo-"+tt.name+"-"+orytest.IntegrationUUID(),
 			)
 			originalFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/original-"+tt.name+".webp", "logo")
 			replacementFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/replacement-"+tt.name+".webp", "logo")
@@ -61,7 +64,6 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, replacementFileID, requireLabelLogoFileID(t, db, labelID, tt.variant))
 			requireFileRowsPresent(t, db, originalFileID, replacementFileID)
-			require.Empty(t, fileDeleter.deletedIDs)
 
 			removed, err := labelService.DeleteLabelImage(ctx, connect.NewRequest(&managev1.DeleteLabelImageRequest{
 				LabelId: labelID,
@@ -71,7 +73,6 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			require.True(t, removed.Msg.Success)
 			require.Empty(t, requireLabelLogoFileID(t, db, labelID, tt.variant))
 			requireFileRowsPresent(t, db, originalFileID, replacementFileID)
-			require.Empty(t, fileDeleter.deletedIDs)
 		})
 	}
 
@@ -80,8 +81,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Effective Logo "+integrationTestUUID(),
-			"label-effective-logo-"+integrationTestUUID(),
+			"Label Effective Logo "+orytest.IntegrationUUID(),
+			"label-effective-logo-"+orytest.IntegrationUUID(),
 		)
 		lightFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/light.webp", "logo")
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/dark.webp", "logo")
@@ -116,7 +117,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 		require.NotNil(t, lightRemoved.Msg.OgGenerationRunId)
 
 		staleOgAssetID := seedReadyLabelOgAsset(t, db, "label-stale-og")
-		require.NoError(t, mediaasset.NewLifecycle(db, "").BindPublicAsset(ctx, mediaasset.Binding{
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(ctx, mediaasset.Binding{
 			AssetID: staleOgAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "og",
 		}))
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
@@ -147,8 +148,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Global Reconcile "+integrationTestUUID(),
-			"label-global-reconcile-"+integrationTestUUID(),
+			"Label Global Reconcile "+orytest.IntegrationUUID(),
+			"label-global-reconcile-"+orytest.IntegrationUUID(),
 		)
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/global-dark.webp", "logo")
 		_, err := labelService.SetLabelImage(ctx, connect.NewRequest(&managev1.SetLabelImageRequest{
@@ -162,12 +163,12 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 		queuedGenerationID := *target.LatestGenerationID
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
 			Update("logo_dark_file_id", nil).Error)
-		require.NoError(t, mediaasset.NewLifecycle(db, "").ReleaseExactPublicAssetBindings(
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").ReleaseExactPublicAssetBindings(
 			ctx, "label", labelID, []string{"logo_dark"},
 		))
 
 		staleOgAssetID := seedReadyLabelOgAsset(t, db, "label-global-stale-og")
-		require.NoError(t, mediaasset.NewLifecycle(db, "").BindPublicAsset(ctx, mediaasset.Binding{
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(ctx, mediaasset.Binding{
 			AssetID: staleOgAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "og",
 		}))
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
@@ -194,8 +195,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Delete Assets "+integrationTestUUID(),
-			"label-delete-assets-"+integrationTestUUID(),
+			"Label Delete Assets "+orytest.IntegrationUUID(),
+			"label-delete-assets-"+orytest.IntegrationUUID(),
 		)
 		lightFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/delete-light.webp", "logo")
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/delete-dark.webp", "logo")
@@ -236,8 +237,10 @@ func requireLabelLogoFileID(
 ) string {
 	t.Helper()
 
-	column, err := labelLogoColumnForVariant(variant)
-	require.NoError(t, err)
+	column := "logo_light_file_id"
+	if variant == managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK {
+		column = "logo_dark_file_id"
+	}
 	var fileID *string
 	require.NoError(t, db.Table("label").
 		Select(column).
@@ -252,18 +255,18 @@ func requireLabelLogoFileID(
 
 func seedReadyLabelOgAsset(t *testing.T, db *gorm.DB, content string) string {
 	t.Helper()
-	assetLifecycle := mediaasset.NewLifecycle(db, "")
-	asset, _, err := assetLifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	assetLifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
+	asset, _, err := mediaasset.AllocationResultProto(assetLifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		Kind:        "og",
 		Extension:   "webp",
 		MimeType:    "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte(content))
-	_, err = assetLifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
+	_, err = assetLifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: int64(len(content)), Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
 	return asset.ID
 }

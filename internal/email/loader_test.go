@@ -2,15 +2,14 @@ package email
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func TestAdapterCacheFreshExpiresMissedBroadcastInvalidation(t *testing.T) {
@@ -23,37 +22,43 @@ func TestAdapterCacheFreshExpiresMissedBroadcastInvalidation(t *testing.T) {
 	require.False(t, adapterCacheFresh(true, time.Time{}, now, 30*time.Second))
 }
 
+// adapterRows is the mail_adapter table in memory.
+type adapterRows struct {
+	mu   sync.Mutex
+	rows []MailAdapter
+}
+
+func (a *adapterRows) ActiveMailAdapters(context.Context) ([]MailAdapter, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.rows), nil
+}
+
+func (a *adapterRows) set(rows ...MailAdapter) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.rows = rows
+}
+
+const sesTestConfig = `{"region":"us-east-1","access_key_id":"test","secret_access_key":"test","from_email":"sender@example.test"}`
+
+func mailAdapterRow(id, name string, adapterType MailAdapterType, config string) MailAdapter {
+	return MailAdapter{
+		ID: id, Name: name, Type: adapterType, IsActive: true, Priority: 1,
+		Config: json.RawMessage(config),
+	}
+}
+
 func TestAdapterLoaderRejectsInvalidAndNonDeliveryActiveAdaptersWithoutCaching(t *testing.T) {
 	t.Parallel()
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE mail_adapter (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			type TEXT NOT NULL,
-			is_active BOOLEAN NOT NULL,
-			priority INTEGER NOT NULL,
-			config BLOB NOT NULL,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO mail_adapter (id, name, type, is_active, priority, config, created_at)
-		VALUES ('logging-1', 'Logging', 'MAIL_ADAPTER_TYPE_LOGGING', TRUE, 1, '{}', CURRENT_TIMESTAMP)
-	`).Error)
+	store := &adapterRows{}
+	store.set(mailAdapterRow("logging-1", "Logging", "MAIL_ADAPTER_TYPE_LOGGING", "{}"))
 
-	loader := NewAdapterLoader(db, nil)
-	_, err = loader.GetActiveAdapters(context.Background())
+	loader := NewAdapterLoader(store, nil)
+	_, err := loader.GetActiveAdapters(context.Background())
 	require.ErrorContains(t, err, "non-delivery")
 
-	require.NoError(t, db.Exec(`
-		UPDATE mail_adapter
-		SET type = 'MAIL_ADAPTER_TYPE_SES',
-			config = '{"region":"us-east-1","access_key_id":"test","secret_access_key":"test","from_email":"sender@example.test"}'
-		WHERE id = 'logging-1'
-	`).Error)
+	store.set(mailAdapterRow("logging-1", "Logging", "MAIL_ADAPTER_TYPE_SES", sesTestConfig))
 	adapters, err := loader.GetActiveAdapters(context.Background())
 	require.NoError(t, err)
 	require.Len(t, adapters, 1)
@@ -62,35 +67,11 @@ func TestAdapterLoaderRejectsInvalidAndNonDeliveryActiveAdaptersWithoutCaching(t
 
 func TestAdapterLoaderTTLReloadsDatabaseAfterMissedBroadcast(t *testing.T) {
 	t.Parallel()
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE mail_adapter (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			type TEXT NOT NULL,
-			is_active BOOLEAN NOT NULL,
-			priority INTEGER NOT NULL,
-			config BLOB NOT NULL,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO mail_adapter (id, name, type, is_active, priority, config, created_at)
-		VALUES (
-			'ses-1',
-			'Before',
-			'MAIL_ADAPTER_TYPE_SES',
-			TRUE,
-			1,
-			'{"region":"us-east-1","access_key_id":"test","secret_access_key":"test","from_email":"sender@example.test"}',
-			CURRENT_TIMESTAMP
-		)
-	`).Error)
+	store := &adapterRows{}
+	store.set(mailAdapterRow("ses-1", "Before", "MAIL_ADAPTER_TYPE_SES", sesTestConfig))
 
 	now := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
-	loader := NewAdapterLoader(db, nil)
+	loader := NewAdapterLoader(store, nil)
 	loader.now = func() time.Time { return now }
 
 	adapters, err := loader.GetActiveAdapters(context.Background())
@@ -98,7 +79,7 @@ func TestAdapterLoaderTTLReloadsDatabaseAfterMissedBroadcast(t *testing.T) {
 	require.Len(t, adapters, 1)
 	require.Equal(t, "Before", adapters[0].Name())
 
-	require.NoError(t, db.Exec(`UPDATE mail_adapter SET name = 'After' WHERE id = 'ses-1'`).Error)
+	store.set(mailAdapterRow("ses-1", "After", "MAIL_ADAPTER_TYPE_SES", sesTestConfig))
 	adapters, err = loader.GetActiveAdapters(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "Before", adapters[0].Name())
@@ -180,8 +161,8 @@ type blockingCloseableAdapter struct {
 
 func (a *blockingCloseableAdapter) ID() string   { return "blocking" }
 func (a *blockingCloseableAdapter) Name() string { return "Blocking" }
-func (a *blockingCloseableAdapter) Type() model.MailAdapterType {
-	return model.MailAdapterType("test")
+func (a *blockingCloseableAdapter) Type() MailAdapterType {
+	return MailAdapterType("test")
 }
 func (a *blockingCloseableAdapter) Send(context.Context, *Email) (*SendResult, error) {
 	close(a.started)

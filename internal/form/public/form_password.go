@@ -3,46 +3,40 @@ package public
 import (
 	"context"
 	"errors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
-// VerifyPassword validates one Form access password without exposing its hash.
-func (s *FormService) VerifyPassword(
-	ctx context.Context,
-	req *connect.Request[openv1.VerifyFormPasswordRequest],
-) (rpcResponse *connect.Response[openv1.VerifyFormPasswordResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "VerifyPassword", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// VerifyFormPasswordQuery checks one Form access password, with the share
+// link that opens the Form when the visitor holds one.
+type VerifyFormPasswordQuery struct {
+	Slug          string
+	Password      string
+	ShareToken    *string
+	SharePassword *string
+}
 
-	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
+// VerifyFormPassword validates one Form access password without exposing its
+// hash. A Form without a password accepts none.
+func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswordQuery) (bool, error) {
+	found, err := s.findFormBySlugOrID(ctx, query.Slug)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-
 	shareTokenState := s.validateShareToken(
 		ctx,
-		form,
-		req.Msg.ShareToken,
-		req.Msg.SharePassword,
-		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM,
-		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
+		&found,
+		query.ShareToken,
+		query.SharePassword,
+		ShareLinkForm,
+		ShareLinkFormDashboard,
 	)
-	if err := s.enforceFormAccess(ctx, form, formAccessOptions{
-		context:                  openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL,
+	if err := s.enforceFormAccess(ctx, s.reads(), &found, formAccessOptions{
+		context:                  ContextURL,
 		hasValidPreviewToken:     shareTokenState.valid,
 		bypassAuth:               shareTokenState.valid,
 		bypassRoles:              shareTokenState.valid,
@@ -51,32 +45,22 @@ func (s *FormService) VerifyPassword(
 		checkSubmissionLimit:     false,
 		checkDuplicateSubmission: true,
 	}); err != nil {
-		return nil, err
+		return false, err
 	}
-
-	// If form has no password, return false
-	if form.AccessPassword == nil || *form.AccessPassword == "" {
-		return connect.NewResponse(&openv1.VerifyFormPasswordResponse{
-			Valid: false,
-		}), nil
+	if !found.HasPassword() {
+		return false, nil
 	}
-
-	// Verify password
-	valid := s.verifyFormPassword(req.Msg.Password, *form.AccessPassword)
-
-	return connect.NewResponse(&openv1.VerifyFormPasswordResponse{
-		Valid: valid,
-	}), nil
+	return s.verifyFormPassword(ctx, query.Password, *found.AccessPassword), nil
 }
 
 // verifyFormPassword checks if the password matches the hash.
 // Supports both legacy bcrypt hashes and new argon2id hashes for backward compatibility.
-func (s *FormService) verifyFormPassword(password, hash string) bool {
+func (s *Service) verifyFormPassword(ctx context.Context, password, hash string) bool {
 	// Check if it's a legacy bcrypt hash
 	if crypto.IsBcryptHash(hash) {
 		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 		if err != nil && !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
+			slog.ErrorContext(ctx, "Form password hash verification failed; rejecting the password", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
 		}
 		return err == nil
 	}
@@ -84,7 +68,7 @@ func (s *FormService) verifyFormPassword(password, hash string) bool {
 	// Otherwise, use argon2id
 	match, err := s.password.Verify(password, hash)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
+		slog.ErrorContext(ctx, "Form password hash verification failed; rejecting the password", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
 		return false
 	}
 	return match

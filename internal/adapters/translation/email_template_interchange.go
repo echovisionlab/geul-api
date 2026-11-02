@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emaildomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -19,21 +23,21 @@ import (
 // EmailTemplateInterchange adapts the shared Rich Text XLIFF codec to Email
 // Template's lifecycle, Content Document CAS, projection and Audit seams.
 type EmailTemplateInterchange struct {
-	references   emaildomain.CampaignDeliveryReferences
-	auditWriter  domainaudit.Appender
+	references   emailauthoringpostgres.DeliveryReferences
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewEmailTemplateInterchange(
-	references emaildomain.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	references emailauthoringpostgres.DeliveryReferences,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *EmailTemplateInterchange {
-	if references == nil || auditWriter == nil || auditBuilder == nil {
+	if references == nil || audit == nil || auditBuilder == nil {
 		panic("Email Template translation interchange dependencies are required")
 	}
 	return &EmailTemplateInterchange{
-		references: references, auditWriter: auditWriter, auditBuilder: auditBuilder,
+		references: references, audit: audit, auditBuilder: auditBuilder,
 	}
 }
 
@@ -42,7 +46,7 @@ type emailRichTextInterchangeTarget struct {
 	localized *contentv1.LocalizedRichTextDocument
 }
 
-func (*EmailTemplateInterchange) LoadTranslationInterchangeTarget(
+func (a *EmailTemplateInterchange) LoadTranslationInterchangeTarget(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
@@ -52,7 +56,7 @@ func (*EmailTemplateInterchange) LoadTranslationInterchangeTarget(
 	plan *core.ExtractionPlan,
 ) (application.TranslationInterchangeTargetState, error) {
 	loaded, err := loadEmailTemplateInterchangeTarget(
-		ctx, db, store, entityType, entityID, locale, plan,
+		ctx, db, store, a.references, entityType, entityID, locale, plan,
 	)
 	return loaded.state, err
 }
@@ -67,7 +71,7 @@ func (a *EmailTemplateInterchange) ApplyTranslationInterchange(
 		return application.TranslationInterchangeApplyResult{}, err
 	}
 	current, err := loadEmailTemplateInterchangeTarget(
-		ctx, db, store, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
+		ctx, db, store, a.references, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
 	)
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
@@ -85,12 +89,10 @@ func (a *EmailTemplateInterchange) ApplyTranslationInterchange(
 	}
 	result, err := emaildomain.ApplyTemplateTranslationInterchange(
 		ctx,
-		db,
-		store,
-		a.references,
+		emailAuthoringStore(db, store, a.references),
 		command.EntityID,
 		command.SourceLocale,
-		emaildomain.TemplateTranslationInterchangeMutation{
+		emailcontent.InterchangeMutation{
 			TargetLocale: command.TargetLocale, ExpectedDocumentRevision: command.Source.ContentDocumentRevision,
 			ExpectedTargetRevision: command.ExpectedRevision,
 			ExpectedPresence:       current.state.Exists, Subject: candidate.Title,
@@ -103,7 +105,7 @@ func (a *EmailTemplateInterchange) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditEmailTemplateUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditEmailTemplateUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -119,6 +121,7 @@ func loadEmailTemplateInterchangeTarget(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
+	references emailauthoringpostgres.DeliveryReferences,
 	entityType string,
 	entityID string,
 	locale string,
@@ -130,7 +133,7 @@ func loadEmailTemplateInterchangeTarget(
 		return emailRichTextInterchangeTarget{}, err
 	}
 	target, err := emaildomain.LoadTemplateTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale,
+		ctx, emailAuthoringStore(db, store, references), entityID, locale,
 	)
 	if err != nil {
 		return emailRichTextInterchangeTarget{}, err
@@ -185,4 +188,4 @@ func buildEmailRichTextInterchangeCandidate(
 	return candidate, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*EmailTemplateInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*EmailTemplateInterchange)(nil)

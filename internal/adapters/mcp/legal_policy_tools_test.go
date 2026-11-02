@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/legal"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -32,107 +33,130 @@ func (owner *recordingLegalPolicies) record(name string, request proto.Message) 
 	owner.request = request
 	return owner.err
 }
-func policyTestTerms() *managev1.Terms {
-	return &managev1.Terms{Id: policyTestID, Version: 2, Title: "Policy title", SourceLocale: "ko", Revision: policyTestRevision, Status: managev1.TermsStatus_TERMS_STATUS_DRAFT, Document: &contentv1.RichTextDocument{SourceLocale: "body must not leak"}, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}
-}
-func (owner *recordingLegalPolicies) ListTermsVersions(_ context.Context, req *connect.Request[managev1.ListTermsVersionsRequest]) (*connect.Response[managev1.ListTermsVersionsResponse], error) {
-	if err := owner.record("ListTermsVersions", req.Msg); err != nil {
-		return nil, err
+func policyTestPolicy(kind legal.PolicyKind) legal.Policy {
+	status := legal.TermsDraft
+	if kind == legal.Privacy {
+		status = legal.PrivacyDraft
 	}
-	return connect.NewResponse(&managev1.ListTermsVersionsResponse{Versions: []*managev1.Terms{policyTestTerms()}, Pagination: &commonv1.PaginationResponse{Total: 4, Limit: req.Msg.Pagination.Limit, Offset: req.Msg.Pagination.Offset, HasMore: true}}), nil
+	now := time.Now()
+	return legal.Policy{ID: policyTestID, Version: 2, Title: "Policy title", SourceLocale: "ko", Revision: policyTestRevision, Status: status, Document: &contentv1.RichTextDocument{SourceLocale: "body must not leak"}, CreatedAt: now, UpdatedAt: now}
 }
-func (owner *recordingLegalPolicies) GetTermsVersion(_ context.Context, req *connect.Request[managev1.GetTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
-	if err := owner.record("GetTermsVersion", req.Msg); err != nil {
-		return nil, err
+
+func policyTestLifecycle(kind legal.PolicyKind) legal.PolicyLifecycle {
+	status := legal.TermsScheduled
+	if kind == legal.Privacy {
+		status = legal.PrivacyScheduled
 	}
-	return connect.NewResponse(policyTestTerms()), nil
+	return legal.PolicyLifecycle{ID: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: status, UpdatedAt: time.Now()}
 }
-func (owner *recordingLegalPolicies) CreateTermsVersion(_ context.Context, req *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
-	if err := owner.record("CreateTermsVersion", req.Msg); err != nil {
-		return nil, err
+
+func policyTestTimestamp(value *time.Time) *timestamppb.Timestamp {
+	if value == nil {
+		return nil
 	}
-	return connect.NewResponse(policyTestTerms()), nil
+	return timestamppb.New(*value)
 }
-func (owner *recordingLegalPolicies) ScheduleTerms(_ context.Context, req *connect.Request[managev1.ScheduleTermsRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
-	if err := owner.record("ScheduleTerms", req.Msg); err != nil {
-		return nil, err
+
+// The recorder keeps the Connect request each use-case call corresponds
+// to, so the assertions read like the RPCs the site sends.
+func (owner *recordingLegalPolicies) ListPolicyVersions(_ context.Context, kind legal.PolicyKind, query legal.ListPolicyVersionsQuery) (legal.PolicyPage, error) {
+	pagination := &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}
+	var err error
+	if kind == legal.Terms {
+		request := &managev1.ListTermsVersionsRequest{Pagination: pagination}
+		if query.Status != nil {
+			status := legal.TermsStatusToProto(*query.Status)
+			request.Status = &status
+		}
+		err = owner.record("ListTermsVersions", request)
+	} else {
+		request := &managev1.ListPrivacyVersionsRequest{Pagination: pagination}
+		if query.Status != nil {
+			status := legal.PrivacyStatusToProto(*query.Status)
+			request.Status = &status
+		}
+		err = owner.record("ListPrivacyVersions", request)
 	}
-	return connect.NewResponse(&managev1.TermsLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.TermsStatus_TERMS_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
-}
-func (owner *recordingLegalPolicies) CancelTermsSchedule(_ context.Context, req *connect.Request[managev1.CancelTermsScheduleRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
-	if err := owner.record("CancelTermsSchedule", req.Msg); err != nil {
-		return nil, err
+	if err != nil {
+		return legal.PolicyPage{}, err
 	}
-	return connect.NewResponse(&managev1.TermsLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.TermsStatus_TERMS_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
+	return legal.PolicyPage{Versions: []legal.Policy{policyTestPolicy(kind)}, Total: 4, Limit: query.Limit, Offset: query.Offset, HasMore: true}, nil
 }
-func (owner *recordingLegalPolicies) ActivateTermsNow(_ context.Context, req *connect.Request[managev1.ActivateTermsNowRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
-	if err := owner.record("ActivateTermsNow", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) GetPolicyVersion(_ context.Context, kind legal.PolicyKind, query legal.GetPolicyVersionQuery) (legal.Policy, error) {
+	var err error
+	if kind == legal.Terms {
+		err = owner.record("GetTermsVersion", &managev1.GetTermsVersionRequest{Id: query.ID})
+	} else {
+		err = owner.record("GetPrivacyVersion", &managev1.GetPrivacyVersionRequest{Id: query.ID})
 	}
-	return connect.NewResponse(&managev1.TermsLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.TermsStatus_TERMS_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
-}
-func (owner *recordingLegalPolicies) DeleteTerms(_ context.Context, req *connect.Request[managev1.DeleteTermsRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := owner.record("DeleteTerms", req.Msg); err != nil {
-		return nil, err
+	if err != nil {
+		return legal.Policy{}, err
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return policyTestPolicy(kind), nil
 }
-func policyTestPrivacy() *managev1.Privacy {
-	return &managev1.Privacy{Id: policyTestID, Version: 2, Title: "Policy title", SourceLocale: "ko", Revision: policyTestRevision, Status: managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, Document: &contentv1.RichTextDocument{SourceLocale: "body must not leak"}, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}
-}
-func (owner *recordingLegalPolicies) ListPrivacyVersions(_ context.Context, req *connect.Request[managev1.ListPrivacyVersionsRequest]) (*connect.Response[managev1.ListPrivacyVersionsResponse], error) {
-	if err := owner.record("ListPrivacyVersions", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) CreatePolicyVersion(_ context.Context, kind legal.PolicyKind, command legal.CreatePolicyVersionCommand) (legal.Policy, error) {
+	var err error
+	if kind == legal.Terms {
+		err = owner.record("CreateTermsVersion", &managev1.CreateTermsVersionRequest{Title: command.Title, Document: command.Document})
+	} else {
+		err = owner.record("CreatePrivacyVersion", &managev1.CreatePrivacyVersionRequest{Title: command.Title, Document: command.Document})
 	}
-	return connect.NewResponse(&managev1.ListPrivacyVersionsResponse{Versions: []*managev1.Privacy{policyTestPrivacy()}, Pagination: &commonv1.PaginationResponse{Total: 4, Limit: req.Msg.Pagination.Limit, Offset: req.Msg.Pagination.Offset, HasMore: true}}), nil
-}
-func (owner *recordingLegalPolicies) GetPrivacyVersion(_ context.Context, req *connect.Request[managev1.GetPrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
-	if err := owner.record("GetPrivacyVersion", req.Msg); err != nil {
-		return nil, err
+	if err != nil {
+		return legal.Policy{}, err
 	}
-	return connect.NewResponse(policyTestPrivacy()), nil
+	return policyTestPolicy(kind), nil
 }
-func (owner *recordingLegalPolicies) CreatePrivacyVersion(_ context.Context, req *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
-	if err := owner.record("CreatePrivacyVersion", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) SchedulePolicy(_ context.Context, kind legal.PolicyKind, command legal.SchedulePolicyCommand) (legal.PolicyLifecycle, error) {
+	var err error
+	if kind == legal.Terms {
+		err = owner.record("ScheduleTerms", &managev1.ScheduleTermsRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision, EffectiveFrom: policyTestTimestamp(command.EffectiveFrom)})
+	} else {
+		err = owner.record("SchedulePrivacy", &managev1.SchedulePrivacyRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision, EffectiveFrom: policyTestTimestamp(command.EffectiveFrom)})
 	}
-	return connect.NewResponse(policyTestPrivacy()), nil
+	if err != nil {
+		return legal.PolicyLifecycle{}, err
+	}
+	return policyTestLifecycle(kind), nil
 }
-func (owner *recordingLegalPolicies) SchedulePrivacy(_ context.Context, req *connect.Request[managev1.SchedulePrivacyRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
-	if err := owner.record("SchedulePrivacy", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) CancelPolicySchedule(_ context.Context, kind legal.PolicyKind, command legal.CancelPolicyScheduleCommand) (legal.PolicyLifecycle, error) {
+	var err error
+	if kind == legal.Terms {
+		err = owner.record("CancelTermsSchedule", &managev1.CancelTermsScheduleRequest{Id: command.ID})
+	} else {
+		err = owner.record("CancelPrivacySchedule", &managev1.CancelPrivacyScheduleRequest{Id: command.ID})
 	}
-	return connect.NewResponse(&managev1.PrivacyLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
+	if err != nil {
+		return legal.PolicyLifecycle{}, err
+	}
+	return policyTestLifecycle(kind), nil
 }
-func (owner *recordingLegalPolicies) CancelPrivacySchedule(_ context.Context, req *connect.Request[managev1.CancelPrivacyScheduleRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
-	if err := owner.record("CancelPrivacySchedule", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) ActivatePolicyNow(_ context.Context, kind legal.PolicyKind, command legal.ActivatePolicyNowCommand) (legal.PolicyLifecycle, error) {
+	var err error
+	if kind == legal.Terms {
+		err = owner.record("ActivateTermsNow", &managev1.ActivateTermsNowRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision})
+	} else {
+		err = owner.record("ActivatePrivacyNow", &managev1.ActivatePrivacyNowRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision})
 	}
-	return connect.NewResponse(&managev1.PrivacyLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
+	if err != nil {
+		return legal.PolicyLifecycle{}, err
+	}
+	return policyTestLifecycle(kind), nil
 }
-func (owner *recordingLegalPolicies) ActivatePrivacyNow(_ context.Context, req *connect.Request[managev1.ActivatePrivacyNowRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
-	if err := owner.record("ActivatePrivacyNow", req.Msg); err != nil {
-		return nil, err
+func (owner *recordingLegalPolicies) DeletePolicy(_ context.Context, kind legal.PolicyKind, command legal.DeletePolicyCommand) error {
+	if kind == legal.Terms {
+		return owner.record("DeleteTerms", &managev1.DeleteTermsRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision})
 	}
-	return connect.NewResponse(&managev1.PrivacyLifecycleMutationResponse{Id: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED, UpdatedAt: timestamppb.Now()}), nil
-}
-func (owner *recordingLegalPolicies) DeletePrivacy(_ context.Context, req *connect.Request[managev1.DeletePrivacyRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := owner.record("DeletePrivacy", req.Msg); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return owner.record("DeletePrivacy", &managev1.DeletePrivacyRequest{Id: command.ID, ExpectedRevision: command.ExpectedRevision})
 }
 
 func TestLegalPolicyToolsCatalog(t *testing.T) {
-	_, err := NewLegalPolicyTools(nil, nil)
+	_, err := NewLegalPolicyTools(nil)
 	require.Error(t, err)
 	var missing *recordingLegalPolicies
-	_, err = NewLegalPolicyTools(missing, &recordingLegalPolicies{})
-	require.Error(t, err)
-	_, err = NewLegalPolicyTools(&recordingLegalPolicies{}, missing)
+	_, err = NewLegalPolicyTools(missing)
 	require.Error(t, err)
 	owner := &recordingLegalPolicies{}
-	tools, err := NewLegalPolicyTools(owner, owner)
+	tools, err := NewLegalPolicyTools(owner)
 	require.NoError(t, err)
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	require.NoError(t, err)
@@ -163,7 +187,7 @@ func TestLegalPolicyDiscoveryAndCreationUseOwnersWithoutLifecycleSideEffects(t *
 	for _, kind := range []string{"terms", "privacy"} {
 		t.Run(kind, func(t *testing.T) {
 			owner := &recordingLegalPolicies{}
-			tools, _ := NewLegalPolicyTools(owner, owner)
+			tools, _ := NewLegalPolicyTools(owner)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPolicyCreate, toolArguments(t, `{"document_type":"`+kind+`","title":"새 정책"}`))
 			require.NoError(t, err)
 			require.Equal(t, true, result.StructuredContent["changed"])
@@ -208,7 +232,7 @@ func TestLegalPolicyLifecycleForwardsExactRevisionAndInstant(t *testing.T) {
 		for _, name := range []string{ToolPolicySchedule, ToolPolicyScheduleCancel, ToolPolicyActivateNow, ToolPolicyDelete} {
 			t.Run(kind+"/"+name, func(t *testing.T) {
 				owner := &recordingLegalPolicies{}
-				tools, _ := NewLegalPolicyTools(owner, owner)
+				tools, _ := NewLegalPolicyTools(owner)
 				arguments := toolArguments(t, `{"document_type":"`+kind+`","document_id":"`+policyTestID+`"}`)
 				if name != ToolPolicyScheduleCancel {
 					arguments["expected_document_revision"], _ = json.Marshal(policyTestRevision)
@@ -275,14 +299,14 @@ func TestLegalPolicyRejectsMalformedArgumentsBeforeCallingOwner(t *testing.T) {
 	} {
 		t.Run(test.name+test.input, func(t *testing.T) {
 			owner := &recordingLegalPolicies{}
-			tools, _ := NewLegalPolicyTools(owner, owner)
+			tools, _ := NewLegalPolicyTools(owner)
 			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.name, toolArguments(t, test.input))
 			var execution *mcpserver.ToolExecutionError
 			require.ErrorAs(t, err, &execution)
 			require.Empty(t, owner.calls)
 		})
 	}
-	tools, _ := NewLegalPolicyTools(&recordingLegalPolicies{}, &recordingLegalPolicies{})
+	tools, _ := NewLegalPolicyTools(&recordingLegalPolicies{})
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, "policy_unknown", nil)
 	require.ErrorIs(t, err, mcpserver.ErrUnknownTool)
 }
@@ -292,7 +316,7 @@ func TestLegalPolicyPreservesOwnerDenialAndLifecycleGuardsWithoutRetry(t *testin
 		for _, name := range []string{ToolPolicyGet, ToolPolicyCreate, ToolPolicyList, ToolPolicySchedule, ToolPolicyScheduleCancel, ToolPolicyActivateNow, ToolPolicyDelete} {
 			for _, code := range []connect.Code{connect.CodePermissionDenied, connect.CodeNotFound, connect.CodeFailedPrecondition, connect.CodeAborted} {
 				owner := &recordingLegalPolicies{err: connect.NewError(code, errors.New("owner rejected the operation"))}
-				tools, _ := NewLegalPolicyTools(owner, owner)
+				tools, _ := NewLegalPolicyTools(owner)
 				args := toolArguments(t, `{"document_type":"`+kind+`"}`)
 				if name != ToolPolicyCreate && name != ToolPolicyList {
 					args["document_id"], _ = json.Marshal(policyTestID)

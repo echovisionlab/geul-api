@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"connectrpc.com/connect"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
@@ -18,10 +20,8 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -96,9 +96,9 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 }
 
 func TestTranslationToolsListJobsMapsBoundedGeneratedRequest(t *testing.T) {
-	application := &recordingTranslationApplication{listJobsResponse: &managev1.ListTranslationJobsResponse{
-		Jobs:       []*managev1.TranslationJob{testTranslationJob(testTranslationJobID, managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_RUNNING)},
-		Pagination: &commonv1.PaginationResponse{Total: 3, Limit: 2, Offset: 1, HasMore: false},
+	application := &recordingTranslationApplication{listJobsResponse: translationapp.JobPage{
+		Jobs:       []translationapp.Job{testTranslationJob(testTranslationJobID, translationapp.JobRunning)},
+		Pagination: translationapp.Pagination{Total: 3, Limit: 2, Offset: 1, HasMore: false},
 	}}
 	tools := mustTranslationTools(t, application)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList, toolArguments(t, `{
@@ -109,7 +109,7 @@ func TestTranslationToolsListJobsMapsBoundedGeneratedRequest(t *testing.T) {
 		t.Fatalf("translation_jobs_list error = %v", err)
 	}
 	request := application.listJobsRequest
-	if request == nil || request.Pagination.GetLimit() != 2 || request.Pagination.GetOffset() != 1 || len(request.Filters) != 5 || len(request.Sorts) != 1 {
+	if request == nil || request.Limit != 2 || request.Offset != 1 || len(request.Filters) != 5 || len(request.Sorts) != 1 {
 		t.Fatalf("ListTranslationJobs request = %+v", request)
 	}
 	if request.Filters[0].Field != "entity_type" || request.Filters[0].Value != "series" || request.Filters[1].Field != "entity_id" || request.Sorts[0].Order != commonv1.SortOrder_SORT_ORDER_DESC {
@@ -124,14 +124,14 @@ func TestTranslationToolsListJobsMapsBoundedGeneratedRequest(t *testing.T) {
 func TestTranslationToolsListAndGetReturnMetadataWithoutTranslationBody(t *testing.T) {
 	title := "secret title"
 	html := "<p>secret html</p>"
-	entry := &managev1.TranslationEntry{
-		Target: &managev1.TranslationTarget{EntityType: managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_POST, EntityId: "post-a"},
-		Locale: "en", Title: &title, ContentHtml: &html, ContentJson: []byte(`{"type":"doc"}`),
-		UpdatedAt: timestamppb.New(time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC)),
+	entry := translationapp.Entry{
+		EntityType: "post", EntityID: "post-a",
+		Locale: "en", Title: &title, ContentHTML: &html, ContentJSON: []byte(`{"type":"doc"}`),
+		UpdatedAt: time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC),
 	}
 	application := &recordingTranslationApplication{
-		listTranslationsResponse: &managev1.ListEntityTranslationsResponse{SourceLocale: "ko", Entries: []*managev1.TranslationEntry{entry}},
-		getTranslationResponse:   &managev1.GetEntityTranslationResponse{Entry: entry},
+		listTranslationsResponse: translationapp.EntityTranslations{SourceLocale: "ko", Entries: []translationapp.Entry{entry}},
+		getTranslationResponse:   entry,
 	}
 	tools := mustTranslationTools(t, application)
 
@@ -149,17 +149,14 @@ func TestTranslationToolsListAndGetReturnMetadataWithoutTranslationBody(t *testi
 			t.Fatalf("translation metadata leaked body %q: %s", forbidden, combined)
 		}
 	}
-	if !strings.Contains(combined, `"l":"en"`) || application.getTranslationRequest.GetLocale() != "en" {
+	if !strings.Contains(combined, `"l":"en"`) || application.getTranslationRequest.Locale != "en" {
 		t.Fatalf("translation metadata/request mismatch: %s %+v", combined, application.getTranslationRequest)
 	}
 }
 
 func TestTranslationToolsCancelAndRegenerateUseGeneratedApplication(t *testing.T) {
 	application := &recordingTranslationApplication{
-		cancelResponse: &managev1.CancelTranslationJobResponse{},
-		regenerateResponse: &managev1.RegenerateEntityTranslationsResponse{Jobs: []*managev1.TranslationJob{
-			testTranslationJob(testTranslationGeneratedID, managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_QUEUED),
-		}},
+		regenerateResponse: []translationapp.Job{testTranslationJob(testTranslationGeneratedID, translationapp.JobQueued)},
 	}
 	tools := mustTranslationTools(t, application)
 
@@ -181,10 +178,10 @@ func TestTranslationToolsCancelAndRegenerateUseGeneratedApplication(t *testing.T
 	if !strings.Contains(regenerated.Content[0]["text"].(string), testTranslationGeneratedID) {
 		t.Fatalf("%s result = %+v", ToolTranslationRegenerate, regenerated)
 	}
-	if application.cancelRequest.JobId != testTranslationJobID {
+	if application.cancelRequest.JobID != testTranslationJobID {
 		t.Fatalf("job cancellation request = %+v", application.cancelRequest)
 	}
-	if application.regenerateRequest.Target.EntityType != managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_POST || !reflect.DeepEqual(application.regenerateRequest.Locales, []string{"en", "ja"}) {
+	if application.regenerateRequest.Target.EntityType != "post" || !reflect.DeepEqual(application.regenerateRequest.Locales, []string{"en", "ja"}) {
 		t.Fatalf("regenerate request = %+v", application.regenerateRequest)
 	}
 }
@@ -193,15 +190,15 @@ func TestTranslationToolsXLIFFUsesOnlyArtifactReferenceAndUploadedFileID(t *test
 	fileName := "post-a.en.xlf"
 	targetRevision := "target-revision-a"
 	application := &recordingTranslationApplication{
-		exportResponse: &managev1.ExportEntityTranslationXLIFFResponse{
-			Artifact: &commonv1.ExpiringMediaRef{
-				FileId: testTranslationArtifactID, Url: "https://cdn.example/xliff/signed", ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)),
+		exportResponse: translationapp.XLIFFExport{
+			Artifact: &mediaauth.Reference{
+				FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed", ExpiresAt: time.Now().UTC().Add(time.Hour),
 				Extension: "xlf", MimeType: "application/xliff+xml", FileName: &fileName,
 			},
 			SourceLocale: "ko", TargetLocale: "en", TargetRevision: &targetRevision,
-			Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+			Mode: translationapp.InterchangeModePatch,
 		},
-		importResponse: &managev1.ImportEntityTranslationXLIFFResponse{
+		importResponse: translationapp.XLIFFImport{
 			TargetRevision: "target-revision-b", Changed: true, AffectedUnitHandles: []string{"block-a/content"},
 		},
 	}
@@ -229,7 +226,7 @@ func TestTranslationToolsXLIFFUsesOnlyArtifactReferenceAndUploadedFileID(t *test
 	if err != nil {
 		t.Fatalf("translation_xliff_import error = %v", err)
 	}
-	if application.importRequest.FileId != testTranslationArtifactID || application.importRequest.GetExpectedTargetRevision() != "target-revision-a" || strings.Contains(imported.Content[0]["text"].(string), "xliff") {
+	if application.importRequest.FileID != testTranslationArtifactID || application.importRequest.ExpectedTargetRevision == nil || *application.importRequest.ExpectedTargetRevision != "target-revision-a" || strings.Contains(imported.Content[0]["text"].(string), "xliff") {
 		t.Fatalf("XLIFF import request/result = %+v %+v", application.importRequest, imported)
 	}
 }
@@ -300,44 +297,44 @@ func TestTranslationToolsRejectOptionalNullBeforeApplicationCall(t *testing.T) {
 
 func TestTranslationOptionalArgumentsPreserveOmissionAndEmptyValues(t *testing.T) {
 	for _, arguments := range []string{`{}`, `{"s":[]}`, `{"k":""}`, `{"n":0,"o":0,"s":[],"k":""}`} {
-		application := &recordingTranslationApplication{listJobsResponse: &managev1.ListTranslationJobsResponse{
-			Pagination: &commonv1.PaginationResponse{Limit: 20},
+		application := &recordingTranslationApplication{listJobsResponse: translationapp.JobPage{
+			Pagination: translationapp.Pagination{Limit: 20},
 		}}
 		tools := mustTranslationTools(t, application)
 		if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList, toolArguments(t, arguments)); err != nil {
 			t.Fatalf("default Job list %s: %v", arguments, err)
 		}
 		request := application.listJobsRequest
-		if request == nil || len(request.Filters) != 0 || len(request.Sorts) != 0 || request.Pagination.GetLimit() != 0 || request.Pagination.GetOffset() != 0 {
+		if request == nil || len(request.Filters) != 0 || len(request.Sorts) != 0 || request.Limit != 0 || request.Offset != 0 {
 			t.Fatalf("default Job list %s changed: %+v", arguments, request)
 		}
 	}
 	for _, selection := range []string{"", `,"u":[]`} {
-		request, err := translationXLIFFExportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
-		if err != nil || len(request.GetUnitHandles()) != 0 {
-			t.Fatalf("replace export selection %q: request=%+v, error=%v", selection, request, err)
+		command, err := translationXLIFFExportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
+		if err != nil || len(command.UnitHandles) != 0 {
+			t.Fatalf("replace export selection %q: command=%+v, error=%v", selection, command, err)
 		}
 	}
-	request, err := translationXLIFFImportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
-	if err != nil || request.ExpectedTargetRevision != nil {
-		t.Fatalf("omitted import revision: request=%+v, error=%v", request, err)
+	command, err := translationXLIFFImportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
+	if err != nil || command.ExpectedTargetRevision != nil {
+		t.Fatalf("omitted import revision: command=%+v, error=%v", command, err)
 	}
 }
 
 func TestTranslationToolsRejectInlineArtifactReferencesAndInvalidApplicationOutput(t *testing.T) {
-	application := &recordingTranslationApplication{exportResponse: &managev1.ExportEntityTranslationXLIFFResponse{
-		Artifact: &commonv1.ExpiringMediaRef{
-			FileId: testTranslationArtifactID, Url: "data:application/xliff+xml;base64,AAAA",
-			ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Extension: "xlf", MimeType: "application/xliff+xml",
+	application := &recordingTranslationApplication{exportResponse: translationapp.XLIFFExport{
+		Artifact: &mediaauth.Reference{
+			FileID: testTranslationArtifactID, URL: "data:application/xliff+xml;base64,AAAA",
+			ExpiresAt: time.Now().UTC().Add(time.Hour), Extension: "xlf", MimeType: "application/xliff+xml",
 		},
-		SourceLocale: "ko", TargetLocale: "en", Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
 	}}
 	tools := mustTranslationTools(t, application)
 	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`)); err == nil || result.Content != nil {
 		t.Fatalf("inline artifact response was exposed: %+v, %v", result, err)
 	}
 
-	application.importResponse = &managev1.ImportEntityTranslationXLIFFResponse{
+	application.importResponse = translationapp.XLIFFImport{
 		TargetRevision: "revision-a", AffectedUnitHandles: []string{""},
 	}
 	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace","f":"`+testTranslationArtifactID+`"}`)); err == nil || result.Content != nil {
@@ -358,21 +355,21 @@ func TestTranslationToolsPreserveOwningMenuUnitHandles(t *testing.T) {
 	}
 	handle := plan.Units[0].UnitID
 	application := &recordingTranslationApplication{
-		exportResponse: &managev1.ExportEntityTranslationXLIFFResponse{
-			Artifact: &commonv1.ExpiringMediaRef{
-				FileId: testTranslationArtifactID, Url: "https://cdn.example/xliff/signed",
-				ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Extension: "xlf", MimeType: "application/xliff+xml",
+		exportResponse: translationapp.XLIFFExport{
+			Artifact: &mediaauth.Reference{
+				FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed",
+				ExpiresAt: time.Now().UTC().Add(time.Hour), Extension: "xlf", MimeType: "application/xliff+xml",
 			},
-			SourceLocale: "ko", TargetLocale: "en", Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+			SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModePatch,
 		},
-		importResponse: &managev1.ImportEntityTranslationXLIFFResponse{
+		importResponse: translationapp.XLIFFImport{
 			TargetRevision: "tr1_after_import", Changed: true, AffectedUnitHandles: []string{handle},
 		},
 	}
 	tools := mustTranslationTools(t, application)
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport,
 		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"patch","u":["`+handle+`"]}`))
-	if err != nil || !reflect.DeepEqual(application.exportRequest.GetUnitHandles(), []string{handle}) {
+	if err != nil || !reflect.DeepEqual(application.exportRequest.UnitHandles, []string{handle}) {
 		t.Fatalf("owning Menu handle export = %+v, %v", application.exportRequest, err)
 	}
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport,
@@ -420,9 +417,9 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing
 		Protocol: core.ProtocolVersion, Profile: core.DomainPost, Catalog: "catalog-a", Document: "post-a",
 		DocumentRevision: "revision-a", SourceLocale: "ko", Locale: "ko", LocaleRole: core.LocaleRoleSource, LocaleExists: true,
 	}}
-	translationApplication := &recordingTranslationApplication{regenerateResponse: &managev1.RegenerateEntityTranslationsResponse{
-		Jobs: []*managev1.TranslationJob{testTranslationJob(testTranslationJobID, managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_QUEUED)},
-	}}
+	translationApplication := &recordingTranslationApplication{
+		regenerateResponse: []translationapp.Job{testTranslationJob(testTranslationJobID, translationapp.JobQueued)},
+	}
 	documentTools, err := NewAIDocumentTools(documentApplication)
 	if err != nil {
 		t.Fatal(err)
@@ -471,34 +468,33 @@ func TestToolSetRejectsDuplicateAndTypedNilProviders(t *testing.T) {
 	}
 }
 
-func testTranslationJob(id string, status managev1.TranslationJobStatus) *managev1.TranslationJob {
-	return &managev1.TranslationJob{
-		Id:           id,
-		Target:       &managev1.TranslationTarget{EntityType: managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_POST, EntityId: "post-a"},
+func testTranslationJob(id string, status translationapp.JobStatus) translationapp.Job {
+	return translationapp.Job{
+		ID:         id,
+		EntityType: "post", EntityID: "post-a",
 		TargetLocale: "en", SourceLocale: "ko", Status: status,
-		OperationId: "55555555-5555-4555-8555-555555555555",
-		RequestedAt: timestamppb.New(time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC)),
+		OperationID: "55555555-5555-4555-8555-555555555555",
+		RequestedAt: time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC),
 	}
 }
 
+// recordingTranslationApplication records each use-case input and answers
+// with the configured result.
 type recordingTranslationApplication struct {
-	managev1connect.UnimplementedTranslationServiceHandler
-
-	listJobsRequest          *managev1.ListTranslationJobsRequest
-	cancelRequest            *managev1.CancelTranslationJobRequest
-	listTranslationsRequest  *managev1.ListEntityTranslationsRequest
-	getTranslationRequest    *managev1.GetEntityTranslationRequest
-	regenerateRequest        *managev1.RegenerateEntityTranslationsRequest
-	exportRequest            *managev1.ExportEntityTranslationXLIFFRequest
-	importRequest            *managev1.ImportEntityTranslationXLIFFRequest
+	listJobsRequest          *translationapp.ListTranslationJobsQuery
+	cancelRequest            *translationapp.CancelTranslationJobCommand
+	listTranslationsRequest  *translationapp.ListEntityTranslationsQuery
+	getTranslationRequest    *translationapp.GetEntityTranslationQuery
+	regenerateRequest        *translationapp.RegenerateEntityTranslationsCommand
+	exportRequest            *translationapp.ExportTranslationXLIFFCommand
+	importRequest            *translationapp.ImportTranslationXLIFFCommand
 	regenerateContext        context.Context
-	listJobsResponse         *managev1.ListTranslationJobsResponse
-	cancelResponse           *managev1.CancelTranslationJobResponse
-	listTranslationsResponse *managev1.ListEntityTranslationsResponse
-	getTranslationResponse   *managev1.GetEntityTranslationResponse
-	regenerateResponse       *managev1.RegenerateEntityTranslationsResponse
-	exportResponse           *managev1.ExportEntityTranslationXLIFFResponse
-	importResponse           *managev1.ImportEntityTranslationXLIFFResponse
+	listJobsResponse         translationapp.JobPage
+	listTranslationsResponse translationapp.EntityTranslations
+	getTranslationResponse   translationapp.Entry
+	regenerateResponse       []translationapp.Job
+	exportResponse           translationapp.XLIFFExport
+	importResponse           translationapp.XLIFFImport
 	listJobsError            error
 	cancelError              error
 	listTranslationsError    error
@@ -508,47 +504,40 @@ type recordingTranslationApplication struct {
 	importError              error
 }
 
-func (application *recordingTranslationApplication) ListTranslationJobs(_ context.Context, request *connect.Request[managev1.ListTranslationJobsRequest]) (*connect.Response[managev1.ListTranslationJobsResponse], error) {
-	application.listJobsRequest = request.Msg
-	return connectResponse(application.listJobsResponse), application.listJobsError
+func (application *recordingTranslationApplication) ListTranslationJobs(_ context.Context, query translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error) {
+	application.listJobsRequest = &query
+	return application.listJobsResponse, application.listJobsError
 }
 
-func (application *recordingTranslationApplication) CancelTranslationJob(_ context.Context, request *connect.Request[managev1.CancelTranslationJobRequest]) (*connect.Response[managev1.CancelTranslationJobResponse], error) {
-	application.cancelRequest = request.Msg
-	return connectResponse(application.cancelResponse), application.cancelError
+func (application *recordingTranslationApplication) CancelTranslationJob(_ context.Context, command translationapp.CancelTranslationJobCommand) error {
+	application.cancelRequest = &command
+	return application.cancelError
 }
 
-func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, request *connect.Request[managev1.ListEntityTranslationsRequest]) (*connect.Response[managev1.ListEntityTranslationsResponse], error) {
-	application.listTranslationsRequest = request.Msg
-	return connectResponse(application.listTranslationsResponse), application.listTranslationsError
+func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
+	application.listTranslationsRequest = &query
+	return application.listTranslationsResponse, application.listTranslationsError
 }
 
-func (application *recordingTranslationApplication) GetEntityTranslation(_ context.Context, request *connect.Request[managev1.GetEntityTranslationRequest]) (*connect.Response[managev1.GetEntityTranslationResponse], error) {
-	application.getTranslationRequest = request.Msg
-	return connectResponse(application.getTranslationResponse), application.getTranslationError
+func (application *recordingTranslationApplication) GetEntityTranslation(_ context.Context, query translationapp.GetEntityTranslationQuery) (translationapp.Entry, error) {
+	application.getTranslationRequest = &query
+	return application.getTranslationResponse, application.getTranslationError
 }
 
-func (application *recordingTranslationApplication) RegenerateEntityTranslations(ctx context.Context, request *connect.Request[managev1.RegenerateEntityTranslationsRequest]) (*connect.Response[managev1.RegenerateEntityTranslationsResponse], error) {
+func (application *recordingTranslationApplication) RegenerateEntityTranslations(ctx context.Context, command translationapp.RegenerateEntityTranslationsCommand) ([]translationapp.Job, error) {
 	application.regenerateContext = ctx
-	application.regenerateRequest = request.Msg
-	return connectResponse(application.regenerateResponse), application.regenerateError
+	application.regenerateRequest = &command
+	return application.regenerateResponse, application.regenerateError
 }
 
-func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF(_ context.Context, request *connect.Request[managev1.ExportEntityTranslationXLIFFRequest]) (*connect.Response[managev1.ExportEntityTranslationXLIFFResponse], error) {
-	application.exportRequest = request.Msg
-	return connectResponse(application.exportResponse), application.exportError
+func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF(_ context.Context, command translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error) {
+	application.exportRequest = &command
+	return application.exportResponse, application.exportError
 }
 
-func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF(_ context.Context, request *connect.Request[managev1.ImportEntityTranslationXLIFFRequest]) (*connect.Response[managev1.ImportEntityTranslationXLIFFResponse], error) {
-	application.importRequest = request.Msg
-	return connectResponse(application.importResponse), application.importError
-}
-
-func connectResponse[T any](message *T) *connect.Response[T] {
-	if message == nil {
-		return nil
-	}
-	return connect.NewResponse(message)
+func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF(_ context.Context, command translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error) {
+	application.importRequest = &command
+	return application.importResponse, application.importError
 }
 
 func mustTranslationTools(t *testing.T, application *recordingTranslationApplication) *TranslationTools {
@@ -566,4 +555,16 @@ func serveMCPAdapterRequest(handler interface {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, mcpHTTPRequest(body))
 	return response
+}
+
+func TestTranslationToolsRejectXLIFFArtifactWithoutExpiry(t *testing.T) {
+	application := &recordingTranslationApplication{exportResponse: translationapp.XLIFFExport{
+		Artifact:     &mediaauth.Reference{FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed", Extension: "xlf", MimeType: "application/xliff+xml"},
+		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
+	}}
+	tools := mustTranslationTools(t, application)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`))
+	if err == nil || !strings.Contains(err.Error(), "incomplete XLIFF artifact reference") || result.Content != nil {
+		t.Fatalf("missing artifact expiry: result=%+v, error=%v", result, err)
+	}
 }

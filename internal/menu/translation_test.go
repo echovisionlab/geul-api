@@ -1,248 +1,216 @@
-package menu
+package menu_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
-	"github.com/echovisionlab/geul-api/internal/translation"
-	"github.com/stretchr/testify/assert"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/translation"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func TestBuildTranslationCandidateAppliesMenuLabels(t *testing.T) {
-	t.Parallel()
-	source := &translation.SourceDocument{ContentJSON: []byte(`[
-		{"id":"home","label":"Home","linkType":"page"},
-		{"id":"about","label":"About","linkType":"page","children":[{"id":"team","label":"Team","linkType":"page"}]}
-	]`)}
-	candidate, err := BuildTranslationCandidate(source, map[string]translation.UnitResult{
-		"item:home:label":  {UnitID: "item:home:label", TranslatedText: "홈"},
-		"item:about:label": {UnitID: "item:about:label", TranslatedText: "소개"},
-		"item:team:label":  {UnitID: "item:team:label", TranslatedText: "팀"},
-	})
-	require.NoError(t, err)
-	assert.JSONEq(t, `[
-		{"id":"about","label":"소개"},
-		{"id":"home","label":"홈"},
-		{"id":"team","label":"팀"}
-	]`, string(candidate.ContentJSON))
+func (f *menuFixture) joined(audit *audittest.Recorder) menu.Joined {
+	return menu.Joined{Store: f.store, Audit: audit}
 }
 
-func TestBuildTranslationCandidatePreservesExplicitEmptyAndOmitsMissingResults(t *testing.T) {
-	t.Parallel()
-	source := &translation.SourceDocument{ContentJSON: []byte(`[
-		{"id":"home","label":"Home"},
-		{"id":"about","label":"About"}
-	]`)}
-	candidate, err := BuildTranslationCandidate(source, map[string]translation.UnitResult{
-		"item:home:label": {UnitID: "item:home:label", TranslatedText: ""},
-	})
-	require.NoError(t, err)
-	assert.JSONEq(t, `[{"id":"home","label":""}]`, string(candidate.ContentJSON))
-}
+func TestTranslationSourceDocumentUsesTheStoredSourceValuesOnly(t *testing.T) {
+	f := newMenuFixture(t)
+	root := f.store.Seed(menu.Root{
+		Name: "Main", SourceLocale: "en",
+		ItemsJSON: []byte(`[{"id":"home","label":"루트 한글"},{"id":"about","label":"루트 소개"}]`),
+	}, uuid.New(), menu.LocaleValues{Locale: "en", Labels: map[string]string{"home": ""}})
 
-func TestBuildTranslationExtractionPlanSkipsFixedLocaleItemsForOtherTargets(t *testing.T) {
-	t.Parallel()
-	plan, err := BuildTranslationExtractionPlan("menu-1", "ko", "fr", &translation.SourceDocument{
-		ContentJSON: []byte(`[
-			{"id":"home","label":"홈","linkType":"page"},
-			{"id":"brand","label":"브랜드","linkType":"page","localizationMode":"fixed_locale","fixedLocale":"en"},
-			{"id":"team","label":"팀","linkType":"page","children":[{"id":"contact","label":"문의","linkType":"page","localizationMode":"fixed_locale","fixedLocale":"ja"}]}
-		]`),
-	})
+	document, err := menu.LoadTranslationSourceDocument(t.Context(), f.store, root.ID)
 	require.NoError(t, err)
-	unitIDs := make([]string, 0, len(plan.Units))
-	for _, unit := range plan.Units {
-		unitIDs = append(unitIDs, unit.UnitID)
-	}
-	assert.Contains(t, unitIDs, "item:home:label")
-	assert.Contains(t, unitIDs, "item:team:label")
-	assert.NotContains(t, unitIDs, "item:brand:label")
-	assert.NotContains(t, unitIDs, "item:contact:label")
-}
-
-func TestLoadTranslationSourceDocumentUsesCurrentSourceValuesWithoutRootFallback(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE menu (id TEXT PRIMARY KEY, items BLOB, source_locale TEXT NOT NULL, updated_at DATETIME);
-		CREATE TABLE menu_translation (entity_id TEXT, locale TEXT, items_json BLOB);
-	`).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu (id, items, source_locale) VALUES (?, ?, 'en')`, "menu-1",
-		[]byte(`[{"id":"home","label":"루트 한글"},{"id":"about","label":"루트 소개"}]`),
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json) VALUES ('menu-1', 'en', ?)`,
-		[]byte(`[{"id":"home","label":""}]`),
-	).Error)
-
-	document, err := LoadTranslationSourceDocument(t.Context(), db, "menu-1")
-	require.NoError(t, err)
-	var items []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-	}
+	var items []menu.Item
 	require.NoError(t, json.Unmarshal(document.ContentJSON, &items))
-	require.Empty(t, items[0].Label, "explicit empty source value must remain empty")
-	require.Empty(t, items[1].Label, "missing source value must not fall back to root")
+	require.Empty(t, items[0].Label, "an explicit empty source value stays empty")
+	require.Empty(t, items[1].Label, "a missing source value never falls back to the root")
+
+	unseeded := f.store.Seed(menu.Root{Name: "Unseeded", SourceLocale: "en", ItemsJSON: []byte(`[]`)}, uuid.New())
+	_, err = menu.LoadTranslationSourceDocument(t.Context(), f.store, unseeded.ID)
+	requireCode(t, err, connect.CodeFailedPrecondition, "Menu source locale values are not initialized")
+	_, err = menu.LoadTranslationSourceDocument(t.Context(), f.store, uuid.NewString())
+	require.ErrorIs(t, err, menu.ErrMenuNotFound)
 }
 
-func TestReconcileTranslationRowsPrunesOnlyDeletedIDs(t *testing.T) {
-	db := openMenuTranslationTestDB(t)
-	previous := time.Unix(100, 0).UTC()
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, updated_at) VALUES (?, ?, ?, ?)`,
-		"menu-1", "fr", []byte(`[{"id":"deleted","label":"Ancien"},{"id":"home","label":""}]`), previous,
-	).Error)
-
-	now := previous.Add(time.Second)
-	require.NoError(t, ReconcileTranslationRowsWithSourceJSON(
-		t.Context(), db, "menu-1", []byte(`[{"id":"home","label":"Home"}]`), now,
-	))
-
-	var row struct {
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
+func TestTranslationBoundariesLockTheMenuAndMaskAnInactivePrincipal(t *testing.T) {
+	f := newMenuFixture(t)
+	created, _ := f.createMenu(t, "Main", customItem("home", "/"))
+	fresh := func(can policyv1.Can) error {
+		return identitystate.RequireFreshCan(f.ctx, nil, f.fence, f.checker, can)
 	}
-	require.NoError(t, db.Table("menu_translation").Select("items_json, updated_at").
-		Where("entity_id = ? AND locale = ?", "menu-1", "fr").Take(&row).Error)
-	assert.JSONEq(t, `[{"id":"home","label":""}]`, string(row.ItemsJSON))
-	require.True(t, row.UpdatedAt.After(previous))
+
+	require.NoError(t, menu.RequireViewAndLock(f.ctx, f.store, fresh, created.ID))
+	require.NoError(t, menu.RequireEditAndLock(f.ctx, f.store, fresh, created.ID))
+	checks := f.checker.Checks()
+	require.Equal(t, authztest.Of(f.identityID, must(policyv1.Menu.View(created.ID)), nil), checks[len(checks)-2])
+	require.Equal(t, authztest.Of(f.identityID, must(policyv1.Menu.Edit(created.ID)), nil), checks[len(checks)-1])
+
+	missing := uuid.NewString()
+	requireCode(t, menu.RequireEditAndLock(f.ctx, f.store, fresh, missing), connect.CodeNotFound, "menu not found: "+missing)
+
+	f.checker.Deny(policyv1.Menu.Edit(created.ID))
+	requireCode(t, menu.RequireEditAndLock(f.ctx, f.store, fresh, created.ID), connect.CodePermissionDenied, "no permission to edit this menu")
+
+	f.fence.Deactivate(f.identityID)
+	requireCode(t, menu.RequireViewAndLock(f.ctx, f.store, fresh, created.ID), connect.CodeNotFound, "menu not found: "+created.ID)
 }
 
-func TestReconcileTranslationRowsLeavesUnchangedValuesAndRevisionUntouched(t *testing.T) {
-	db := openMenuTranslationTestDB(t)
-	previous := time.Unix(100, 0).UTC()
-	original := []byte(`[{"id":"home","label":""},{"id":"about","label":"À propos"}]`)
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, updated_at) VALUES (?, ?, ?, ?)`,
-		"menu-1", "fr", original, previous,
-	).Error)
-
-	require.NoError(t, ReconcileTranslationRowsWithSourceJSON(
-		t.Context(), db, "menu-1",
-		[]byte(`[{"id":"new","label":"New"},{"id":"about","label":"Renamed source"},{"id":"home","label":"Home","targetSlug":"changed"}]`),
-		previous.Add(time.Hour),
-	))
-
-	var row struct {
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
+func must[T any](value T, err error) T {
+	if err != nil {
+		panic(err)
 	}
-	require.NoError(t, db.Table("menu_translation").Select("items_json, updated_at").
-		Where("entity_id = ? AND locale = ?", "menu-1", "fr").Take(&row).Error)
-	require.Equal(t, original, row.ItemsJSON)
-	require.True(t, row.UpdatedAt.Equal(previous), "source-only changes must preserve target revision")
+	return value
 }
 
-func TestSyncCurrentSourceLabelValuesWritesOnlyCurrentSourceRow(t *testing.T) {
-	db := openMenuTranslationTestDB(t)
-	previous := time.Unix(100, 0).UTC()
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu (id, items, source_locale, updated_at) VALUES ('menu-1', '[]', 'en', ?)`, previous,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, updated_at) VALUES (?, ?, ?, ?)`,
-		"menu-1", "en", []byte(`[{"id":"home","label":"Old"}]`), previous,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, updated_at) VALUES (?, ?, ?, ?)`,
-		"menu-1", "fr", []byte(`[{"id":"home","label":"Accueil"}]`), previous,
-	).Error)
-
-	require.NoError(t, SyncCurrentSourceLabelValues(t.Context(), db, "menu-1", []model.MenuItem{
-		{ID: "home", Label: ""},
-		{ID: "about", Label: "About"},
-	}, previous.Add(time.Second)))
-
-	var rows []struct {
-		Locale    string    `gorm:"column:locale"`
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
-	}
-	require.NoError(t, db.Table("menu_translation").Select("locale, items_json, updated_at").Order("locale").Find(&rows).Error)
-	require.Len(t, rows, 2)
-	require.Equal(t, "en", rows[0].Locale)
-	require.JSONEq(t, `[{"id":"about","label":"About"},{"id":"home","label":""}]`, string(rows[0].ItemsJSON))
-	require.True(t, rows[0].UpdatedAt.After(previous))
-	require.Equal(t, "fr", rows[1].Locale)
-	require.JSONEq(t, `[{"id":"home","label":"Accueil"}]`, string(rows[1].ItemsJSON))
-	require.True(t, rows[1].UpdatedAt.Equal(previous), "non-source locale revision must remain unchanged")
-}
-
-func TestInitializeCurrentSourceLabelValuesCreatesExactRootSourceRowOnce(t *testing.T) {
-	db := openMenuTranslationTestDB(t)
-	now := time.Unix(100, 0).UTC()
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu (id, items, source_locale, updated_at) VALUES (?, ?, 'ko', ?)`,
-		"menu-1", []byte(`[{"id":"home","label":"홈","linkType":"page"},{"id":"about","label":"","linkType":"page"}]`), now,
-	).Error)
-	require.NoError(t, initializeCurrentSourceLabelValues(
-		t.Context(), db, "menu-1",
-		[]byte(`[{"id":"home","label":"홈","linkType":"page"},{"id":"about","label":"","linkType":"page"}]`),
-		now,
-	))
-
-	document, err := LoadTranslationSourceDocument(t.Context(), db, "menu-1")
-	require.NoError(t, err)
-	require.JSONEq(t, `[{"id":"home","label":"홈","linkType":"page"},{"id":"about","label":"","linkType":"page"}]`, string(document.ContentJSON))
-
-	var row struct {
-		Locale    string `gorm:"column:locale"`
-		ItemsJSON []byte `gorm:"column:items_json"`
-	}
-	require.NoError(t, db.Table("menu_translation").Select("locale, items_json").
-		Where("entity_id = ?", "menu-1").Take(&row).Error)
-	require.Equal(t, "ko", row.Locale)
-	require.JSONEq(t, `[{"id":"about","label":""},{"id":"home","label":"홈"}]`, string(row.ItemsJSON))
-
-	require.NoError(t, db.Exec(
-		`UPDATE menu SET items = ?, updated_at = ? WHERE id = 'menu-1'`,
-		[]byte(`[{"id":"home","label":"changed root","linkType":"page"},{"id":"about","label":"changed root","linkType":"page"}]`), now.Add(time.Minute),
-	).Error)
-	document, err = LoadTranslationSourceDocument(t.Context(), db, "menu-1")
-	require.NoError(t, err)
-	require.JSONEq(t, `[{"id":"home","label":"홈","linkType":"page"},{"id":"about","label":"","linkType":"page"}]`, string(document.ContentJSON),
-		"the exact root source row remains authoritative after initialization")
-}
-
-func TestLoadTranslationSourceDocumentRejectsMissingRootSourceValues(t *testing.T) {
-	db := openMenuTranslationTestDB(t)
-	now := time.Unix(100, 0).UTC()
-	require.NoError(t, db.Exec(
-		`INSERT INTO menu (id, items, source_locale, updated_at) VALUES (?, ?, 'en', ?)`,
-		"menu-1", []byte(`[{"id":"home","label":"root must not become source"}]`), now,
-	).Error)
-
-	_, err := LoadTranslationSourceDocument(t.Context(), db, "menu-1")
-	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-
-	var count int64
-	require.NoError(t, db.Table("menu_translation").Where("entity_id = ?", "menu-1").Count(&count).Error)
-	require.Zero(t, count, "a missing source row must not be seeded from root labels")
-}
-
-func openMenuTranslationTestDB(t *testing.T) *gorm.DB {
+func providerCandidate(t *testing.T, plan *translation.ExtractionPlan, results map[string]translation.UnitResult) *translation.Candidate {
 	t.Helper()
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
+	candidate := &translation.Candidate{}
+	require.NoError(t, candidate.SetProviderUnitPatch(plan, results))
+	return candidate
+}
+
+func TestProviderTranslationCreatesTheTargetLocaleAndAuditsTheRequester(t *testing.T) {
+	f := newMenuFixture(t)
+	created, revision := f.createMenu(t, "Main", customItem("home", "/"), customItem("about", "/about"))
+	source, err := menu.LoadTranslationSourceDocument(t.Context(), f.store, created.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE menu (
-			id TEXT PRIMARY KEY, items BLOB,
-			source_locale TEXT NOT NULL DEFAULT 'en', updated_at DATETIME
-		);
-		CREATE TABLE menu_translation (
-			entity_id TEXT, locale TEXT, items_json BLOB, created_at DATETIME, updated_at DATETIME,
-			PRIMARY KEY (entity_id, locale)
-		)
-	`).Error)
-	return db
+	plan, err := menu.BuildTranslationExtractionPlan(created.ID, translation.DefaultLocale, "ko", source)
+	require.NoError(t, err)
+	requester := uuid.NewString()
+	audit := &audittest.Recorder{}
+	applied := menu.ProviderTranslation{
+		MenuID: created.ID, TargetLocale: "ko", RequestedByMemberID: requester,
+		Candidate: providerCandidate(t, plan, map[string]translation.UnitResult{
+			"item:home:label": {UnitID: "item:home:label", TranslatedText: "홈"}, "item:about:label": {UnitID: "item:about:label", TranslatedText: "about"},
+		}),
+		Now: time.Now(),
+	}
+
+	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
+	require.Equal(t, map[string]string{"about": "about", "home": "홈"}, f.labels(t, created.ID, "ko"))
+	require.Equal(t, revision, f.revision(t, created.ID), "a target translation keeps the document revision")
+	records := audit.Records()
+	require.Len(t, records, 1)
+	require.Equal(t, requester, records[0].MemberID)
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, records[0].ItemOperation)
+
+	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
+	require.Len(t, audit.Records(), 1, "the same labels again change nothing")
+
+	applied.RequestedByMemberID = "not-a-member"
+	require.Error(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
+	applied.RequestedByMemberID = requester
+	applied.MenuID = uuid.NewString()
+	requireCode(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied), connect.CodeNotFound, "")
+	require.Error(t, menu.ApplyProviderTranslation(t.Context(), menu.Joined{Store: f.store}, applied), "a provider apply is always audited")
+}
+
+func TestProviderTranslationOfTheSourceLocaleAdvancesTheDocument(t *testing.T) {
+	f := newMenuFixture(t)
+	created, revision := f.createMenu(t, "Main", customItem("home", "/"))
+	source, err := menu.LoadTranslationSourceDocument(t.Context(), f.store, created.ID)
+	require.NoError(t, err)
+	plan, err := menu.BuildTranslationExtractionPlan(created.ID, "ko", translation.DefaultLocale, source)
+	require.NoError(t, err)
+	audit := &audittest.Recorder{}
+
+	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), menu.ProviderTranslation{
+		MenuID: created.ID, TargetLocale: translation.DefaultLocale, RequestedByMemberID: uuid.NewString(),
+		Candidate: providerCandidate(t, plan, map[string]translation.UnitResult{"item:home:label": {UnitID: "item:home:label", TranslatedText: "Start"}}),
+		Now:       time.Now(),
+	}))
+
+	require.Equal(t, map[string]string{"home": "Start"}, f.labels(t, created.ID, translation.DefaultLocale))
+	require.NotEqual(t, revision, f.revision(t, created.ID))
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, audit.Records()[0].ItemOperation)
+}
+
+func interchange(menuID string, plan *translation.ExtractionPlan, mode menu.InterchangeMode, expected *string, targets map[string]translation.UnitResult) menu.TranslationInterchangeMutation {
+	handles := make([]string, 0, len(targets))
+	for handle := range targets {
+		handles = append(handles, handle)
+	}
+	return menu.TranslationInterchangeMutation{
+		MenuID: menuID, SourceLocale: translation.DefaultLocale, TargetLocale: plan.TargetLocale,
+		Mode: mode, ExpectedRevision: expected, Plan: plan, Targets: targets, UnitHandles: handles, Now: time.Now().UTC(),
+	}
+}
+
+func TestTranslationInterchangePersistsSparseTargetsWithCASAndAudit(t *testing.T) {
+	f := newMenuFixture(t)
+	created, _ := f.createMenu(t, "Menu XLIFF", customItem("home", "/"), customItem("about", "/about"))
+	source, err := menu.LoadTranslationSourceDocument(f.ctx, f.store, created.ID)
+	require.NoError(t, err)
+	plan, err := menu.BuildTranslationExtractionPlan(created.ID, translation.DefaultLocale, "ko", source)
+	require.NoError(t, err)
+	audit := &audittest.Recorder{}
+	emptyHome := map[string]translation.UnitResult{"item:home:label": {UnitID: "item:home:label", TranslatedText: ""}}
+
+	absent, err := menu.LoadTranslationInterchangeTarget(f.ctx, f.store, created.ID, "ko", plan)
+	require.NoError(t, err)
+	require.False(t, absent.Exists)
+	require.Empty(t, absent.Targets, "an absent locale never materializes source fallback")
+
+	result, err := menu.ApplyTranslationInterchange(f.ctx, f.joined(audit), interchange(created.ID, plan, menu.InterchangePatch, nil, emptyHome))
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, map[string]string{"about": "about", "home": ""}, f.labels(t, created.ID, "ko"))
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, audit.Records()[0].ItemOperation)
+	loaded, err := menu.LoadTranslationInterchangeTarget(f.ctx, f.store, created.ID, "ko", plan)
+	require.NoError(t, err)
+	require.Equal(t, result.Revision, loaded.Revision)
+
+	createdRevision := result.Revision
+	result, err = menu.ApplyTranslationInterchange(f.ctx, f.joined(audit), interchange(created.ID, plan, menu.InterchangeReplace, &createdRevision, emptyHome))
+	require.NoError(t, err)
+	require.Equal(t, []string{"item:about:label"}, result.AffectedUnitHandles)
+	require.Equal(t, map[string]string{"home": ""}, f.labels(t, created.ID, "ko"))
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, audit.Records()[1].ItemOperation)
+
+	_, err = menu.ApplyTranslationInterchange(f.ctx, f.joined(audit), interchange(created.ID, plan, menu.InterchangePatch, &createdRevision,
+		map[string]translation.UnitResult{"item:home:label": {UnitID: "item:home:label", TranslatedText: "홈"}}))
+	var conflict *translation.TargetRevisionConflict
+	require.ErrorAs(t, err, &conflict)
+	require.Len(t, audit.Records(), 2)
+
+	sourcePlan := *plan
+	sourcePlan.TargetLocale = translation.DefaultLocale
+	_, err = menu.LoadTranslationInterchangeTarget(f.ctx, f.store, created.ID, translation.DefaultLocale, &sourcePlan)
+	requireCode(t, err, connect.CodeInvalidArgument, "")
+	_, err = menu.ApplyTranslationInterchange(f.ctx, menu.Joined{Store: f.store}, interchange(created.ID, plan, menu.InterchangePatch, nil, emptyHome))
+	requireCode(t, err, connect.CodeUnavailable, "Menu translation interchange unavailable")
+	_, err = menu.ApplyTranslationInterchange(f.ctx, f.joined(audit), interchange(created.ID, plan, 0, nil, emptyHome))
+	requireCode(t, err, connect.CodeInvalidArgument, "mode: PATCH or REPLACE is required")
+}
+
+func TestTranslationInterchangeAuditFailureFailsTheJoinedTransaction(t *testing.T) {
+	f := newMenuFixture(t)
+	created, _ := f.createMenu(t, "Menu XLIFF", customItem("home", "/"))
+	source, err := menu.LoadTranslationSourceDocument(f.ctx, f.store, created.ID)
+	require.NoError(t, err)
+	plan, err := menu.BuildTranslationExtractionPlan(created.ID, translation.DefaultLocale, "fr", source)
+	require.NoError(t, err)
+	auditDown := errors.New("audit unavailable")
+
+	err = f.units.Transaction(f.ctx, false, func(tx mutation.Tx[menu.Store]) error {
+		_, err := menu.ApplyTranslationInterchange(f.ctx, menu.Joined{Store: tx.Store(), Audit: &audittest.Recorder{Err: auditDown}},
+			interchange(created.ID, plan, menu.InterchangePatch, nil, map[string]translation.UnitResult{"item:home:label": {UnitID: "item:home:label", TranslatedText: "Accueil"}}))
+		return err
+	})
+
+	require.ErrorIs(t, err, auditDown)
+	require.Nil(t, f.labels(t, created.ID, "fr"))
 }

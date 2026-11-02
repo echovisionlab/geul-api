@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -26,7 +28,7 @@ func TestBrandingReusesReadyLibraryImageAcrossBindingReadsAndOG(t *testing.T) {
 			assets := NewAssets("https://cdn.example.com")
 			ref, err := assets.BindReady(t.Context(), db, domain.AssetBinding{SourceFileID: fileID, Key: tc.slot, Kind: tc.expected})
 			require.NoError(t, err)
-			require.Equal(t, assetID, ref.GetAssetId())
+			require.Equal(t, assetID, optional.Value(ref).AssetID)
 			read, err := assets.ReadyRef(t.Context(), db, fileID, tc.expected)
 			require.NoError(t, err)
 			require.Equal(t, ref, read)

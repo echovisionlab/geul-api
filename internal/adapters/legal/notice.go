@@ -2,13 +2,20 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
+	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -19,26 +26,44 @@ type EmailDeliveryDispatcher interface {
 }
 
 // NoticeRuntime seals legal-policy source, email-template, and layout
-// revisions in the policy transaction, then delegates post-commit dispatch to
-// Campaign's generic delivery runtime.
+// revisions in the policy transaction. Campaign's adapter reads and stops the
+// runs a policy lifecycle change affects.
 type NoticeRuntime struct {
+	campaignadapter.LegalNoticeRuns
+}
+
+func NewNoticeRuntime() *NoticeRuntime {
+	return &NoticeRuntime{}
+}
+
+// NoticeDispatch delegates the post-commit dispatch of a sealed notice run
+// to Campaign's generic delivery runtime and cancels, on db, the update
+// notice an activation made obsolete.
+type NoticeDispatch struct {
+	db         *gorm.DB
 	dispatcher EmailDeliveryDispatcher
 }
 
-func NewNoticeRuntime(dispatcher EmailDeliveryDispatcher) *NoticeRuntime {
-	return &NoticeRuntime{dispatcher: dispatcher}
+// NewNoticeDispatch returns the post-commit notice steps over db; a nil
+// dispatcher answers every dispatch as unavailable.
+func NewNoticeDispatch(db *gorm.DB, dispatcher EmailDeliveryDispatcher) *NoticeDispatch {
+	return &NoticeDispatch{db: db, dispatcher: dispatcher}
+}
+
+func (d *NoticeDispatch) DispatchRun(ctx context.Context, runID string) error {
+	if d == nil || d.dispatcher == nil {
+		return errs.DependencyUnavailable("Campaign delivery dispatcher")
+	}
+	return d.dispatcher.DispatchEmailDeliveryRun(ctx, runID)
+}
+
+func (d *NoticeDispatch) CancelUpdateNoticeAfterActivation(ctx context.Context, kind legaldomain.PolicyKind, policyID string, now time.Time) {
+	campaignadapter.LegalNoticeRuns{}.CancelUpdateNoticeAfterActivation(ctx, d.db, string(kind), policyID, now)
 }
 
 type noticeRenderTranslation = campaign.CampaignDeliverySnapshotTranslation
 type noticeLayoutTranslation = campaign.CampaignDeliverySnapshotLayout
 type noticeRenderSnapshot = campaign.CampaignDeliverySnapshot
-
-type noticeTranslationRow struct {
-	Locale         string  `gorm:"column:locale"`
-	Subject        *string `gorm:"column:subject"`
-	ContentHTML    *string `gorm:"column:content_html"`
-	IsSourceLocale bool    `gorm:"column:is_source_locale"`
-}
 
 func (r *NoticeRuntime) CreateRun(
 	ctx context.Context,
@@ -64,7 +89,7 @@ func (r *NoticeRuntime) CreateRun(
 	switch strings.TrimSpace(referenceType) {
 	case legaldomain.EmailDeliveryReferenceTypeTerms:
 		var policy model.Terms
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "version").First(&policy, "id = ?", referenceID).Error; err != nil {
 			return nil, err
 		}
@@ -73,7 +98,7 @@ func (r *NoticeRuntime) CreateRun(
 		termsVersion = &version
 	case legaldomain.EmailDeliveryReferenceTypePrivacy:
 		var policy model.Privacy
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "version").First(&policy, "id = ?", referenceID).Error; err != nil {
 			return nil, err
 		}
@@ -85,9 +110,9 @@ func (r *NoticeRuntime) CreateRun(
 	}
 
 	var template model.EmailTemplate
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("event_key = ? AND is_active = ?", eventKey, true).First(&template).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.FailedPrecondition("active legal notice email template is unavailable")
 		}
 		return nil, err
@@ -102,9 +127,9 @@ func (r *NoticeRuntime) CreateRun(
 	if template.LayoutID != nil && strings.TrimSpace(*template.LayoutID) != "" {
 		trimmedID := strings.TrimSpace(*template.LayoutID)
 		var layout model.EmailLayout
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "updated_at").First(&layout, "id = ?", trimmedID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.FailedPrecondition("legal notice email layout no longer exists")
 			}
 			return nil, err
@@ -118,9 +143,9 @@ func (r *NoticeRuntime) CreateRun(
 	if err != nil {
 		return nil, err
 	}
-	return campaign.SealLegalNoticeDeliveryRun(
+	run, err := campaign.SealLegalNoticeDeliveryRun(
 		ctx,
-		tx,
+		campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil),
 		campaign.LegalNoticeDeliveryRunDefinition{
 			TermsID:                 termsID,
 			PrivacyID:               privacyID,
@@ -136,22 +161,11 @@ func (r *NoticeRuntime) CreateRun(
 			SourcePrivacyVersion:    privacyVersion,
 		},
 	)
-}
-
-func (r *NoticeRuntime) DispatchRun(ctx context.Context, runID string) error {
-	if r == nil || r.dispatcher == nil {
-		return errs.DependencyUnavailable("Campaign delivery dispatcher")
+	if err != nil {
+		return nil, err
 	}
-	return r.dispatcher.DispatchEmailDeliveryRun(ctx, runID)
-}
-
-func (*NoticeRuntime) PrepareAutomaticPreviewShareLink(
-	ctx context.Context,
-	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
-	now time.Time,
-) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, run, now)
+	row := campaignpostgres.DeliveryRunToRow(*run)
+	return &row, nil
 }
 
 func loadNoticeRenderSnapshot(
@@ -163,12 +177,8 @@ func loadNoticeRenderSnapshot(
 	if strings.HasPrefix(eventKey, "campaign:") {
 		return noticeRenderSnapshot{}, errs.FailedPrecondition("legal notice email template event key is invalid")
 	}
-	var rows []noticeTranslationRow
-	if err := db.WithContext(ctx).Table("email_template_translation AS translation").
-		Select("translation.locale, translation.subject, translation.content_html, translation.locale = source.source_locale AS is_source_locale").
-		Joins("JOIN email_template AS source ON source.id = translation.entity_id").
-		Where("translation.entity_id = ?", template.ID).
-		Order("is_source_locale DESC, locale ASC").Scan(&rows).Error; err != nil {
+	rows, err := emailauthoringadapter.TemplateLocaleContents(ctx, db, template.ID)
+	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}
 	if len(rows) == 0 {
@@ -193,7 +203,7 @@ func loadNoticeRenderSnapshot(
 	if template.LayoutID == nil || strings.TrimSpace(*template.LayoutID) == "" {
 		return snapshot, nil
 	}
-	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, db, strings.TrimSpace(*template.LayoutID))
+	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, emailauthoringpostgres.NewRenderingStore(db), strings.TrimSpace(*template.LayoutID))
 	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}
@@ -226,5 +236,6 @@ func stringValue(value *string) string {
 }
 
 var (
-	_ legaldomain.NoticeDelivery = (*NoticeRuntime)(nil)
+	_ legalpostgres.Notices      = (*NoticeRuntime)(nil)
+	_ legaldomain.NoticeDispatch = (*NoticeDispatch)(nil)
 )

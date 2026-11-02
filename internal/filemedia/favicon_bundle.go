@@ -14,18 +14,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 const (
@@ -35,20 +31,20 @@ const (
 
 var errFaviconBundleCommitUncertain = stderrors.New("favicon bundle commit outcome is uncertain")
 
-func (s *FileService) generateFaviconBundle(
+func (s *Service) generateFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	bundleCtx, cancel := context.WithTimeout(ctx, s.faviconGenerationTimeout())
 	defer cancel()
 	sourceFileID = strings.TrimSpace(sourceFileID)
 
-	existing, err := favicon.LoadSet(bundleCtx, s.db, s.cdnDomain, sourceFileID)
+	existing, err := s.loadFaviconSet(bundleCtx, sourceFileID)
 	if err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
+		return nil, domainerr.Precondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
 	}
 	if existing != nil {
-		return existing.GetIconPng_32(), nil
+		return existing.IconPNG32, nil
 	}
 
 	source, sourceBytes, err := s.loadValidatedFaviconSource(bundleCtx, sourceFileID)
@@ -66,54 +62,54 @@ func (s *FileService) generateFaviconBundle(
 	return s.commitFaviconBundle(ctx, bundleCtx, source, staged)
 }
 
-func (s *FileService) faviconGenerationTimeout() time.Duration {
+func (s *Service) faviconGenerationTimeout() time.Duration {
 	if s.testFaviconBundleTimeout > 0 {
 		return s.testFaviconBundleTimeout
 	}
 	return faviconBundleTimeout
 }
 
-func (s *FileService) loadValidatedFaviconSource(
+func (s *Service) loadValidatedFaviconSource(
 	ctx context.Context,
 	sourceFileID string,
-) (model.File, []byte, error) {
-	var source model.File
-	if err := s.db.WithContext(ctx).
-		Select("id", "mime_type", "file_size", "extension").
-		Where("id = ?", sourceFileID).
-		Take(&source).Error; err != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("load favicon source: %w", err))
+) (File, []byte, error) {
+	var source File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		source, err = store.FaviconSource(ctx, sourceFileID, false)
+		return err
+	}); err != nil {
+		return File{}, nil, fmt.Errorf("load favicon source: %w", err)
 	}
 	objectKey, err := mediaauth.MediaObjectKey(source.ID, source.Extension)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid favicon source metadata", failurecause.Attr(err), "file_id", source.ID)
-		return model.File{}, nil, errs.FailedPrecondition("favicon source metadata is not canonical")
+		return File{}, nil, domainerr.Precondition("favicon source metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", source.ID))))
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.s3Bucket),
 		Key:    aws.String(objectKey),
 	})
 	if err != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("read favicon source: %w", err))
+		return File{}, nil, fmt.Errorf("read favicon source: %w", err)
 	}
 	sourceBytes, readErr := io.ReadAll(io.LimitReader(object.Body, favicon.MaxSourceSize+1))
 	closeErr := object.Body.Close()
 	if readErr != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("read favicon source: %w", readErr))
+		return File{}, nil, fmt.Errorf("read favicon source: %w", readErr)
 	}
 	if closeErr != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("close favicon source: %w", closeErr))
+		return File{}, nil, fmt.Errorf("close favicon source: %w", closeErr)
 	}
 	if int64(len(sourceBytes)) != source.FileSize {
-		return model.File{}, nil, errs.FailedPrecondition("favicon source size does not match File")
+		return File{}, nil, domainerr.Precondition("favicon source size does not match File")
 	}
 	if err := favicon.ValidateSource(sourceBytes, source.MimeType); err != nil {
-		return model.File{}, nil, errs.FailedPrecondition(fmt.Sprintf("favicon source validation failed: %v", err))
+		return File{}, nil, domainerr.Precondition(fmt.Sprintf("favicon source validation failed: %v", err))
 	}
 	return source, sourceBytes, nil
 }
 
-func (s *FileService) generateFaviconOutputs(
+func (s *Service) generateFaviconOutputs(
 	ctx context.Context,
 	sourceBytes []byte,
 	sourceMime string,
@@ -126,15 +122,16 @@ func (s *FileService) generateFaviconOutputs(
 	// only bytes eligible for source-backed SVG publication.
 	outputs, err := processor.Process(ctx, append([]byte(nil), sourceBytes...), sourceMime)
 	if err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing failed: %v", err))
+		return nil, domainerr.Precondition(fmt.Sprintf("favicon processing failed: %v", err))
 	}
 	if err := favicon.ValidateOutputs(outputs, sourceMime); err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err))
+		// The processor generated the bundle; an invalid one is a server fault.
+		return nil, domainerr.Precondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err)).WithCause(failurecause.ServerFault(err))
 	}
 	return outputs, nil
 }
 
-func (s *FileService) stageFaviconBundle(
+func (s *Service) stageFaviconBundle(
 	cleanupCtx context.Context,
 	ctx context.Context,
 	sourceBytes []byte,
@@ -147,14 +144,14 @@ func (s *FileService) stageFaviconBundle(
 			Kind:        "favicon",
 			Extension:   "svg",
 			MimeType:    "image/svg+xml",
-			Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-		}, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_UNSPECIFIED, true)
+			Disposition: mediaasset.DispositionInline,
+		}, favicon.DerivativeType(""), true)
 		if asset.AssetID != "" {
 			staged = append(staged, asset)
 		}
 		if stageErr != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-			return nil, errs.Internal(fmt.Errorf("stage favicon SVG source asset: %w", stageErr))
+			return nil, fmt.Errorf("stage favicon SVG source asset: %w", stageErr)
 		}
 	}
 	for _, output := range outputs {
@@ -162,44 +159,45 @@ func (s *FileService) stageFaviconBundle(
 			Kind:        "favicon",
 			Extension:   output.Spec.Extension,
 			MimeType:    output.Spec.MimeType,
-			Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+			Disposition: mediaasset.DispositionInline,
 		}, output.Spec.DerivativeType, false)
 		if asset.AssetID != "" {
 			staged = append(staged, asset)
 		}
 		if stageErr != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-			return nil, errs.Internal(fmt.Errorf(
+			return nil, fmt.Errorf(
 				"stage favicon derivative %s: %w",
 				output.Spec.DerivativeType.String(),
 				stageErr,
-			))
+			)
 		}
 	}
 	return staged, nil
 }
 
-func (s *FileService) commitFaviconBundle(
+func (s *Service) commitFaviconBundle(
 	cleanupCtx context.Context,
 	ctx context.Context,
-	source model.File,
+	source File,
 	staged []stagedFaviconAsset,
-) (*commonv1.AssetRef, error) {
-	tx := s.db.WithContext(ctx).Begin()
-	if tx.Error != nil {
+) (*mediaasset.Reference, error) {
+	var set *favicon.Set
+	var usedStaged bool
+	result := s.faviconCommits.Commit(ctx, func(store Store) error {
+		var err error
+		set, usedStaged, err = s.finalizeStagedFaviconBundle(ctx, store, source, staged)
+		return err
+	})
+	switch result.Stage {
+	case domain.FaviconBeginFailed:
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-		return nil, errs.Internal(fmt.Errorf("begin favicon bundle transaction: %w", tx.Error))
-	}
-	set, usedStaged, callbackErr := s.finalizeStagedFaviconBundle(ctx, tx, source, staged)
-	if callbackErr != nil {
-		rollbackErr := tx.Rollback().Error
+		return nil, fmt.Errorf("begin favicon bundle transaction: %w", result.Err)
+	case domain.FaviconChangeFailed:
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-		return nil, errs.Internal(fmt.Errorf(
-			"store generated favicon bundle: %w",
-			stderrors.Join(callbackErr, rollbackErr),
-		))
+		return nil, fmt.Errorf("store generated favicon bundle: %w", result.Err)
 	}
-	commitErr := tx.Commit().Error
+	commitErr := result.Err
 	if commitErr == nil && s.testFaviconCommitError != nil {
 		commitErr = s.testFaviconCommitError
 	}
@@ -208,48 +206,52 @@ func (s *FileService) commitFaviconBundle(
 		winner, reconcileErr := s.reconcileFaviconBundle(cleanupCtx, source.ID)
 		if reconcileErr == nil && winner != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(winner))
-			return winner.GetIconPng_32(), nil
+			return winner.IconPNG32, nil
 		}
 		slog.ErrorContext(ctx, "favicon bundle commit outcome could not be reconciled; preserving source and staged assets", failurecause.Attr(stderrors.Join(commitErr, reconcileErr)), "file_id", source.ID)
-		return nil, errs.Internal(fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: commit error: %v; reconcile error: %v",
 			errFaviconBundleCommitUncertain,
 			commitErr,
 			reconcileErr,
-		))
+		)
 	}
 	if !usedStaged {
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(set))
 	}
-	return set.GetIconPng_32(), nil
+	return set.IconPNG32, nil
 }
 
 type stagedFaviconAsset struct {
 	AssetID        string
-	DerivativeType managev1.FileDerivativeType
+	DerivativeType favicon.DerivativeType
 	SourceSVG      bool
 }
 
-func (s *FileService) stageFaviconAsset(
+func (s *Service) stageFaviconAsset(
 	ctx context.Context,
 	data []byte,
 	allocation mediaasset.Allocation,
-	derivativeType managev1.FileDerivativeType,
+	derivativeType favicon.DerivativeType,
 	sourceSVG bool,
 ) (stagedFaviconAsset, error) {
-	lifecycle := mediaasset.NewLifecycle(s.db, s.cdnDomain)
-	_, target, err := lifecycle.AllocatePublicAsset(ctx, allocation)
+	var target *mediaasset.WriteTarget
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		_, target, err = unit.Store().AllocatePromotionAsset(ctx, s.cdnDomain, allocation)
+		return err
+	})
 	if err != nil {
 		return stagedFaviconAsset{}, err
 	}
 	staged := stagedFaviconAsset{
-		AssetID:        target.GetAssetId(),
+		AssetID:        target.AssetID,
 		DerivativeType: derivativeType,
 		SourceSVG:      sourceSVG,
 	}
 	if _, err := s.s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(s.s3Bucket),
-		Key:           aws.String(target.GetObjectKey()),
+		Key:           aws.String(target.ObjectKey),
 		Body:          bytes.NewReader(data),
 		ContentLength: aws.Int64(int64(len(data))),
 		ContentType:   aws.String(allocation.MimeType),
@@ -257,31 +259,24 @@ func (s *FileService) stageFaviconAsset(
 		return staged, err
 	}
 	digest := sha256.Sum256(data)
-	if _, err := lifecycle.CompletePublicAsset(ctx, &commonv1.AssetWriteResult{
-		AssetId:  target.GetAssetId(),
-		FileSize: int64(len(data)),
-		Sha256:   digest[:],
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		return unit.Store().CompletePromotionAsset(ctx, s.cdnDomain, mediaasset.WrittenAsset{AssetID: target.AssetID, FileSize: int64(len(data)), SHA256: digest[:]})
 	}); err != nil {
 		return staged, err
 	}
 	return staged, nil
 }
 
-func (s *FileService) finalizeStagedFaviconBundle(
+func (s *Service) finalizeStagedFaviconBundle(
 	ctx context.Context,
-	tx *gorm.DB,
-	source model.File,
+	store Store,
+	source File,
 	staged []stagedFaviconAsset,
-) (*commonv1.FaviconAssetSet, bool, error) {
-	var lockedSource model.File
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "mime_type", "file_size", "extension").
-		Where("id = ?", source.ID).
-		Take(&lockedSource).Error; err != nil {
+) (*favicon.Set, bool, error) {
+	if _, err := store.FaviconSource(ctx, source.ID, true); err != nil {
 		return nil, false, err
 	}
-	existing, err := favicon.LoadSet(ctx, tx, s.cdnDomain, source.ID)
+	existing, err := store.FaviconSet(ctx, s.cdnDomain, source.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -289,24 +284,14 @@ func (s *FileService) finalizeStagedFaviconBundle(
 		return existing, false, nil
 	}
 
-	stagedByType := make(map[managev1.FileDerivativeType]stagedFaviconAsset, len(staged))
+	stagedByType := make(map[favicon.DerivativeType]stagedFaviconAsset, len(staged))
 	for _, asset := range staged {
 		if asset.SourceSVG {
-			result := tx.WithContext(ctx).Model(&model.PublicAsset{}).
-				Where(
-					"id = ? AND kind = ? AND status = ? AND source_file_id IS NULL",
-					asset.AssetID,
-					"favicon",
-					model.PublicAssetStatusReady,
-				).
-				Updates(structured.Fields{
-					"source_file_id": source.ID,
-					"updated_at":     time.Now().UTC(),
-				})
-			if result.Error != nil {
-				return nil, false, result.Error
+			attached, err := store.AttachFaviconSource(ctx, asset.AssetID, source.ID, time.Now().UTC())
+			if err != nil {
+				return nil, false, err
 			}
-			if result.RowsAffected != 1 {
+			if !attached {
 				return nil, false, fmt.Errorf("staged SVG favicon asset is not attachable")
 			}
 			continue
@@ -318,38 +303,33 @@ func (s *FileService) finalizeStagedFaviconBundle(
 		if !ok {
 			return nil, false, fmt.Errorf("staged favicon bundle is missing %s", spec.DerivativeType.String())
 		}
-		if err := tx.WithContext(ctx).Table("file_derivative").Create(structured.Fields{
-			"id":       uuid.NewString(),
-			"file_id":  source.ID,
-			"type":     spec.DerivativeType.String(),
-			"asset_id": asset.AssetID,
-		}).Error; err != nil {
+		if err := store.InsertFaviconDerivative(ctx, uuid.NewString(), source.ID, spec.DerivativeType.String(), asset.AssetID); err != nil {
 			return nil, false, err
 		}
 	}
-	set, err := favicon.LoadSet(ctx, tx, s.cdnDomain, source.ID)
+	set, err := store.FaviconSet(ctx, s.cdnDomain, source.ID)
 	if err != nil {
 		return nil, false, err
 	}
-	if set == nil || set.GetIconPng_32() == nil {
+	if set == nil || set.IconPNG32 == nil {
 		return nil, false, fmt.Errorf("generated favicon set is incomplete")
 	}
 	return set, true, nil
 }
 
-func (s *FileService) reconcileFaviconBundle(
+func (s *Service) reconcileFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
-) (*commonv1.FaviconAssetSet, error) {
+) (*favicon.Set, error) {
 	if s.testFaviconReconcileError != nil {
 		return nil, s.testFaviconReconcileError
 	}
 	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), faviconCleanupItemTimeout)
 	defer cancel()
-	return favicon.LoadSet(reconcileCtx, s.db, s.cdnDomain, sourceFileID)
+	return s.loadFaviconSet(reconcileCtx, sourceFileID)
 }
 
-func (s *FileService) scheduleStagedFaviconDeletion(
+func (s *Service) scheduleStagedFaviconDeletion(
 	ctx context.Context,
 	staged []stagedFaviconAsset,
 	preserve map[string]struct{},
@@ -366,14 +346,20 @@ func (s *FileService) scheduleStagedFaviconDeletion(
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), faviconCleanupItemTimeout)
 	defer cancel()
 	now := time.Now().UTC()
-	result := s.db.WithContext(cleanupCtx).Model(&model.PublicAsset{}).
-		Where("id IN ? AND status IN ?", ids, []string{model.PublicAssetStatusReady, model.PublicAssetStatusFailed}).
-		Updates(structured.Fields{
-			"status":              model.PublicAssetStatusDeletePending,
-			"delete_requested_at": now,
-			"updated_at":          now,
-		})
-	if result.Error != nil {
-		slog.Error("failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, failurecause.Attr(result.Error))
+	err := s.units.Transaction(cleanupCtx, false, func(unit mutation.Tx[Store]) error {
+		return unit.Store().ScheduleStagedFaviconDeletion(cleanupCtx, ids, now)
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, failurecause.Attr(err))
 	}
+}
+
+func (s *Service) loadFaviconSet(ctx context.Context, id string) (*favicon.Set, error) {
+	var set *favicon.Set
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		set, err = store.FaviconSet(ctx, s.cdnDomain, id)
+		return err
+	})
+	return set, err
 }

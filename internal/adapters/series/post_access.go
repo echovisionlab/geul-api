@@ -2,22 +2,20 @@ package series
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 )
 
 // PostAccess adapts Post-owned source projection and edit authorization to
 // Series membership mutations.
 type PostAccess struct{}
 
-func (PostAccess) PostSourceTitleSQL() string { return postdomain.PostSourceTitleSQL }
+func (PostAccess) PostSourceTitleSQL() string { return postpostgres.PostSourceTitleSQL }
 
 func (PostAccess) RequireLockedEdit(
 	ctx context.Context,
@@ -28,16 +26,15 @@ func (PostAccess) RequireLockedEdit(
 	// The Series aggregate independently checks its exact manage action. This
 	// adapter owns only the Post decision and delegates lifecycle selection to
 	// Post: edit for ordinary Posts, edit_archived for archived Posts.
-	err := postdomain.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, postID)
+	err := postpostgres.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, postID)
 	if err == nil {
 		return nil
 	}
 	// Series membership is a private mutation surface. Do not reveal whether a
 	// Post exists to a principal that cannot perform the selected Post action.
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-		slog.WarnContext(ctx, "Series Post access rejected", failurecause.Attr(err), "post_id", postID)
-		return errs.NotFound("post", postID)
+		return errs.WithCause(errs.NotFound("post", postID), err)
 	default:
 		return err
 	}

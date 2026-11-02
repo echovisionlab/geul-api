@@ -8,11 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestPostInterchangeExportProjectionPreservesStableBlockIdentityAndExplicitEmpty(t *testing.T) {
@@ -58,7 +56,7 @@ func TestPostInterchangeImportPatchPreservesUnselectedTargetAndAppliesExplicitEm
 	require.NoError(t, err)
 	command := application.TranslationInterchangeApply{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   application.InterchangeModePatch,
 		Source: source, Plan: plan,
 		Targets: map[string]core.UnitResult{
 			firstHandle: {UnitID: firstHandle, TranslatedText: ""},
@@ -113,7 +111,7 @@ func TestPostInterchangeImportReplacePreservesExplicitEmptyEntityTarget(t *testi
 	blockHandle := requireBlockInterchangeHandle(t, plan, blockID)
 	command := application.TranslationInterchangeApply{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: source, Plan: plan,
 		Targets: map[string]core.UnitResult{
 			"entity:title": {UnitID: "entity:title", TranslatedText: ""},
@@ -135,7 +133,7 @@ func TestPostInterchangeValidateRejectsIdentityAndRevisionMismatch(t *testing.T)
 	plan := requirePostInterchangePlan(t, source)
 	command := application.TranslationInterchangeApply{
 		EntityType: "post", EntityID: "other-post", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: source, Plan: plan,
 	}
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(validateBlockInterchangeApply(command, "post")))
@@ -154,7 +152,7 @@ func TestPostInterchangeValidateRejectsIdentityAndRevisionMismatch(t *testing.T)
 func requirePostInterchangePlan(t *testing.T, source *core.SourceDocument) *core.ExtractionPlan {
 	t.Helper()
 	plan, err := core.BuildRichTextExtractionPlan(
-		&model.TranslationJob{
+		&core.JobIdentity{
 			EntityType: "post", EntityID: "post-1", SourceLocale: "en", TargetLocale: "ko",
 		},
 		source,

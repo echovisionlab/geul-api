@@ -7,10 +7,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -56,24 +58,24 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 	}, []releasepublic.TrackDownloadAccessRequest{
 		{TrackID: publicTrackID, FileID: fileID},
 		{TrackID: disabledTrackID, FileID: fileID},
-	}, func(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-		return &commonv1.ExpiringMediaRef{Url: "signed:" + file.ID}, nil
+	}, func(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
+		return &mediaauth.Reference{URL: "signed:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, result[publicTrackID].Access.GetAction())
-	require.Equal(t, "signed:"+fileID, result[publicTrackID].Download.GetUrl())
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[disabledTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionDownload, result[publicTrackID].Access.Action)
+	require.Equal(t, "signed:"+fileID, optional.Value(result[publicTrackID].Download).URL)
+	require.Equal(t, releasepublic.DownloadActionNone, result[disabledTrackID].Access.Action)
 	require.Nil(t, result[disabledTrackID].Download)
 
 	require.NoError(t, db.Exec(`UPDATE release SET status = 'RELEASE_STATUS_DRAFT' WHERE id = ?`, releaseID).Error)
 	result, err = resolver.Resolve(t.Context(), releaseID, "RELEASE_STATUS_PUBLISHED", mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "release", ResourceID: releaseID, Status: "RELEASE_STATUS_PUBLISHED",
 		Mode: mediaasset.ContentDownloadOwnerAccessPublic,
-	}, []releasepublic.TrackDownloadAccessRequest{{TrackID: publicTrackID, FileID: fileID}}, func(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-		return &commonv1.ExpiringMediaRef{Url: "stale:" + file.ID}, nil
+	}, []releasepublic.TrackDownloadAccessRequest{{TrackID: publicTrackID, FileID: fileID}}, func(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
+		return &mediaauth.Reference{URL: "stale:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[publicTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionNone, result[publicTrackID].Access.Action)
 	require.Nil(t, result[publicTrackID].Download)
 
 	shareID := uuid.NewString()
@@ -86,10 +88,10 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 		ShareLink: &mediaasset.ContentDownloadShareLinkWitness{
 			ID: shareID, EntityType: "SHARE_LINK_ENTITY_TYPE_RELEASE", EntityID: releaseID, ExpiresAt: &expiresAt,
 		},
-	}, []releasepublic.TrackDownloadAccessRequest{{TrackID: publicTrackID, FileID: fileID}}, func(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-		return &commonv1.ExpiringMediaRef{Url: "stale:" + file.ID}, nil
+	}, []releasepublic.TrackDownloadAccessRequest{{TrackID: publicTrackID, FileID: fileID}}, func(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
+		return &mediaauth.Reference{URL: "stale:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[publicTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionNone, result[publicTrackID].Access.Action)
 	require.Nil(t, result[publicTrackID].Download)
 }

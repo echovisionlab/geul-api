@@ -7,13 +7,16 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -24,16 +27,16 @@ import (
 
 func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	authorIdentityID := uuid.NewString()
 	authorMemberID := uuid.NewString()
 	memberIdentityID := uuid.NewString()
 	memberID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: authorIdentityID,
 	})
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: memberIdentityID,
 	})
 	seedFileDownloadMember(t, db, authorIdentityID, authorMemberID, policyv1.Role.Author().ID())
@@ -64,7 +67,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	now := time.Now().UTC()
 	require.NoError(t, db.Create(&model.AudienceSegment{
 		ID: segmentID, Name: "Download audience " + uuid.NewString(),
-		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
+		SegmentType: model.AudienceSegmentMemberTags,
 		CreatedAt:   now, UpdatedAt: &now,
 	}).Error)
 	require.NoError(t, db.Create(&model.AudienceSegmentUserTag{
@@ -91,15 +94,9 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := &FileService{
-		db:             db,
-		spiceDB:        stack.SpiceDBClient,
-		auditWriter:    apitelemetry.NewDurableWriter(db),
-		asyncPublisher: &policySignalPublisher{},
-	}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(fileSvc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(fileSvc)
-	updated, err := fileSvc.UpdateFileDownloadPolicy(
+	fileSvc := withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient, auditWriter: apitelemetry.NewDurableWriter(db), asyncPublisher: &policySignalPublisher{}}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, stack.SpiceDBClient)}))
+
+	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -113,44 +110,30 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, updated.Msg.Policy.AudienceSegments, 1)
 
-	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), db, []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), mediaassetpostgres.NewDownloadStore(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
 	require.NoError(t, err)
 	source := sources[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")]
-	allowed, err := mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.True(t, allowed)
 
 	require.NoError(t, db.Where("member_id = ?", memberID).
 		Delete(&model.UserTagMapping{}).Error)
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.False(t, allowed)
 
-	zeroSegmentPolicy, err := fileSvc.UpdateFileDownloadPolicy(
+	zeroSegmentPolicy, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -175,36 +158,29 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	}
 	require.JSONEq(t, `{"changed_fields":["file_download_audience","file_download_audience_segment_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_state":"disabled","new_state":"restricted","previous_item_ids":[],"item_ids":["`+segmentID+`"]}`, string(auditRows[0].Attributes))
 	require.JSONEq(t, `{"changed_fields":["file_download_audience_segment_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_item_ids":["`+segmentID+`"],"item_ids":[]}`, string(auditRows[1].Attributes))
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.False(t, allowed)
 }
 
 func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID})
 	seedFileDownloadMember(t, db, identityID, memberID, policyv1.Role.Admin().ID())
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
 	require.NoError(t, err)
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -232,15 +208,13 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), eventPolicy)
 	require.NoError(t, err)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithProgramEventAttachment(newIntegrationProgramEventAccess(db))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
+	svc := withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, stack.SpiceDBClient), Events: newIntegrationProgramEventAccess(db)}))
+
 	for _, request := range []*managev1.GetFileDownloadPolicyRequest{
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID, BlockId: managePolicyString(postBlockID), ReferencePath: managePolicyString("file")},
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT, EntityId: eventID, BlockId: managePolicyString(eventBlockID), ReferencePath: managePolicyString("file")},
 	} {
-		response, getErr := svc.GetFileDownloadPolicy(ctx, connect.NewRequest(request))
+		response, getErr := NewConnectHandler(svc).GetFileDownloadPolicy(ctx, connect.NewRequest(request))
 		require.NoError(t, getErr)
 		require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, response.Msg.GetPolicy().GetAudience())
 	}

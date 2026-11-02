@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -54,8 +52,7 @@ func parseFileDeleteEvent(msg mq.Message) (*managev1.FileDeleteEvent, error) {
 
 	bodyText := strings.TrimSpace(string(msg.Body))
 	if bodyText == "" || (!strings.HasPrefix(bodyText, "{") && !strings.HasPrefix(bodyText, "[")) {
-		slog.Warn("Invalid file delete payload", "queue", msg.Queue, "message_id", msg.MessageID, "command_id", msg.CorrelationID, "failure_cause", failurecause.Message(protoErr))
-		return nil, fmt.Errorf("%w: unsupported encoding", errInvalidFileDeletePayload)
+		return nil, fmt.Errorf("%w: unsupported encoding: %w", errInvalidFileDeletePayload, protoErr)
 	}
 
 	// Handles protobuf JSON payloads.
@@ -68,8 +65,7 @@ func parseFileDeleteEvent(msg mq.Message) (*managev1.FileDeleteEvent, error) {
 		}
 	}
 
-	slog.Warn("Invalid file delete payload", "queue", msg.Queue, "message_id", msg.MessageID, "command_id", msg.CorrelationID, "failure_cause", failurecause.Message(errors.Join(protoErr, jsonErr)))
-	return nil, fmt.Errorf("%w: missing required fields", errInvalidFileDeletePayload)
+	return nil, fmt.Errorf("%w: missing required fields: %w", errInvalidFileDeletePayload, errors.Join(protoErr, jsonErr))
 }
 
 // handleFileDeleteMessage handles messages from file.delete queue
@@ -84,7 +80,7 @@ func (h *Handlers) handleFileDeleteMessage(ctx context.Context, msg mq.Message) 
 	if err := requireStableDeliveryMessageID(msg, event.GetFileId()); err != nil {
 		return err
 	}
-	if err := h.HandleFileDelete(ctx, event); err != nil {
+	if err := h.files.HandleFileDelete(ctx, event); err != nil {
 		if errors.Is(err, filemediaapplication.ErrInvalidFileDeleteTarget) {
 			return terminalQueueContractError("invalid_file_delete_target", err)
 		}

@@ -5,33 +5,32 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMailAdapterSenderConfigPreservesCredentialsAndUnknownFields(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		typeID model.MailAdapterType
+		typeID AdapterType
 		config string
 	}{
 		{"SES", "MAIL_ADAPTER_TYPE_SES", `{"region":"ap-northeast-2","access_key_id":"rotated-key","secret_access_key":"rotated-secret","from_name":"Old name","from_email":"old@example.test","future_provider_token":{"value":"preserve-exactly"}}`},
 		{"SMTP", "MAIL_ADAPTER_TYPE_SMTP", `{"host":"smtp.example.test","port":587,"secure":false,"user":"rotated-user","password":"rotated-password","from_name":"Old name","from_email":"old@example.test","future_provider_token":{"value":"preserve-exactly"}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			service := &MailAdapterService{}
 			for _, input := range []MailAdapterSenderUpdate{
 				{FromName: mailSenderPointer("")},
 				{FromEmail: mailSenderPointer("new@example.test")},
 				{FromName: mailSenderPointer("New name"), FromEmail: mailSenderPointer("new@example.test")},
 			} {
-				adapter := &model.MailAdapter{Type: test.typeID, Config: model.MailAdapterConfig{RawMessage: json.RawMessage(test.config)}}
-				merged, validated, err := service.senderConfig(adapter, input)
+				adapter := MailAdapter{Type: test.typeID, Config: json.RawMessage(test.config)}
+				merged, validated, err := senderConfig(adapter, input)
 				require.NoError(t, err)
 				require.NotNil(t, validated)
 				var before, after map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(test.config), &before))
-				require.NoError(t, json.Unmarshal(merged.RawMessage, &after))
+				require.NoError(t, json.Unmarshal(merged, &after))
 				for key, original := range before {
 					if key == "from_name" && input.FromName != nil {
 						encoded, err := json.Marshal(*input.FromName)
@@ -46,7 +45,7 @@ func TestMailAdapterSenderConfigPreservesCredentialsAndUnknownFields(t *testing.
 					}
 				}
 				// Building the candidate must not mutate the locked original.
-				require.Equal(t, test.config, string(adapter.Config.RawMessage))
+				require.Equal(t, test.config, string(adapter.Config))
 			}
 		})
 	}
@@ -55,7 +54,7 @@ func TestMailAdapterSenderConfigPreservesCredentialsAndUnknownFields(t *testing.
 func TestMailAdapterSenderConfigReusesAdminValidation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		typeID model.MailAdapterType
+		typeID AdapterType
 		config string
 		email  string
 		code   connect.Code
@@ -70,18 +69,16 @@ func TestMailAdapterSenderConfigReusesAdminValidation(t *testing.T) {
 		{"null stored config", "MAIL_ADAPTER_TYPE_SES", `null`, "new@example.test", connect.CodeInternal},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			service := &MailAdapterService{}
-			adapter := &model.MailAdapter{Type: test.typeID, Config: model.MailAdapterConfig{RawMessage: json.RawMessage(test.config)}}
-			_, _, err := service.senderConfig(adapter, MailAdapterSenderUpdate{FromEmail: &test.email})
+			adapter := MailAdapter{Type: test.typeID, Config: json.RawMessage(test.config)}
+			_, _, err := senderConfig(adapter, MailAdapterSenderUpdate{FromEmail: &test.email})
 			require.Error(t, err)
-			require.Equal(t, test.code, connect.CodeOf(err))
-			require.Equal(t, test.config, string(adapter.Config.RawMessage))
+			require.Equal(t, test.code, errs.Wrap(err).Code())
+			require.Equal(t, test.config, string(adapter.Config))
 		})
 	}
 }
 
 func TestMailAdapterSenderConfigRecognizesNoOp(t *testing.T) {
-	service := &MailAdapterService{}
 	for _, test := range []struct {
 		name   string
 		config string
@@ -90,18 +87,18 @@ func TestMailAdapterSenderConfigRecognizesNoOp(t *testing.T) {
 		{"", `{"region":"r","access_key_id":"k","secret_access_key":"s","from_email":"sender@example.test"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			adapter := &model.MailAdapter{Type: "MAIL_ADAPTER_TYPE_SES", Config: model.MailAdapterConfig{RawMessage: json.RawMessage(test.config)}}
-			merged, _, err := service.senderConfig(adapter, MailAdapterSenderUpdate{FromName: &test.name})
+			adapter := MailAdapter{Type: "MAIL_ADAPTER_TYPE_SES", Config: json.RawMessage(test.config)}
+			merged, _, err := senderConfig(adapter, MailAdapterSenderUpdate{FromName: &test.name})
 			require.NoError(t, err)
-			require.True(t, configJSONSemanticallyEqual(adapter.Config.RawMessage, merged.RawMessage))
+			require.True(t, configJSONSemanticallyEqual(adapter.Config, merged))
 		})
 	}
 }
 
 func TestMailAdapterSenderRejectsUnauthenticatedBeforeDependencies(t *testing.T) {
-	service := &MailAdapterService{}
-	_, err := service.UpdateSender(t.Context(), MailAdapterSenderUpdate{ID: "11111111-1111-4111-8111-111111111111", FromName: mailSenderPointer("Name")})
-	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+	service := &Service{}
+	_, err := service.UpdateMailAdapterSender(t.Context(), MailAdapterSenderUpdate{ID: "11111111-1111-4111-8111-111111111111", FromName: mailSenderPointer("Name")})
+	require.Equal(t, connect.CodeUnauthenticated, errs.Wrap(err).Code())
 }
 
 func mailSenderPointer[T any](value T) *T { return &value }

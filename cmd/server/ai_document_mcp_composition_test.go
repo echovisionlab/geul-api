@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,23 +11,38 @@ import (
 	"testing"
 	"time"
 
+	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
 	"connectrpc.com/connect"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	mcpadapter "github.com/echovisionlab/geul-api/internal/adapters/mcp"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
+	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/label"
+	"github.com/echovisionlab/geul-api/internal/legal"
+	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/series"
+	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -67,18 +81,17 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 
 	policyOwner := &compositionLegalPolicyApplication{}
 	references := compositionContentApplications()
-	references.terms = policyOwner
-	references.privacy = policyOwner
+	references.legalPolicies = policyOwner
 	composition, err := newAIDocumentMCPComposition(
 		registrations,
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		references,
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -184,11 +197,11 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -210,11 +223,11 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -260,11 +273,11 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		files,
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -344,8 +357,8 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{},
-		&compositionProgramEventApplication{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
-		compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, files,
+		&programevent.Service{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
+		compositionContentApplications(), &translationapplication.Service{}, files,
 		aiDocumentMCPConfig{
 			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
@@ -367,7 +380,7 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 	require.Contains(t, response.Body.String(), compositionFileID)
 	require.NotContains(t, response.Body.String(), "signature=secret")
 	require.NotNil(t, files.importInput)
-	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, files.importInput.UploadType)
+	require.Equal(t, filemedia.UploadEditorImage, files.importInput.UploadType)
 	require.Equal(t, "diagram.png", files.importInput.FileName)
 	require.Equal(t, "b2011513-d89a-4c34-90e5-b59b3cb874f2", files.importInput.CorrelationID)
 	require.NotNil(t, files.principal)
@@ -427,8 +440,10 @@ type compositionDomainPort struct {
 	principal *auth.UserInfo
 }
 
+// compositionFileRuntime leaves the File library use cases it does not
+// record unimplemented; no composition test reaches one.
 type compositionFileRuntime struct {
-	managev1connect.UnimplementedFileServiceHandler
+	mcpadapter.FileManager
 	mu             sync.Mutex
 	principal      *auth.UserInfo
 	deliveryFileID string
@@ -439,8 +454,11 @@ type compositionFileRuntime struct {
 
 type compositionSignalPublisher struct{}
 
+// compositionPostApplication lists no AI documents and leaves the Post use
+// cases unimplemented; no composition test reaches one.
 type compositionPostApplication struct {
-	managev1connect.UnimplementedPostServiceHandler
+	mcpadapter.PostManagementApplication
+	mcpadapter.PostRelatedApplication
 }
 
 func (*compositionPostApplication) ListAIDocuments(
@@ -450,107 +468,48 @@ func (*compositionPostApplication) ListAIDocuments(
 	return postdomain.AIDocumentListResult{Items: []postdomain.AIDocumentListItem{}, Limit: 20}, nil
 }
 
+// compositionWorkApplication lists the Work use cases; no composition test
+// reaches one.
 type compositionWorkApplication struct {
-	managev1connect.UnimplementedWorkServiceHandler
+	mcpadapter.WorkDocumentDiscovery
+	mcpadapter.WorkManagementApplication
+	mcpadapter.WorkRelatedApplication
 }
+
+// compositionPageApplication carries the Page use cases the composition
+// binds; no test calls them.
 type compositionPageApplication struct {
-	managev1connect.UnimplementedPageServiceHandler
-}
-type compositionProgramEventApplication struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
+	*page.Service
 }
 
-type compositionCategoryReferences struct {
-	managev1connect.UnimplementedCategoryServiceHandler
-}
-type compositionTagReferences struct {
-	managev1connect.UnimplementedTagServiceHandler
-}
-type compositionClientReferences struct {
-	managev1connect.UnimplementedClientServiceHandler
-}
-type compositionMapPlaceReferences struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
-}
-type compositionMemberReferences struct {
-	managev1connect.UnimplementedMemberServiceHandler
-}
-type compositionArtistReferences struct {
-	managev1connect.UnimplementedArtistServiceHandler
-}
 type compositionFileReferences struct {
-	managev1connect.UnimplementedFileServiceHandler
-}
-
-type compositionProgramEventTypeReferences struct {
-	managev1connect.UnimplementedProgramEventTypeServiceHandler
-}
-
-type compositionProgramEventSeriesReferences struct {
-	managev1connect.UnimplementedProgramEventSeriesServiceHandler
-}
-
-type compositionLabelReferences struct {
-	managev1connect.UnimplementedLabelServiceHandler
-}
-
-type compositionGenreReferences struct {
-	managev1connect.UnimplementedGenreServiceHandler
-}
-
-type compositionStyleReferences struct {
-	managev1connect.UnimplementedStyleServiceHandler
-}
-
-type compositionFormatReferences struct {
-	managev1connect.UnimplementedFormatServiceHandler
-}
-
-type compositionFormReferences struct {
-	managev1connect.UnimplementedFormServiceHandler
-}
-
-type compositionPostSeriesReferences struct {
-	managev1connect.UnimplementedSeriesServiceHandler
-}
-
-type compositionTrackReferences struct {
-	managev1connect.UnimplementedTrackServiceHandler
-}
-
-type compositionMapThemeReferences struct {
-	managev1connect.UnimplementedMapThemeServiceHandler
-}
-
-func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, string, int64, *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
-	return nil, false, nil
+	mcpadapter.FileReferenceDiscovery
 }
 
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
-		terms:        managev1connect.UnimplementedTermsServiceHandler{},
-		privacy:      managev1connect.UnimplementedPrivacyServiceHandler{},
-		categories:   &compositionCategoryReferences{},
-		tags:         &compositionTagReferences{},
-		clients:      &compositionClientReferences{},
-		mapPlaces:    &compositionMapPlaceReferences{},
-		members:      &compositionMemberReferences{},
-		artists:      &compositionArtistReferences{},
-		files:        &compositionFileReferences{},
-		eventTypes:   &compositionProgramEventTypeReferences{},
-		eventSeries:  &compositionProgramEventSeriesReferences{},
-		labels:       &compositionLabelReferences{},
-		genres:       &compositionGenreReferences{},
-		styles:       &compositionStyleReferences{},
-		formats:      &compositionFormatReferences{},
-		forms:        &compositionFormReferences{},
-		postSeries:   &compositionPostSeriesReferences{},
-		tracks:       &compositionTrackReferences{},
-		mapThemes:    &compositionMapThemeReferences{},
-		menus:        managev1connect.UnimplementedMenuServiceHandler{},
-		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
-		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
-		mailAdapters: &emaildelivery.MailAdapterService{},
+		legalPolicies: &legal.Service{},
+		categories:    &referencecatalog.Service{},
+		tags:          &referencecatalog.Service{},
+		clients:       &referencecatalog.Service{},
+		mapPlaces:     &referencecatalog.Service{},
+		members:       &member.Service{},
+		artists:       &artistdomain.Service{},
+		files:         &compositionFileReferences{},
+		eventTypes:    &programevent.Service{},
+		eventSeries:   &programevent.Service{},
+		labels:        &label.Service{},
+		genres:        &referencecatalog.Service{},
+		styles:        &referencecatalog.Service{},
+		formats:       &referencecatalog.Service{},
+		forms:         &formdomain.Service{},
+		postSeries:    &series.Service{},
+		tracks:        &releasepkg.Service{},
+		mapThemes:     &maptheme.Service{},
+		menus:         &menu.Service{},
+		menuSettings:  &sitesettings.Service{},
+		siteSettings:  &sitesettings.Service{},
+		mailAdapters:  &emaildelivery.Service{},
 	}
 }
 
@@ -573,38 +532,26 @@ func (receiver *compositionRelayReceiver) RelayInteractiveAIDocumentMutation(
 	return connect.NewResponse(&intrav1.RelayInteractiveAIDocumentMutationResponse{}), nil
 }
 
-func (*compositionFileRuntime) InitiateMultipartUpload(
-	context.Context,
-	*connect.Request[managev1.InitiateMultipartUploadRequest],
-) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
-	return connect.NewResponse(&managev1.InitiateMultipartUploadResponse{}), nil
+func (*compositionFileRuntime) InitiateMultipartUpload(context.Context, filemedia.InitiateMultipartUploadCommand) (*filemedia.MultipartUpload, error) {
+	return &filemedia.MultipartUpload{}, nil
 }
 
-func (*compositionFileRuntime) FindMultipartUploadCandidate(
-	context.Context,
-	*connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
-	return connect.NewResponse(&managev1.FindMultipartUploadCandidateResponse{}), nil
+func (*compositionFileRuntime) FindMultipartUploadCandidate(context.Context, filemedia.FindMultipartUploadCandidateQuery) (*filemedia.MultipartCandidate, error) {
+	return &filemedia.MultipartCandidate{}, nil
 }
 
-func (*compositionFileRuntime) CompleteMultipartUpload(
-	context.Context,
-	*connect.Request[managev1.CompleteMultipartUploadRequest],
-) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
-	return connect.NewResponse(&managev1.CompleteMultipartUploadResponse{}), nil
+func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedia.CompleteMultipartUploadCommand) (*filemedia.CompletedUpload, error) {
+	return &filemedia.CompletedUpload{}, nil
 }
 
-func (*compositionFileRuntime) DownloadFromUrl(
-	context.Context,
-	*connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
-	return connect.NewResponse(&managev1.DownloadFromUrlResponse{}), nil
+func (*compositionFileRuntime) DownloadFromURL(context.Context, filemedia.DownloadFromURLCommand) (*filemedia.ImportedFile, error) {
+	return &filemedia.ImportedFile{}, nil
 }
 
 func (runtime *compositionFileRuntime) ImportRemoteFile(
 	ctx context.Context,
 	input filemedia.RemoteFileImportInput,
-) (*managev1.DownloadFromUrlResponse, error) {
+) (*filemedia.ImportedFile, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	runtime.importInput = &input
@@ -612,65 +559,50 @@ func (runtime *compositionFileRuntime) ImportRemoteFile(
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return &managev1.DownloadFromUrlResponse{
-		FileId: compositionFileID,
-		Delivery: &commonv1.MediaDelivery{
-			FileId: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
+	return &filemedia.ImportedFile{
+		FileID: compositionFileID,
+		Delivery: &filemedia.Delivery{
+			FileID: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
 			FileName: &input.FileName,
 		},
 	}, nil
 }
 
-func (runtime *compositionFileRuntime) DeleteFiles(
-	ctx context.Context,
-	request *connect.Request[managev1.DeleteFilesRequest],
-) (*connect.Response[managev1.DeleteFilesResponse], error) {
+func (runtime *compositionFileRuntime) DeleteFiles(ctx context.Context, command filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	runtime.deleteRequest = proto.Clone(request.Msg).(*managev1.DeleteFilesRequest)
+	runtime.deleteRequest = &managev1.DeleteFilesRequest{FileIds: append([]string(nil), command.FileIDs...)}
 	if principal := auth.GetUser(ctx); principal != nil {
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: request.Msg.FileIds}), nil
+	return filemedia.FileDeletionOutcome{AcceptedFileIDs: command.FileIDs}, nil
 }
 
-func (runtime *compositionFileRuntime) GetMediaDelivery(
-	ctx context.Context,
-	request *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
+func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, query filemedia.GetMediaDeliveryQuery) (*filemedia.MediaDeliveryResult, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	runtime.deliveryCalls++
-	runtime.deliveryFileID = request.Msg.GetFileId()
+	runtime.deliveryFileID = query.FileID
 	if principal := auth.GetUser(ctx); principal != nil {
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return connect.NewResponse(&managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{
-		FileId: request.Msg.GetFileId(), Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
-	}}), nil
+	return &filemedia.MediaDeliveryResult{Delivery: &filemedia.Delivery{
+		FileID: query.FileID, Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
+	}}, nil
 }
 
-func (*compositionFileRuntime) GetFileDownloadPolicy(
-	context.Context,
-	*connect.Request[managev1.GetFileDownloadPolicyRequest],
-) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
-	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{}), nil
+func (*compositionFileRuntime) GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*filemedia.DownloadPolicy, error) {
+	return nil, nil
 }
 
-func (*compositionFileRuntime) UpdateFileDownloadPolicy(
-	context.Context,
-	*connect.Request[managev1.UpdateFileDownloadPolicyRequest],
-) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
-	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{}), nil
+func (*compositionFileRuntime) UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*filemedia.DownloadPolicy, error) {
+	return nil, nil
 }
 
-func (*compositionFileRuntime) ListFileUsages(
-	context.Context,
-	*connect.Request[managev1.ListFileUsagesRequest],
-) (*connect.Response[managev1.ListFileUsagesResponse], error) {
-	return connect.NewResponse(&managev1.ListFileUsagesResponse{}), nil
+func (*compositionFileRuntime) ListFileUsages(context.Context, filemedia.ListFileUsagesQuery) (filemedia.FileUsagePage, error) {
+	return filemedia.FileUsagePage{}, nil
 }
 
 func (runtime *compositionFileRuntime) snapshot() (*auth.UserInfo, string, int) {
@@ -774,35 +706,35 @@ var _ aidocument.DomainPort = (*compositionDomainPort)(nil)
 var _ filemediaadapter.MCPFileRuntime = (*compositionFileRuntime)(nil)
 
 type compositionReleaseApplication struct {
-	managev1connect.UnimplementedReleaseServiceHandler
+	*releasepkg.Service
 	principal *auth.UserInfo
 }
 
-func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
+func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ releasepkg.ListReleasesQuery) (releasepkg.ReleasePage, error) {
 	application.principal = auth.GetUser(ctx)
-	return connect.NewResponse(&managev1.ListReleasesAdminResponse{Releases: []*managev1.ReleaseWithStats{{Release: &managev1.Release{
-		Id: "44444444-4444-4444-8444-444444444444", Title: "Release A", Status: "draft", SourceLocale: "ko", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+	return releasepkg.ReleasePage{Releases: []releasepkg.ReleaseWithStats{{View: releasepkg.View{Title: "Release A", Release: releasepkg.Release{
+		ID: "44444444-4444-4444-8444-444444444444", Status: "draft", SourceLocale: "ko", UpdatedAt: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC),
+	}}}}, Total: 1, Limit: 20}, nil
 }
 
 type compositionArtistApplication struct {
-	managev1connect.UnimplementedArtistServiceHandler
 	principal *auth.UserInfo
 }
 
-func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
+func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ artistdomain.ListArtistsQuery) (artistdomain.AdminArtistPage, error) {
 	application.principal = auth.GetUser(ctx)
-	return connect.NewResponse(&managev1.ListArtistsAdminResponse{Artists: []*managev1.ArtistWithStats{{Artist: &managev1.Artist{
-		Id: "55555555-5555-4555-8555-555555555555", Name: "Artist A", Status: "published", SourceLocale: "en", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+	updatedAt := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	return artistdomain.AdminArtistPage{Artists: []artistdomain.AdminView{{Artist: artistdomain.View{Name: "Artist A", Artist: artistdomain.Artist{
+		ID: "55555555-5555-4555-8555-555555555555", Status: "published", SourceLocale: "en", UpdatedAt: &updatedAt,
+	}}}}, Pagination: artistdomain.Pagination{Total: 1, Limit: 20}}, nil
 }
 
 func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContext(t *testing.T) {
 	releases, artists := &compositionReleaseApplication{}, &compositionArtistApplication{}
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
-		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
-		releases, artists, compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
+		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &programevent.Service{},
+		releases, artists, compositionContentApplications(), &translationapplication.Service{}, &compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
 			authHeaderName:            compositionAuthHeaderName,
@@ -852,24 +784,21 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 // The HTTP composition must preserve the authenticated caller when dispatching
 // lifecycle commands to the owning Legal services.
 type compositionLegalPolicyApplication struct {
-	managev1connect.UnimplementedTermsServiceHandler
-	managev1connect.UnimplementedPrivacyServiceHandler
+	mcpadapter.LegalPolicyManagementApplication
 	principal *auth.UserInfo
 	title     string
 	kind      string
 }
 
-func (application *compositionLegalPolicyApplication) CreateTermsVersion(ctx context.Context, request *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
+func (application *compositionLegalPolicyApplication) CreatePolicyVersion(ctx context.Context, kind legal.PolicyKind, command legal.CreatePolicyVersionCommand) (legal.Policy, error) {
 	application.principal = auth.GetUser(ctx)
-	application.title = request.Msg.GetTitle()
-	application.kind = "terms"
-	return connect.NewResponse(&managev1.Terms{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.TermsStatus_TERMS_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
-}
-func (application *compositionLegalPolicyApplication) CreatePrivacyVersion(ctx context.Context, request *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
-	application.principal = auth.GetUser(ctx)
-	application.title = request.Msg.GetTitle()
-	application.kind = "privacy"
-	return connect.NewResponse(&managev1.Privacy{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
+	application.title = *command.Title
+	application.kind = string(kind)
+	status := legal.TermsDraft
+	if kind == legal.Privacy {
+		status = legal.PrivacyDraft
+	}
+	return legal.Policy{ID: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: status, CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
 }
 
 func (publisher *compositionSignalPublisher) NotifyProtobufWithExecutor(

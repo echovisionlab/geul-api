@@ -56,27 +56,20 @@ func TestMutationRejectionLogsBoundedIssueIdentities(t *testing.T) {
 	require.Equal(t, "post", entry["domain"])
 }
 
-func TestExactMutationRejectionLogsDocumentAndIssues(t *testing.T) {
+// The caller that answers the rejection records it once, with the request's
+// document identity; the exact-mutation mapping must not add a second record.
+func TestExactMutationRejectionIsNotLoggedByTheMapping(t *testing.T) {
 	logs := captureProductionLogs(t)
 	rejected := rejectExactMutation("Page", core.ValidationResult{Issues: []core.OperationIssue{{
 		Operation: 1, Code: core.IssueInvalidBlockRelation, Handle: "block-7", Message: "private document text",
 	}}})
-	request := core.ApplyRequest{Profile: core.DomainPage, Document: "page-stable", Locale: "ko"}
 
-	_, err, handled := handleExactMutationValidationError(t.Context(), request, rejected, false)
+	_, err, handled := handleExactMutationValidationError(rejected, false)
 	require.True(t, handled)
-	require.Error(t, err)
-
-	require.NotContains(t, logs.String(), "private")
-	entry := decodeLogEntry(t, logs)
-	require.Equal(t, "AI document validation rejected operations", entry["msg"])
-	require.Equal(t, "Page AI document operations are invalid", entry["failure_cause"])
-	require.Equal(t, "Page", entry["domain"])
-	require.Equal(t, "page-stable", entry["document_id"])
-	require.Equal(t, "ko", entry["locale"])
-	require.Equal(t, false, entry["validate_only"])
-	require.EqualValues(t, 1, entry["issue_count"])
-	require.Equal(t, "op1:invalid_block_relation@block-7", entry["issues"])
+	var validationError *core.ValidationError
+	require.ErrorAs(t, err, &validationError)
+	require.Equal(t, core.IssueInvalidBlockRelation, validationError.Result.Issues[0].Code)
+	require.Empty(t, logs.String())
 }
 
 func TestInteractiveRelayFailureLogsJoinableRelayIdentity(t *testing.T) {

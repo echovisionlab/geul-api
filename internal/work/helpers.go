@@ -4,18 +4,18 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 )
 
 func nullableStringEqual(left, right *string) bool {
@@ -25,69 +25,45 @@ func nullableStringEqual(left, right *string) bool {
 	return *left == *right
 }
 
-func normalizeStringIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func normalizeInitialSourceLocale(ctx context.Context, db *gorm.DB, locale string) string {
+func normalizeInitialSourceLocale(ctx context.Context, store Store, locale string) string {
 	if normalized := localization.NormalizeSupportedLocale(locale); normalized != nil {
 		return *normalized
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
-		if normalized := localization.NormalizeSupportedLocale(settings.DefaultLocale); normalized != nil {
+	if defaultLocale, err := store.DefaultLocale(ctx); err == nil {
+		if normalized := localization.NormalizeSupportedLocale(defaultLocale); normalized != nil {
 			return *normalized
 		}
 	} else {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "normalizeInitialSourceLocale", failurecause.Attr(err))
-		}
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using the default Work source locale", "domain", "work", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }
 
-func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.IdentityManager, acceptLanguage string) string {
-	if principal := auth.GetUser(ctx); principal != nil && principal.Authenticated && db != nil {
-		var preferred *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").
-			Where("id = ?::uuid AND deleted_at IS NULL", principal.MemberID.String()).
-			Scan(&preferred).Error; err == nil && preferred != nil {
+func resolveInitialSourceLocale(ctx context.Context, store Store, acceptLanguage string) string {
+	if principal := auth.GetUser(ctx); principal != nil && principal.Authenticated {
+		preferred, err := store.PreferredLocale(ctx, principal.MemberID.String())
+		if err == nil && preferred != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
 			}
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
-			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "Member preferred locale lookup failed; inferring Work source locale from the request", "domain", "work", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	return normalizeInitialSourceLocale(ctx, db, "")
+	return normalizeInitialSourceLocale(ctx, store, "")
 }
 
-func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, identity auth.IdentityManager, requestedLocale, acceptLanguage string) (string, error) {
+func resolveCreateSourceLocale(ctx context.Context, store Store, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
-		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+		return "", domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 	}
-	return resolveInitialSourceLocale(ctx, db, identity, acceptLanguage), nil
+	return resolveInitialSourceLocale(ctx, store, acceptLanguage), nil
 }
 
 func normalizeOptionalNullableString(value *string) (*string, bool) {
@@ -101,22 +77,22 @@ func normalizeOptionalNullableString(value *string) (*string, bool) {
 	return &normalized, true
 }
 
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errs.InvalidArgument("slug", "must not contain '/'")
-	}
-	return nil
-}
-
 // IsValidUUID reports whether value is a UUID accepted by Work public reads.
 func IsValidUUID(value string) bool { _, err := uuid.Parse(value); return err == nil }
 
-func loadReadyManageOgAssetRefs(
-	ctx context.Context,
-	assets MediaAssets,
-	db *gorm.DB,
-	candidates ...*string,
-) (map[string]*commonv1.AssetRef, error) {
+// RequireExists verifies that the Work exists for an owning-domain consumer
+// that stores a Work reference, through store bound to its database handle.
+func RequireExists(ctx context.Context, store Store, workID string) error {
+	return requireWorkExists(ctx, store, workID)
+}
+
+// workUpdatedAudit names a Work update record attributed to the request's
+// member actor.
+func workUpdatedAudit(build domainaudit.Builder) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditWorkUpdated, build)
+}
+
+func uniqueAssetIDs(candidates ...*string) []string {
 	ids := make([]string, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
@@ -133,39 +109,34 @@ func loadReadyManageOgAssetRefs(
 		seen[id] = struct{}{}
 		ids = append(ids, id)
 	}
-	ready := make(map[string]*commonv1.AssetRef, len(ids))
+	return ids
+}
+
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*mediaasset.Reference, error) {
+	ids := uniqueAssetIDs(candidates...)
+	ready := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return ready, nil
 	}
-	ready, err := assets.ResolveReadyAssetRefs(ctx, db, ids)
-	if err != nil {
-		return nil, errs.Internal(err)
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		ready, err = store.ReadyAssets(ctx, ids)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	return ready, nil
 }
 
-func readyManageOgAssetRef(
-	ctx context.Context,
-	assets MediaAssets,
-	db *gorm.DB,
-	candidates ...*string,
-) (*commonv1.AssetRef, error) {
-	ready, err := loadReadyManageOgAssetRefs(ctx, assets, db, candidates...)
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error) {
+	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidates...)
 	if err != nil {
 		return nil, err
 	}
-	for _, candidate := range candidates {
-		if candidate == nil {
-			continue
-		}
-		if asset := ready[strings.TrimSpace(*candidate)]; asset != nil {
-			return asset, nil
-		}
-	}
-	return nil, nil
+	return manageOgAssetFromReadyMap(ready, candidates...), nil
 }
 
-func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates ...*string) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*mediaasset.Reference, candidates ...*string) *mediaasset.Reference {
 	for _, candidate := range candidates {
 		if candidate == nil {
 			continue
@@ -177,9 +148,17 @@ func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates .
 	return nil
 }
 
-func timestampProtoPtr(value *time.Time) *timestamppb.Timestamp {
+func cloneOptionalString(value *string) *string {
 	if value == nil {
 		return nil
 	}
-	return timestamppb.New(*value)
+	cloned := *value
+	return &cloned
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

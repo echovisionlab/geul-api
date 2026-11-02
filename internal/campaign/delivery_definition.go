@@ -2,16 +2,14 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
 const (
@@ -99,9 +97,8 @@ type CampaignDeliveryTarget struct {
 
 func deriveCampaignDeliveryTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	campaign model.Campaign,
-	audienceTargets CampaignAudienceTargetPort,
+	tx Store,
+	campaign Campaign,
 ) (CampaignDeliveryTarget, error) {
 	target := CampaignDeliveryTarget{
 		QueryVersion:   CampaignDeliveryTargetQueryVersion,
@@ -109,45 +106,43 @@ func deriveCampaignDeliveryTarget(
 		RecipientScope: campaign.RecipientScope,
 	}
 	if err := validateCampaignRecipientScope(target.RecipientScope); err != nil {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition(err.Error())
+		return CampaignDeliveryTarget{}, domainerr.Precondition(err.Error())
 	}
 	if err := validateCampaignTargetDefinition(campaign); err != nil {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition(err.Error())
+		return CampaignDeliveryTarget{}, domainerr.Precondition(err.Error())
 	}
-	if campaign.TargetMode == model.CampaignTargetModeAll {
+	if campaign.TargetMode == CampaignTargetModeAll {
 		return target, nil
 	}
 	segmentID := strings.TrimSpace(ptrStringValue(campaign.SegmentID))
-	if audienceTargets == nil {
-		return CampaignDeliveryTarget{}, errs.DependencyUnavailable("Campaign audience target")
-	}
-	segment, err := audienceTargets.LockTarget(ctx, tx, segmentID)
+
+	segment, err := tx.LockAudienceTarget(ctx, segmentID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return CampaignDeliveryTarget{}, errs.FailedPrecondition(errs.MsgCampaignSegmentNotFound)
+		if errors.Is(err, ErrAudienceNotFound) {
+			return CampaignDeliveryTarget{}, domainerr.Precondition(msgCampaignSegmentNotFound)
 		}
 		return CampaignDeliveryTarget{}, err
 	}
 	if segment.Archived {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment is archived")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is archived")
 	}
 	if !segment.Valid {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment is invalid")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is invalid")
 	}
 	target.CreatedAfter = segment.CreatedAfter
 	target.CreatedBefore = segment.CreatedBefore
 	target.MemberTagIDs = append([]string(nil), segment.MemberTagIDs...)
 	target.AccountRoles = append([]string(nil), segment.AccountRoles...)
 	target.ExcludedMemberIDs = append([]string(nil), segment.ExcludedMemberIDs...)
-	switch strings.TrimSpace(segment.SegmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
+	switch AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
+	case AudienceSegmentAllMembers:
 		target.Mode = CampaignDeliveryTargetModeAllUsers
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+	case AudienceSegmentMemberTags:
 		target.Mode = CampaignDeliveryTargetModeUserTags
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case AudienceSegmentMembersByFilter:
 		target.Mode = CampaignDeliveryTargetModeUsersByFilter
 	default:
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment type is unsupported")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment type is unsupported")
 	}
 	return target, nil
 }
@@ -159,7 +154,7 @@ func ValidateCampaignDeliveryTarget(target CampaignDeliveryTarget) error {
 	if target.CreatedAfter != nil && target.CreatedBefore != nil && target.CreatedAfter.After(*target.CreatedBefore) {
 		return fmt.Errorf("email delivery target created_after exceeds created_before")
 	}
-	if len(sortedUniqueNonEmptyCampaignStrings(target.ExcludedMemberIDs)) != len(target.ExcludedMemberIDs) {
+	if len(sliceutil.SortedUniqueTrimmed(target.ExcludedMemberIDs)) != len(target.ExcludedMemberIDs) {
 		return fmt.Errorf("email delivery target excluded member IDs must be unique and non-empty")
 	}
 	if err := validateCampaignRecipientScope(target.RecipientScope); err != nil {
@@ -188,8 +183,8 @@ func ValidateCampaignDeliveryTarget(target CampaignDeliveryTarget) error {
 
 func loadCampaignDeliveryTarget(
 	ctx context.Context,
-	db *gorm.DB,
-	run model.CampaignDeliveryRun,
+	db Store,
+	run DeliveryRun,
 ) (CampaignDeliveryTarget, error) {
 	if !run.DefinitionSealed {
 		return CampaignDeliveryTarget{}, fmt.Errorf("email delivery run definition is not sealed")
@@ -213,79 +208,15 @@ func loadCampaignDeliveryTarget(
 			target.QueryVersion,
 		)
 	}
-	if err := db.WithContext(ctx).
-		Model(&model.EmailDeliveryRunTargetUserTag{}).
-		Where("run_id = ?", run.ID).
-		Order("user_tag_id ASC").
-		Pluck("user_tag_id", &target.MemberTagIDs).Error; err != nil {
+
+	loaded, err := db.LoadDeliveryTarget(ctx, run)
+	if err != nil {
 		return CampaignDeliveryTarget{}, err
 	}
-	if err := db.WithContext(ctx).
-		Model(&model.EmailDeliveryRunTargetUserRole{}).
-		Where("run_id = ?", run.ID).
-		Order("role ASC").
-		Pluck("role", &target.AccountRoles).Error; err != nil {
-		return CampaignDeliveryTarget{}, err
-	}
-	if err := db.WithContext(ctx).
-		Model(&model.EmailDeliveryRunTargetExcludedMember{}).
-		Where("run_id = ?", run.ID).
-		Order("member_id ASC").
-		Pluck("member_id", &target.ExcludedMemberIDs).Error; err != nil {
-		return CampaignDeliveryTarget{}, err
-	}
+	target.MemberTagIDs, target.AccountRoles, target.ExcludedMemberIDs = loaded.MemberTagIDs, loaded.AccountRoles, loaded.ExcludedMemberIDs
+
 	if err := ValidateCampaignDeliveryTarget(target); err != nil {
 		return CampaignDeliveryTarget{}, err
 	}
 	return target, nil
-}
-
-func campaignDeliveryTargetRecipientSelection(
-	target CampaignDeliveryTarget,
-) (*bulkEmailRecipientSelection, error) {
-	if err := ValidateCampaignDeliveryTarget(target); err != nil {
-		return nil, err
-	}
-	selection := &bulkEmailRecipientSelection{
-		RequireNewsletterSubscription: target.RecipientScope == campaignRecipientScopeSubscribedUsers,
-	}
-	switch target.Mode {
-	case CampaignDeliveryTargetModeAllUsers:
-		selection.Mode = CampaignDeliveryTargetModeAllUsers
-	case CampaignDeliveryTargetModeUserTags:
-		if len(target.MemberTagIDs) == 0 {
-			return nil, fmt.Errorf("user-tags target has no user tags")
-		}
-		selection.Mode = CampaignDeliveryTargetModeUserTags
-		selection.MemberTagIDs = target.MemberTagIDs
-	case CampaignDeliveryTargetModeUsersByFilter:
-		selection.Mode = CampaignDeliveryTargetModeUsersByFilter
-		selection.Filters = &bulkEmailRecipientFilters{
-			AccountRoles:      target.AccountRoles,
-			CreatedAfter:      target.CreatedAfter,
-			CreatedBefore:     target.CreatedBefore,
-			ExcludedMemberIDs: target.ExcludedMemberIDs,
-		}
-	default:
-		return nil, fmt.Errorf("unsupported email delivery target mode: %s", target.Mode)
-	}
-	return selection, nil
-}
-
-func sortedUniqueNonEmptyCampaignStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
 }

@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,129 +11,149 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (_ *connect.Response[managev1.PrepareClientMediaUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "PrepareClientMediaUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	if req == nil || req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	r := req.Msg
+// PrepareClientMediaUploadCommand registers the browser-built media bundle
+// of an upload before its completion.
+type PrepareClientMediaUploadCommand struct {
+	FileID          string
+	UploadID        string
+	Kind            ClientMediaKind
+	DurationSeconds float64
+	Artifacts       []ClientMediaUploadArtifact
+}
+
+// ClientMediaUploadArtifact is one object of a client media bundle.
+type ClientMediaUploadArtifact struct {
+	Path           string
+	MimeType       string
+	Size           int64
+	SHA256         string
+	DerivativeType DerivativeKind
+}
+
+// PrepareClientMediaUpload returns the ID of the bundle it registered.
+func (s *Service) PrepareClientMediaUpload(ctx context.Context, command PrepareClientMediaUploadCommand) (string, error) {
 	var bundleID string
-	err := withMultipartCompletionAdvisoryLock(ctx, s.db, r.GetUploadId(), r.GetFileId(), func(db *gorm.DB) error {
-		svc := *s
-		svc.db = db
-		session, err := svc.authorizedClientMediaSession(ctx, r.GetUploadId(), r.GetFileId())
+	err := s.ingestLocks.Multipart(ctx, command.UploadID, command.FileID, func(scope domain.IngestSession) error {
+		lockedService, err := s.ingestService(scope)
+		if err != nil {
+			return err
+		}
+		session, err := lockedService.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
 		if err != nil {
 			return err
 		}
 		if !clientMediaSessionWritable(session) {
-			return errs.FailedPrecondition("upload session is not writable")
+			return domainerr.Precondition("upload session is not writable")
 		}
-		bundleID, err = svc.prepareMediaBundle(ctx, session, r)
+		bundleID, err = lockedService.prepareMediaBundle(ctx, session, command)
 		return err
 	})
 	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.PrepareClientMediaUploadResponse{BundleId: bundleID}), nil
-}
-func clientMediaPlanFromRequest(request *managev1.PrepareClientMediaUploadRequest, memberID string) (clientMediaPlan, error) {
-	plan := clientMediaPlan{Version: clientMediaPlanVersion, DurationSeconds: request.GetDurationSeconds(), MemberID: memberID}
-	switch request.GetKind() {
-	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO:
-		plan.Kind = "audio"
-	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO:
-		plan.Kind = "video"
-	default:
-		return plan, errs.InvalidArgument("kind", "unsupported media kind")
-	}
-	for _, artifact := range request.GetArtifacts() {
-		plan.Artifacts = append(plan.Artifacts, clientMediaArtifact{Path: artifact.GetPath(), MimeType: normalizeMimeType(artifact.GetMimeType()), Size: artifact.GetSize(), SHA256: artifact.GetSha256(), DerivativeType: int32(artifact.GetDerivativeType())})
-	}
-	return plan, nil
-}
-
-func (s *FileService) prepareMediaBundle(ctx context.Context, session model.UploadSession, request *managev1.PrepareClientMediaUploadRequest) (string, error) {
-	plan, err := clientMediaPlanFromRequest(request, auth.GetUser(ctx).MemberID.String())
-	if err != nil {
 		return "", err
-	}
-	if err := validateClientMediaPlan(plan, session); err != nil {
-		return "", errs.InvalidArgument("artifacts", err.Error())
-	}
-	manifest, err := encodeClientMediaPlan(plan)
-	if err != nil {
-		return "", errs.Internal(err)
-	}
-	if session.ClientMediaBundleID != nil {
-		existing, err := decodeClientMediaPlan(session)
-		if err != nil {
-			return "", errs.Internal(err)
-		}
-		prior, err := encodeClientMediaPlan(existing)
-		if err != nil {
-			return "", errs.Internal(err)
-		}
-		if prior != manifest {
-			return "", errs.FailedPrecondition("client media plan conflicts with existing bundle")
-		}
-		return *session.ClientMediaBundleID, nil
-	}
-	bundleID := uuid.NewString()
-	result := s.db.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_id = ? AND file_id = ? AND status IN ? AND client_media_bundle_id IS NULL", session.UploadID, session.FileID, []model.UploadSessionStatus{model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading}).
-		Updates(structured.Fields{"client_media_bundle_id": bundleID, "client_media_manifest": manifest, "last_activity_at": time.Now()})
-	if result.Error != nil {
-		return "", errs.Internal(result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return "", errs.FailedPrecondition("upload session changed before bundle preparation")
 	}
 	return bundleID, nil
 }
 
-func clientMediaSessionWritable(session model.UploadSession) bool {
-	return session.Status == model.UploadSessionStatusInitiated || session.Status == model.UploadSessionStatusUploading
+func clientMediaPlanFromCommand(command PrepareClientMediaUploadCommand, memberID string) (clientMediaPlan, error) {
+	plan := clientMediaPlan{Version: clientMediaPlanVersion, DurationSeconds: command.DurationSeconds, MemberID: memberID}
+	switch command.Kind {
+	case ClientMediaAudio:
+		plan.Kind = "audio"
+	case ClientMediaVideo:
+		plan.Kind = "video"
+	default:
+		return plan, domainerr.InvalidField("kind", "unsupported media kind")
+	}
+	for _, artifact := range command.Artifacts {
+		plan.Artifacts = append(plan.Artifacts, clientMediaArtifact{Path: artifact.Path, MimeType: normalizeMimeType(artifact.MimeType), Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: int32(artifact.DerivativeType)})
+	}
+	return plan, nil
 }
-func (s *FileService) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (model.UploadSession, error) {
-	var session model.UploadSession
-	if !IsValidUUID(fileID) || uploadID == "" || len(uploadID) > 256 {
-		return session, errs.InvalidArgument("upload_id", "invalid upload identity")
+
+func (s *Service) prepareMediaBundle(ctx context.Context, session domain.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
+	plan, err := clientMediaPlanFromCommand(command, auth.GetUser(ctx).MemberID.String())
+	if err != nil {
+		return "", err
 	}
-	if err := s.db.WithContext(ctx).Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return session, errs.NotFoundMsg("upload session not found")
+	if err := validateClientMediaPlan(plan, session); err != nil {
+		return "", domainerr.InvalidField("artifacts", err.Error())
+	}
+	manifest, err := encodeClientMediaPlan(plan)
+	if err != nil {
+		return "", err
+	}
+	if session.ClientMediaBundleID != nil {
+		existing, err := decodeClientMediaPlan(session)
+		if err != nil {
+			return "", err
 		}
-		return session, errs.Internal(err)
+		prior, err := encodeClientMediaPlan(existing)
+		if err != nil {
+			return "", err
+		}
+		if prior != manifest {
+			return "", domainerr.Precondition("client media plan conflicts with existing bundle")
+		}
+		return *session.ClientMediaBundleID, nil
 	}
+	bundleID := uuid.NewString()
+	changed := false
+	err = s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		changed, err = unit.Store().PrepareUploadBundle(ctx, session.UploadID, session.FileID, bundleID, manifest, time.Now())
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if !changed {
+		return "", domainerr.Precondition("upload session changed before bundle preparation")
+	}
+
+	return bundleID, nil
+}
+
+func clientMediaSessionWritable(session domain.UploadSession) bool {
+	return session.Status == domain.UploadSessionStatusInitiated || session.Status == domain.UploadSessionStatusUploading
+}
+func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (domain.UploadSession, error) {
+	var session domain.UploadSession
+	if !IsValidUUID(fileID) || uploadID == "" || len(uploadID) > 256 {
+		return session, domainerr.InvalidField("upload_id", "invalid upload identity")
+	}
+	var row domain.UploadSession
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, uploadID, fileID, false)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
+			return session, domainerr.New(domainerr.NotFound, "", "upload session not found")
+		}
+		return session, err
+	}
+	session = row
+
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return session, errs.AuthenticationRequired()
+		return session, domainerr.AuthenticationRequired()
 	}
 	return session, s.checkPartUploadPermission(ctx, user.MemberID.String(), session)
 }
 
 // HandleClientMediaArtifact relays only a hash-verified artifact from the sealed plan.
-func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -148,10 +169,15 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 		return
 	}
 	// The same lock seals PUT and completion; no upload can race canonical registration.
-	err := withMultipartCompletionAdvisoryLock(r.Context(), s.db, uploadID, fileID, func(db *gorm.DB) error {
-		return db.Transaction(func(tx *gorm.DB) error {
-			svc := *s
-			svc.db = tx
+	err := s.ingestLocks.Multipart(r.Context(), uploadID, fileID, func(scope domain.IngestSession) error {
+		lockedService, err := s.ingestService(scope)
+		if err != nil {
+			return err
+		}
+		return lockedService.units.Transaction(r.Context(), false, func(unit mutation.Tx[Store]) error {
+			svc := *lockedService
+			svc.uploadReads = boundFileStoreReader{unit.Store()}
+			svc.ownerPreflights = boundFileStoreReader{unit.Store()}
 			session, artifact, err := svc.authorizeMediaArtifact(r.Context(), identity.MemberID.String(), fileID, uploadID, bundleID, path)
 			if err != nil {
 				return err
@@ -159,63 +185,64 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 			if err := svc.stageMediaArtifact(r, bundleID, *artifact); err != nil {
 				return err
 			}
-			svc.refreshUploadSessionActivity(r.Context(), session.UploadID)
+			if err := unit.Store().RenewUploadActivity(r.Context(), session.UploadID, time.Now()); err != nil {
+				slog.ErrorContext(r.Context(), "Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", session.UploadID)
+			}
 			return nil
 		})
 	})
 	if err != nil {
 		status := clientArtifactHTTPStatus(err)
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadMediaArtifact", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
-	var session model.UploadSession
-	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
-		level := slog.LevelError
-		if err == gorm.ErrRecordNotFound {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Failed to load media artifact upload session", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
-		return session, nil, errs.NotFoundMsg("upload session not found")
+func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (domain.UploadSession, *clientMediaArtifact, error) {
+	var session domain.UploadSession
+	var row domain.UploadSession
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, uploadID, fileID, true)
+		return err
+	}); err != nil {
+		return session, nil, domainerr.New(domainerr.NotFound, "", "upload session not found").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
+	session = row
+
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
-		slog.WarnContext(ctx, "authorizeMediaArtifact: PermissionDenied", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
-		return session, nil, errs.PermissionDenied("artifact upload permission denied")
+		return session, nil, domainerr.Denied("artifact upload permission denied").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
 	writable, err := s.clientMediaArtifactWritable(ctx, session)
 	if err != nil {
 		return session, nil, err
 	}
 	if !writable || session.ClientMediaBundleID == nil || *session.ClientMediaBundleID != bundleID {
-		return session, nil, errs.FailedPrecondition("artifact bundle is not writable")
+		return session, nil, domainerr.Precondition("artifact bundle is not writable")
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		return session, nil, errs.Internal(err)
+		return session, nil, err
 	}
 	if plan.MemberID != memberID {
-		return session, nil, errs.PermissionDenied("client media bundle belongs to another member")
+		return session, nil, domainerr.Denied("client media bundle belongs to another member")
 	}
 	artifact := plan.artifact(path)
 	if artifact == nil {
-		return session, nil, errs.InvalidArgument("path", "artifact is absent from plan")
+		return session, nil, domainerr.InvalidField("path", "artifact is absent from plan")
 	}
 	return session, artifact, nil
 }
 
-func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string, artifact clientMediaArtifact) error {
+func (s *Service) stageMediaArtifact(request *http.Request, bundleID string, artifact clientMediaArtifact) error {
 	if request.ContentLength != artifact.Size || normalizeMimeType(request.Header.Get("Content-Type")) != artifact.MimeType {
-		return errs.InvalidArgument("body", "artifact size or MIME differs from plan")
+		return domainerr.InvalidField("body", "artifact size or MIME differs from plan")
 	}
 	tmp, err := os.CreateTemp("", "dsub-client-artifact-*")
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	defer func() {
@@ -225,79 +252,54 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 	}()
 	size, digest, err := hashArtifactBody(request.Body, tmp, artifact.Size)
 	if err != nil || size != artifact.Size || digest != artifact.SHA256 {
-		if err != nil {
-			slog.WarnContext(request.Context(), "Failed to read media artifact", failurecause.Attr(err), "bundle_id", bundleID)
-		}
-		return errs.InvalidArgument("body", "artifact size or SHA256 mismatch")
+		return domainerr.InvalidField("body", "artifact size or SHA256 mismatch").WithCause(failurecause.WithAttrs(err, slog.String("bundle_id", bundleID)))
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	_, err = s.s3Client.PutObject(request.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(s.s3Bucket), Key: aws.String(clientMediaStagingKey(bundleID, artifact.Path)), Body: tmp,
 		ContentLength: aws.Int64(size), ContentType: aws.String(artifact.MimeType),
 	})
 	if err != nil {
-		return errs.Internal(fmt.Errorf("stage client artifact: %w", err))
+		return fmt.Errorf("stage client artifact: %w", err)
 	}
 	return nil
 }
 
-func clientArtifactHTTPStatus(err error) int {
-	switch connect.CodeOf(err) {
-	case connect.CodeInvalidArgument, connect.CodeOutOfRange:
-		return http.StatusBadRequest
-	case connect.CodeUnauthenticated:
-		return http.StatusUnauthorized
-	case connect.CodeNotFound:
-		return http.StatusNotFound
-	case connect.CodePermissionDenied:
-		return http.StatusForbidden
-	case connect.CodeFailedPrecondition, connect.CodeAlreadyExists, connect.CodeAborted:
-		return http.StatusConflict
-	case connect.CodeResourceExhausted:
-		return http.StatusTooManyRequests
-	case connect.CodeUnavailable:
-		return http.StatusServiceUnavailable
-	case connect.CodeDeadlineExceeded:
-		return http.StatusGatewayTimeout
-	case connect.CodeCanceled:
-		return 499
-	case connect.CodeUnimplemented:
-		return http.StatusNotImplemented
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
-func clientMediaBundleMatches(session model.UploadSession, bundleID string) error {
+func clientMediaBundleMatches(session domain.UploadSession, bundleID string) error {
 	if session.ClientMediaBundleID == nil {
 		if bundleID != "" {
-			return errs.FailedPrecondition("client media bundle is not prepared")
+			return domainerr.Precondition("client media bundle is not prepared")
 		}
 		return nil
 	}
 	if strings.TrimSpace(bundleID) != *session.ClientMediaBundleID {
-		return errs.FailedPrecondition("completion requires the prepared client media bundle")
+		return domainerr.Precondition("completion requires the prepared client media bundle")
 	}
 	return nil
 }
 
 // Finalizing repair changes staging only, and remains serialized with completion.
-func (s *FileService) clientMediaArtifactWritable(ctx context.Context, session model.UploadSession) (bool, error) {
+func (s *Service) clientMediaArtifactWritable(ctx context.Context, session domain.UploadSession) (bool, error) {
 	if clientMediaSessionWritable(session) {
 		return true, nil
 	}
-	if session.Status != model.UploadSessionStatusFinalizing {
+	if session.Status != domain.UploadSessionStatusFinalizing {
 		return false, nil
 	}
-	var file model.File
-	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if err == gorm.ErrRecordNotFound {
+	var file File
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, session.FileID)
+		return err
+	})
+	if errors.Is(err, domain.ErrFileNotFound) {
 		return true, nil
 	}
+
 	if err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	// The durable receipt seals uploads even if a later deletion/corruption changes derivatives.
 	return file.ClientMediaBundleID == nil && file.DeleteRequestedAt == nil, nil

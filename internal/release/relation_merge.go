@@ -1,43 +1,87 @@
 package release
 
-import (
-	"context"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
-	"log/slog"
-)
+// RelationOrderIntent moves ItemID before NextItemID, otherwise after
+// PreviousItemID, otherwise to the end.
+type RelationOrderIntent struct {
+	ItemID         string
+	PreviousItemID *string
+	NextItemID     *string
+}
 
-func applyRelationOrderIntent(ids []string, intent *managev1.RelationOrderIntent) ([]string, bool) {
-	if intent == nil || intent.GetItemId() == "" {
+// Snapshot is the relation entries a client observed. A relation set
+// without its observation cannot merge with concurrent edits, so a nil
+// Snapshot is rejected.
+type Snapshot[T any] struct {
+	Items []T
+}
+
+// ReleaseArtistInput is one Artist of a Release.
+type ReleaseArtistInput struct {
+	ArtistID string
+}
+
+// ReleaseLabelInput is one Label of a Release.
+type ReleaseLabelInput struct {
+	LabelID       string
+	CatalogNumber *string
+}
+
+// ReleaseFormatInput is one Format of a Release.
+type ReleaseFormatInput struct {
+	FormatID    string
+	Description *string
+}
+
+// CreditInput is one Release or Track credit. ID is empty for a new credit.
+type CreditInput struct {
+	ID           *string
+	ArtistID     *string
+	MemberID     *string
+	CreditedName *string
+	CreditRole   *string
+	SortOrder    int32
+}
+
+func (c *CreditInput) id() string {
+	if c == nil || c.ID == nil {
+		return ""
+	}
+	return *c.ID
+}
+
+func applyRelationOrderIntent(ids []string, intent *RelationOrderIntent) ([]string, bool) {
+	if intent == nil || intent.ItemID == "" {
 		return ids, false
 	}
-	from := indexOfID(ids, intent.GetItemId())
+	from := indexOfID(ids, intent.ItemID)
 	if from < 0 {
 		return ids, false
 	}
 	remaining := append([]string(nil), ids...)
 	remaining = append(remaining[:from], remaining[from+1:]...)
 
-	insertBefore := intent.GetNextItemId()
-	if insertBefore != "" && insertBefore != intent.GetItemId() {
+	if insertBefore := optionalValue(intent.NextItemID); insertBefore != "" && insertBefore != intent.ItemID {
 		if to := indexOfID(remaining, insertBefore); to >= 0 {
-			result := insertID(remaining, to, intent.GetItemId())
+			result := insertID(remaining, to, intent.ItemID)
 			return result, !equalIDs(ids, result)
 		}
 	}
-
-	insertAfter := intent.GetPreviousItemId()
-	if insertAfter != "" && insertAfter != intent.GetItemId() {
+	if insertAfter := optionalValue(intent.PreviousItemID); insertAfter != "" && insertAfter != intent.ItemID {
 		if to := indexOfID(remaining, insertAfter); to >= 0 {
-			result := insertID(remaining, to+1, intent.GetItemId())
+			result := insertID(remaining, to+1, intent.ItemID)
 			return result, !equalIDs(ids, result)
 		}
 	}
 
-	remaining = append(remaining, intent.GetItemId())
+	remaining = append(remaining, intent.ItemID)
 	return remaining, !equalIDs(ids, remaining)
+}
+
+func optionalValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func indexOfID(ids []string, id string) int {
@@ -69,396 +113,209 @@ func equalIDs(left, right []string) bool {
 	return true
 }
 
-func mergeReleaseArtists(
-	current []model.ReleaseArtist,
-	observed, desired []*managev1.ReleaseArtistInput,
-	intent *managev1.RelationOrderIntent,
-) []model.ReleaseArtist {
-	observedIDs := make(map[string]struct{}, len(observed))
-	desiredRows := make(map[string]*managev1.ReleaseArtistInput, len(desired))
-	for _, row := range observed {
-		if row != nil && row.ArtistId != "" {
-			observedIDs[row.ArtistId] = struct{}{}
-		}
-	}
-	for _, row := range desired {
-		if row != nil && row.ArtistId != "" {
-			desiredRows[row.ArtistId] = row
-		}
-	}
+// observedMerge applies a desired relation set to the current rows against
+// the set the client observed: an observed entry the client no longer wants
+// is removed, an observed entry it still wants takes the client's attribute
+// changes, and a wanted entry that is neither observed nor current is
+// appended. Entries a concurrent editor added keep their place.
+type observedMerge[Row any, Input any] struct {
+	rowKey   func(Row) string
+	inputKey func(*Input) string
+	// update applies the attribute delta between observed and desired; nil
+	// keeps the current row.
+	update func(row *Row, observed, desired *Input)
+	// add returns the row of a new desired entry; false skips the entry.
+	add func(*Input) (Row, bool)
+}
 
-	next := make([]model.ReleaseArtist, 0, len(current)+len(desiredRows))
-	currentIDs := make(map[string]struct{}, len(current))
+func (m observedMerge[Row, Input]) merge(current []Row, observed, desired []*Input) ([]Row, bool) {
+	observedByKey := m.keyed(observed)
+	desiredByKey := m.keyed(desired)
+	next := make([]Row, 0, len(current)+len(desiredByKey))
+	currentKeys := make(map[string]struct{}, len(current))
 	membershipChanged := false
 	for _, row := range current {
-		currentIDs[row.ArtistID] = struct{}{}
-		if _, wasObserved := observedIDs[row.ArtistID]; wasObserved {
-			if _, isDesired := desiredRows[row.ArtistID]; !isDesired {
-				membershipChanged = true
-				continue
-			}
-		}
-		next = append(next, row)
-	}
-	for _, row := range desired {
-		if row == nil || row.ArtistId == "" {
-			continue
-		}
-		if _, wasObserved := observedIDs[row.ArtistId]; wasObserved {
-			continue
-		}
-		if _, exists := currentIDs[row.ArtistId]; exists {
-			continue
-		}
-		next = append(next, model.ReleaseArtist{ArtistID: row.ArtistId})
-		currentIDs[row.ArtistId] = struct{}{}
-		membershipChanged = true
-	}
-
-	ids := releaseArtistIDs(next)
-	ids, reordered := applyRelationOrderIntent(ids, intent)
-	if membershipChanged || reordered {
-		next = orderReleaseArtists(next, ids)
-		for index := range next {
-			next[index].SortOrder = index
-		}
-	}
-	return next
-}
-
-func releaseArtistIDs(rows []model.ReleaseArtist) []string {
-	ids := make([]string, len(rows))
-	for index, row := range rows {
-		ids[index] = row.ArtistID
-	}
-	return ids
-}
-
-func orderReleaseArtists(rows []model.ReleaseArtist, ids []string) []model.ReleaseArtist {
-	byID := make(map[string]model.ReleaseArtist, len(rows))
-	for _, row := range rows {
-		byID[row.ArtistID] = row
-	}
-	ordered := make([]model.ReleaseArtist, 0, len(ids))
-	for _, id := range ids {
-		if row, ok := byID[id]; ok {
-			ordered = append(ordered, row)
-		}
-	}
-	return ordered
-}
-
-func mergeReleaseLabels(
-	current []model.ReleaseLabel,
-	observed, desired []*managev1.ReleaseLabelInput,
-	intent *managev1.RelationOrderIntent,
-) []model.ReleaseLabel {
-	observedRows := make(map[string]*managev1.ReleaseLabelInput, len(observed))
-	desiredRows := make(map[string]*managev1.ReleaseLabelInput, len(desired))
-	for _, row := range observed {
-		if row != nil && row.LabelId != "" {
-			observedRows[row.LabelId] = row
-		}
-	}
-	for _, row := range desired {
-		if row != nil && row.LabelId != "" {
-			desiredRows[row.LabelId] = row
-		}
-	}
-
-	next := make([]model.ReleaseLabel, 0, len(current)+len(desiredRows))
-	currentIDs := make(map[string]struct{}, len(current))
-	membershipChanged := false
-	for _, row := range current {
-		currentIDs[row.LabelID] = struct{}{}
-		observedRow, wasObserved := observedRows[row.LabelID]
-		desiredRow, isDesired := desiredRows[row.LabelID]
+		key := m.rowKey(row)
+		currentKeys[key] = struct{}{}
+		observedInput, wasObserved := observedByKey[key]
+		desiredInput, isDesired := desiredByKey[key]
 		if wasObserved && !isDesired {
 			membershipChanged = true
 			continue
 		}
-		if wasObserved && isDesired && !sameOptionalString(observedRow.CatalogNumber, desiredRow.CatalogNumber) {
-			row.CatalogNumber = desiredRow.CatalogNumber
+		if wasObserved && m.update != nil {
+			m.update(&row, observedInput, desiredInput)
 		}
 		next = append(next, row)
 	}
-	for _, row := range desired {
-		if row == nil || row.LabelId == "" {
+	for _, input := range desired {
+		if input == nil {
 			continue
 		}
-		if _, wasObserved := observedRows[row.LabelId]; wasObserved {
+		key := m.inputKey(input)
+		if _, wasObserved := observedByKey[key]; wasObserved {
 			continue
 		}
-		if _, exists := currentIDs[row.LabelId]; exists {
+		if _, exists := currentKeys[key]; exists && key != "" {
 			continue
 		}
-		next = append(next, model.ReleaseLabel{
-			LabelID:       row.LabelId,
-			CatalogNumber: row.CatalogNumber,
-		})
-		currentIDs[row.LabelId] = struct{}{}
+		row, ok := m.add(input)
+		if !ok {
+			continue
+		}
+		next = append(next, row)
+		if key != "" {
+			currentKeys[key] = struct{}{}
+		}
 		membershipChanged = true
 	}
+	return next, membershipChanged
+}
 
-	ids := releaseLabelIDs(next)
-	ids, reordered := applyRelationOrderIntent(ids, intent)
-	if membershipChanged || reordered {
-		next = orderReleaseLabels(next, ids)
-		for index := range next {
-			next[index].SortOrder = index
+func (m observedMerge[Row, Input]) keyed(inputs []*Input) map[string]*Input {
+	keyed := make(map[string]*Input, len(inputs))
+	for _, input := range inputs {
+		if input == nil {
+			continue
+		}
+		if key := m.inputKey(input); key != "" {
+			keyed[key] = input
 		}
 	}
-	return next
+	return keyed
 }
 
-func releaseLabelIDs(rows []model.ReleaseLabel) []string {
+// reorderRelation applies the order intent and renumbers the rows when the
+// membership changed or the intent moved an entry; otherwise the stored
+// order stands.
+func reorderRelation[Row any](
+	rows []Row,
+	key func(Row) string,
+	setSortOrder func(*Row, int),
+	intent *RelationOrderIntent,
+	membershipChanged bool,
+) []Row {
 	ids := make([]string, len(rows))
+	byID := make(map[string]Row, len(rows))
 	for index, row := range rows {
-		ids[index] = row.LabelID
+		ids[index] = key(row)
+		byID[ids[index]] = row
 	}
-	return ids
-}
-
-func orderReleaseLabels(rows []model.ReleaseLabel, ids []string) []model.ReleaseLabel {
-	byID := make(map[string]model.ReleaseLabel, len(rows))
-	for _, row := range rows {
-		byID[row.LabelID] = row
+	ids, reordered := applyRelationOrderIntent(ids, intent)
+	if !membershipChanged && !reordered {
+		return rows
 	}
-	ordered := make([]model.ReleaseLabel, 0, len(ids))
+	ordered := make([]Row, 0, len(ids))
 	for _, id := range ids {
 		if row, ok := byID[id]; ok {
 			ordered = append(ordered, row)
 		}
 	}
+	for index := range ordered {
+		setSortOrder(&ordered[index], index)
+	}
 	return ordered
 }
 
-func mergeReleaseFormats(
-	current []model.ReleaseFormat,
-	observed, desired []*managev1.ReleaseFormatInput,
-) []model.ReleaseFormat {
-	observedRows := make(map[string]*managev1.ReleaseFormatInput, len(observed))
-	desiredRows := make(map[string]*managev1.ReleaseFormatInput, len(desired))
-	for _, row := range observed {
-		if row != nil && row.FormatId != "" {
-			observedRows[row.FormatId] = row
-		}
-	}
-	for _, row := range desired {
-		if row != nil && row.FormatId != "" {
-			desiredRows[row.FormatId] = row
-		}
-	}
+func mergeReleaseArtists(
+	current []ReleaseArtist,
+	observed, desired []*ReleaseArtistInput,
+	intent *RelationOrderIntent,
+) []ReleaseArtist {
+	next, membershipChanged := observedMerge[ReleaseArtist, ReleaseArtistInput]{
+		rowKey:   func(row ReleaseArtist) string { return row.ArtistID },
+		inputKey: func(input *ReleaseArtistInput) string { return input.ArtistID },
+		add: func(input *ReleaseArtistInput) (ReleaseArtist, bool) {
+			return ReleaseArtist{ArtistID: input.ArtistID}, input.ArtistID != ""
+		},
+	}.merge(current, observed, desired)
+	return reorderRelation(next, func(row ReleaseArtist) string { return row.ArtistID },
+		func(row *ReleaseArtist, order int) { row.SortOrder = order }, intent, membershipChanged)
+}
 
-	next := make([]model.ReleaseFormat, 0, len(current)+len(desiredRows))
-	currentIDs := make(map[string]struct{}, len(current))
-	for _, row := range current {
-		currentIDs[row.FormatID] = struct{}{}
-		observedRow, wasObserved := observedRows[row.FormatID]
-		desiredRow, isDesired := desiredRows[row.FormatID]
-		if wasObserved && !isDesired {
-			continue
-		}
-		if wasObserved && isDesired && !sameOptionalString(observedRow.FormatDescription, desiredRow.FormatDescription) {
-			row.FormatDescription = desiredRow.FormatDescription
-		}
-		next = append(next, row)
-	}
-	for _, row := range desired {
-		if row == nil || row.FormatId == "" {
-			continue
-		}
-		if _, wasObserved := observedRows[row.FormatId]; wasObserved {
-			continue
-		}
-		if _, exists := currentIDs[row.FormatId]; exists {
-			continue
-		}
-		next = append(next, model.ReleaseFormat{FormatID: row.FormatId, FormatDescription: row.FormatDescription})
-		currentIDs[row.FormatId] = struct{}{}
-	}
+func mergeReleaseLabels(
+	current []ReleaseLabel,
+	observed, desired []*ReleaseLabelInput,
+	intent *RelationOrderIntent,
+) []ReleaseLabel {
+	next, membershipChanged := observedMerge[ReleaseLabel, ReleaseLabelInput]{
+		rowKey:   func(row ReleaseLabel) string { return row.LabelID },
+		inputKey: func(input *ReleaseLabelInput) string { return input.LabelID },
+		update: func(row *ReleaseLabel, observed, desired *ReleaseLabelInput) {
+			if !sameOptionalString(observed.CatalogNumber, desired.CatalogNumber) {
+				row.CatalogNumber = desired.CatalogNumber
+			}
+		},
+		add: func(input *ReleaseLabelInput) (ReleaseLabel, bool) {
+			return ReleaseLabel{LabelID: input.LabelID, CatalogNumber: input.CatalogNumber}, input.LabelID != ""
+		},
+	}.merge(current, observed, desired)
+	return reorderRelation(next, func(row ReleaseLabel) string { return row.LabelID },
+		func(row *ReleaseLabel, order int) { row.SortOrder = order }, intent, membershipChanged)
+}
+
+func mergeReleaseFormats(
+	current []ReleaseFormat,
+	observed, desired []*ReleaseFormatInput,
+) []ReleaseFormat {
+	next, _ := observedMerge[ReleaseFormat, ReleaseFormatInput]{
+		rowKey:   func(row ReleaseFormat) string { return row.FormatID },
+		inputKey: func(input *ReleaseFormatInput) string { return input.FormatID },
+		update: func(row *ReleaseFormat, observed, desired *ReleaseFormatInput) {
+			if !sameOptionalString(observed.Description, desired.Description) {
+				row.FormatDescription = desired.Description
+			}
+		},
+		add: func(input *ReleaseFormatInput) (ReleaseFormat, bool) {
+			return ReleaseFormat{FormatID: input.FormatID, FormatDescription: input.Description}, input.FormatID != ""
+		},
+	}.merge(current, observed, desired)
 	return next
 }
 
 func mergeReleaseCredits(
-	current []model.ReleaseCredit,
-	observed, desired []*managev1.ReleaseCreditInput,
-	intent *managev1.RelationOrderIntent,
-) []model.ReleaseCredit {
-	observedRows := make(map[string]*managev1.ReleaseCreditInput, len(observed))
-	desiredRows := make(map[string]*managev1.ReleaseCreditInput, len(desired))
-	for _, row := range observed {
-		if row != nil && row.GetId() != "" {
-			observedRows[row.GetId()] = row
-		}
-	}
-	for _, row := range desired {
-		if row != nil && row.GetId() != "" {
-			desiredRows[row.GetId()] = row
-		}
-	}
-
-	next := make([]model.ReleaseCredit, 0, len(current)+len(desiredRows))
-	currentIDs := make(map[string]struct{}, len(current))
-	membershipChanged := false
-	for _, row := range current {
-		currentIDs[row.ID] = struct{}{}
-		observedRow, wasObserved := observedRows[row.ID]
-		desiredRow, isDesired := desiredRows[row.ID]
-		if wasObserved && !isDesired {
-			membershipChanged = true
-			continue
-		}
-		if wasObserved && isDesired {
-			applyReleaseCreditAttributeDelta(&row, observedRow, desiredRow)
-		}
-		next = append(next, row)
-	}
-	for _, row := range desired {
-		if row == nil {
-			continue
-		}
-		id := row.GetId()
-		if _, wasObserved := observedRows[id]; wasObserved {
-			continue
-		}
-		if id != "" {
-			if _, exists := currentIDs[id]; exists {
-				continue
-			}
-		}
-		credit := releaseCreditFromInput(row)
-		next = append(next, credit)
-		if id != "" {
-			currentIDs[id] = struct{}{}
-		}
-		membershipChanged = true
-	}
-
-	ids := releaseCreditIDs(next)
-	ids, reordered := applyRelationOrderIntent(ids, intent)
-	if membershipChanged || reordered {
-		next = orderReleaseCredits(next, ids)
-		for index := range next {
-			next[index].SortOrder = index
-		}
-	}
-	return next
-}
-
-func applyReleaseCreditAttributeDelta(
-	current *model.ReleaseCredit,
-	observed, desired *managev1.ReleaseCreditInput,
-) {
-	if !sameOptionalString(observed.ArtistId, desired.ArtistId) {
-		current.ArtistID = desired.ArtistId
-	}
-	if !sameOptionalString(observed.MemberId, desired.MemberId) {
-		current.MemberID = desired.MemberId
-	}
-	if !sameOptionalString(observed.CreditedName, desired.CreditedName) {
-		current.CreditedName = desired.CreditedName
-	}
-	if !sameOptionalString(observed.CreditRole, desired.CreditRole) {
-		current.CreditRole = desired.CreditRole
-	}
-}
-
-func releaseCreditFromInput(input *managev1.ReleaseCreditInput) model.ReleaseCredit {
-	credit := model.ReleaseCredit{
-		CreditRole:   input.CreditRole,
-		SortOrder:    int(input.SortOrder),
-		ArtistID:     input.ArtistId,
-		MemberID:     input.MemberId,
-		CreditedName: input.CreditedName,
-	}
-	if id := input.GetId(); id != "" {
-		credit.ID = id
-	}
-	return credit
-}
-
-func releaseCreditIDs(rows []model.ReleaseCredit) []string {
-	ids := make([]string, len(rows))
-	for index, row := range rows {
-		ids[index] = row.ID
-	}
-	return ids
-}
-
-func orderReleaseCredits(rows []model.ReleaseCredit, ids []string) []model.ReleaseCredit {
-	byID := make(map[string]model.ReleaseCredit, len(rows))
-	for _, row := range rows {
-		byID[row.ID] = row
-	}
-	ordered := make([]model.ReleaseCredit, 0, len(ids))
-	for _, id := range ids {
-		if row, ok := byID[id]; ok {
-			ordered = append(ordered, row)
-		}
-	}
-	return ordered
+	current []ReleaseCredit,
+	observed, desired []*CreditInput,
+	intent *RelationOrderIntent,
+) []ReleaseCredit {
+	next, membershipChanged := observedMerge[ReleaseCredit, CreditInput]{
+		rowKey:   func(row ReleaseCredit) string { return row.ID },
+		inputKey: (*CreditInput).id,
+		update: func(row *ReleaseCredit, observed, desired *CreditInput) {
+			applyCreditAttributeDelta(
+				creditAttributes{&row.ArtistID, &row.MemberID, &row.CreditedName, &row.CreditRole}, observed, desired,
+			)
+		},
+		add: func(input *CreditInput) (ReleaseCredit, bool) {
+			return ReleaseCredit{
+				ID: input.id(), CreditRole: input.CreditRole, SortOrder: int(input.SortOrder),
+				ArtistID: input.ArtistID, MemberID: input.MemberID, CreditedName: input.CreditedName,
+			}, true
+		},
+	}.merge(current, observed, desired)
+	return reorderRelation(next, func(row ReleaseCredit) string { return row.ID },
+		func(row *ReleaseCredit, order int) { row.SortOrder = order }, intent, membershipChanged)
 }
 
 func mergeTrackCredits(
 	trackID string,
-	current []model.TrackCredit,
-	observed, desired []*managev1.TrackCreditInput,
-) []model.TrackCredit {
-	observedRows := make(map[string]*managev1.TrackCreditInput, len(observed))
-	desiredRows := make(map[string]*managev1.TrackCreditInput, len(desired))
-	for _, row := range observed {
-		if row != nil && row.GetId() != "" {
-			observedRows[row.GetId()] = row
-		}
-	}
-	for _, row := range desired {
-		if row != nil && row.GetId() != "" {
-			desiredRows[row.GetId()] = row
-		}
-	}
-
-	next := make([]model.TrackCredit, 0, len(current)+len(desiredRows))
-	currentIDs := make(map[string]struct{}, len(current))
-	membershipChanged := false
-	for _, row := range current {
-		currentIDs[row.ID] = struct{}{}
-		observedRow, wasObserved := observedRows[row.ID]
-		desiredRow, isDesired := desiredRows[row.ID]
-		if wasObserved && !isDesired {
-			membershipChanged = true
-			continue
-		}
-		if wasObserved && isDesired {
-			applyTrackCreditAttributeDelta(&row, observedRow, desiredRow)
-		}
-		next = append(next, row)
-	}
-	for _, row := range desired {
-		if row == nil {
-			continue
-		}
-		id := row.GetId()
-		if _, wasObserved := observedRows[id]; wasObserved {
-			continue
-		}
-		if id != "" {
-			if _, exists := currentIDs[id]; exists {
-				continue
-			}
-		}
-		credit, err := newTrackCredit(trackID, row)
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "release", "operation", "mergeTrackCredits", failurecause.Attr(err), "track_id", trackID)
-			continue
-		}
-		credit.ID = id
-		next = append(next, credit)
-		if id != "" {
-			currentIDs[id] = struct{}{}
-		}
-		membershipChanged = true
-	}
+	current []TrackCredit,
+	observed, desired []*CreditInput,
+) []TrackCredit {
+	next, membershipChanged := observedMerge[TrackCredit, CreditInput]{
+		rowKey:   func(row TrackCredit) string { return row.ID },
+		inputKey: (*CreditInput).id,
+		update: func(row *TrackCredit, observed, desired *CreditInput) {
+			applyCreditAttributeDelta(
+				creditAttributes{&row.ArtistID, &row.MemberID, &row.CreditedName, &row.CreditRole}, observed, desired,
+			)
+		},
+		add: func(input *CreditInput) (TrackCredit, bool) {
+			credit, err := newTrackCredit(trackID, input)
+			credit.ID = input.id()
+			return credit, err == nil
+		},
+	}.merge(current, observed, desired)
 	if membershipChanged {
 		for index := range next {
 			next[index].SortOrder = index
@@ -467,25 +324,32 @@ func mergeTrackCredits(
 	return next
 }
 
-func applyTrackCreditAttributeDelta(
-	current *model.TrackCredit,
-	observed, desired *managev1.TrackCreditInput,
-) {
-	if !sameOptionalString(observed.ArtistId, desired.ArtistId) {
-		current.ArtistID = desired.ArtistId
-	}
-	if !sameOptionalString(observed.MemberId, desired.MemberId) {
-		current.MemberID = desired.MemberId
-	}
-	if !sameOptionalString(observed.CreditedName, desired.CreditedName) {
-		current.CreditedName = desired.CreditedName
-	}
-	if !sameOptionalString(observed.CreditRole, desired.CreditRole) {
-		current.CreditRole = desired.CreditRole
+// creditAttributes points at the attributes a Release or Track credit row
+// shares.
+type creditAttributes struct {
+	artistID, memberID, creditedName, creditRole **string
+}
+
+// applyCreditAttributeDelta takes each attribute the client changed between
+// its observation and its desired credit; untouched attributes keep a
+// concurrent editor's value.
+func applyCreditAttributeDelta(current creditAttributes, observed, desired *CreditInput) {
+	for _, attribute := range []struct {
+		current                **string
+		observed, desiredValue *string
+	}{
+		{current.artistID, observed.ArtistID, desired.ArtistID},
+		{current.memberID, observed.MemberID, desired.MemberID},
+		{current.creditedName, observed.CreditedName, desired.CreditedName},
+		{current.creditRole, observed.CreditRole, desired.CreditRole},
+	} {
+		if !sameOptionalString(attribute.observed, attribute.desiredValue) {
+			*attribute.current = attribute.desiredValue
+		}
 	}
 }
 
-func sameReleaseArtistRows(left, right []model.ReleaseArtist) bool {
+func sameReleaseArtistRows(left, right []ReleaseArtist) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -497,41 +361,7 @@ func sameReleaseArtistRows(left, right []model.ReleaseArtist) bool {
 	return true
 }
 
-func persistReleaseArtists(tx *gorm.DB, releaseID string, current, next []model.ReleaseArtist) error {
-	nextByID := make(map[string]model.ReleaseArtist, len(next))
-	for _, row := range next {
-		nextByID[row.ArtistID] = row
-	}
-	currentByID := make(map[string]model.ReleaseArtist, len(current))
-	for _, row := range current {
-		currentByID[row.ArtistID] = row
-		if _, exists := nextByID[row.ArtistID]; !exists {
-			if err := tx.Delete(&model.ReleaseArtist{}, "release_id = ? AND artist_id = ?", releaseID, row.ArtistID).Error; err != nil {
-				return err
-			}
-		}
-	}
-	for _, row := range next {
-		previous, exists := currentByID[row.ArtistID]
-		if !exists {
-			row.ReleaseID = releaseID
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if previous.SortOrder != row.SortOrder {
-			if err := tx.Model(&model.ReleaseArtist{}).
-				Where("release_id = ? AND artist_id = ?", releaseID, row.ArtistID).
-				Update("sort_order", row.SortOrder).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func sameReleaseLabelRows(left, right []model.ReleaseLabel) bool {
+func sameReleaseLabelRows(left, right []ReleaseLabel) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -544,52 +374,11 @@ func sameReleaseLabelRows(left, right []model.ReleaseLabel) bool {
 	return true
 }
 
-func persistReleaseLabels(tx *gorm.DB, releaseID string, current, next []model.ReleaseLabel) error {
-	nextByID := make(map[string]model.ReleaseLabel, len(next))
-	for _, row := range next {
-		nextByID[row.LabelID] = row
-	}
-	currentByID := make(map[string]model.ReleaseLabel, len(current))
-	for _, row := range current {
-		currentByID[row.LabelID] = row
-		if _, exists := nextByID[row.LabelID]; !exists {
-			if err := tx.Delete(&model.ReleaseLabel{}, "release_id = ? AND label_id = ?", releaseID, row.LabelID).Error; err != nil {
-				return err
-			}
-		}
-	}
-	for _, row := range next {
-		previous, exists := currentByID[row.LabelID]
-		if !exists {
-			row.ReleaseID = releaseID
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		updates := map[string]any{}
-		if !sameOptionalString(previous.CatalogNumber, row.CatalogNumber) {
-			updates["catalog_number"] = row.CatalogNumber
-		}
-		if previous.SortOrder != row.SortOrder {
-			updates["sort_order"] = row.SortOrder
-		}
-		if len(updates) > 0 {
-			if err := tx.Model(&model.ReleaseLabel{}).
-				Where("release_id = ? AND label_id = ?", releaseID, row.LabelID).
-				Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func sameReleaseFormatRows(left, right []model.ReleaseFormat) bool {
+func sameReleaseFormatRows(left, right []ReleaseFormat) bool {
 	if len(left) != len(right) {
 		return false
 	}
-	byID := make(map[string]model.ReleaseFormat, len(left))
+	byID := make(map[string]ReleaseFormat, len(left))
 	for _, row := range left {
 		byID[row.FormatID] = row
 	}
@@ -602,41 +391,7 @@ func sameReleaseFormatRows(left, right []model.ReleaseFormat) bool {
 	return true
 }
 
-func persistReleaseFormats(tx *gorm.DB, releaseID string, current, next []model.ReleaseFormat) error {
-	nextByID := make(map[string]model.ReleaseFormat, len(next))
-	for _, row := range next {
-		nextByID[row.FormatID] = row
-	}
-	currentByID := make(map[string]model.ReleaseFormat, len(current))
-	for _, row := range current {
-		currentByID[row.FormatID] = row
-		if _, exists := nextByID[row.FormatID]; !exists {
-			if err := tx.Delete(&model.ReleaseFormat{}, "release_id = ? AND format_id = ?", releaseID, row.FormatID).Error; err != nil {
-				return err
-			}
-		}
-	}
-	for _, row := range next {
-		previous, exists := currentByID[row.FormatID]
-		if !exists {
-			row.ReleaseID = releaseID
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		if !sameOptionalString(previous.FormatDescription, row.FormatDescription) {
-			if err := tx.Model(&model.ReleaseFormat{}).
-				Where("release_id = ? AND format_id = ?", releaseID, row.FormatID).
-				Update("format_description", row.FormatDescription).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func sameReleaseCreditRows(left, right []model.ReleaseCredit) bool {
+func sameReleaseCreditRows(left, right []ReleaseCredit) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -650,54 +405,4 @@ func sameReleaseCreditRows(left, right []model.ReleaseCredit) bool {
 		}
 	}
 	return true
-}
-
-func persistReleaseCredits(tx *gorm.DB, releaseID string, current, next []model.ReleaseCredit) error {
-	nextByID := make(map[string]model.ReleaseCredit, len(next))
-	for _, row := range next {
-		nextByID[row.ID] = row
-	}
-	currentByID := make(map[string]model.ReleaseCredit, len(current))
-	for _, row := range current {
-		currentByID[row.ID] = row
-		if _, exists := nextByID[row.ID]; !exists {
-			if err := tx.Delete(&model.ReleaseCredit{}, "release_id = ? AND id = ?", releaseID, row.ID).Error; err != nil {
-				return err
-			}
-		}
-	}
-	for _, row := range next {
-		previous, exists := currentByID[row.ID]
-		if !exists {
-			row.ReleaseID = releaseID
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			continue
-		}
-		updates := map[string]any{}
-		if !sameOptionalString(previous.ArtistID, row.ArtistID) {
-			updates["artist_id"] = row.ArtistID
-		}
-		if !sameOptionalString(previous.MemberID, row.MemberID) {
-			updates["member_id"] = row.MemberID
-		}
-		if !sameOptionalString(previous.CreditedName, row.CreditedName) {
-			updates["credited_name"] = row.CreditedName
-		}
-		if !sameOptionalString(previous.CreditRole, row.CreditRole) {
-			updates["credit_role"] = row.CreditRole
-		}
-		if previous.SortOrder != row.SortOrder {
-			updates["sort_order"] = row.SortOrder
-		}
-		if len(updates) > 0 {
-			if err := tx.Model(&model.ReleaseCredit{}).
-				Where("release_id = ? AND id = ?", releaseID, row.ID).
-				Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -23,7 +22,7 @@ const (
 // entity identity, provider, or model.
 func emitTranslationJobTerminal(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	outcome translationJobTerminalOutcome,
 	errorClassification string,
 	startedAt time.Time,

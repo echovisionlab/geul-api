@@ -132,7 +132,7 @@ func (service *LoginHookService) resolveMember(
 	if err == nil || !errors.Is(err, ErrLoginMemberLinkRepairable) {
 		return memberID, err
 	}
-	slog.WarnContext(ctx, "Operation failed", "reason", "login_member_link_repair", failurecause.Attr(err), "identity_id", input.IdentityID)
+	slog.WarnContext(ctx, "Login Member link is repairable; provisioning it again", "operation", "repair_login_member_link", failurecause.Attr(err), "identity_id", input.IdentityID)
 	preferredLocale := strings.TrimSpace(input.PreferredLocale)
 	if preferredLocale == "" {
 		preferredLocale = localization.LocaleEnglish

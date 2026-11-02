@@ -4,191 +4,135 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
-func LoadTypedTranslationSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	artistID string,
-) (*translation.SourceDocument, error) {
-	if store == nil {
-		return nil, errors.New("artist translation content block store is not configured")
-	}
-	source, err := loadCreativeDocumentAuthority(ctx, db, artistContentEntity, artistID)
+// TranslationJob is the part of a translation job an Artist delivery reads.
+type TranslationJob struct {
+	EntityType          string
+	EntityID            string
+	TargetLocale        string
+	RequestedByMemberID string
+}
+
+// LoadTypedTranslationSourceDocument reads the Artist's source-locale title
+// and content document for translation, through store bound to the
+// translation domain's database handle.
+func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, artistID string) (*translation.SourceDocument, error) {
+	store := joined.Store
+
+	sourceLocale, err := loadCreativeDocumentAuthority(ctx, store, artistID, Unlocked)
 	if err != nil {
 		return nil, err
 	}
-	title, err := loadCreativeSourceTitle(ctx, db, artistContentEntity, artistID, source.SourceLocale)
+	title, err := loadCreativeSourceTitle(ctx, store, artistID, sourceLocale)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, db, artistContentEntity, artistID)
+	documentID, err := loadCreativeContentDocumentID(ctx, store, artistID)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, source.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
-		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return nil, normalizeCreativeContentBlockError(err)
 	}
-	document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, source.SourceLocale)
+	document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, sourceLocale)
 	if err != nil {
-		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return nil, normalizeCreativeContentBlockError(err)
 	}
-	var row struct {
-		RealName *string `gorm:"column:real_name"`
-	}
-	if err := db.WithContext(ctx).Table("artist").Select("real_name").Where("id = ?", artistID).Take(&row).Error; err != nil {
+	artist, err := store.FindArtist(ctx, artistID)
+	if err != nil {
 		return nil, err
 	}
 	return &translation.SourceDocument{
 		Title: title, ContentDocumentRevision: snapshot.Document.Revision.String(), ContentBlockDocument: document,
-		ProtectedTerms: translation.NormalizeProtectedTerms([]string{title, optionalArtistString(row.RealName)}),
+		ProtectedTerms: translation.NormalizeProtectedTerms([]string{title, optionalArtistString(artist.RealName)}),
 	}, nil
 }
 
-func BuildTranslationExtractionPlan(
-	job *model.TranslationJob,
-	source *translation.SourceDocument,
-) (*translation.ExtractionPlan, error) {
-	if job == nil || job.EntityType != artistContentEntity {
-		return nil, errors.New("typed Artist translation source is required")
-	}
-	return translation.BuildRichTextExtractionPlan(job, source, translation.RichTextDocumentFields{})
-}
-
-func BuildTranslationCandidate(
-	plan *translation.ExtractionPlan,
-	source *translation.SourceDocument,
-	results map[string]translation.UnitResult,
-) (*translation.Candidate, error) {
-	if plan == nil || plan.EntityType != artistContentEntity {
-		return nil, errors.New("typed Artist translation source is required")
-	}
-	return translation.BuildRichTextCandidate(plan, source, results)
-}
-
-func ApplyTypedTranslationCandidateWithDB(
+// ApplyTypedTranslationCandidate applies a provider delivery in the
+// translation domain's transaction, which store is bound to, replacing the
+// current target row.
+func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadata, nil, true, auditWriter, true,
+	store := joined.Store
+	auditWriter := joined.Audit
+
+	return applyTypedTranslationCandidate(
+		ctx, store, job, candidate, metadata, nil, targetlocale.RevisionCurrent, auditWriter, true,
 	)
 }
 
-// ApplyTypedTranslationInterchangeCandidateWithDB applies an interactive
-// XLIFF replacement against the exact target revision observed by the caller.
-func ApplyTypedTranslationInterchangeCandidateWithDB(
+// ApplyTypedTranslationInterchangeCandidate applies an XLIFF interchange
+// candidate under the target row CAS, in the translation domain's
+// transaction, which store is bound to.
+func ApplyTypedTranslationInterchangeCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	expectedTargetRevision *string,
 ) error {
-	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadata, expectedTargetRevision, false, nil, false,
+	store := joined.Store
+
+	return applyTypedTranslationCandidate(
+		ctx, store, job, candidate, metadata, expectedTargetRevision, targetlocale.RevisionObserved, nil, false,
 	)
 }
 
-func applyTypedTranslationCandidateWithDB(
+func applyTypedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	expectedTargetRevision *string,
-	useCurrentTargetRevision bool,
+	revisionMode targetlocale.RevisionMode,
 	auditWriter domainaudit.Appender,
 	appendProviderAudit bool,
 ) error {
-	if store == nil || job == nil || job.EntityType != artistContentEntity || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
+	if store == nil || job.EntityType != artistContentEntity || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed Artist translation candidate and content Block store are required")
 	}
 	if metadata.Summary != nil || len(metadata.ContentJSON) != 0 || metadata.ContentHTML != nil ||
 		metadata.ContentText != nil {
-		return errs.FailedPrecondition("Artist translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Artist translation body is stored as typed Content Blocks")
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, tx, artistContentEntity, job.EntityID)
+	documentID, err := loadCreativeContentDocumentID(ctx, store, job.EntityID)
 	if err != nil {
 		return err
 	}
 	expectedRevision, err := canonicalArtistUUID(candidate.ContentDocumentRevision)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
-	domain, err := internalCreativeContentFence(artistContentEntity, job.EntityID)(ctx, tx, documentID)
+	domain, err := internalCreativeContentFence(job.EntityID)(ctx, store, documentID)
 	if err != nil {
 		return err
 	}
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
-		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
-		if auditWriter == nil || parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
-		}
-		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
-		if loadErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, loadErr)
-		}
-		batch, buildErr := translation.BuildProviderTargetRichTextBatch(
-			snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
-		)
-		if buildErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, buildErr)
-		}
-		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
-		result, applyErr := store.ApplyBatch(
-			ctx, tx, batch, artistLockedTargetFence(documentID, domain),
-		)
-		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(applyErr), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
-			return translation.ErrSourceNoLongerCurrent
-		}
-		if applyErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, applyErr)
-		}
-		if !result.Changed {
-			return nil
-		}
-		if !result.TranslationSourceChanged {
-			return errs.InternalMsg("provider source Artist translation did not advance source state")
-		}
-		return domainaudit.AppendMember(
-			ctx, tx, auditWriter, job.RequestedByMemberID, sharedtelemetry.AuditArtistUpdated,
-			func(auditMetadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewArtistLocaleContentAuditRecord(
-					auditMetadata, job.EntityID, domain.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
-				)
-			},
-		)
+		return applyProviderSourceArtistTranslation(ctx, store, job, candidate, auditWriter, documentID, domain)
 	}
-	state, err := loadArtistTargetLocaleState(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, true,
-	)
+	state, err := loadArtistTargetLocaleState(ctx, store, job.EntityID, documentID, job.TargetLocale, true)
 	if err != nil {
 		return err
 	}
@@ -205,30 +149,30 @@ func applyTypedTranslationCandidateWithDB(
 			LocaleMutationGroups: []*contentv1.RichTextLocaleMutationGroup{{Locale: job.TargetLocale, Mutations: mutations}},
 		})
 		if err != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, err)
+			return normalizeCreativeContentBlockError(err)
 		}
 	}
 	if err != nil {
-		return normalizeCreativeContentBlockError(artistContentEntity, err)
+		return normalizeCreativeContentBlockError(err)
 	}
-	result, targetRevision, err := applyArtistTargetLocaleBatchAuthority(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch,
-		expectedTargetRevision, true, true, useCurrentTargetRevision, metadata.Now,
-		artistLockedTargetFence(documentID, domain),
-	)
+	result, targetRevision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
+		ArtistID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+		ExpectedTargetRevision: expectedTargetRevision,
+		Policy:                 targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: revisionMode},
+		Now:                    metadata.Now, Fence: lockedContentFence(documentID, domain),
+	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
-		return normalizeCreativeContentBlockError(artistContentEntity, err)
+		return normalizeCreativeContentBlockError(err)
 	}
 	changed := result.Changed
 	if candidate.Title != nil {
 		titleResult, _, titleErr := updateArtistTargetLocaleTitle(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale,
+			ctx, store, job.EntityID, documentID, job.TargetLocale,
 			result.DocumentRevision, &targetRevision, candidate.Title, metadata.Now,
-			artistLockedTargetFence(documentID, domain),
+			lockedContentFence(documentID, domain),
 		)
 		if titleErr != nil {
 			return titleErr
@@ -238,7 +182,7 @@ func applyTypedTranslationCandidateWithDB(
 	if !appendProviderAudit || !changed {
 		return nil
 	}
-	if auditWriter == nil || strings.TrimSpace(job.RequestedByMemberID) == "" {
+	if strings.TrimSpace(job.RequestedByMemberID) == "" {
 		return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
 	}
 	operation := sharedtelemetry.AuditItemOperationUpdated
@@ -246,8 +190,8 @@ func applyTypedTranslationCandidateWithDB(
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
 	memberID := strings.TrimSpace(job.RequestedByMemberID)
-	return domainaudit.AppendMember(
-		ctx, tx, auditWriter, memberID, sharedtelemetry.AuditArtistUpdated,
+	return store.AppendMemberAudit(
+		ctx, auditWriter, memberID, sharedtelemetry.AuditArtistUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewArtistLocaleContentAuditRecord(
 				metadata, job.EntityID, job.TargetLocale, operation,
@@ -256,11 +200,65 @@ func applyTypedTranslationCandidateWithDB(
 	)
 }
 
-func RequireLockedSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) error {
-	if err := lockArtistParticipantRoot(ctx, tx, artistID); err != nil {
+// applyProviderSourceArtistTranslation applies a provider's unit patch of
+// the source locale as its requesting Member.
+func applyProviderSourceArtistTranslation(
+	ctx context.Context,
+	store Store,
+	job TranslationJob,
+	candidate *translation.Candidate,
+	auditWriter domainaudit.Appender,
+	documentID uuid.UUID,
+	domain contentblock.DomainContext,
+) error {
+	requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
+	if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
+	}
+	snapshot, loadErr := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
+	if loadErr != nil {
+		return normalizeCreativeContentBlockError(loadErr)
+	}
+	batch, buildErr := translation.BuildProviderTargetRichTextBatch(
+		snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
+	)
+	if buildErr != nil {
+		return normalizeCreativeContentBlockError(buildErr)
+	}
+	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
+	result, applyErr := store.ApplyContentBatch(ctx, batch, lockedContentFence(documentID, domain))
+	if errors.Is(applyErr, contentblock.ErrStaleRevision) {
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
+	}
+	if applyErr != nil {
+		return normalizeCreativeContentBlockError(applyErr)
+	}
+	if !result.Changed {
+		return nil
+	}
+	if !result.TranslationSourceChanged {
+		return errors.New("provider source Artist translation did not advance source state")
+	}
+	return store.AppendMemberAudit(
+		ctx, auditWriter, job.RequestedByMemberID, sharedtelemetry.AuditArtistUpdated,
+		func(auditMetadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewArtistLocaleContentAuditRecord(
+				auditMetadata, job.EntityID, domain.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
+			)
+		},
+	)
+}
+
+// RequireLockedSourceLocaleEdit locks the Artist row, then requires Edit of
+// the principal lockActive locks, for the translation domain's source locale
+// change in its transaction, which store is bound to.
+func RequireLockedSourceLocaleEdit(ctx context.Context, joined Joined, checker entityparticipant.PermissionChecker, lockActive func(*auth.UserInfo) (bool, error), artistID string) error {
+	store := joined.Store
+
+	if err := artistEntity.LockRoot(ctx, store, artistID); err != nil {
 		return err
 	}
-	return requireLockedArtistPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Edit)
+	return artistEntity.RequireLockedPermission(ctx, lockActive, checker, artistID, policyv1.Artist.Edit)
 }
 
 func canonicalArtistUUID(value string) (uuid.UUID, error) {

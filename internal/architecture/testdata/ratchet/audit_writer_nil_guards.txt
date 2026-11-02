@@ -1,0 +1,3 @@
+# Nil checks on audit writers per package. Audit is mandatory; lower with
+# -update.
+1 internal/account

@@ -12,6 +12,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	publicpage "github.com/echovisionlab/geul-api/internal/page/public"
+	pagepublicpostgres "github.com/echovisionlab/geul-api/internal/page/public/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -81,6 +82,6 @@ func (a *PublicAccess) RequirePageShareLinkAccess(
 }
 
 var (
-	_ publicpage.DraftAccessChecker     = (*PublicAccess)(nil)
-	_ publicpage.ShareLinkAccessChecker = (*PublicAccess)(nil)
+	_ publicpage.DraftAccessChecker             = (*PublicAccess)(nil)
+	_ pagepublicpostgres.ShareLinkAccessChecker = (*PublicAccess)(nil)
 )

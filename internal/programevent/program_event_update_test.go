@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -14,26 +14,27 @@ import (
 
 func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *testing.T) {
 	base := time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC)
-	initial := model.ProgramEvent{
+	initial := Event{
 		StartsAt:     base,
 		EndsAt:       timestampPtr(timestamppb.New(base.Add(10 * time.Hour))),
-		LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
+		LocationMode: LocationModeOnline,
 	}
 	newStart := timestamppb.New(base.Add(8 * time.Hour))
 	request := &managev1.UpdateProgramEventRequest{StartsAt: newStart}
-	fields := structured.Fields{"title": "keep concurrent title"}
+	keepTimezone := "Asia/Seoul"
+	update := programEventUpdate{SettingsUpdate{Timezone: &keepTimezone}}
 
-	require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, request))
-	require.Equal(t, base.Add(8*time.Hour), fields["starts_at"])
+	require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(request)))
+	require.Equal(t, base.Add(8*time.Hour), *update.StartsAt)
 
-	locked := model.ProgramEvent{
+	locked := Event{
 		StartsAt:     base,
 		EndsAt:       timestampPtr(timestamppb.New(base.Add(6 * time.Hour))),
 		LocationMode: initial.LocationMode,
 	}
-	err := applyProgramEventTimeAndLocationUpdates(fields, &locked, request)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	require.Equal(t, "keep concurrent title", fields["title"])
+	err := applyProgramEventTimeAndLocationUpdates(&update, &locked, updateProgramEventCommand(request))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	require.Equal(t, keepTimezone, *update.Timezone)
 }
 
 func TestProgramEventRelationWritesRequireObservedBaselines(t *testing.T) {
@@ -48,66 +49,67 @@ func TestProgramEventRelationWritesRequireObservedBaselines(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateProgramEventRelationBaselines(test.request)
-			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			err := validateProgramEventRelationBaselines(updateProgramEventCommand(test.request))
+			require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 		})
 	}
 }
 
 func TestProgramEventObservedOnlyRelationBaselinesDoNotStartWrites(t *testing.T) {
-	require.NoError(t, validateProgramEventRelationBaselines(&managev1.UpdateProgramEventRequest{
+	require.NoError(t, validateProgramEventRelationBaselines(updateProgramEventCommand(&managev1.UpdateProgramEventRequest{
 		ObservedArtists: &managev1.ProgramEventArtistsSnapshot{},
 		ObservedLabels:  &managev1.ProgramEventLabelsSnapshot{},
 		ObservedClients: &managev1.ProgramEventClientsSnapshot{},
-	}))
+	})))
 }
 
 func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeChange(t *testing.T) {
-	mapPlaceMode := managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String()
+	mapPlaceMode := LocationModeMapPlace
 	initialPlace := "place-before"
 	requestedPlace := "place-requested"
-	for _, lockedMode := range []string{
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String(),
+	for _, lockedMode := range []LocationMode{
+		LocationModeOnline,
+		LocationModeTBA,
 	} {
-		t.Run(lockedMode, func(t *testing.T) {
-			initial := model.ProgramEvent{
+		t.Run(string(lockedMode), func(t *testing.T) {
+			initial := Event{
 				StartsAt:     time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC),
 				LocationMode: mapPlaceMode,
 				MapPlaceID:   &initialPlace,
 			}
 			request := &managev1.UpdateProgramEventRequest{MapPlaceId: &requestedPlace}
-			fields := structured.Fields{"title": "keep title"}
+			keepTimezone := "Asia/Seoul"
+			update := programEventUpdate{SettingsUpdate{Timezone: &keepTimezone}}
 
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, request))
-			require.Equal(t, "place-requested", *fields["map_place_id"].(*string))
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(request)))
+			require.Equal(t, "place-requested", *update.MapPlaceID.Value)
 
-			locked := model.ProgramEvent{
+			locked := Event{
 				StartsAt:     initial.StartsAt,
 				LocationMode: lockedMode,
 				MapPlaceID:   nil,
 			}
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &locked, request))
-			require.Contains(t, fields, "map_place_id")
-			require.Nil(t, fields["map_place_id"])
-			_, hasLocationModeUpdate := fields["location_mode"]
-			require.False(t, hasLocationModeUpdate)
-			require.Equal(t, "keep title", fields["title"])
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &locked, updateProgramEventCommand(request)))
+			require.True(t, update.MapPlaceID.Set)
+			require.Nil(t, update.MapPlaceID.Value)
+			require.Nil(t, update.LocationMode)
+			require.Equal(t, keepTimezone, *update.Timezone)
 		})
 	}
 
 	t.Run("explicit TBA transition clears current map place", func(t *testing.T) {
 		requestMode := managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA
-		initial := model.ProgramEvent{
+		initial := Event{
 			StartsAt:     time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC),
 			LocationMode: mapPlaceMode,
 			MapPlaceID:   &initialPlace,
 		}
-		fields := structured.Fields{}
-		require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, &managev1.UpdateProgramEventRequest{
+		var update programEventUpdate
+		require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(&managev1.UpdateProgramEventRequest{
 			LocationMode: &requestMode,
-		}))
-		require.Equal(t, requestMode.String(), fields["location_mode"])
-		require.Nil(t, fields["map_place_id"])
+		})))
+		require.Equal(t, LocationModeTBA, *update.LocationMode)
+		require.True(t, update.MapPlaceID.Set)
+		require.Nil(t, update.MapPlaceID.Value)
 	})
 }

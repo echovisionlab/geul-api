@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -19,7 +21,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
@@ -52,24 +53,19 @@ func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
-		db:        db,
-		s3Bucket:  "bucket",
-		cdnDomain: "https://cdn.example.com",
-		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	service := withNativeFileUnits(&Service{s3Bucket: "bucket", cdnDomain: "https://cdn.example.com", s3Client: newAvatarAssetTestS3Client(server)}, db, nativeFilePorts{})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
-	require.Equal(t, "webp", ref.GetExtension())
-	require.Equal(t, "image/webp", ref.GetMimeType())
-	require.True(t, strings.HasSuffix(ref.GetUrl(), "/asset/"+ref.GetAssetId()+"/avatar.webp"))
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, "webp", ref.Extension)
+	require.Equal(t, "image/webp", ref.MimeType)
+	require.True(t, strings.HasSuffix(ref.URL, "/asset/"+ref.AssetID+"/avatar.webp"))
+	require.Equal(t, digest[:], ref.SHA256)
 	require.Equal(t, 2, requestCount)
 
 	reused, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 	require.NoError(t, err)
-	require.Equal(t, ref.GetAssetId(), reused.GetAssetId())
+	require.Equal(t, ref.AssetID, reused.AssetID)
 	require.Equal(t, 2, requestCount)
 }
 
@@ -102,12 +98,7 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
-		db:        db,
-		s3Bucket:  "bucket",
-		cdnDomain: "https://cdn.example.com",
-		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	service := withNativeFileUnits(&Service{s3Bucket: "bucket", cdnDomain: "https://cdn.example.com", s3Client: newAvatarAssetTestS3Client(server)}, db, nativeFilePorts{})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.Error(t, err)
@@ -122,7 +113,7 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	failWrite = false
 	retried, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 	require.NoError(t, err)
-	require.Equal(t, asset.ID, retried.GetAssetId())
+	require.Equal(t, asset.ID, retried.AssetID)
 	var retriedAsset model.PublicAsset
 	require.NoError(t, db.First(&retriedAsset, "id = ?", asset.ID).Error)
 	require.Equal(t, model.PublicAssetStatusReady, retriedAsset.Status)
@@ -138,13 +129,13 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	fileID := uuid.NewString()
 	digest := sha256.Sum256([]byte("verified-avatar"))
 	createAvatarSourceFile(t, db, fileID, int64(len("verified-avatar")), digest[:])
-	allocated, _, err := mediaasset.NewLifecycle(db, "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	allocated, _, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: &fileID,
 		Kind:         "avatar",
 		Extension:    "webp",
 		MimeType:     "image/webp",
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition:  mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,17 +155,12 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
-		db:        db,
-		s3Bucket:  "bucket",
-		cdnDomain: "https://cdn.example.com",
-		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	service := withNativeFileUnits(&Service{s3Bucket: "bucket", cdnDomain: "https://cdn.example.com", s3Client: newAvatarAssetTestS3Client(server)}, db, nativeFilePorts{})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
-	require.Equal(t, allocated.ID, ref.GetAssetId())
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, allocated.ID, ref.AssetID)
+	require.Equal(t, digest[:], ref.SHA256)
 }
 
 func newUserAvatarAssetUnitDB(t *testing.T) *gorm.DB {

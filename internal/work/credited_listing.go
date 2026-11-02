@@ -2,180 +2,133 @@ package work
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// workSortConfig defines allowed sort fields for works
-type creditedWorkRow struct {
-	WorkID            string    `gorm:"column:work_id"`
-	SourceLocale      string    `gorm:"column:source_locale"`
-	Title             string    `gorm:"column:title"`
-	Slug              *string   `gorm:"column:slug"`
-	Type              string    `gorm:"column:type"`
-	Status            string    `gorm:"column:status"`
-	CreatedAt         time.Time `gorm:"column:created_at"`
-	CreditID          string    `gorm:"column:credit_id"`
-	CreditRole        *string   `gorm:"column:credit_role"`
-	ArtistID          *string   `gorm:"column:artist_id"`
-	ArtistName        *string   `gorm:"column:artist_name"`
-	ArtistImageFileID *string   `gorm:"column:artist_image_file_id"`
-	MemberID          *string   `gorm:"column:member_id"`
+// ListMyCreditedWorksQuery lists the credits of the caller and of the
+// Artists the caller owns or manages.
+type ListMyCreditedWorksQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
 }
 
-func (s *WorkService) ListMyCreditedWorks(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMyCreditedWorksRequest],
-) (_ *connect.Response[managev1.ListMyCreditedWorksResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListMyCreditedWorks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// CreditType names whom a credited Work credits.
+type CreditType uint8
 
+const (
+	CreditTypeArtist CreditType = iota + 1
+	CreditTypeMember
+)
+
+// CreditedWork is one credit of the caller or of an Artist the caller owns
+// or manages, with its Work.
+type CreditedWork struct {
+	WorkID       string
+	SourceLocale string
+	Title        string
+	Slug         *string
+	Type         string
+	Status       Status
+	CreditID     string
+	CreditRole   *string
+	CreditType   CreditType
+	CreditedAs   string
+	Image        *mediaasset.Reference
+	CreatedAt    time.Time
+}
+
+// CreditedWorkPage is one page of credited Works.
+type CreditedWorkPage struct {
+	Works      []CreditedWork
+	Pagination Pagination
+}
+
+func (s *Service) ListMyCreditedWorks(ctx context.Context, query ListMyCreditedWorksQuery) (CreditedWorkPage, error) {
 	principal := auth.GetUser(ctx)
 	if principal == nil || principal.MemberID == "" {
-		return nil, errs.AuthenticationRequired()
+		return CreditedWorkPage{}, domainerr.AuthenticationRequired()
 	}
 
 	memberID := principal.MemberID.String()
 
 	var artistIDs []string
-	var err error
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT artist_id::text FROM artist_owner WHERE member_id = ?::uuid
-		UNION
-		SELECT artist_id::text FROM artist_manager WHERE member_id = ?::uuid
-	`, memberID, memberID).Scan(&artistIDs).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		artistIDs, err = store.CreditingArtistIDs(ctx, memberID)
+		return err
+	}); err != nil {
+		return CreditedWorkPage{}, err
 	}
 
-	query := s.db.WithContext(ctx).
-		Table("work_credit wc").
-		Joins("JOIN work w ON w.id = wc.work_id").
-		Joins("LEFT JOIN artist a ON a.id = wc.artist_id").
-		Joins(`
-			LEFT JOIN (
-				SELECT DISTINCT ON (artist_id) artist_id, file_id
-				FROM artist_file
-				ORDER BY artist_id, sort_order ASC, created_at ASC
-			) afi ON afi.artist_id = a.id
-		`)
-
-	if len(artistIDs) > 0 {
-		query = query.Where("(wc.member_id = ? OR wc.artist_id IN ?)", memberID, artistIDs)
-	} else {
-		query = query.Where("wc.member_id = ?", memberID)
-	}
-
-	query, err = myCreditedWorkFilterConfig.ApplyFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-
+	pg := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.DefaultPaginationConfig)
+	var rows []CreditedRow
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		rows, total, err = store.ListCreditedWorks(ctx, CreditedPage{
+			MemberID: memberID, ArtistIDs: artistIDs, Filters: query.Filters, Sorts: query.Sorts,
+			Limit: pg.Limit, Offset: pg.Offset,
+		})
+		return err
+	}); err != nil {
+		return CreditedWorkPage{}, err
 	}
 
-	pg := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-
-	query, err = myCreditedWorkSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	var rows []creditedWorkRow
-	err = pg.Apply(query).
-		Select(`
-			w.id AS work_id,
- w.source_locale AS source_locale,
-			` + WorkSourceTitleSQL("w") + ` AS title,
-			w.slug AS slug,
-			w.type AS type,
-			w.status AS status,
-			w.created_at AS created_at,
-			wc.id AS credit_id,
-			wc.credit_role AS credit_role,
-			wc.artist_id AS artist_id,
-			` + ArtistSourceTitleSQL("a") + ` AS artist_name,
-			afi.file_id AS artist_image_file_id,
-			wc.member_id AS member_id
-		`).
-		Scan(&rows).Error
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if s.members == nil {
-		return nil, errs.InternalMsg("Work Member summary loader is not configured")
-	}
 	memberSummaries, err := s.members.LoadMemberSummaries(ctx, []string{memberID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return CreditedWorkPage{}, err
 	}
-	protoWorks := make([]*managev1.MyCreditedWork, 0, len(rows))
+	works := make([]CreditedWork, 0, len(rows))
 	for _, row := range rows {
 		credited, err := s.projectCreditedWork(ctx, row, memberID, memberSummaries[memberID])
 		if err != nil {
-			return nil, err
+			return CreditedWorkPage{}, err
 		}
-		protoWorks = append(protoWorks, credited)
+		works = append(works, credited)
 	}
 
-	return connect.NewResponse(&managev1.ListMyCreditedWorksResponse{
-		Works:      protoWorks,
-		Pagination: pg.BuildResponse(total),
-	}), nil
+	return CreditedWorkPage{Works: works, Pagination: paginationOf(pg, total)}, nil
 }
 
-func (s *WorkService) projectCreditedWork(
+func (s *Service) projectCreditedWork(
 	ctx context.Context,
-	row creditedWorkRow,
+	row CreditedRow,
 	memberID string,
-	memberSummary *commonv1.MemberSummary,
-) (*managev1.MyCreditedWork, error) {
-	workType := managev1.WorkType(managev1.WorkType_value[row.Type])
-	if workType == managev1.WorkType_WORK_TYPE_UNSPECIFIED {
-		workType = managev1.WorkType_WORK_TYPE_MUSIC_PROJECT
-	}
-	workStatus := managev1.WorkStatus(managev1.WorkStatus_value[row.Status])
-	if workStatus == managev1.WorkStatus_WORK_STATUS_UNSPECIFIED {
-		workStatus = managev1.WorkStatus_WORK_STATUS_DRAFT
-	}
-	credited := &managev1.MyCreditedWork{
-		WorkId:       row.WorkID,
+	memberSummary *memberref.Summary,
+) (CreditedWork, error) {
+	credited := CreditedWork{
+		WorkID:       row.WorkID,
 		SourceLocale: row.SourceLocale,
 		Title:        row.Title,
 		Slug:         row.Slug,
-		Type:         workType,
-		Status:       workStatus,
-		CreditId:     row.CreditID,
+		Type:         row.Type,
+		Status:       Status(row.Status),
+		CreditID:     row.CreditID,
 		CreditRole:   row.CreditRole,
-		CreatedAt:    timestamppb.New(row.CreatedAt),
+		CreatedAt:    row.CreatedAt,
 	}
 	if row.MemberID != nil && *row.MemberID == memberID {
 		if memberSummary == nil {
-			return nil, errs.InternalMsg("credited member is missing")
+			return CreditedWork{}, errors.New("credited member is missing")
 		}
-		credited.CreditType = managev1.MyCreditedWorkCreditType_MY_CREDITED_WORK_CREDIT_TYPE_MEMBER
-		credited.CreditedAs = memberSummary.GetNickname()
-		credited.CreditedAsImageAsset = memberSummary.AvatarAsset
+		credited.CreditType = CreditTypeMember
+		credited.CreditedAs = memberSummary.Nickname
+		credited.Image = memberSummary.Avatar.Reference()
 		return credited, nil
 	}
-	credited.CreditType = managev1.MyCreditedWorkCreditType_MY_CREDITED_WORK_CREDIT_TYPE_ARTIST
+	credited.CreditType = CreditTypeArtist
 	credited.CreditedAs = "Unknown Artist"
 	if row.ArtistName != nil && strings.TrimSpace(*row.ArtistName) != "" {
 		credited.CreditedAs = *row.ArtistName
@@ -183,18 +136,10 @@ func (s *WorkService) projectCreditedWork(
 	if row.ArtistImageFileID == nil {
 		return credited, nil
 	}
-	asset, err := s.runtime.ReadyPublicAssetRefForSourceFile(
-		ctx, s.db, *row.ArtistImageFileID, "image",
-	)
+	asset, err := s.readyFileAsset(ctx, *row.ArtistImageFileID, "image")
 	if err != nil {
-		return nil, err
+		return CreditedWork{}, err
 	}
-	credited.CreditedAsImageAsset = asset
+	credited.Image = asset
 	return credited, nil
 }
-
-// =============================================================================
-// Utility
-// =============================================================================
-
-// CheckWorkSlugAvailable checks if a slug is available (requires edit permission)

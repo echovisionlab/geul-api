@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -17,8 +17,8 @@ type manageFiles interface {
 		string,
 		uuid.UUID,
 		*auth.UserInfo,
-		[]*contentv1.ContentBlockMediaItem,
-	) ([]*contentv1.ContentBlockMediaItem, error)
+		[]*fileref.BlockMediaItem,
+	) ([]*fileref.BlockMediaItem, error)
 }
 
 // Files adapts the shared File runtime to Program Event manage/internal ports.
@@ -43,15 +43,15 @@ func (a *Files) HydrateAuthorizedProgramEventBlockMediaWithDB(
 	eventID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return a.files.HydrateAuthorizedProgramEventBlockMediaWithDB(
 		ctx, tx, eventID, documentID, principal, items,
 	)
 }
 
 type publicFiles interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
 // PublicFiles adapts request-scoped File delivery after Program Event has
@@ -69,7 +69,7 @@ func NewPublicFiles(files publicFiles) *PublicFiles {
 
 func (a *PublicFiles) HydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return a.files.HydrateAuthorizedContentBlockMedia(ctx, items)
 }

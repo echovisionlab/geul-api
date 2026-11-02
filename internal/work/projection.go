@@ -2,158 +2,200 @@ package work
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// workSortConfig defines allowed sort fields for works
-func (s *WorkService) CheckWorkSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckWorkSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckWorkSlugAvailableResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CheckWorkSlugAvailable", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if req.Msg.ExcludeWorkId != nil {
-		if err := RequireExists(ctx, s.db, *req.Msg.ExcludeWorkId); err != nil {
-			return nil, err
-		}
-		var work model.Work
-		if err := s.db.WithContext(ctx).Select("id", "status").Take(&work, "id = ?", *req.Msg.ExcludeWorkId).Error; err != nil {
-			return nil, errs.Internal(err)
-		}
-		if err := requireWorkPermission(ctx, s.spiceDB, work, policyv1.Work.Manage, workAuthorizationMutation); err != nil {
-			return nil, err
-		}
-	} else if err := requireWorkCreate(ctx, s.spiceDB); err != nil {
-		return nil, err
-	}
-	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
-		return nil, err
-	}
-
-	var count int64
-
-	query := s.db.WithContext(ctx).Model(&model.Work{}).Where("slug = ?", req.Msg.Slug)
-
-	if req.Msg.ExcludeWorkId != nil {
-		query = query.Where("id != ?", *req.Msg.ExcludeWorkId)
-	}
-
-	if err := query.Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if count == 0 {
-		available, err := routeregistry.IsResourceRouteAvailable(ctx, s.db, "works", req.Msg.Slug)
-		if err != nil {
-			return nil, err
-		}
-		if !available {
-			count = 1
-		}
-	}
-
-	return connect.NewResponse(&managev1.CheckWorkSlugAvailableResponse{
-		Available: count == 0,
-	}), nil
+// View is a Work as the management surface shows it: the row with its
+// source-locale title, summary and OG image, its content projection, and
+// the assets and clients a read attaches.
+type View struct {
+	Work
+	Title         string
+	Summary       *string
+	OgAssetID     *string
+	OgAsset       *mediaasset.Reference
+	FeaturedImage *mediaasset.Reference
+	Revision      string
+	Document      *contentv1.RichTextDocument
+	BlockMedia    []*fileref.BlockMediaItem
+	Clients       []Client
 }
 
-func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID string) *commonv1.AssetRef {
-	var result struct {
-		FileID *string `gorm:"column:file_id"`
+// Client is a client of a Work with its ready logos.
+type Client struct {
+	ID        string
+	Name      string
+	Website   *string
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
+}
+
+// viewOf overlays the Work's source-locale title, summary and OG image.
+func viewOf(work Work, source *SourceDocument) View {
+	view := View{Work: work}
+	if source == nil {
+		return view
+	}
+	if source.Title != nil {
+		view.Title = *source.Title
+	}
+	if source.Summary != nil {
+		view.Summary = source.Summary
+	}
+	view.OgAssetID = source.OgAssetID
+	return view
+}
+
+func collectWorkIDs(works []Work) []string {
+	ids := make([]string, 0, len(works))
+	for _, work := range works {
+		ids = append(ids, work.ID)
+	}
+	return ids
+}
+
+func (s *Service) loadSourceDocuments(ctx context.Context, workIDs []string) (map[string]SourceDocument, error) {
+	var documents map[string]SourceDocument
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		documents, err = store.SourceDocuments(ctx, workIDs)
+		return err
+	})
+	return documents, err
+}
+
+// viewWithSourceDocument reads the Work's source-locale document state and
+// overlays it.
+func (s *Service) viewWithSourceDocument(ctx context.Context, work Work) (View, error) {
+	documents, err := s.loadSourceDocuments(ctx, []string{work.ID})
+	if err != nil {
+		return View{}, err
+	}
+	source, ok := documents[work.ID]
+	if !ok {
+		return viewOf(work, nil), nil
+	}
+	return viewOf(work, &source), nil
+}
+
+// CheckWorkSlugAvailableQuery asks whether Slug is free for a new Work, or
+// for ExcludeWorkID's own Work.
+type CheckWorkSlugAvailableQuery struct {
+	Slug          string
+	ExcludeWorkID *string
+}
+
+// CheckWorkSlugAvailable reports whether no other Work and no route use the
+// slug.
+func (s *Service) CheckWorkSlugAvailable(ctx context.Context, query CheckWorkSlugAvailableQuery) (bool, error) {
+	if query.ExcludeWorkID != nil {
+		work, err := s.findWork(ctx, *query.ExcludeWorkID)
+		if err != nil {
+			return false, err
+		}
+		if err := requireWorkPermission(ctx, s.spiceDB, work, policyv1.Work.Manage, workAuthorizationMutation); err != nil {
+			return false, err
+		}
+	} else if err := requireWorkCreate(ctx, s.spiceDB); err != nil {
+		return false, err
+	}
+	if err := pathslug.Validate(query.Slug); err != nil {
+		return false, err
 	}
 
-	err := s.db.WithContext(ctx).
-		Table("work").
-		Select("work.featured_image_file_id AS file_id").
-		Where("work.id = ?", workID).
-		Scan(&result).Error
-
-	if err != nil || result.FileID == nil || *result.FileID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "getWorkFeaturedImageAsset", failurecause.Attr(err), "work_id", workID)
+	var available bool
+	err := s.read(ctx, func(store Store) error {
+		taken, err := store.SlugTaken(ctx, query.Slug, query.ExcludeWorkID)
+		if err != nil || taken {
+			return err
 		}
+		available, err = store.ResourceRouteAvailable(ctx, query.Slug)
+		return err
+	})
+	return available, err
+}
+
+func (s *Service) getWorkFeaturedImageAsset(ctx context.Context, workID string) *mediaasset.Reference {
+	var fileID *string
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		fileID, err = store.FeaturedImageFileID(ctx, workID)
+		if errors.Is(err, ErrWorkNotFound) {
+			fileID, err = nil, nil
+		}
+		return err
+	}); err != nil {
+		slog.ErrorContext(ctx, "Work featured image lookup failed; serving work without featured image", "domain", "work", "operation", "load_featured_image", failurecause.Attr(err), "work_id", workID)
+		return nil
+	}
+	if fileID == nil || *fileID == "" {
 		return nil
 	}
 
-	asset, err := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *result.FileID, "image")
+	asset, err := s.readyFileAsset(ctx, *fileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve work featured image asset", "workId", workID, "fileId", *result.FileID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Work featured image asset resolution failed; serving work without featured image", "domain", "work", "operation", "resolve_featured_image_asset", failurecause.Attr(err), "work_id", workID, "file_id", *fileID)
 		return nil
 	}
 	return asset
 }
 
-func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*managev1.WorkClient, error) {
-	type clientRow struct {
-		ID          string
-		Name        string
-		Website     *string
-		LightFileID *string `gorm:"column:light_file_id"`
-		DarkFileID  *string `gorm:"column:dark_file_id"`
-	}
+func (s *Service) readyFileAsset(ctx context.Context, fileID, kind string) (*mediaasset.Reference, error) {
+	var asset *mediaasset.Reference
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		asset, err = store.ReadyFileAsset(ctx, fileID, kind)
+		return err
+	})
+	return asset, err
+}
 
-	var rows []clientRow
-	err := s.db.WithContext(ctx).
-		Table("work_client wc").
-		Select("c.id, c.name, c.website, c.logo_light_file_id AS light_file_id, c.logo_dark_file_id AS dark_file_id").
-		Joins("JOIN client c ON c.id = wc.client_id").
-		Where("wc.work_id = ?", workID).
-		Order("wc.sort_order ASC").
-		Scan(&rows).Error
-
-	if err != nil {
-		return nil, errs.Internal(err)
+func (s *Service) getWorkClients(ctx context.Context, workID string) ([]Client, error) {
+	var rows []ClientRow
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.Clients(ctx, workID)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
 
-	clients := make([]*managev1.WorkClient, 0, len(rows))
+	clients := make([]Client, 0, len(rows))
 	for _, row := range rows {
-		client := &managev1.WorkClient{
-			Id:   row.ID,
-			Name: row.Name,
-		}
-		if row.Website != nil {
-			client.Website = row.Website
-		}
+		client := Client{ID: row.ID, Name: row.Name, Website: row.Website}
 		if row.LightFileID != nil && *row.LightFileID != "" {
-			asset, assetErr := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *row.LightFileID, "logo")
+			asset, assetErr := s.readyFileAsset(ctx, *row.LightFileID, "logo")
 			if assetErr != nil {
-				slog.ErrorContext(ctx, "Failed to resolve client light logo asset", "clientId", row.ID, "fileId", *row.LightFileID, failurecause.Attr(assetErr))
+				slog.ErrorContext(ctx, "Work client light logo resolution failed; serving client without light logo", "domain", "work", "operation", "resolve_client_logo_asset", failurecause.Attr(assetErr), "work_id", workID, "client_id", row.ID, "file_id", *row.LightFileID)
 			} else {
-				client.LogoLightAsset = asset
+				client.LightLogo = asset
 			}
 		}
 		if row.DarkFileID != nil && *row.DarkFileID != "" {
-			asset, assetErr := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *row.DarkFileID, "logo")
+			asset, assetErr := s.readyFileAsset(ctx, *row.DarkFileID, "logo")
 			if assetErr != nil {
-				slog.ErrorContext(ctx, "Failed to resolve client dark logo asset", "clientId", row.ID, "fileId", *row.DarkFileID, failurecause.Attr(assetErr))
+				slog.ErrorContext(ctx, "Work client dark logo resolution failed; serving client without dark logo", "domain", "work", "operation", "resolve_client_logo_asset", failurecause.Attr(assetErr), "work_id", workID, "client_id", row.ID, "file_id", *row.DarkFileID)
 			} else {
-				client.LogoDarkAsset = asset
+				client.DarkLogo = asset
 			}
 		}
 		clients = append(clients, client)
@@ -162,75 +204,64 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*man
 	return clients, nil
 }
 
-func (s *WorkService) loadReadyWorkOgAssets(
-	ctx context.Context,
-	works []model.Work,
-) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyWorkOgAssets(ctx context.Context, works []View) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(works))
 	for i := range works {
 		candidates = append(candidates, works[i].OgAssetID)
 	}
-	return loadReadyManageOgAssetRefs(ctx, s.runtime, s.db, candidates...)
+	return s.loadReadyManageOgAssetRefs(ctx, candidates...)
 }
 
-func (s *WorkService) workResponseWithReadyOg(
-	ctx context.Context,
-	work *model.Work,
-	imageAsset *commonv1.AssetRef,
-) (*connect.Response[managev1.Work], error) {
-	if err := s.hydrateWorkContentProjection(ctx, work); err != nil {
-		return nil, err
+// workResponseWithReadyOg adds the content projection and the ready OG
+// image to view.
+func (s *Service) workResponseWithReadyOg(ctx context.Context, view View, imageAsset *mediaasset.Reference) (View, error) {
+	if err := s.hydrateWorkContentProjection(ctx, &view); err != nil {
+		return View{}, err
 	}
-	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, work.OgAssetID)
+	ogAsset, err := s.readyManageOgAssetRef(ctx, view.OgAssetID)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	return connect.NewResponse(s.toProtoWork(work, imageAsset, ogAsset)), nil
+	view.OgAsset, view.FeaturedImage = ogAsset, imageAsset
+	return view, nil
 }
 
-func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *model.Work) error {
-	if work == nil {
-		return errs.InternalMsg("Work is required")
-	}
-	if s.contentBlocks == nil {
-		return errs.InternalMsg("Work content Block store is not configured")
-	}
-	if s.mediaHydrator == nil {
-		return errs.InternalMsg("Work Block media hydrator is not configured")
-	}
-	var source *workSourceLocaleMetadata
+// workContent is the content projection a manage read attaches to a Work.
+type workContent struct {
+	document   *contentv1.RichTextDocument
+	blockMedia []*fileref.BlockMediaItem
+	revision   string
+}
+
+// hydrateWorkContentProjection reads the Work's source-locale document and
+// its block media into view, after the principal's fresh View check.
+func (s *Service) hydrateWorkContentProjection(ctx context.Context, view *View) error {
 	var snapshot contentblock.Snapshot
-	var mediaItems []*contentv1.ContentBlockMediaItem
-	var principal *auth.UserInfo
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var loadErr error
-		if _, loadErr = requireLockedWorkPermission(
-			ctx, tx, s.spiceDB, work.ID, policyv1.Work.View, workAuthorizationRead,
-		); loadErr != nil {
-			return loadErr
+	var mediaItems []*fileref.BlockMediaItem
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		if _, err := requireLockedWorkPermission(
+			ctx, store, freshRequire(ctx, store, s.fence, s.spiceDB), view.ID, policyv1.Work.View, workAuthorizationRead,
+		); err != nil {
+			return err
 		}
-		principal = auth.GetUser(ctx)
-		documentID, loadErr := loadWorkContentDocumentIDForRead(ctx, tx, work.ID)
-		if loadErr != nil {
-			return loadErr
+		principal := auth.GetUser(ctx)
+		documentID, err := loadWorkContentDocumentID(ctx, store, view.ID, ShareLock)
+		if err != nil {
+			return err
 		}
-		source, loadErr = LoadRequiredSourceLocaleMetadata(ctx, tx, work.ID)
-		if loadErr != nil {
-			return loadErr
+		source, err := LoadRequiredSourceLocaleMetadata(ctx, store, view.ID)
+		if err != nil {
+			return err
 		}
-		snapshot, loadErr = s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, source.Locale)
-		if loadErr != nil {
-			return loadErr
+		if snapshot, err = store.LockedContentSnapshot(ctx, documentID, source.Locale); err != nil {
+			return err
 		}
-		mediaItems, loadErr = LoadContentBlockMediaReferences(ctx, tx, documentID)
-		if loadErr != nil {
-			return loadErr
+		if mediaItems, err = store.MediaReferences(ctx, documentID); err != nil {
+			return err
 		}
-		mediaItems, loadErr = s.mediaHydrator.HydrateAuthorizedWorkBlockMediaWithDB(
-			ctx, tx, work.ID, documentID, principal, mediaItems,
-		)
-		return loadErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		mediaItems, err = store.HydrateBlockMedia(ctx, view.ID, documentID, principal, mediaItems)
+		return err
+	})
 	if err != nil {
 		return normalizeWorkContentBlockError(err)
 	}
@@ -238,33 +269,25 @@ func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *mo
 	if err != nil {
 		return normalizeWorkContentBlockError(err)
 	}
-	work.ContentDocument = document
-	work.ContentRevision = snapshot.Document.Revision.String()
-	work.BlockMedia = mediaItems
+	content := workContent{document: document, blockMedia: mediaItems, revision: snapshot.Document.Revision.String()}
+	view.Document, view.BlockMedia, view.Revision = content.document, content.blockMedia, content.revision
 	return nil
 }
 
-func (s *WorkService) hydrateWorkContentProjections(ctx context.Context, works []model.Work) error {
-	for index := range works {
-		if err := s.hydrateWorkContentProjection(ctx, &works[index]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
+// LoadLocalizedWorkContentProjectionForPublic reads the Work's content
+// document in locale (the source locale when empty) and its block media,
+// through store bound to the public read's snapshot.
 func LoadLocalizedWorkContentProjectionForPublic(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	workID string,
 	documentID uuid.UUID,
 	locale string,
-) (*contentv1.LocalizedRichTextDocument, string, []*contentv1.ContentBlockMediaItem, error) {
-	if tx == nil || store == nil {
-		return nil, "", nil, errs.InternalMsg("Work content projection dependencies are required")
+) (*contentv1.LocalizedRichTextDocument, string, []*fileref.BlockMediaItem, error) {
+	if store == nil {
+		return nil, "", nil, errors.New("Work content projection dependencies are required")
 	}
-	source, err := LoadRequiredSourceLocaleMetadata(ctx, tx, workID)
+	source, err := LoadRequiredSourceLocaleMetadata(ctx, store, workID)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -272,9 +295,9 @@ func LoadLocalizedWorkContentProjectionForPublic(
 		locale = source.Locale
 	}
 	if documentID == uuid.Nil {
-		return nil, "", nil, errs.FailedPrecondition("Work content document is not initialized")
+		return nil, "", nil, domainerr.Precondition("Work content document is not initialized")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.Locale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, source.Locale)
 	if err != nil {
 		return nil, "", nil, normalizeWorkContentBlockError(err)
 	}
@@ -282,98 +305,30 @@ func LoadLocalizedWorkContentProjectionForPublic(
 	if err != nil {
 		return nil, "", nil, normalizeWorkContentBlockError(err)
 	}
-	media, err := LoadContentBlockMediaReferences(ctx, tx, documentID)
+	media, err := store.MediaReferences(ctx, documentID)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	return document,
-		snapshot.Document.Revision.String(),
-		media,
-		nil
+	return document, snapshot.Document.Revision.String(), media, nil
 }
 
-// toProtoWork converts a model.Work to protobuf Work
-func (s *WorkService) toProtoWork(
-	w *model.Work,
-	imageAsset *commonv1.AssetRef,
-	ogAsset *commonv1.AssetRef,
-) *managev1.Work {
-	work := &managev1.Work{
-		Id:           w.ID,
-		Title:        w.Title,
-		Type:         managev1.WorkType(managev1.WorkType_value[w.Type]),
-		Year:         w.Year,
-		Month:        w.Month,
-		IsPresent:    w.IsPresent,
-		Featured:     w.Featured,
-		Status:       managev1.WorkStatus(managev1.WorkStatus_value[w.Status]),
-		CreatedAt:    timestamppb.New(w.CreatedAt),
-		UpdatedAt:    timestamppb.New(w.UpdatedAt),
-		OgAsset:      ogAsset,
-		Document:     w.ContentDocument,
-		Revision:     w.ContentRevision,
-		SourceLocale: w.SourceLocale,
-		BlockMedia:   w.BlockMedia,
-	}
-
-	if w.Slug != nil {
-		work.Slug = w.Slug
-	}
-	if w.Summary != nil {
-		work.Summary = w.Summary
-	}
-	if imageAsset != nil {
-		work.FeaturedImageAsset = imageAsset
-	}
-	if w.PublishedAt != nil {
-		work.PublishedAt = timestamppb.New(*w.PublishedAt)
-	}
-	// Convert metadata
-	if w.Metadata != nil {
-		if metadata, err := structpb.NewStruct(w.Metadata); err == nil {
-			work.Metadata = metadata
-		} else {
-			if err != nil {
-				slog.ErrorContext(context.Background(), "Operation failed", "domain", "work", "operation", "convert_work_metadata", failurecause.Attr(err), "work_id", w.ID)
-			}
-		}
-	}
-
-	if w.MapPlaceID != nil {
-		work.MapPlaceId = w.MapPlaceID
-	}
-	if w.UntilYear != nil {
-		work.UntilYear = w.UntilYear
-	}
-	if w.UntilMonth != nil {
-		work.UntilMonth = w.UntilMonth
-	}
-
-	return work
-}
-
-func (s *WorkService) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+func (s *Service) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
 	mapPlaceID := strings.TrimSpace(raw)
 	if mapPlaceID == "" {
 		return nil, nil
 	}
 
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Table("map_place").
-		Where("id = ?", mapPlaceID).
-		Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
+	var exists bool
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		exists, err = store.MapPlaceExists(ctx, mapPlaceID)
+		return err
+	}); err != nil {
+		return nil, err
 	}
-	if count == 0 {
-		return nil, errs.InvalidArgument("map_place_id", "map place does not exist")
+	if !exists {
+		return nil, domainerr.InvalidField("map_place_id", "map place does not exist")
 	}
 
 	return &mapPlaceID, nil
 }
-
-// ============================================================================
-// Version History
-// ============================================================================
-
-// ListWorkVersions returns a paginated list of version snapshots for a work.

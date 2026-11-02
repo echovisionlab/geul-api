@@ -2,641 +2,367 @@ package public
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
-	"time"
-
-	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	programevent "github.com/echovisionlab/geul-api/internal/programevent"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/google/uuid"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-var programEventPublicSortConfig = &queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"title":        "program_event.title",
-		"starts_at":    "starts_at",
-		"ends_at":      "ends_at",
-		"published_at": "published_at",
-		"updated_at":   "updated_at",
-	},
+// GetProgramEventQuery names a published or archived event by slug or ID.
+type GetProgramEventQuery struct {
+	SlugOrID       string
+	AcceptLanguage string
 }
 
-var programEventPublicFilterConfig = &queryutil.FilterConfig{
-	Fields: map[string]queryutil.FieldDef{
-		"search": {
-			Type:       queryutil.TypeText,
-			AllowedOps: queryutil.SearchOps,
-			SearchColumns: []string{
-				"program_event.title",
-				"COALESCE((SELECT pet.summary FROM program_event_translation AS pet WHERE pet.entity_id = program_event.id AND pet.locale = program_event.source_locale LIMIT 1), '')",
-			},
-		},
-		"type_id": {
-			Column:     "type_id",
-			Type:       queryutil.TypeID,
-			AllowedOps: []commonv1.FilterOp{commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_IN},
-			IsFK:       true,
-		},
-		"location_mode": {
-			Column:     "location_mode",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: []commonv1.FilterOp{commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_IN},
-			EnumValues: []string{
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String(),
-			},
-		},
-		"series_id": {
-			Column:     "series_id",
-			Type:       queryutil.TypeID,
-			AllowedOps: []commonv1.FilterOp{commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_IN},
-			IsFK:       true,
-		},
-		"map_place_id": {
-			Column: "map_place_id",
-			Type:   queryutil.TypeID,
-			AllowedOps: []commonv1.FilterOp{
-				commonv1.FilterOp_FILTER_OP_EQ,
-				commonv1.FilterOp_FILTER_OP_IN,
-				commonv1.FilterOp_FILTER_OP_IS_NULL,
-				commonv1.FilterOp_FILTER_OP_IS_NOT_NULL,
-			},
-			IsFK: true,
-		},
-		"starts_at": {
-			Column:     "starts_at",
-			Type:       queryutil.TypeDate,
-			AllowedOps: queryutil.DateOps,
-		},
-		"published_at": {
-			Column:     "published_at",
-			Type:       queryutil.TypeDate,
-			AllowedOps: queryutil.DateOps,
-		},
-	},
+// TypeEntry is the type of a public event, named in the displayed locale.
+type TypeEntry struct {
+	programevent.Type
+	Name        string
+	Description *string
 }
 
-type ProgramEventService struct {
-	openv1connect.UnimplementedProgramEventServiceHandler
-	db            *gorm.DB
-	assets        Assets
-	contentBlocks *contentblock.Store
-	files         MediaHydrator
-	creditMembers CreditMemberSummaries
+// SeriesEntry is a published series with its ready poster.
+type SeriesEntry struct {
+	programevent.Series
+	PosterAsset *mediaasset.Reference
 }
 
-// MediaHydrator resolves request-scoped delivery for authorized Program Event Block media.
-type MediaHydrator interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+// CreditArtist is the published artist a public credit names.
+type CreditArtist struct {
+	ID         string
+	Name       string
+	Slug       *string
+	ImageAsset *mediaasset.Reference
 }
 
-// CreditMemberSummaries projects public Member-owned identity details for Program Event credits.
-type CreditMemberSummaries interface {
-	LoadPublicCreditMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+// Credit is one credit of a public event with its projections.
+type Credit struct {
+	ID          string
+	DisplayName *string
+	CreditRole  *string
+	Description *string
+	SortOrder   int32
+	Artist      *CreditArtist
+	Member      *memberref.Summary
 }
 
-type ProgramEventServiceOption func(*ProgramEventService)
-
-func WithProgramEventContentBlockStore(store *contentblock.Store) ProgramEventServiceOption {
-	return func(service *ProgramEventService) {
-		service.contentBlocks = store
-	}
+// EventDetail is a public event in its displayed locale. MapPlaceID is set
+// only for a location mode that names a Map Place.
+type EventDetail struct {
+	programevent.Event
+	Localization     publiccontent.Selection
+	Document         *contentv1.LocalizedRichTextDocument
+	ContentHTML      string
+	ContentText      string
+	DocumentRevision string
+	PosterAsset      *mediaasset.Reference
+	LocationPlace    *MapPlace
+	Type             *TypeEntry
+	Series           *SeriesEntry
+	Artists          []Participant
+	Labels           []Participant
+	Clients          []Client
+	Credits          []Credit
 }
 
-func WithProgramEventFileService(files MediaHydrator) ProgramEventServiceOption {
-	return func(service *ProgramEventService) {
-		service.files = files
-	}
+// PublicEvent is a public event in its displayed locale with the delivery
+// of its Block media.
+type PublicEvent struct {
+	Event      EventDetail
+	BlockMedia []*fileref.BlockMediaItem
 }
 
-func NewProgramEventService(
-	db *gorm.DB,
-	assets Assets,
-	creditMembers CreditMemberSummaries,
-	options ...ProgramEventServiceOption,
-) *ProgramEventService {
-	if creditMembers == nil {
-		panic("Program Event public credit Member summaries are required")
-	}
-	if assets == nil {
-		panic("Program Event public assets are required")
-	}
-	service := &ProgramEventService{db: db, assets: assets, creditMembers: creditMembers}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
-}
-
-type ProgramEventSeriesService struct {
-	openv1connect.UnimplementedProgramEventSeriesServiceHandler
-	db     *gorm.DB
-	assets Assets
-}
-
-func NewProgramEventSeriesService(db *gorm.DB, assets Assets) *ProgramEventSeriesService {
-	if assets == nil {
-		panic("Program Event public assets are required")
-	}
-	return &ProgramEventSeriesService{db: db, assets: assets}
-}
-
-type ProgramEventTypeService struct {
-	openv1connect.UnimplementedProgramEventTypeServiceHandler
-	db *gorm.DB
-}
-
-func NewProgramEventTypeService(db *gorm.DB) *ProgramEventTypeService {
-	return &ProgramEventTypeService{db: db}
-}
-
-func (s *ProgramEventService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetProgramEventRequest],
-) (_ *connect.Response[openv1.GetProgramEventResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	slugOrID := strings.TrimSpace(req.Msg.Slug)
+// GetProgramEvent returns a published or archived event in the locale
+// AcceptLanguage selects.
+func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuery) (PublicEvent, error) {
+	slugOrID := strings.TrimSpace(query.SlugOrID)
 	if slugOrID == "" {
-		return nil, errs.Required("slug")
+		return PublicEvent{}, domainerr.Required("slug")
 	}
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Program Event content Block store is not configured")
-	}
-	if s.files == nil {
-		return nil, errs.InternalMsg("Program Event media resolver is not configured")
-	}
-
-	var protoEvent *openv1.ProgramEvent
-	var media []*contentv1.ContentBlockMediaItem
+	var detail EventDetail
+	var media []*fileref.BlockMediaItem
 	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var event model.ProgramEvent
-		query := tx.
-			Model(&model.ProgramEvent{}).
-			Clauses(clause.Locking{Strength: "SHARE"}).
-			Where("status IN ?", publicProgramEventStatuses())
-		if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
-			query = query.Where("id = ?", slugOrID)
-		} else {
-			query = query.Where("slug = ?", slugOrID)
-		}
-		if err := query.First(&event).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFoundMsg("program event not found")
+	err := s.units.ReadCurrent(ctx, func(store Store) error {
+		_, parseErr := uuid.Parse(slugOrID)
+		event, err := store.PublicEvent(ctx, slugOrID, parseErr == nil)
+		if err != nil {
+			if errors.Is(err, programevent.ErrEventNotFound) {
+				return domainerr.New(domainerr.NotFound, "", "program event not found")
 			}
-			return errs.Internal(err)
+			return err
 		}
-
-		scoped := *s
-		scoped.db = tx
-		blockRead, err := scoped.loadProgramEventBlockRead(ctx, &event)
+		blockRead, err := loadProgramEventBlockRead(ctx, store, event)
 		if err != nil {
 			return err
 		}
 		localization, err := resolveProgramEventLocalization(
-			ctx,
-			tx,
-			req.Header().Get("Accept-Language"),
-			event.ID,
-			blockRead.SourceLocale,
-			blockRead.CompleteLocales,
+			ctx, store, query.AcceptLanguage, event.ID, blockRead.SourceLocale, blockRead.CompleteLocales,
 		)
 		if err != nil {
 			return err
 		}
-		protoEvent, err = scoped.toProtoProgramEvent(ctx, &event, localization, blockRead)
+		detail, err = s.programEventDetail(ctx, store, event, localization, blockRead)
 		if err != nil {
 			return err
 		}
-		media, err = programevent.LoadContentBlockMediaReferences(ctx, tx, blockRead.DocumentID)
+		media, err = store.MediaReferences(ctx, blockRead.DocumentID)
 		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
-			ResourceType: "program_event", ResourceID: event.ID, Status: event.Status,
+			ResourceType: "program_event", ResourceID: event.ID, Status: string(event.Status),
 			DocumentID: blockRead.DocumentID.String(), Mode: mediaasset.ContentDownloadOwnerAccessPublic,
 		}
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return PublicEvent{}, err
 	}
 	media, err = s.files.HydrateAuthorizedContentBlockMedia(
 		mediaasset.WithContentDownloadOwnerAuthorization(ctx, mediaAuthorization), media,
 	)
 	if err != nil {
-		return nil, err
+		return PublicEvent{}, err
 	}
-	return connect.NewResponse(&openv1.GetProgramEventResponse{
-		Event:      protoEvent,
-		BlockMedia: media,
-	}), nil
+	return PublicEvent{Event: detail, BlockMedia: media}, nil
 }
 
-func (s *ProgramEventService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListProgramEventsRequest],
-) (_ *connect.Response[openv1.ListProgramEventsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// ListProgramEventsQuery is one page of public events.
+type ListProgramEventsQuery struct {
+	Limit          int32
+	Offset         int32
+	Filters        []*commonv1.FilterSpec
+	Sorts          []*commonv1.SortSpec
+	AcceptLanguage string
+}
 
-	query := s.db.WithContext(ctx).
-		Model(&model.ProgramEvent{}).
-		Where("status IN ?", publicProgramEventStatuses())
+// EventSummary is a public event in a list, in its displayed locale. Its
+// MapPlaceID is set only for a location mode that names a Map Place.
+type EventSummary struct {
+	programevent.Event
+	Localization publiccontent.Selection
+	PosterAsset  *mediaasset.Reference
+	Type         *TypeEntry
+}
 
-	var err error
-	query, err = applyPublicProgramEventFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
+// EventList is one page of public event summaries.
+type EventList struct {
+	Events     []EventSummary
+	Pagination programevent.Pagination
+}
 
+// ListProgramEvents returns one page of published and archived events, TBA
+// events first by default.
+func (s *Service) ListProgramEvents(ctx context.Context, query ListProgramEventsQuery) (EventList, error) {
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var events []programevent.Event
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		events, total, err = store.ListPublicEvents(ctx, programevent.ListPage{
+			Filters: query.Filters, Sorts: query.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
+		})
+		return err
+	}); err != nil {
+		return EventList{}, err
 	}
-
-	query, err = applyProgramEventPublicSort(query, req.Msg.Sorts)
+	summaries, err := s.programEventSummaries(ctx, events, query.AcceptLanguage)
 	if err != nil {
+		return EventList{}, err
+	}
+	return EventList{Events: summaries, Pagination: page(pagination, total)}, nil
+}
+
+func page(pagination queryutil.Pagination, total int64) programevent.Pagination {
+	return programevent.Pagination{
+		Total: int32(total), Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore(total),
+	}
+}
+
+// programEventSummaries projects a page of events in the locale
+// acceptLanguage selects, with their posters and types.
+func (s *Service) programEventSummaries(ctx context.Context, events []programevent.Event, acceptLanguage string) ([]EventSummary, error) {
+	eventIDs := collectPublicProgramEventIDs(events)
+	var localizations map[string]publiccontent.Selection
+	if err := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		localizations, err = store.ResolveLocalizations(ctx, eventIDs, acceptLanguage)
+		return err
+	}); err != nil {
 		return nil, err
 	}
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	query = pagination.Apply(query)
-
-	var events []model.ProgramEvent
-	if err := query.Find(&events).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	localizations, err := publiccontent.ResolveBatch(
-		ctx,
-		s.db,
-		programEventLocalizationSpec,
-		collectPublicProgramEventIDs(events),
-		req.Header().Get("Accept-Language"),
-	)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	posterFilesByEvent, posterQueryErr := loadProgramEventPosterFileIDs(ctx, s.db, collectPublicProgramEventIDs(events))
-	posterAssetsByEvent := make(map[string]*commonv1.AssetRef, len(posterFilesByEvent))
-	if posterQueryErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
-		for i := range events {
-			posterAssetsByEvent[events[i].ID] = loadProgramEventPosterAsset(ctx, s.db, s.assets, events[i].ID)
-		}
-	} else {
-		posterFileIDs := make([]string, 0, len(posterFilesByEvent))
-		for _, fileID := range posterFilesByEvent {
-			posterFileIDs = append(posterFileIDs, fileID)
-		}
-		assetsByFile := make(map[string]*commonv1.AssetRef)
-		if len(posterFileIDs) > 0 {
-			resolved, resolveErr := s.assets.ResolveReadyAssetsForSourceFiles(ctx, posterFileIDs, "poster", "image")
-			if resolveErr == nil {
-				assetsByFile = resolved
-			} else {
-				if resolveErr != nil {
-					slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolve_poster_assets", failurecause.Attr(resolveErr))
-				}
-				for _, fileID := range posterFileIDs {
-					assetsByFile[fileID] = s.assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
-				}
-			}
-		}
-		for eventID, fileID := range posterFilesByEvent {
-			posterAssetsByEvent[eventID] = assetsByFile[fileID]
-		}
-	}
+	posterAssetsByEvent := s.listPosterAssets(ctx, events)
 	eventTypeIDs := collectPublicProgramEventTypeIDs(events)
-	eventTypes, err := loadPublicProgramEventTypes(ctx, s.db, eventTypeIDs)
-	if err != nil {
+	var eventTypes map[string]programevent.Type
+	var typeLocales map[string][]programevent.TypeLocale
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if eventTypes, err = store.Types(ctx, eventTypeIDs); err != nil {
+			return err
+		}
+		typeLocales, err = store.TypeLocales(ctx, eventTypeIDs)
+		return err
+	}); err != nil {
 		return nil, err
 	}
-	typeLocales, err := loadPublicProgramEventTypeLocales(ctx, s.db, eventTypeIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	summaries := make([]*openv1.ProgramEventSummary, 0, len(events))
+	summaries := make([]EventSummary, 0, len(events))
 	for i := range events {
-		event := &events[i]
+		event := events[i]
 		localization := localizations[event.ID]
-		posterAsset := posterAssetsByEvent[event.ID]
-		var eventType *openv1.ProgramEventType
+		summary := EventSummary{Event: publicLocation(event), Localization: localization, PosterAsset: posterAssetsByEvent[event.ID]}
 		if event.TypeID != "" {
 			typeRow, ok := eventTypes[event.TypeID]
 			if !ok {
-				return nil, errs.Internal(gorm.ErrRecordNotFound)
+				return nil, programevent.ErrTypeNotFound
 			}
-			eventType, err = publicProgramEventTypeProto(typeRow, typeLocales[typeRow.ID], localization.DisplayedLocale)
+			eventType, err := publicTypeEntry(typeRow, typeLocales[typeRow.ID], localization.DisplayedLocale)
 			if err != nil {
 				return nil, err
 			}
+			summary.Type = &eventType
 		}
-		item := s.toProtoProgramEventSummary(event, localization, posterAsset, eventType)
-		summaries = append(summaries, item)
+		summaries = append(summaries, summary)
 	}
-
-	return connect.NewResponse(&openv1.ListProgramEventsResponse{
-		Events:     summaries,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
+	return summaries, nil
 }
 
-func applyProgramEventPublicSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.DB, error) {
-	if len(sorts) == 0 {
-		return query.
-			Order(programEventTBAFirstOrder()).
-			Order("starts_at ASC").
-			Order("id ASC"), nil
+// publicLocation clears the Map Place of an event whose location mode does
+// not name one.
+func publicLocation(event programevent.Event) programevent.Event {
+	if !event.LocationMode.UsesMapPlace() {
+		event.MapPlaceID = nil
 	}
-
-	for _, sort := range sorts {
-		column, ok := programEventPublicSortConfig.AllowedFields[sort.GetField()]
-		if !ok {
-			return nil, errs.InvalidSortField(sort.GetField())
-		}
-
-		order := "ASC"
-		if sort.GetOrder() == commonv1.SortOrder_SORT_ORDER_DESC {
-			order = "DESC"
-		}
-
-		if sort.GetField() == "starts_at" {
-			query = query.Order(programEventTBAFirstOrder()).Order("starts_at " + order)
-			continue
-		}
-		query = query.Order(column + " " + order)
-	}
-
-	return query.Order("id ASC"), nil
+	return event
 }
 
-func programEventTBAFirstOrder() string {
-	return "location_mode = '" + managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String() + "' DESC"
+// listPosterAssets resolves the poster of each event of a page in two
+// batches, falling back to one lookup per event or per File when a batch
+// fails.
+func (s *Service) listPosterAssets(ctx context.Context, events []programevent.Event) map[string]*mediaasset.Reference {
+	var posterFilesByEvent map[string]string
+	posterQueryErr := s.units.Read(ctx, func(store Store) error {
+		var err error
+		posterFilesByEvent, err = store.PosterFileIDs(ctx, collectPublicProgramEventIDs(events))
+		return err
+	})
+	posterAssetsByEvent := make(map[string]*mediaasset.Reference, len(posterFilesByEvent))
+	if posterQueryErr != nil {
+		slog.ErrorContext(ctx, "Program Event poster batch lookup failed; resolving posters per event", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
+		for i := range events {
+			_ = s.units.Read(ctx, func(store Store) error {
+				posterAssetsByEvent[events[i].ID] = loadProgramEventPosterAsset(ctx, store, s.assets, events[i].ID)
+				return nil
+			})
+		}
+		return posterAssetsByEvent
+	}
+	posterFileIDs := make([]string, 0, len(posterFilesByEvent))
+	for _, fileID := range posterFilesByEvent {
+		posterFileIDs = append(posterFileIDs, fileID)
+	}
+	assetsByFile := make(map[string]*mediaasset.Reference)
+	if len(posterFileIDs) > 0 {
+		resolved, resolveErr := s.assets.ResolveReadyAssetsForSourceFiles(ctx, posterFileIDs, "poster", "image")
+		if resolveErr == nil {
+			assetsByFile = resolved
+		} else {
+			slog.ErrorContext(ctx, "Program Event poster batch asset resolution failed; resolving posters per file", "domain", "programevent", "operation", "resolve_poster_assets", failurecause.Attr(resolveErr))
+			for _, fileID := range posterFileIDs {
+				assetsByFile[fileID] = s.assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
+			}
+		}
+	}
+	for eventID, fileID := range posterFilesByEvent {
+		posterAssetsByEvent[eventID] = assetsByFile[fileID]
+	}
+	return posterAssetsByEvent
 }
 
-func (s *ProgramEventSeriesService) Get(
+func (s *Service) programEventDetail(
 	ctx context.Context,
-	req *connect.Request[openv1.GetProgramEventSeriesRequest],
-) (_ *connect.Response[openv1.GetProgramEventSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	slugOrID := strings.TrimSpace(req.Msg.Slug)
-	if slugOrID == "" {
-		return nil, errs.Required("slug")
-	}
-
-	var series model.ProgramEventSeries
-	query := s.db.WithContext(ctx).
-		Model(&model.ProgramEventSeries{}).
-		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
-	if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
-		query = query.Where("id = ?", slugOrID)
-	} else {
-		query = query.Where("slug = ?", slugOrID)
-	}
-	if err := query.First(&series).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("program event series not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	protoSeries, err := s.toProtoProgramEventSeries(ctx, &series, req.Header().Get("Accept-Language"))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&openv1.GetProgramEventSeriesResponse{Series: protoSeries}), nil
-}
-
-func (s *ProgramEventSeriesService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListProgramEventSeriesRequest],
-) (_ *connect.Response[openv1.ListProgramEventSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	query := s.db.WithContext(ctx).
-		Model(&model.ProgramEventSeries{}).
-		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
-	var err error
-	query, err = applySimpleProgramEventSeriesFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	query = query.Order("updated_at DESC")
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	query = pagination.Apply(query)
-
-	var rows []model.ProgramEventSeries
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	result, err := s.toProtoProgramEventSeriesList(ctx, rows)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&openv1.ListProgramEventSeriesResponse{
-		Series:     result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
-}
-
-func (s *ProgramEventTypeService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListProgramEventTypesRequest],
-) (_ *connect.Response[openv1.ListProgramEventTypesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	query := s.db.WithContext(ctx).
-		Model(&model.ProgramEventType{}).
-		Where("status = ?", openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String())
-	var err error
-	query, err = applySimpleProgramEventTypeFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
-	}
-
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	query = query.Order("sort_order ASC, slug ASC")
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	query = pagination.Apply(query)
-
-	var rows []model.ProgramEventType
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	typeIDs := make([]string, 0, len(rows))
-	for i := range rows {
-		typeIDs = append(typeIDs, rows[i].ID)
-	}
-	localesByType, err := loadPublicProgramEventTypeLocales(ctx, s.db, typeIDs)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*openv1.ProgramEventType, 0, len(rows))
-	for i := range rows {
-		item, err := publicProgramEventTypeProto(rows[i], localesByType[rows[i].ID], req.Header().Get("Accept-Language"))
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-	return connect.NewResponse(&openv1.ListProgramEventTypesResponse{
-		Types:      result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
-}
-
-func (s *ProgramEventService) toProtoProgramEvent(
-	ctx context.Context,
-	event *model.ProgramEvent,
+	store Store,
+	event programevent.Event,
 	localization publiccontent.Selection,
 	blockRead programEventPublicBlockRead,
-) (*openv1.ProgramEvent, error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Program Event content Block store is not configured")
-	}
+) (EventDetail, error) {
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(
 		blockRead.Snapshot,
 		localization.DisplayedLocale,
 	)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("materialize Program Event typed document: %w", err))
+		return EventDetail{}, fmt.Errorf("materialize Program Event typed document: %w", err)
 	}
 	var variables sitevariable.Context
 	if contentblock.HasSiteVariables(document) {
-		variables, err = sitevariable.LoadRuntime(ctx, s.db)
+		variables, err = store.SiteVariables(ctx)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return EventDetail{}, err
 		}
 	}
 	projection, err := contentblock.MaterializeLocalizedRichTextDocument(
 		ctx,
 		document,
-		&programEventPublicFileRenderResolver{db: s.db, assets: s.assets}, variables,
+		&programEventPublicFileRenderResolver{store: store, assets: s.assets}, variables,
 	)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("render Program Event typed document: %w", err))
+		return EventDetail{}, fmt.Errorf("render Program Event typed document: %w", err)
 	}
-	mapPlaceID := event.MapPlaceID
-	if !publicProgramEventLocationModeUsesMapPlace(event.LocationMode) {
-		mapPlaceID = nil
-	}
-	protoEvent := &openv1.ProgramEvent{
-		Id:               event.ID,
-		Status:           openProgramEventStatus(event.Status),
-		Title:            event.Title,
-		Slug:             &event.Slug,
-		Summary:          localization.Summary,
-		ContentHtml:      &projection.HTML,
-		ContentText:      &projection.Text,
-		TypeId:           event.TypeID,
-		SeriesId:         event.SeriesID,
-		SeriesOrder:      event.SeriesOrder,
-		StartsAt:         timestamppb.New(event.StartsAt),
-		EndsAt:           timestampProto(event.EndsAt),
-		Timezone:         event.Timezone,
-		AllDay:           event.AllDay,
-		LocationMode:     openProgramEventLocationMode(event.LocationMode),
-		MapPlaceId:       mapPlaceID,
-		TicketUrl:        event.TicketURL,
-		StreamUrl:        event.StreamURL,
-		ExternalUrl:      event.ExternalURL,
-		PublishedAt:      timestampProto(event.PublishedAt),
-		UpdatedAt:        timestamppb.New(event.UpdatedAt),
-		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(localization),
-		Document:         document,
+	detail := EventDetail{
+		Event: publicLocation(event), Localization: localization, Document: document,
+		ContentHTML: projection.HTML, ContentText: projection.Text,
 		DocumentRevision: blockRead.Snapshot.Document.Revision.String(),
+		PosterAsset:      loadProgramEventPosterAsset(ctx, store, s.assets, event.ID),
 	}
-	if posterAsset := loadProgramEventPosterAsset(ctx, s.db, s.assets, event.ID); posterAsset != nil {
-		protoEvent.PosterAsset = posterAsset
-	}
-	if mapPlaceID != nil {
-		if place, err := loadPublicProgramEventMapPlace(ctx, s.db, *mapPlaceID); err != nil {
-			return nil, err
-		} else {
-			protoEvent.LocationPlace = place
+	if detail.MapPlaceID != nil {
+		place, err := store.MapPlace(ctx, *detail.MapPlaceID)
+		if err != nil {
+			return EventDetail{}, err
 		}
+		detail.LocationPlace = &place
 	}
 	if event.TypeID != "" {
-		eventType, err := loadPublicProgramEventType(ctx, s.db, event.TypeID, localization.DisplayedLocale)
+		eventType, err := loadPublicProgramEventType(ctx, store, event.TypeID, localization.DisplayedLocale)
 		if err != nil {
-			return nil, err
+			return EventDetail{}, err
 		}
-		protoEvent.Type = eventType
+		detail.Type = &eventType
 	}
-	protoEvent.Series, err = s.loadPublishedProgramEventSeries(
-		ctx, event.SeriesID, localization.DisplayedLocale,
-	)
+	detail.Series, err = s.loadPublishedProgramEventSeries(ctx, store, event.SeriesID)
 	if err != nil {
-		return nil, err
+		return EventDetail{}, err
 	}
-	if protoEvent.Artists, err = loadPublicProgramEventArtists(ctx, s.db, event.ID); err != nil {
-		return nil, err
+	if detail.Artists, err = store.Artists(ctx, event.ID); err != nil {
+		return EventDetail{}, err
 	}
-	if protoEvent.Labels, err = loadPublicProgramEventLabels(ctx, s.db, event.ID); err != nil {
-		return nil, err
+	if detail.Labels, err = store.Labels(ctx, event.ID); err != nil {
+		return EventDetail{}, err
 	}
-	if protoEvent.Clients, err = loadPublicProgramEventClients(ctx, s.db, event.ID); err != nil {
-		return nil, err
+	if detail.Clients, err = store.Clients(ctx, event.ID); err != nil {
+		return EventDetail{}, err
 	}
-	if protoEvent.Credits, err = s.loadPublicProgramEventCredits(ctx, event.ID); err != nil {
-		return nil, err
+	if detail.Credits, err = s.loadPublicProgramEventCredits(ctx, store, event.ID); err != nil {
+		return EventDetail{}, err
 	}
-	return protoEvent, nil
+	return detail, nil
 }
 
 type programEventPublicBlockRead struct {
@@ -647,7 +373,7 @@ type programEventPublicBlockRead struct {
 }
 
 type programEventPublicFileRenderResolver struct {
-	db     *gorm.DB
+	store  Store
 	assets Assets
 }
 
@@ -655,64 +381,55 @@ func (r *programEventPublicFileRenderResolver) ResolveContentBlockFile(
 	ctx context.Context,
 	selector contentblock.FileRenderSelector,
 ) (contentblock.FileRenderTarget, error) {
-	if r == nil || r.db == nil || r.assets == nil || selector.BlockID == uuid.Nil || selector.ReferencePath == "" || selector.FileID == uuid.Nil {
+	if r == nil || r.store == nil || r.assets == nil || selector.BlockID == uuid.Nil || selector.ReferencePath == "" || selector.FileID == uuid.Nil {
 		return contentblock.FileRenderTarget{}, fmt.Errorf("invalid public Program Event Content Block File render selector")
 	}
-	var file struct {
-		MIMEType string `gorm:"column:mime_type"`
+	mimeType, found, err := r.store.ContentFileMIMEType(ctx, selector.BlockID, selector.ReferencePath, selector.FileID)
+	if err != nil {
+		return contentblock.FileRenderTarget{}, fmt.Errorf("load exact public Program Event Content Block File: %w", err)
 	}
-	result := r.db.WithContext(ctx).Raw(`
-		SELECT file.mime_type
-		FROM content_block_attachment AS attachment
-		JOIN file ON file.id = attachment.file_id
-		WHERE attachment.block_id = ? AND attachment.reference_path = ?
-		  AND attachment.selector_kind = 'active' AND attachment.file_id = ?
-		  AND file.delete_requested_at IS NULL
-	`, selector.BlockID, selector.ReferencePath, selector.FileID).Scan(&file)
-	if result.Error != nil {
-		return contentblock.FileRenderTarget{}, fmt.Errorf("load exact public Program Event Content Block File: %w", result.Error)
-	}
-	if result.RowsAffected != 1 {
+	if !found {
 		return contentblock.FileRenderTarget{}, fmt.Errorf("exact public Program Event Content Block File reference does not exist")
 	}
-	target := contentblock.FileRenderTarget{MIMEType: file.MIMEType}
-	if !strings.HasPrefix(file.MIMEType, "image/") {
+	target := contentblock.FileRenderTarget{MIMEType: mimeType}
+	if !strings.HasPrefix(mimeType, "image/") {
 		return target, nil
 	}
 	asset := r.assets.ResolveReadyAssetForSourceFile(ctx, selector.FileID.String(), "image")
 	if asset == nil {
 		return contentblock.FileRenderTarget{}, fmt.Errorf("public Program Event Content Block image asset is unavailable")
 	}
-	target.URL = asset.GetUrl()
-	target.MIMEType = asset.GetMimeType()
+	target.URL = optional.Value(asset).URL
+	target.MIMEType = optional.Value(asset).MimeType
 	return target, nil
 }
 
-func (s *ProgramEventService) loadProgramEventBlockRead(
+func loadProgramEventBlockRead(
 	ctx context.Context,
-	event *model.ProgramEvent,
+	store Store,
+	event programevent.Event,
 ) (programEventPublicBlockRead, error) {
-	if event == nil || event.ContentDocumentID == nil || strings.TrimSpace(*event.ContentDocumentID) == "" {
-		return programEventPublicBlockRead{}, errs.FailedPrecondition("Program Event content document is not initialized")
+	if event.ContentDocumentID == nil || strings.TrimSpace(*event.ContentDocumentID) == "" {
+		return programEventPublicBlockRead{}, domainerr.Precondition("Program Event content document is not initialized")
 	}
 	documentID, err := uuid.Parse(*event.ContentDocumentID)
 	if err != nil {
-		return programEventPublicBlockRead{}, errs.Internal(fmt.Errorf("invalid Program Event content_document_id: %w", err))
+		return programEventPublicBlockRead{}, fmt.Errorf("invalid Program Event content_document_id: %w", err)
 	}
 	if strings.TrimSpace(event.SourceLocale) == "" {
-		return programEventPublicBlockRead{}, errs.FailedPrecondition("Program Event source locale is not initialized")
+		return programEventPublicBlockRead{}, domainerr.Precondition("Program Event source locale is not initialized")
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, s.db, documentID, event.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, event.SourceLocale)
 	if err != nil {
-		return programEventPublicBlockRead{}, errs.Internal(fmt.Errorf("load Program Event content document: %w", err))
+		return programEventPublicBlockRead{}, fmt.Errorf("load Program Event content document: %w", err)
 	}
 	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 	if err != nil {
-		return programEventPublicBlockRead{}, errs.Internal(fmt.Errorf("restore Program Event typed document: %w", err))
+		return programEventPublicBlockRead{}, fmt.Errorf("restore Program Event typed document: %w", err)
 	}
 	completeLocales, err := contentblock.CompleteRichTextDocumentLocales(document)
 	if err != nil {
-		return programEventPublicBlockRead{}, errs.Internal(fmt.Errorf("validate Program Event typed document locales: %w", err))
+		return programEventPublicBlockRead{}, fmt.Errorf("validate Program Event typed document locales: %w", err)
 	}
 	return programEventPublicBlockRead{
 		DocumentID:      documentID,
@@ -722,302 +439,46 @@ func (s *ProgramEventService) loadProgramEventBlockRead(
 	}, nil
 }
 
-func (s *ProgramEventService) loadPublishedProgramEventSeries(
+func (s *Service) loadPublishedProgramEventSeries(
 	ctx context.Context,
+	store Store,
 	seriesID *string,
-	locale string,
-) (*openv1.ProgramEventSeries, error) {
+) (*SeriesEntry, error) {
 	if seriesID == nil {
 		return nil, nil
 	}
-	var series model.ProgramEventSeries
-	err := s.db.WithContext(ctx).
-		First(
-			&series,
-			"id = ? AND status = ?",
-			*seriesID,
-			managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
-		).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
+	series, found, err := store.PublishedSeries(ctx, *seriesID)
+	if err != nil || !found {
+		return nil, err
 	}
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	service := &ProgramEventSeriesService{db: s.db, assets: s.assets}
-	return service.toProtoProgramEventSeries(ctx, &series, locale)
-}
-
-func (s *ProgramEventService) toProtoProgramEventSummary(
-	event *model.ProgramEvent,
-	localization publiccontent.Selection,
-	posterAsset *commonv1.AssetRef,
-	eventType *openv1.ProgramEventType,
-) *openv1.ProgramEventSummary {
-	mapPlaceID := event.MapPlaceID
-	if !publicProgramEventLocationModeUsesMapPlace(event.LocationMode) {
-		mapPlaceID = nil
-	}
-	summary := &openv1.ProgramEventSummary{
-		Id:               event.ID,
-		Status:           openProgramEventStatus(event.Status),
-		Title:            event.Title,
-		Slug:             &event.Slug,
-		Summary:          localization.Summary,
-		TypeId:           event.TypeID,
-		SeriesId:         event.SeriesID,
-		SeriesOrder:      event.SeriesOrder,
-		StartsAt:         timestamppb.New(event.StartsAt),
-		EndsAt:           timestampProto(event.EndsAt),
-		Timezone:         event.Timezone,
-		AllDay:           event.AllDay,
-		LocationMode:     openProgramEventLocationMode(event.LocationMode),
-		MapPlaceId:       mapPlaceID,
-		PublishedAt:      timestampProto(event.PublishedAt),
-		UpdatedAt:        timestamppb.New(event.UpdatedAt),
-		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(localization),
-	}
-	if posterAsset != nil {
-		summary.PosterAsset = posterAsset
-	}
-	if eventType != nil {
-		summary.Type = eventType
-	}
-	return summary
-}
-
-func (s *ProgramEventSeriesService) toProtoProgramEventSeries(
-	ctx context.Context,
-	series *model.ProgramEventSeries,
-	_ string,
-) (*openv1.ProgramEventSeries, error) {
-	result := openProgramEventSeriesProto(series)
-	if posterAsset := loadProgramEventFileAsset(ctx, s.assets, series.PosterFileID); posterAsset != nil {
-		result.PosterAsset = posterAsset
-	}
-	return result, nil
-}
-
-func (s *ProgramEventSeriesService) toProtoProgramEventSeriesList(
-	ctx context.Context,
-	series []model.ProgramEventSeries,
-) ([]*openv1.ProgramEventSeries, error) {
-	fileIDs := make([]string, 0, len(series))
-	for i := range series {
-		if series[i].PosterFileID != nil {
-			fileIDs = append(fileIDs, *series[i].PosterFileID)
-		}
-	}
-	assetsByFile, err := s.assets.ResolveReadyAssetsForSourceFiles(ctx, fileIDs, "image", "poster", "map_image")
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	result := make([]*openv1.ProgramEventSeries, 0, len(series))
-	for i := range series {
-		item := openProgramEventSeriesProto(&series[i])
-		if series[i].PosterFileID != nil {
-			item.PosterAsset = assetsByFile[*series[i].PosterFileID]
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-func openProgramEventSeriesProto(series *model.ProgramEventSeries) *openv1.ProgramEventSeries {
-	return &openv1.ProgramEventSeries{
-		Id:          series.ID,
-		Status:      openProgramEventSeriesStatus(series.Status),
-		Title:       series.Title,
-		Slug:        series.Slug,
-		Summary:     series.Summary,
-		Description: series.Description,
-	}
-}
-
-func applyPublicProgramEventFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
-	remaining := make([]*commonv1.FilterSpec, 0, len(filters))
-	for _, filter := range filters {
-		if filter == nil {
-			continue
-		}
-		switch filter.GetField() {
-		case "status":
-			q, err := applyPublicProgramEventStatusFilter(query, filter)
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "time_window":
-			q, err := applyProgramEventTimeWindowFilter(query, filter)
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "type_slug":
-			q, err := applySlugSubqueryFilter(query, filter, "type_id", "program_event_type", "slug", "id")
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "series_slug":
-			q, err := applySlugSubqueryFilter(query, filter, "series_id", "program_event_series", "slug", "id")
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "artist_id":
-			q, err := applyRelationIDFilter(query, filter, "program_event_artist", "artist_id")
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "label_id":
-			q, err := applyRelationIDFilter(query, filter, "program_event_label", "label_id")
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		case "client_id":
-			q, err := applyRelationIDFilter(query, filter, "program_event_client", "client_id")
-			if err != nil {
-				return nil, err
-			}
-			query = q
-		default:
-			remaining = append(remaining, filter)
-		}
-	}
-	return programEventPublicFilterConfig.ApplyFilters(query, remaining)
-}
-
-func applyPublicProgramEventStatusFilter(query *gorm.DB, filter *commonv1.FilterSpec) (*gorm.DB, error) {
-	switch filter.GetOp() {
-	case commonv1.FilterOp_FILTER_OP_EQ:
-		if isPublicProgramEventStatus(filter.GetValue()) {
-			return query.Where("status = ?", filter.GetValue()), nil
-		}
-		return query.Where("1 = 0"), nil
-	case commonv1.FilterOp_FILTER_OP_IN:
-		statuses := make([]string, 0, len(filter.GetValues()))
-		for _, value := range filter.GetValues() {
-			if isPublicProgramEventStatus(value) {
-				statuses = append(statuses, value)
-			}
-		}
-		if len(statuses) == 0 {
-			return query.Where("1 = 0"), nil
-		}
-		return query.Where("status IN ?", statuses), nil
-	default:
-		return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-	}
-}
-
-func applyProgramEventTimeWindowFilter(query *gorm.DB, filter *commonv1.FilterSpec) (*gorm.DB, error) {
-	if filter.GetOp() != commonv1.FilterOp_FILTER_OP_EQ {
-		return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-	}
-	now := time.Now().UTC()
-	switch strings.TrimSpace(strings.ToLower(filter.GetValue())) {
-	case "", "all":
-		return query, nil
-	case "upcoming":
-		return query.Where("starts_at >= ?", now), nil
-	case "past":
-		return query.Where("COALESCE(ends_at, starts_at) < ?", now), nil
-	case "current":
-		return query.Where("starts_at <= ? AND COALESCE(ends_at, starts_at) >= ?", now, now), nil
-	default:
-		return nil, errs.InvalidArgument("time_window", "must be one of upcoming, past, current, all")
-	}
-}
-
-func applySlugSubqueryFilter(query *gorm.DB, filter *commonv1.FilterSpec, eventColumn string, tableName string, slugColumn string, idColumn string) (*gorm.DB, error) {
-	switch filter.GetOp() {
-	case commonv1.FilterOp_FILTER_OP_EQ:
-		return query.Where(eventColumn+" IN (SELECT "+idColumn+" FROM "+tableName+" WHERE "+slugColumn+" = ?)", filter.GetValue()), nil
-	case commonv1.FilterOp_FILTER_OP_IN:
-		return query.Where(eventColumn+" IN (SELECT "+idColumn+" FROM "+tableName+" WHERE "+slugColumn+" IN ?)", filter.GetValues()), nil
-	default:
-		return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-	}
-}
-
-func applyRelationIDFilter(query *gorm.DB, filter *commonv1.FilterSpec, tableName string, relationColumn string) (*gorm.DB, error) {
-	switch filter.GetOp() {
-	case commonv1.FilterOp_FILTER_OP_EQ:
-		return query.Where("id IN (SELECT event_id FROM "+tableName+" WHERE "+relationColumn+" = ?)", filter.GetValue()), nil
-	case commonv1.FilterOp_FILTER_OP_IN:
-		return query.Where("id IN (SELECT event_id FROM "+tableName+" WHERE "+relationColumn+" IN ?)", filter.GetValues()), nil
-	default:
-		return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-	}
-}
-
-func applySimpleProgramEventSeriesFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
-	for _, filter := range filters {
-		if filter == nil {
-			continue
-		}
-		switch filter.GetField() {
-		case "search":
-			if filter.GetOp() != commonv1.FilterOp_FILTER_OP_LIKE && filter.GetOp() != commonv1.FilterOp_FILTER_OP_ILIKE {
-				return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-			}
-			pattern := "%" + filter.GetValue() + "%"
-			query = query.Where("title ILIKE ? OR summary ILIKE ?", pattern, pattern)
-		default:
-			return nil, errs.InvalidArgument("filter", "unsupported program event series filter")
-		}
-	}
-	return query, nil
-}
-
-func applySimpleProgramEventTypeFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
-	for _, filter := range filters {
-		if filter == nil {
-			continue
-		}
-		switch filter.GetField() {
-		case "search":
-			if filter.GetOp() != commonv1.FilterOp_FILTER_OP_LIKE && filter.GetOp() != commonv1.FilterOp_FILTER_OP_ILIKE {
-				return nil, errs.InvalidFilterOp(filter.GetField(), filter.GetOp().String())
-			}
-			query = query.Where("id IN (SELECT type_id FROM program_event_type_locale WHERE name ILIKE ? OR description ILIKE ?)", "%"+filter.GetValue()+"%", "%"+filter.GetValue()+"%")
-		default:
-			return nil, errs.InvalidArgument("filter", "unsupported program event type filter")
-		}
-	}
-	return query, nil
+	entry := seriesEntry(ctx, s.assets, series)
+	return &entry, nil
 }
 
 func resolveProgramEventLocalization(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	acceptLanguage string,
 	eventID string,
 	sourceLocale string,
 	completeDocumentLocales []string,
 ) (publiccontent.Selection, error) {
-	settings, settingsErr := translation.LoadRuntimeSettings(ctx, db)
+	settings, settingsErr := store.TranslationSettings(ctx)
 	if settingsErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_localization_settings", failurecause.Attr(settingsErr), "event_id", eventID)
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using default Program Event localization settings", "domain", "programevent", "operation", "load_localization_settings", failurecause.Attr(settingsErr), "event_id", eventID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	sourceLocale = normalizeSourceLocaleWithDefault(sourceLocale, settings.DefaultLocale)
-	selection, err := publiccontent.ResolveWithPolicy(
-		ctx, db, programEventLocalizationSpec, eventID, acceptLanguage, settings,
-	)
+	selection, err := store.ResolveLocalization(ctx, eventID, acceptLanguage, settings)
 	if err != nil {
-		return publiccontent.Selection{}, errs.Internal(err)
+		return publiccontent.Selection{}, err
 	}
 	complete := make(map[string]struct{}, len(completeDocumentLocales))
 	for _, locale := range completeDocumentLocales {
 		complete[normalizeSourceLocaleWithDefault(locale, settings.DefaultLocale)] = struct{}{}
 	}
 	if _, ok := complete[sourceLocale]; !ok {
-		return publiccontent.Selection{}, errs.InternalMsg("Program Event source locale Block overlay is incomplete")
+		return publiccontent.Selection{}, errors.New("program Event source locale Block overlay is incomplete")
 	}
 	if selection.DisplayedLocale != sourceLocale {
 		if _, ok := complete[selection.DisplayedLocale]; !ok {
@@ -1028,20 +489,16 @@ func resolveProgramEventLocalization(
 			if fallbackLocale == selection.SourceLocale {
 				fallbackLocale = sourceLocale
 			}
-			selection, err = publiccontent.ResolveWithPolicy(
-				ctx, db, programEventLocalizationSpec, eventID, fallbackLocale, settings,
-			)
+			selection, err = store.ResolveLocalization(ctx, eventID, fallbackLocale, settings)
 			if err != nil {
-				return publiccontent.Selection{}, errs.Internal(err)
+				return publiccontent.Selection{}, err
 			}
 			selection.RequestedLocale = requestedLocale
 			selection.IsFallback = true
 			selection.FallbackReason = openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE
 		}
 	}
-	available, availableErr := publiccontent.AvailableLocales(
-		ctx, db, programEventLocalizationSpec, eventID, sourceLocale, settings,
-	)
+	available, availableErr := store.AvailableLocales(ctx, eventID, sourceLocale, settings)
 	if availableErr == nil {
 		filtered := make([]string, 0, len(available))
 		for _, locale := range available {
@@ -1055,496 +512,7 @@ func resolveProgramEventLocalization(
 		}
 		selection.AvailableLocales = filtered
 	} else {
-		if availableErr != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_available_locales", failurecause.Attr(availableErr), "event_id", eventID)
-		}
+		slog.ErrorContext(ctx, "Program Event available locales lookup failed; serving without available locales", "domain", "programevent", "operation", "load_available_locales", failurecause.Attr(availableErr), "event_id", eventID)
 	}
 	return selection, nil
-}
-
-func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string, acceptLanguage string) (*openv1.ProgramEventType, error) {
-	var eventType model.ProgramEventType
-	if err := db.WithContext(ctx).First(&eventType, "id = ?", typeID).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	localesByType, err := loadPublicProgramEventTypeLocales(ctx, db, []string{eventType.ID})
-	if err != nil {
-		return nil, err
-	}
-	return publicProgramEventTypeProto(eventType, localesByType[eventType.ID], acceptLanguage)
-}
-
-func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string]model.ProgramEventType, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
-	result := make(map[string]model.ProgramEventType, len(ids))
-	if len(ids) == 0 {
-		return result, nil
-	}
-	var rows []model.ProgramEventType
-	if err := db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	for i := range rows {
-		result[rows[i].ID] = rows[i]
-	}
-	return result, nil
-}
-
-func loadPublicProgramEventTypeLocales(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string][]publicProgramEventTypeLocaleRow, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
-	result := make(map[string][]publicProgramEventTypeLocaleRow, len(ids))
-	if len(ids) == 0 {
-		return result, nil
-	}
-	var rows []publicProgramEventTypeLocaleRow
-	if err := db.WithContext(ctx).
-		Table("program_event_type_locale").
-		Select("type_id, locale, name, description").
-		Where("type_id IN ?", ids).
-		Order("type_id ASC, locale ASC").
-		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	for _, row := range rows {
-		result[row.TypeID] = append(result[row.TypeID], row)
-	}
-	return result, nil
-}
-
-func publicProgramEventTypeProto(
-	eventType model.ProgramEventType,
-	locales []publicProgramEventTypeLocaleRow,
-	acceptLanguage string,
-) (*openv1.ProgramEventType, error) {
-	localeRow, err := selectPublicProgramEventTypeLocaleRows(locales, eventType.ID, acceptLanguage)
-	if err != nil {
-		return nil, err
-	}
-	return &openv1.ProgramEventType{
-		Id:                eventType.ID,
-		Slug:              eventType.Slug,
-		Status:            openProgramEventTypeStatus(eventType.Status),
-		SortOrder:         eventType.SortOrder,
-		Name:              localeRow.Name,
-		Description:       localeRow.Description,
-		RequiresPlace:     eventType.RequiresPlace,
-		RequiresStreamUrl: eventType.RequiresStreamURL,
-	}, nil
-}
-
-type publicProgramEventTypeLocaleRow struct {
-	TypeID      string  `gorm:"column:type_id"`
-	Locale      string  `gorm:"column:locale"`
-	Name        string  `gorm:"column:name"`
-	Description *string `gorm:"column:description"`
-}
-
-func selectPublicProgramEventTypeLocaleRows(rows []publicProgramEventTypeLocaleRow, typeID string, acceptLanguage string) (publicProgramEventTypeLocaleRow, error) {
-	if len(rows) == 0 {
-		return publicProgramEventTypeLocaleRow{}, errs.NotFound("program event type locale", typeID)
-	}
-	requested := resolveRequestedLocale(acceptLanguage)
-	if matched, ok := findProgramEventTypeLocale(rows, requested); ok {
-		return matched, nil
-	}
-	if matched, ok := findProgramEventTypeLocale(rows, defaultPublicLocale); ok {
-		return matched, nil
-	}
-	return rows[0], nil
-}
-
-func uniqueProgramEventIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
-	typeIDs := make([]string, 0, len(events))
-	for i := range events {
-		if events[i].TypeID != "" {
-			typeIDs = append(typeIDs, events[i].TypeID)
-		}
-	}
-	return uniqueProgramEventIDs(typeIDs)
-}
-
-// loadProgramEventPosterFileIDs applies the public poster selection rule to an entire result page.
-func loadProgramEventPosterFileIDs(ctx context.Context, db *gorm.DB, eventIDs []string) (map[string]string, error) {
-	ids := uniqueProgramEventIDs(eventIDs)
-	fileByEvent := make(map[string]string, len(ids))
-	if len(ids) == 0 {
-		return fileByEvent, nil
-	}
-	var rows []struct {
-		EventID string `gorm:"column:event_id"`
-		FileID  string `gorm:"column:file_id"`
-	}
-	err := db.WithContext(ctx).Raw(`
-		SELECT pem.event_id, pem.file_id
-		FROM program_event_media AS pem
-		WHERE pem.event_id IN ? AND pem.role = 'poster'
-		ORDER BY pem.event_id ASC,
-			pem.is_primary DESC,
-			pem.sort_order ASC,
-			pem.created_at ASC,
-			pem.id ASC
-	`, ids).Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		if _, exists := fileByEvent[row.EventID]; !exists && strings.TrimSpace(row.FileID) != "" {
-			fileByEvent[row.EventID] = row.FileID
-		}
-	}
-	return fileByEvent, nil
-}
-
-func findProgramEventTypeLocale(rows []publicProgramEventTypeLocaleRow, locale string) (publicProgramEventTypeLocaleRow, bool) {
-	for _, row := range rows {
-		if normalizeSourceLocale(row.Locale) == normalizeSourceLocale(locale) {
-			return row, true
-		}
-	}
-	return publicProgramEventTypeLocaleRow{}, false
-}
-
-func loadProgramEventPosterAsset(ctx context.Context, db *gorm.DB, assets Assets, eventID string) *commonv1.AssetRef {
-	var file struct {
-		FileID string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).Raw(
-		`SELECT pem.file_id
-		 FROM program_event_media AS pem
-		 WHERE pem.event_id = ? AND pem.role = 'poster'
-		 ORDER BY
-		   pem.is_primary DESC,
-		   pem.sort_order ASC,
-		   pem.created_at ASC
-		 LIMIT 1`,
-		eventID,
-	).Scan(&file).Error; err != nil || strings.TrimSpace(file.FileID) == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventPosterAsset", failurecause.Attr(err), "event_id", eventID)
-		}
-		return nil
-	}
-	return assets.ResolveReadyAssetForSourceFile(ctx, file.FileID, "poster", "image")
-}
-
-func loadProgramEventFileAsset(ctx context.Context, assets Assets, fileID *string) *commonv1.AssetRef {
-	if fileID == nil || strings.TrimSpace(*fileID) == "" {
-		return nil
-	}
-	return assets.ResolveReadyAssetForSourceFile(ctx, *fileID, "image", "poster", "map_image")
-}
-
-func loadPublicProgramEventMapPlace(ctx context.Context, db *gorm.DB, mapPlaceID string) (*openv1.MapPlaceBasic, error) {
-	var place model.MapPlace
-	if err := db.WithContext(ctx).First(&place, "id = ?", mapPlaceID).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoPlace := &openv1.MapPlaceBasic{
-		Id:      place.ID,
-		Name:    place.Name,
-		Address: place.Address,
-		Lat:     place.Lat,
-		Lng:     place.Lng,
-	}
-	if place.GooglePlaceID != nil && *place.GooglePlaceID != "" {
-		protoPlace.GooglePlaceId = place.GooglePlaceID
-	}
-	return protoPlace, nil
-}
-
-type publicProgramEventParticipantRow struct {
-	ID        string  `gorm:"column:id"`
-	Name      string  `gorm:"column:name"`
-	Slug      *string `gorm:"column:slug"`
-	Role      *string `gorm:"column:role"`
-	SortOrder int32   `gorm:"column:sort_order"`
-}
-
-func creativeSourceTitleSQL(entityType, tableAlias string) string {
-	alias := strings.TrimSpace(tableAlias)
-	if alias == "" {
-		alias = entityType
-	}
-	return fmt.Sprintf(
-		"COALESCE((SELECT translation.title FROM %s_translation AS translation WHERE translation.entity_id = %s.id AND translation.locale = %s.source_locale LIMIT 1), '')",
-		entityType,
-		alias,
-		alias,
-	)
-}
-
-func loadPublicProgramEventArtists(ctx context.Context, db *gorm.DB, eventID string) ([]*openv1.ProgramEventArtist, error) {
-	rows, err := loadPublicProgramEventParticipants(ctx, db, eventID, publicProgramEventParticipantQuery{
-		Junction:   "program_event_artist AS pea",
-		Projection: "a.id, " + creativeSourceTitleSQL("artist", "a") + " AS name, a.slug, pea.role, pea.sort_order",
-		Join:       "JOIN artist AS a ON a.id = pea.artist_id",
-		Where:      "pea.event_id = ? AND a.status = ?",
-		Status:     managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(),
-		Order:      "pea.sort_order ASC, name ASC",
-	})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*openv1.ProgramEventArtist, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, &openv1.ProgramEventArtist{
-			Id:        row.ID,
-			Name:      row.Name,
-			Slug:      row.Slug,
-			Role:      row.Role,
-			SortOrder: row.SortOrder,
-		})
-	}
-	return result, nil
-}
-
-type publicProgramEventParticipantQuery struct {
-	Junction   string
-	Projection string
-	Join       string
-	Where      string
-	Status     string
-	Order      string
-}
-
-func loadPublicProgramEventParticipants(
-	ctx context.Context,
-	db *gorm.DB,
-	eventID string,
-	query publicProgramEventParticipantQuery,
-) ([]publicProgramEventParticipantRow, error) {
-	var rows []publicProgramEventParticipantRow
-	if err := db.WithContext(ctx).
-		Table(query.Junction).
-		Select(query.Projection).
-		Joins(query.Join).
-		Where(query.Where, eventID, query.Status).
-		Order(query.Order).
-		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	return rows, nil
-}
-
-func loadPublicProgramEventLabels(ctx context.Context, db *gorm.DB, eventID string) ([]*openv1.ProgramEventLabel, error) {
-	rows, err := loadPublicProgramEventParticipants(ctx, db, eventID, publicProgramEventParticipantQuery{
-		Junction:   "program_event_label AS pel",
-		Projection: "l.id, " + creativeSourceTitleSQL("label", "l") + " AS name, l.slug, pel.role, pel.sort_order",
-		Join:       "JOIN label AS l ON l.id = pel.label_id",
-		Where:      "pel.event_id = ? AND l.status = ?",
-		Status:     managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String(),
-		Order:      "pel.sort_order ASC, name ASC",
-	})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*openv1.ProgramEventLabel, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, &openv1.ProgramEventLabel{
-			Id:        row.ID,
-			Name:      row.Name,
-			Slug:      row.Slug,
-			Role:      row.Role,
-			SortOrder: row.SortOrder,
-		})
-	}
-	return result, nil
-}
-
-type publicProgramEventClientRow struct {
-	ID        string  `gorm:"column:id"`
-	Name      string  `gorm:"column:name"`
-	Website   *string `gorm:"column:website"`
-	Role      *string `gorm:"column:role"`
-	SortOrder int32   `gorm:"column:sort_order"`
-}
-
-func loadPublicProgramEventClients(ctx context.Context, db *gorm.DB, eventID string) ([]*openv1.ProgramEventClient, error) {
-	var rows []publicProgramEventClientRow
-	if err := db.WithContext(ctx).
-		Table("program_event_client AS pec").
-		Select("c.id, c.name, c.website, pec.role, pec.sort_order").
-		Joins("JOIN client AS c ON c.id = pec.client_id").
-		Where("pec.event_id = ?", eventID).
-		Order("pec.sort_order ASC, c.name ASC").
-		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	result := make([]*openv1.ProgramEventClient, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, &openv1.ProgramEventClient{
-			Id:        row.ID,
-			Name:      row.Name,
-			Website:   row.Website,
-			Role:      row.Role,
-			SortOrder: row.SortOrder,
-		})
-	}
-	return result, nil
-}
-
-type publicProgramEventCreditRow struct {
-	ID                string  `gorm:"column:id"`
-	Display           *string `gorm:"column:display_name"`
-	CreditRole        *string `gorm:"column:credit_role"`
-	Description       *string `gorm:"column:description"`
-	SortOrder         int32   `gorm:"column:sort_order"`
-	ArtistID          *string `gorm:"column:artist_id"`
-	ArtistName        *string `gorm:"column:artist_name"`
-	ArtistSlug        *string `gorm:"column:artist_slug"`
-	ArtistImageFileID *string `gorm:"column:artist_image_file_id"`
-	MemberID          *string `gorm:"column:member_id"`
-}
-
-func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context, eventID string) ([]*openv1.ProgramEventCredit, error) {
-	var rows []publicProgramEventCreditRow
-	if err := s.db.WithContext(ctx).
-		Table("program_event_credit AS pec").
-		Select(`
-			pec.id,
-			pec.display_name,
-			pec.credit_role,
-			pec.description,
-			pec.sort_order,
-			a.id AS artist_id,
-			`+creativeSourceTitleSQL("artist", "a")+` AS artist_name,
-			a.slug AS artist_slug,
-			(SELECT file_id FROM artist_file WHERE artist_id = a.id
-			 ORDER BY sort_order ASC LIMIT 1) AS artist_image_file_id,
-			pec.member_id
-		`).
-		Joins("LEFT JOIN artist AS a ON a.id = pec.artist_id AND a.status = ?", managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()).
-		Where("pec.event_id = ?", eventID).
-		Order("pec.sort_order ASC, pec.id ASC").
-		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	memberIDs := make([]string, 0, len(rows))
-	imageFileIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.ArtistImageFileID != nil {
-			imageFileIDs = append(imageFileIDs, *row.ArtistImageFileID)
-		}
-		if row.MemberID != nil {
-			memberIDs = append(memberIDs, *row.MemberID)
-		}
-	}
-	members, err := s.creditMembers.LoadPublicCreditMemberSummaries(ctx, memberIDs)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	images, err := s.assets.ResolveReadyAssetsForSourceFiles(ctx, imageFileIDs, "image")
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	result := make([]*openv1.ProgramEventCredit, 0, len(rows))
-	for _, row := range rows {
-		item := &openv1.ProgramEventCredit{
-			Id:          row.ID,
-			DisplayName: row.Display,
-			CreditRole:  row.CreditRole,
-			Description: row.Description,
-			SortOrder:   row.SortOrder,
-		}
-		if row.ArtistID != nil {
-			name := ""
-			if row.ArtistName != nil {
-				name = *row.ArtistName
-			}
-			item.Artist = &openv1.ProgramEventArtist{
-				Id:   *row.ArtistID,
-				Name: name,
-				Slug: row.ArtistSlug,
-			}
-			if row.ArtistImageFileID != nil {
-				item.Artist.ImageAsset = images[*row.ArtistImageFileID]
-			}
-		}
-		if row.MemberID != nil {
-			item.Member = members[*row.MemberID]
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-func collectPublicProgramEventIDs(events []model.ProgramEvent) []string {
-	ids := make([]string, 0, len(events))
-	for i := range events {
-		ids = append(ids, events[i].ID)
-	}
-	return ids
-}
-
-func timestampProto(value *time.Time) *timestamppb.Timestamp {
-	if value == nil {
-		return nil
-	}
-	return timestamppb.New(*value)
-}
-
-func openProgramEventStatus(status string) openv1.ProgramEventStatus {
-	if value, ok := openv1.ProgramEventStatus_value[status]; ok {
-		return openv1.ProgramEventStatus(value)
-	}
-	return openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_UNSPECIFIED
-}
-
-func publicProgramEventStatuses() []string {
-	return []string{
-		openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
-		openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(),
-	}
-}
-
-func isPublicProgramEventStatus(status string) bool {
-	return status == openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() ||
-		status == openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()
-}
-
-func openProgramEventSeriesStatus(status string) openv1.ProgramEventSeriesStatus {
-	switch status {
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String():
-		return openv1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String():
-		return openv1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_DRAFT
-	default:
-		return openv1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED
-	}
-}
-
-func openProgramEventLocationMode(mode string) openv1.ProgramEventLocationMode {
-	if value, ok := openv1.ProgramEventLocationMode_value[mode]; ok {
-		return openv1.ProgramEventLocationMode(value)
-	}
-	return openv1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_UNSPECIFIED
-}
-
-func publicProgramEventLocationModeUsesMapPlace(mode string) bool {
-	return mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String() ||
-		mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String()
-}
-
-func openProgramEventTypeStatus(status string) openv1.ProgramEventTypeStatus {
-	if value, ok := openv1.ProgramEventTypeStatus_value[status]; ok {
-		return openv1.ProgramEventTypeStatus(value)
-	}
-	return openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_UNSPECIFIED
 }

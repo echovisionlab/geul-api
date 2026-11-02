@@ -8,9 +8,10 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/form"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestPageReferenceDescriptors(t *testing.T) {
@@ -52,8 +53,8 @@ func TestPageReferenceNativeRequestsAndCompactProjection(t *testing.T) {
 	slug := "contact"
 	description := "Private native body"
 	fixture := &recordingPageReferences{
-		forms:      []*managev1.FormSummary{nil, {Id: managementWorkID, Title: "문의 폼", Slug: &slug, Status: managev1.FormStatus_FORM_STATUS_PUBLISHED, SourceLocale: "ko", SubmissionCount: 19}},
-		series:     []*managev1.SeriesWithStats{nil, {}, {Series: &managev1.Series{Id: managementWorkID, Title: "소식", Slug: "news", Status: "SERIES_STATUS_PUBLISHED", SourceLocale: "ko", Description: &description}, PostCount: 4, ManagerCount: 7}},
+		forms:      []form.Summary{{Form: form.Form{ID: managementWorkID, Slug: &slug, Status: form.StatusPublished, SourceLocale: "ko"}, Title: "문의 폼", SubmissionCount: 19}},
+		series:     []series.ListedSeries{{Detail: series.Detail{Series: series.Series{ID: managementWorkID, Title: "소식", Slug: "news", Status: series.StatusPublished, SourceLocale: "ko", Description: &description}}, PostCount: 4, ManagerCount: 7}},
 		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
 	}
 	tools := newPageReferenceFixture(t, fixture)
@@ -99,7 +100,7 @@ func TestPageReferenceNativeRequestsAndCompactProjection(t *testing.T) {
 			}
 		})
 	}
-	fixture.forms[1].Slug = nil
+	fixture.forms[0].Form.Slug = nil
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFormList, toolArguments(t, `{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +208,8 @@ func newPageReferenceFixture(t *testing.T, fixture *recordingPageReferences) *Pa
 }
 
 type recordingPageReferences struct {
-	forms             []*managev1.FormSummary
-	series            []*managev1.SeriesWithStats
+	forms             []form.Summary
+	series            []series.ListedSeries
 	pagination        *commonv1.PaginationResponse
 	requestPagination *commonv1.PaginationRequest
 	filters           []*commonv1.FilterSpec
@@ -217,14 +218,16 @@ type recordingPageReferences struct {
 	err               error
 }
 
-func (r *recordingPageReferences) ListFormsAdmin(_ context.Context, request *connect.Request[managev1.ListFormsAdminRequest]) (*connect.Response[managev1.ListFormsAdminResponse], error) {
+func (r *recordingPageReferences) ListFormsAdmin(_ context.Context, query form.ListFormsAdminQuery) (form.FormList, error) {
 	r.calls++
-	r.requestPagination, r.filters, r.sorts = request.Msg.Pagination, request.Msg.Filters, request.Msg.Sorts
-	return connect.NewResponse(&managev1.ListFormsAdminResponse{Forms: r.forms, Pagination: r.pagination}), r.err
+	r.requestPagination = &commonv1.PaginationRequest{Limit: query.Page.Limit, Offset: query.Page.Offset}
+	r.filters, r.sorts = query.Filters, query.Sorts
+	return form.FormList{Forms: r.forms, Pagination: form.Pagination{Total: r.pagination.GetTotal(), HasMore: r.pagination.GetHasMore()}}, r.err
 }
 
-func (r *recordingPageReferences) ListSeriesAdmin(_ context.Context, request *connect.Request[managev1.ListSeriesAdminRequest]) (*connect.Response[managev1.ListSeriesAdminResponse], error) {
+func (r *recordingPageReferences) ListSeriesAdmin(_ context.Context, query series.ListSeriesAdminQuery) (series.SeriesPage, error) {
 	r.calls++
-	r.requestPagination, r.filters, r.sorts = request.Msg.Pagination, request.Msg.Filters, request.Msg.Sorts
-	return connect.NewResponse(&managev1.ListSeriesAdminResponse{Series: r.series, Pagination: r.pagination}), r.err
+	r.requestPagination = &commonv1.PaginationRequest{Limit: query.Page.Limit, Offset: query.Page.Offset}
+	r.filters, r.sorts = query.Filters, query.Sorts
+	return series.SeriesPage{Items: r.series, Total: r.pagination.GetTotal(), HasMore: r.pagination.GetHasMore()}, r.err
 }

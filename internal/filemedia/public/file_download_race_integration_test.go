@@ -1,6 +1,6 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
@@ -10,16 +10,29 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
+	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
+
 	"connectrpc.com/connect"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -74,8 +87,8 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 			BlockId: blockID, ReferencePath: "file",
 		}},
 	})
-	initialService := NewFileService(db, spiceDB, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
-	initial, err := initialService.AuthorizeDownload(t.Context(), request)
+	initialService := newTestService(testDeps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	initial, err := NewConnectHandler(initialService).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, initial.Msg.GetAccess().GetAction())
 	initialURL := initial.Msg.GetDownload().GetUrl()
@@ -87,14 +100,14 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 		release:   release,
 		trigger:   1,
 	}})
-	svc := NewFileService(serviceDB, spiceDB, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	type authorizationResult struct {
 		response *connect.Response[openv1.AuthorizeDownloadResponse]
 		err      error
 	}
 	authorized := make(chan authorizationResult, 1)
 	go func() {
-		response, err := svc.AuthorizeDownload(t.Context(), request)
+		response, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 		authorized <- authorizationResult{response: response, err: err}
 	}()
 	select {
@@ -148,7 +161,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 2,
 	}})
-	svc := NewFileService(serviceDB, spiceDB, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -162,7 +175,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 	}
 	authorized := make(chan authorizationResult, 1)
 	go func() {
-		response, err := svc.AuthorizeDownload(t.Context(), request)
+		response, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 		authorized <- authorizationResult{response: response, err: err}
 	}()
 	select {
@@ -195,7 +208,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 	assertDownloadToken(t, result.response.Msg.GetDownload().GetUrl(), originalFileID, originalFileID+".wav", mediaauth.DownloadTTL)
 	require.NoError(t, <-replaced)
 
-	afterReplacement, err := svc.AuthorizeDownload(t.Context(), request)
+	afterReplacement, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, afterReplacement.Msg.GetAccess().GetAction())
 }
@@ -219,20 +232,20 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 		(?::uuid, 'file', 'active', ?::uuid, 'public'),
 		(?::uuid, 'file', 'active', ?::uuid, 'public')`, stableBlockID, originalFileID, replacedBlockID, originalFileID).Error)
 
-	items, err := filemedia.LoadContentBlockMediaReferences(t.Context(), db, uuid.MustParse(documentID))
+	items, err := contentblock.LoadMediaReferences(t.Context(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	require.Len(t, items, 2)
 	loaded, release := make(chan struct{}), make(chan struct{})
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 1,
 	}})
-	svc := NewFileService(serviceDB, spiceDB, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	hydrationContext := mediaasset.WithContentDownloadOwnerAuthorization(t.Context(), mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "post", ResourceID: postID, Status: managev1.PostStatus_POST_STATUS_PUBLISHED.String(), DocumentID: documentID,
 		Mode: mediaasset.ContentDownloadOwnerAccessPublic,
 	})
 	type hydrationResult struct {
-		items []*contentv1.ContentBlockMediaItem
+		items []*fileref.BlockMediaItem
 		err   error
 	}
 	hydrated := make(chan hydrationResult, 1)
@@ -259,31 +272,31 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 	require.NoError(t, result.err)
 	require.Len(t, result.items, 2)
 
-	byBlock := make(map[string]*contentv1.ContentBlockMediaItem, len(result.items))
+	byBlock := make(map[string]*fileref.BlockMediaItem, len(result.items))
 	for _, item := range result.items {
-		byBlock[item.GetSelector().GetBlockId()] = item
+		byBlock[optional.Value(optional.Value(item).Selector).BlockID] = item
 	}
 	stable := byBlock[stableBlockID]
-	require.NotNil(t, stable.GetDelivery())
-	require.NotNil(t, stable.GetDelivery().GetInline())
-	require.NotNil(t, stable.GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, stable.GetDownloadAction())
+	require.NotNil(t, optional.Value(stable).Delivery)
+	require.NotNil(t, optional.Value(optional.Value(stable).Delivery).Inline)
+	require.NotNil(t, optional.Value(optional.Value(stable).Delivery).Download)
+	require.Equal(t, fileref.Download, optional.Value(stable).DownloadAction)
 
 	replaced := byBlock[replacedBlockID]
-	require.Nil(t, replaced.GetDelivery())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, replaced.GetDownloadAction())
+	require.Nil(t, optional.Value(replaced).Delivery)
+	require.Equal(t, fileref.NoDownload, optional.Value(replaced).DownloadAction)
 }
 
 func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, fileID := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceAuthenticated,
 	)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
-	svc := NewFileService(db, stack.SpiceDBClient, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -292,18 +305,18 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 		}},
 	})
 
-	active, err := svc.AuthorizeDownload(ctx, request)
+	active, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, active.Msg.GetAccess().GetAction())
 
 	assertDenied := func() {
 		t.Helper()
-		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), db, []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), mediaassetpostgres.NewDownloadStore(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
 		require.NoError(t, loadErr)
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), db, stack.SpiceDBClient, sources, member.AuthUserInfo())
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), mediaassetpostgres.NewDownloadStore(db, nil), stack.SpiceDBClient, sources, member.AuthUserInfo())
 		require.NoError(t, evaluateErr)
 		require.False(t, allowed[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")])
-		response, authorizeErr := svc.AuthorizeDownload(ctx, request)
+		response, authorizeErr := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 		require.NoError(t, authorizeErr)
 		require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, response.Msg.GetAccess().GetAction())
 		require.Nil(t, response.Msg.GetDownload())
@@ -326,20 +339,17 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 
 func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceRestricted,
 	)
 	segmentID := uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, segmentID, managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String()).Error)
+	require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, segmentID, model.AudienceSegmentAllMembers).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, blockID, segmentID).Error)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
-	svc := NewFileService(
-		db, stack.SpiceDBClient, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL,
-		WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
-	)
+	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL, Segments: mediaassetadapter.NewSegmentConfigs()})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -348,31 +358,31 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 		}},
 	})
 
-	active, err := svc.AuthorizeDownload(ctx, request)
+	active, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, active.Msg.GetAccess().GetAction())
 	require.NotNil(t, active.Msg.GetDownload())
 
-	anonymous, err := svc.AuthorizeDownload(t.Context(), request)
+	anonymous, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_SIGN_IN, anonymous.Msg.GetAccess().GetAction())
 	require.Nil(t, anonymous.Msg.GetDownload())
 
 	require.NoError(t, db.Exec(`UPDATE member SET onboarded = FALSE WHERE id = ?::uuid`, member.MemberID).Error)
-	inactive, err := svc.AuthorizeDownload(ctx, request)
+	inactive, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, inactive.Msg.GetAccess().GetAction())
 	require.Nil(t, inactive.Msg.GetDownload())
 
 	require.NoError(t, db.Exec(`UPDATE member SET onboarded = TRUE WHERE id = ?::uuid`, member.MemberID).Error)
 	require.NoError(t, db.Exec(`UPDATE audience_segment SET archived_at = CURRENT_TIMESTAMP WHERE id = ?::uuid`, segmentID).Error)
-	archived, err := svc.AuthorizeDownload(ctx, request)
+	archived, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, archived.Msg.GetAccess().GetAction())
 	require.Nil(t, archived.Msg.GetDownload())
 
 	require.NoError(t, db.Exec(`DELETE FROM content_block_attachment_download_audience_segment WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error)
-	restrictedEmpty, err := svc.AuthorizeDownload(ctx, request)
+	restrictedEmpty, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, restrictedEmpty.Msg.GetAccess().GetAction())
 	require.Nil(t, restrictedEmpty.Msg.GetDownload())
@@ -380,20 +390,20 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 
 func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_DRAFT.String(), mediaasset.FileDownloadAudiencePublic,
 	)
 	member := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	testutil.GrantPostIntegrationRole(t, stack.SpiceDBClient, member.IdentityID, policyv1.Role.Admin())
+	orytest.GrantPostIntegrationRole(t, stack.SpiceDBClient, member.IdentityID, policyv1.Role.Admin())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
 
 	loaded, release := make(chan struct{}), make(chan struct{})
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 1,
 	}})
-	svc := NewFileService(serviceDB, stack.SpiceDBClient, "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -407,7 +417,7 @@ func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneI
 	}
 	authorized := make(chan authorizationResult, 1)
 	go func() {
-		response, err := svc.AuthorizeDownload(ctx, request)
+		response, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 		authorized <- authorizationResult{response: response, err: err}
 	}()
 	select {

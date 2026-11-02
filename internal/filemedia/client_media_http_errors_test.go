@@ -1,11 +1,12 @@
 package filemedia
 
 import (
-	"connectrpc.com/connect"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
+
+	"connectrpc.com/connect"
 )
 
 func TestClientArtifactHTTPStatusPreservesClassifiedFailures(t *testing.T) {

@@ -65,10 +65,6 @@ type DeliveryCampaignStore interface {
 	MarkClaimedResult(context.Context, string, string, string, string, string) error
 }
 
-type Suppression struct {
-	Reason string
-}
-
 type DeliverySuppressionStore interface {
 	Find(context.Context, string) (*Suppression, error)
 	Suppress(context.Context, SuppressionRequest) error
@@ -145,8 +141,8 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{Outcome: DeliveryExpired}, nil
 	}
 
-	recipientID := strings.TrimSpace(job.GetDeliveryRecipientId())
-	claimID, claimed, err := a.claimDelivery(ctx, recipientID)
+	attempt := deliveryAttempt{job: job, recipientID: strings.TrimSpace(job.GetDeliveryRecipientId())}
+	claimID, claimed, err := a.claimDelivery(ctx, attempt.recipientID)
 	if err != nil {
 		return DeliveryResult{}, err
 	}
@@ -154,75 +150,110 @@ func (a *DeliveryApplication) Deliver(
 		logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.duplicate_suppressed", job, "skipped", "campaign_recipient_claim_unavailable", "")
 		return DeliveryResult{}, nil
 	}
+	attempt.claimID = claimID
 	a.metrics.RecordSendAttempt(ctx, job.GetTemplateType())
 
+	if result, done, err := a.screenRecipient(ctx, attempt); done || err != nil {
+		return result, err
+	}
+	rendered, result, done, err := a.render(ctx, attempt)
+	if done || err != nil {
+		return result, err
+	}
+	return a.send(ctx, attempt, rendered)
+}
+
+// deliveryAttempt is one claimed delivery of a job.
+type deliveryAttempt struct {
+	job         *managev1.SendEmailEvent
+	recipientID string
+	claimID     string
+}
+
+// finish records a terminal recipient status and its metrics.
+func (a *DeliveryApplication) finish(ctx context.Context, attempt deliveryAttempt, status, reason, result string) error {
+	if err := a.markTerminalResult(ctx, attempt.recipientID, attempt.claimID, status, reason); err != nil {
+		return err
+	}
+	a.metrics.RecordSendResult(ctx, attempt.job.GetTemplateType(), result)
+	a.metrics.RecordRecipientStatus(ctx, attempt.job.GetTemplateType(), status)
+	return nil
+}
+
+// screenRecipient ends the attempt for a suppressed address or a recipient
+// whose context no longer allows the email. done reports that it did.
+func (a *DeliveryApplication) screenRecipient(ctx context.Context, attempt deliveryAttempt) (DeliveryResult, bool, error) {
+	job := attempt.job
 	suppression, err := a.suppressions.Find(ctx, job.GetRecipient())
 	if err != nil {
-		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+		return DeliveryResult{}, true, a.releaseClaimAfterError(ctx, attempt.recipientID, attempt.claimID, err)
 	}
 	if suppression != nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSuppressed, "", "email_suppressed"); err != nil {
-			return DeliveryResult{}, err
+		if err := a.finish(ctx, attempt, RecipientStatusSuppressed, "email_suppressed", "suppressed"); err != nil {
+			return DeliveryResult{}, true, err
 		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "suppressed")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusSuppressed)
 		logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.suppressed", job, "skipped", suppression.Reason, "")
-		return DeliveryResult{Outcome: DeliverySuppressed}, nil
+		return DeliveryResult{Outcome: DeliverySuppressed}, true, nil
 	}
-
 	decision, err := a.recipients.Authorize(ctx, job)
 	if err != nil {
-		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+		return DeliveryResult{}, true, a.releaseClaimAfterError(ctx, attempt.recipientID, attempt.claimID, err)
 	}
-	if decision.Blocked {
-		reason := strings.TrimSpace(decision.Reason)
-		if reason == "" {
-			reason = "recipient_context_blocked"
-		}
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", reason); err != nil {
-			return DeliveryResult{}, err
-		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "blocked")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusBlocked)
-		logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.blocked", job, "blocked", reason, "recipient_context_blocked")
-		return DeliveryResult{Outcome: DeliveryRecipientBlocked}, nil
+	if !decision.Blocked {
+		return DeliveryResult{}, false, nil
 	}
+	reason := strings.TrimSpace(decision.Reason)
+	if reason == "" {
+		reason = "recipient_context_blocked"
+	}
+	if err := a.finish(ctx, attempt, RecipientStatusBlocked, reason, "blocked"); err != nil {
+		return DeliveryResult{}, true, err
+	}
+	logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.blocked", job, "blocked", reason, "recipient_context_blocked")
+	return DeliveryResult{Outcome: DeliveryRecipientBlocked}, true, nil
+}
 
+// render renders the job's email. done reports that rendering ended the
+// attempt: a failed template blocks the recipient and a missing one skips it.
+func (a *DeliveryApplication) render(ctx context.Context, attempt deliveryAttempt) (*email.RenderedEmail, DeliveryResult, bool, error) {
+	job := attempt.job
 	rendered, err := a.renderer.Render(ctx, job)
 	if err != nil && dberrors.IsTransient(err) {
 		// The template is not at fault; the queue retries once the database
 		// answers again instead of blocking the recipient.
 		logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.render_deferred", job, "retry", "render_dependency_unavailable", "")
-		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, fmt.Errorf("render email: %w", err))
+		return nil, DeliveryResult{}, true, a.releaseClaimAfterError(ctx, attempt.recipientID, attempt.claimID, fmt.Errorf("render email: %w", err))
 	}
 	if err != nil {
 		errorType := managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()
 		LogDeliveryFailure(ctx, "mail.delivery.render_failed", job, err, "reason", "render_failed", "error_type", errorType)
-		if markErr := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", errorType); markErr != nil {
-			return DeliveryResult{}, fmt.Errorf("persist terminal render failure: %w", markErr)
+		if markErr := a.finish(ctx, attempt, RecipientStatusBlocked, errorType, "failed"); markErr != nil {
+			return nil, DeliveryResult{}, true, fmt.Errorf("persist terminal render failure: %w", markErr)
 		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusBlocked)
-		return DeliveryResult{Outcome: DeliveryRenderFailed}, nil
+		return nil, DeliveryResult{Outcome: DeliveryRenderFailed}, true, nil
 	}
 	if rendered == nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSkipped, "", "template_not_configured"); err != nil {
-			return DeliveryResult{}, err
+		if err := a.finish(ctx, attempt, RecipientStatusSkipped, "template_not_configured", "skipped"); err != nil {
+			return nil, DeliveryResult{}, true, err
 		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "skipped")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusSkipped)
 		logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.skipped", job, "skipped", "template_not_configured", "")
-		return DeliveryResult{Outcome: DeliveryTemplateMissing}, nil
+		return nil, DeliveryResult{Outcome: DeliveryTemplateMissing}, true, nil
 	}
+	return rendered, DeliveryResult{}, false, nil
+}
 
+// send hands the rendered email to the active providers in order and
+// records the outcome.
+func (a *DeliveryApplication) send(ctx context.Context, attempt deliveryAttempt, rendered *email.RenderedEmail) (DeliveryResult, error) {
+	job := attempt.job
 	adapters, err := a.providers.GetActiveAdapters(ctx)
 	if err != nil {
-		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, attempt.recipientID, attempt.claimID, err)
 	}
 	if len(adapters) == 0 {
 		// A missing adapter is a site configuration gap, not a recipient fact.
 		// Keep the recipient pending so the retry or a later resume sends it.
-		if err := a.releaseClaim(ctx, recipientID, claimID); err != nil {
+		if err := a.releaseClaim(ctx, attempt.recipientID, attempt.claimID); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
@@ -243,32 +274,37 @@ func (a *DeliveryApplication) Deliver(
 	ctx = context.WithValue(ctx, deliveryRenderContextKey{}, rendered)
 	providerMessageID, failures, lastErr, expired, err := a.sendThroughProviders(ctx, job, adapters, message)
 	if err != nil {
-		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, attempt.recipientID, attempt.claimID, err)
 	}
 	if expired {
 		return DeliveryResult{Outcome: DeliveryExpired}, nil
 	}
-	if providerMessageID != "" {
-		// Retain the claim if provider acceptance is known but the durable
-		// terminal write fails; releasing it could immediately send a duplicate.
-		if err := a.persistAcceptedResult(ctx, recipientID, claimID, providerMessageID); err != nil {
-			LogDeliveryFailure(ctx, "mail.delivery.accepted_unpersisted", job, err, "reason", "accepted_result_unpersisted", "provider_message_id", providerMessageID)
-			return DeliveryResult{}, err
-		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "accepted")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusSent)
-		logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.accepted", job, "accepted", "", "", "provider_message_id", providerMessageID)
-		return DeliveryResult{Outcome: DeliveryAccepted}, nil
+	if providerMessageID == "" {
+		return a.providerFailure(ctx, attempt, failures, lastErr)
 	}
+	// Retain the claim if provider acceptance is known but the durable
+	// terminal write fails; releasing it could immediately send a duplicate.
+	if err := a.persistAcceptedResult(ctx, attempt.recipientID, attempt.claimID, providerMessageID); err != nil {
+		LogDeliveryFailure(ctx, "mail.delivery.accepted_unpersisted", job, err, "reason", "accepted_result_unpersisted", "provider_message_id", providerMessageID)
+		return DeliveryResult{}, err
+	}
+	a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "accepted")
+	a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusSent)
+	logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.accepted", job, "accepted", "", "", "provider_message_id", providerMessageID)
+	return DeliveryResult{Outcome: DeliveryAccepted}, nil
+}
 
+// providerFailure records a delivery every provider refused: a permanent
+// failure ends the recipient (and suppresses an invalid address), a
+// retryable one releases the claim for the queue's retry.
+func (a *DeliveryApplication) providerFailure(ctx context.Context, attempt deliveryAttempt, failures []ProviderFailure, lastErr error) (DeliveryResult, error) {
+	job := attempt.job
 	status, errorType, failureErr := ClassifyProviderFailures(failures, lastErr)
 	retryable := status == deliveryRetryableStatus
 	if !retryable && failureErr != nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, status, "", errorType); err != nil {
+		if err := a.finish(ctx, attempt, status, errorType, "failed"); err != nil {
 			return DeliveryResult{}, err
 		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), status)
 		LogDeliveryFailure(ctx, "mail.delivery.failed", job, failureErr, "reason", status, "error_type", errorType)
 		if errorType == managev1.EmailErrorType_EMAIL_ERROR_TYPE_INVALID_RECIPIENT.String() {
 			if suppressErr := a.suppressions.Suppress(ctx, SuppressionRequest{
@@ -284,7 +320,7 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{Outcome: DeliveryProviderFailed}, nil
 	}
 	if retryable {
-		if err := a.releaseClaim(ctx, recipientID, claimID); err != nil {
+		if err := a.releaseClaim(ctx, attempt.recipientID, attempt.claimID); err != nil {
 			return DeliveryResult{}, err
 		}
 	}
@@ -356,10 +392,9 @@ func (a *DeliveryApplication) markTerminalResult(
 	recipientID string,
 	claimID string,
 	status string,
-	providerMessageID string,
 	errorType string,
 ) error {
-	if err := a.markResult(ctx, recipientID, claimID, status, providerMessageID, errorType); err != nil {
+	if err := a.markResult(ctx, recipientID, claimID, status, "", errorType); err != nil {
 		return a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	return nil

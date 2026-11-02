@@ -5,156 +5,209 @@ import (
 	"fmt"
 	"log/slog"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/structpb"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// GetSettings returns all settings including sensitive ones (admin only)
-func (s *SiteSettingService) GetSettings(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSettingsRequest],
-) (_ *connect.Response[managev1.GetSettingsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSettings", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
+// GetSettingQuery reads one setting by key.
+type GetSettingQuery struct {
+	Key string
+}
 
+// LoaderAsset is a site loader File and its ready asset.
+type LoaderAsset struct {
+	FileID string
+	Asset  Asset
+}
+
+// AdminSettings is what an administrator reads: the stored settings, with
+// an empty reference read as unset, the ready asset of each File setting
+// (nil when it has none), the decoded JSON settings and the runtime origin.
+type AdminSettings struct {
+	SiteTitle              string
+	CompanyName            string
+	CompanyAddress         string
+	TaxID                  string
+	LegalEmail             string
+	ContactEmail           string
+	PrimaryColor           string
+	DefaultCommentsEnabled bool
+	DefaultMapThemeID      string
+	MetaDescription        string
+
+	HomepagePageID       *string
+	MenuHeaderID         *string
+	MenuSecondaryID      *string
+	MenuFooterID         *string
+	MenuAvatarDropdownID *string
+	GoogleAnalyticsID    *string
+
+	LogoFullLight       *Asset
+	LogoFullDark        *Asset
+	LogoSymbolLight     *Asset
+	LogoSymbolDark      *Asset
+	LogoEmailLight      *Asset
+	LogoEmailDark       *Asset
+	Favicon             *Asset
+	FaviconSet          *FaviconSet
+	SiteOgBackground    *Asset
+	PrivacyOgBackground *Asset
+	TermsOgBackground   *Asset
+	LoaderAssets        []LoaderAsset
+
+	// SocialLinks is nil when no link is stored or the stored value is
+	// undecodable; OGImageConfig is nil when it is unset, empty or
+	// undecodable.
+	SocialLinks   structured.Fields
+	OGImageConfig structured.Fields
+
+	SiteOrigin string
+}
+
+func (s *Service) requireView(ctx context.Context) error {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
-	}
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
+}
 
-	settings, err := s.loadSettingsRow(s.db.WithContext(ctx))
+// GetSettings returns all settings including sensitive ones (admin only).
+func (s *Service) GetSettings(ctx context.Context) (AdminSettings, error) {
+	if err := s.requireView(ctx); err != nil {
+		return AdminSettings{}, err
+	}
+	var settings Settings
+	var loaders []LoaderAsset
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if settings, err = store.Settings(ctx); err != nil {
+			return err
+		}
+		loaders, err = loaderAssets(ctx, store)
+		return err
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return AdminSettings{}, err
 	}
-
-	public := &managev1.PublicSettings{
+	all := AdminSettings{
 		SiteTitle:              settings.SiteTitle,
 		CompanyName:            settings.CompanyName,
 		CompanyAddress:         settings.CompanyAddress,
-		TaxId:                  settings.TaxID,
+		TaxID:                  settings.TaxID,
 		LegalEmail:             settings.LegalEmail,
 		ContactEmail:           settings.ContactEmail,
 		PrimaryColor:           settings.PrimaryColor,
 		DefaultCommentsEnabled: settings.DefaultCommentsEnabled,
-		DefaultMapThemeId:      settings.DefaultMapThemeID,
+		DefaultMapThemeID:      settings.DefaultMapThemeID,
 		MetaDescription:        settings.MetaDescription,
+		HomepagePageID:         nonEmpty(settings.HomepagePageID),
+		MenuHeaderID:           nonEmpty(settings.MenuHeaderID),
+		MenuSecondaryID:        nonEmpty(settings.MenuSecondaryID),
+		MenuFooterID:           nonEmpty(settings.MenuFooterID),
+		MenuAvatarDropdownID:   nonEmpty(settings.MenuAvatarDropdownID),
+		GoogleAnalyticsID:      nonEmpty(settings.GoogleAnalyticsID),
+		LogoFullLight:          s.optionalFileAsset(ctx, settings.LogoFullLightFileID, "logo"),
+		LogoFullDark:           s.optionalFileAsset(ctx, settings.LogoFullDarkFileID, "logo"),
+		LogoSymbolLight:        s.optionalFileAsset(ctx, settings.LogoSymbolLightFileID, "logo"),
+		LogoSymbolDark:         s.optionalFileAsset(ctx, settings.LogoSymbolDarkFileID, "logo"),
+		LogoEmailLight:         s.optionalFileAsset(ctx, settings.LogoEmailLightFileID, "email_image"),
+		LogoEmailDark:          s.optionalFileAsset(ctx, settings.LogoEmailDarkFileID, "email_image"),
+		LoaderAssets:           loaders,
+		SiteOrigin:             s.siteOrigin,
 	}
-
-	if v := optionalString(settings.HomepagePageID); v != nil {
-		value := v.(string)
-		public.HomepagePageId = &value
-	}
-	if v := optionalString(settings.MenuHeaderID); v != nil {
-		value := v.(string)
-		public.MenuHeaderId = &value
-	}
-	if v := optionalString(settings.MenuSecondaryID); v != nil {
-		value := v.(string)
-		public.MenuSecondaryId = &value
-	}
-	if v := optionalString(settings.MenuFooterID); v != nil {
-		value := v.(string)
-		public.MenuFooterId = &value
-	}
-	if v := optionalString(settings.MenuAvatarDropdownID); v != nil {
-		value := v.(string)
-		public.MenuAvatarDropdownId = &value
-	}
-	if v := optionalString(settings.GoogleAnalyticsID); v != nil {
-		value := v.(string)
-		public.GoogleAnalyticsId = &value
-	}
-
-	public.LogoFullLightAsset = s.optionalFileAsset(ctx, settings.LogoFullLightFileID, "logo")
-	public.LogoFullDarkAsset = s.optionalFileAsset(ctx, settings.LogoFullDarkFileID, "logo")
-	public.LogoSymbolLightAsset = s.optionalFileAsset(ctx, settings.LogoSymbolLightFileID, "logo")
-	public.LogoSymbolDarkAsset = s.optionalFileAsset(ctx, settings.LogoSymbolDarkFileID, "logo")
-	public.LogoEmailLightAsset = s.optionalFileAsset(ctx, settings.LogoEmailLightFileID, "email_image")
-	public.LogoEmailDarkAsset = s.optionalFileAsset(ctx, settings.LogoEmailDarkFileID, "email_image")
 	if settings.FaviconFileID != nil {
-		public.FaviconAsset, public.FaviconAssetSet = s.assets.ProjectFavicon(ctx, s.db, *settings.FaviconFileID)
+		all.Favicon, all.FaviconSet = s.assets.Favicon(ctx, *settings.FaviconFileID)
 	}
-	if settings.SiteOgBackgroundFileID != nil {
-		public.SiteOgBackgroundAsset = s.getFileAsset(ctx, *settings.SiteOgBackgroundFileID, "image")
-	}
-	if settings.PrivacyOgBackgroundFileID != nil {
-		public.PrivacyOgBackgroundAsset = s.getFileAsset(ctx, *settings.PrivacyOgBackgroundFileID, "image")
-	}
-	if settings.TermsOgBackgroundFileID != nil {
-		public.TermsOgBackgroundAsset = s.getFileAsset(ctx, *settings.TermsOgBackgroundFileID, "image")
-	}
-	loaderAssets, err := s.loadSiteLoaderAssets(ctx, s.db)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to load site loader assets", "failure_cause", failurecause.Message(err))
-		return nil, errs.Internal(err)
-	}
-	applyLoaderAssetsToPublicSettings(public, loaderAssets)
+	all.SiteOgBackground = s.optionalFileAsset(ctx, settings.SiteOgBackgroundFileID, "image")
+	all.PrivacyOgBackground = s.optionalFileAsset(ctx, settings.PrivacyOgBackgroundFileID, "image")
+	all.TermsOgBackground = s.optionalFileAsset(ctx, settings.TermsOgBackgroundFileID, "image")
 
-	if socialLinks := jsonColumnToMap(settings.SocialLinks, "social_links", true); len(socialLinks) > 0 {
-		value, err := structpb.NewStruct(socialLinks)
+	socialLinks, err := jsonColumnToMap(settings.SocialLinks, true)
+	if err != nil {
+		logInvalidStoredSetting(ctx, "social_links", err)
+	}
+	if len(socialLinks) > 0 {
+		all.SocialLinks = socialLinks
+	}
+	ogImageConfig, err := jsonColumnToMap(settings.OGImageConfig, false)
+	if err != nil {
+		logInvalidStoredSetting(ctx, "og_image_config", err)
+	}
+	if len(ogImageConfig) > 0 {
+		all.OGImageConfig = ogImageConfig
+	}
+	return all, nil
+}
+
+// loaderAssets reads the loader Files that have a ready asset, in order.
+func loaderAssets(ctx context.Context, store Store) ([]LoaderAsset, error) {
+	fileIDs, err := store.LoaderFileIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	assets := make([]LoaderAsset, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		asset, err := store.ReadyAsset(ctx, fileID, "loader")
 		if err != nil {
-			slog.WarnContext(ctx, "failed to convert social_links to struct", "failure_cause", failurecause.Message(err))
-		} else {
-			public.SocialLinks = value
+			return nil, err
+		}
+		if asset != nil {
+			assets = append(assets, LoaderAsset{FileID: fileID, Asset: *asset})
 		}
 	}
+	return assets, nil
+}
 
-	all := &managev1.AllSettings{
-		Public:  public,
-		Runtime: &managev1.RuntimeSettings{SiteOrigin: s.siteOrigin},
+// optionalFileAsset logs a failed lookup and serves the setting without the asset.
+func (s *Service) optionalFileAsset(ctx context.Context, fileID *string, expectedKind string) *Asset {
+	if fileID == nil || *fileID == "" {
+		return nil
 	}
-	all.OgImageConfig = jsonColumnToStruct(settings.OGImageConfig, "og_image_config")
+	asset, err := s.assets.ReadyAsset(ctx, *fileID, expectedKind)
+	if err != nil {
+		slog.WarnContext(ctx, "Site setting asset lookup failed; serving the setting without it", "domain", "sitesettings", "operation", "resolve_setting_asset", "outcome", "failed", "file_id", *fileID, failurecause.Attr(err))
+		return nil
+	}
+	return asset
+}
 
-	return connect.NewResponse(&managev1.GetSettingsResponse{Settings: all}), nil
+// nonEmpty returns a copy of a set, non-empty value.
+func nonEmpty(value *string) *string {
+	if value == nil || *value == "" {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
 
 // GetSetting retrieves a single setting by key.
-func (s *SiteSettingService) GetSetting(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSettingRequest],
-) (_ *connect.Response[managev1.GetSettingResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSetting", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
-	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
+func (s *Service) GetSetting(ctx context.Context, query GetSettingQuery) (Setting, error) {
+	if err := s.requireView(ctx); err != nil {
+		return Setting{}, err
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+	var settings Settings
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		settings, err = store.Settings(ctx)
+		return err
+	}); err != nil {
+		return Setting{}, err
 	}
-	settings, err := s.loadSettingsRow(s.db.WithContext(ctx))
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	value, ok := settingValue(settings, req.Msg.Key)
+	value, ok, decodeErr := decodedSettingValue(&settings, query.Key)
 	if !ok {
-		return nil, errs.InvalidArgument("key", fmt.Sprintf("invalid setting key: %s", req.Msg.Key))
+		return Setting{}, domainerr.InvalidField("key", fmt.Sprintf("invalid setting key: %s", query.Key))
 	}
-	protoValue, err := structpb.NewValue(value)
-	if err != nil {
-		return nil, errs.Internal(err)
+	if decodeErr != nil {
+		logInvalidStoredSetting(ctx, query.Key, decodeErr)
 	}
-	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{
-		Key: req.Msg.Key, Value: protoValue,
-	}}), nil
+	return Setting{Key: query.Key, Value: value}, nil
+}
+
+// logInvalidStoredSetting records a stored setting that a read replaced by its
+// empty fallback. The read still succeeds, so no request record holds it.
+func logInvalidStoredSetting(ctx context.Context, key string, err error) {
+	slog.ErrorContext(ctx, "Stored site setting is invalid; serving it empty", "domain", "sitesettings", "operation", "decode_stored_setting", "outcome", "failed", "key", key, failurecause.Attr(err))
 }

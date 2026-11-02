@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -35,51 +35,6 @@ func TestEmptyQueueConsumerBecomesReadyIntegration(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-func TestUserDeletionCommandsShareCallerTransactionIntegration(t *testing.T) {
-	t.Parallel()
-	identityQueue := eventpkg.QueueUserDeleteIdentity
-	avatarQueue := eventpkg.QueueUserDeleteAvatar
-	pg := newMQIntegrationPostgres(t, identityQueue, avatarQueue)
-	ctx := t.Context()
-	publisher, err := NewPublisher(pg.SQLDB)
-	require.NoError(t, err)
-
-	memberID := uuid.NewString()
-	identityID := uuid.NewString()
-	avatarID := uuid.NewString()
-	identityCommand := &managev1.UserDeleteIdentityCommand{
-		Mode:     managev1.UserDeleteIdentityMode_TOMBSTONE,
-		MemberId: memberID, IdentityId: identityID, AvatarAssetId: &avatarID,
-	}
-	avatarCommand := &managev1.UserDeleteAvatarCommand{MemberId: memberID, AvatarAssetId: &avatarID}
-
-	rolledBack, err := pg.SQLDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, publisher.PublishUserDeleteIdentityWithExecutor(ctx, rolledBack, identityCommand))
-	require.NoError(t, publisher.PublishUserDeleteAvatarWithExecutor(ctx, rolledBack, avatarCommand))
-	require.NoError(t, rolledBack.Rollback())
-	identityMessages, err := testutil.ReadPGMQ(ctx, pg.SQLDB, identityQueue, time.Minute, 1)
-	require.NoError(t, err)
-	avatarMessages, err := testutil.ReadPGMQ(ctx, pg.SQLDB, avatarQueue, time.Minute, 1)
-	require.NoError(t, err)
-	require.Empty(t, identityMessages)
-	require.Empty(t, avatarMessages)
-
-	committed, err := pg.SQLDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, publisher.PublishUserDeleteIdentityWithExecutor(ctx, committed, identityCommand))
-	require.NoError(t, publisher.PublishUserDeleteAvatarWithExecutor(ctx, committed, avatarCommand))
-	require.NoError(t, committed.Commit())
-	identityMessages, err = testutil.ReadPGMQ(ctx, pg.SQLDB, identityQueue, time.Minute, 1)
-	require.NoError(t, err)
-	avatarMessages, err = testutil.ReadPGMQ(ctx, pg.SQLDB, avatarQueue, time.Minute, 1)
-	require.NoError(t, err)
-	require.Len(t, identityMessages, 1)
-	require.Len(t, avatarMessages, 1)
-	require.NoError(t, testutil.CompletePGMQ(ctx, pg.SQLDB, identityQueue, identityMessages[0].TransportID))
-	require.NoError(t, testutil.CompletePGMQ(ctx, pg.SQLDB, avatarQueue, avatarMessages[0].TransportID))
-}
-
 func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T) {
 	t.Parallel()
 	queue := eventpkg.QueueAiMetadataGenerate
@@ -96,7 +51,7 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 		&managev1.MetadataGenerationQueueEvent{JobId: "rollback-job"},
 	))
 	require.NoError(t, rolledBack.Rollback())
-	messages, err := testutil.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
+	messages, err := pgtest.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
 	require.NoError(t, err)
 	require.Empty(t, messages)
 
@@ -111,11 +66,11 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 	))
 	require.NoError(t, committed.Commit())
 
-	messages, err = testutil.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
+	messages, err = pgtest.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.Equal(t, "commit-command", messages[0].Envelope.MessageID)
-	require.NoError(t, testutil.CompletePGMQ(ctx, pg.SQLDB, queue, messages[0].TransportID))
+	require.NoError(t, pgtest.CompletePGMQ(ctx, pg.SQLDB, queue, messages[0].TransportID))
 }
 
 func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.T) {

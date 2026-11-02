@@ -3,10 +3,6 @@ package email
 import (
 	"context"
 	"errors"
-
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 var (
@@ -20,22 +16,18 @@ var (
 // CheckTestSendReadiness reports, before a test email is queued, the facts
 // that would make the worker drop or hold it. A queued test otherwise looks
 // successful to the administrator even when nothing is sent.
-func CheckTestSendReadiness(ctx context.Context, db *gorm.DB, recipient string) error {
+func CheckTestSendReadiness(ctx context.Context, store ReadinessStore, recipient string) error {
 	if normalized := NormalizeAddressForDelivery(recipient); normalized != "" {
-		var suppressed int64
-		if err := db.WithContext(ctx).Model(&model.EmailSuppression{}).
-			Where("LOWER(email) = ? AND released_at IS NULL", normalized).
-			Count(&suppressed).Error; err != nil {
+		suppressed, err := store.ActiveSuppressionCount(ctx, normalized)
+		if err != nil {
 			return err
 		}
 		if suppressed > 0 {
 			return ErrTestRecipientSuppressed
 		}
 	}
-	var active int64
-	if err := db.WithContext(ctx).Model(&model.MailAdapter{}).
-		Where("is_active = ?", true).
-		Count(&active).Error; err != nil {
+	active, err := store.ActiveMailAdapterCount(ctx)
+	if err != nil {
 		return err
 	}
 	if active == 0 {

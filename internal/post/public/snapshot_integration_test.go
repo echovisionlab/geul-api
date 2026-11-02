@@ -9,17 +9,32 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
+
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -31,19 +46,19 @@ import (
 
 func TestPostPublicReadKeepsPublishedStatusAndBodyAcrossUnpublishIntegration(t *testing.T) {
 	t.Parallel()
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	stack, err := runtimetest.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db := stack.Postgres.DB
 
 	identityID := uuid.NewString()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Public Snapshot Admin")
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Public Snapshot Admin")
 	spiceDB := stack.SpiceDBClient
-	testutil.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	adminCtx := testutil.PostIntegrationContext(identityID)
-	store := testutil.NewPostContentBlockStore(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	adminCtx := orytest.PostIntegrationContext(identityID)
+	store := contenttest.NewPostContentBlockStore(t)
 	management := postintegration.NewPostDomainService(
-		t, db, "", spiceDB, testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")), store,
+		t, db, "", spiceDB, store,
 	)
 	blockID := uuid.New()
 	created, err := management.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
@@ -71,11 +86,7 @@ func TestPostPublicReadKeepsPublishedStatusAndBodyAcrossUnpublishIntegration(t *
 			<-release
 		})
 	}))
-	publicService := postpublic.NewPostService(
-		publicDB, "", spiceDB, referenceSearchFileService{}, postadapter.NewLocalization(),
-		referencecatalogadapter.PublicMapPlaces{}, postadapter.NewMemberSummaries(publicDB, ""),
-		postruntime.ShareLinks{}, postpublic.WithPostContentBlockStore(store),
-	)
+	publicService := newPublicPostHandler(t, publicDB, spiceDB, store)
 	getDone := make(chan postReadResult, 1)
 	go func() {
 		response, getErr := publicService.Get(context.Background(), connect.NewRequest(&openv1.GetPostRequest{Slug: created.Msg.Id}))
@@ -156,7 +167,7 @@ func replacePublicPostSnapshotDocument(
 		var root struct {
 			ContentDocumentID string `gorm:"column:content_document_id"`
 		}
-		if err := tx.Table("post").Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Table("post").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("content_document_id").Where("id = ?::uuid", postID).Take(&root).Error; err != nil {
 			return err
 		}
@@ -208,4 +219,36 @@ func requirePublicPostUpdateWaitsForSnapshot(t *testing.T, db *gorm.DB, writeDon
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("Post unpublish did not wait for the public root SHARE lock")
+}
+
+type snapshotFileService struct{}
+
+func (snapshotFileService) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
+}
+
+func (snapshotFileService) ResolveAuthorizedContentBlockMedia(
+	context.Context,
+	uuid.UUID,
+) ([]*fileref.BlockMediaItem, error) {
+	return nil, nil
+}
+
+var _ postpublic.FileService = snapshotFileService{}
+
+// newPublicPostHandler composes the public Post RPCs over db.
+func newPublicPostHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) *postpublic.ConnectHandler {
+	t.Helper()
+	localization := postadapter.NewLocalization()
+	units, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Ports{
+		ContentBlocks: store, Localization: localization,
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postruntime.ShareLinks{},
+	})
+	require.NoError(t, err)
+	service, err := postpublic.NewService(postpublic.Deps{
+		Units: units, SpiceDB: spiceDB, Files: snapshotFileService{},
+		Localizer: postpublicpostgres.NewLocalizer(db, localization), Members: postadapter.NewMemberSummaries(db, ""),
+	})
+	require.NoError(t, err)
+	return postpublic.NewConnectHandler(service)
 }

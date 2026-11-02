@@ -1,0 +1,75 @@
+// Package fileref contains media delivery values shared by domain ports.
+package fileref
+
+import (
+	"strconv"
+
+	"github.com/echovisionlab/geul-api/internal/optional"
+
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+)
+
+type ProcessingStatus int32
+
+const (
+	ProcessingUnspecified ProcessingStatus = iota
+	ProcessingActive
+	ProcessingReady
+	ProcessingFailed
+)
+
+func (s ProcessingStatus) String() string {
+	switch s {
+	case ProcessingUnspecified:
+		return "MEDIA_PROCESSING_STATUS_UNSPECIFIED"
+	case ProcessingActive:
+		return "MEDIA_PROCESSING_STATUS_PROCESSING"
+	case ProcessingReady:
+		return "MEDIA_PROCESSING_STATUS_READY"
+	case ProcessingFailed:
+		return "MEDIA_PROCESSING_STATUS_FAILED"
+	default:
+		return strconv.FormatInt(int64(s), 10)
+	}
+}
+
+type HLSReference struct{ FileID, GenerationID, URL string }
+type Delivery struct {
+	ProcessingStatus                        ProcessingStatus
+	ProcessingPercentage                    *int32
+	FileID, Extension, MimeType             string
+	FileSize                                int64
+	FileName                                *string
+	DurationSeconds                         *int32
+	Asset, Thumbnail, Spectrogram, Waveform *mediaasset.Reference
+	Playback                                *HLSReference
+	Inline, Download                        *mediaauth.Reference
+}
+
+func (d *Delivery) Clone() *Delivery {
+	if d == nil {
+		return nil
+	}
+	result := *d
+	result.ProcessingPercentage = optional.Clone(d.ProcessingPercentage)
+	if d.FileName != nil {
+		v := *d.FileName
+		result.FileName = &v
+	}
+	if d.DurationSeconds != nil {
+		v := *d.DurationSeconds
+		result.DurationSeconds = &v
+	}
+	result.Asset = d.Asset.Clone()
+	result.Thumbnail = d.Thumbnail.Clone()
+	result.Spectrogram = d.Spectrogram.Clone()
+	result.Waveform = d.Waveform.Clone()
+	if d.Playback != nil {
+		v := *d.Playback
+		result.Playback = &v
+	}
+	result.Inline = d.Inline.Clone()
+	result.Download = d.Download.Clone()
+	return &result
+}

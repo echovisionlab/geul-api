@@ -2,211 +2,190 @@ package release
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
+	"errors"
 
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// ReleaseService implements the ReleaseService Connect handler
-func (s *ReleaseService) UpdateRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateReleaseRequest],
-) (_ *connect.Response[managev1.UpdateReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
+// ReleaseDateChange is what an update does to the release date.
+type ReleaseDateChange uint8
 
-	updates, err := s.buildReleaseUpdates(ctx, req.Msg)
+const (
+	ReleaseDateUnchanged ReleaseDateChange = iota
+	// ReleaseDateSet sets the date to UpdateReleaseCommand.ReleaseDate; a
+	// missing date is rejected.
+	ReleaseDateSet
+	ReleaseDateCleared
+)
+
+// UpdateReleaseCommand updates Release settings. Nil fields are left alone.
+type UpdateReleaseCommand struct {
+	ID                string
+	Slug              *string
+	Type              *Type
+	ReleaseDateChange ReleaseDateChange
+	ReleaseDate       *time.Time
+	SpotifyURL        *string
+	AppleMusicURL     *string
+	BandcampURL       *string
+	YoutubeMusicURL   *string
+	CatalogNumber     *string
+}
+
+// ReleaseUpdate is the outcome of UpdateRelease.
+type ReleaseUpdate struct {
+	ID          string
+	Changed     bool
+	UpdatedAt   time.Time
+	ReleaseDate *time.Time
+}
+
+// UpdateRelease updates Release settings (Release editors).
+func (s *Service) UpdateRelease(ctx context.Context, command UpdateReleaseCommand) (ReleaseUpdate, error) {
+	update, err := s.buildReleaseUpdates(ctx, command)
 	if err != nil {
-		return nil, err
+		return ReleaseUpdate{}, err
 	}
-	changed := false
-	var release *model.Release
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		changed, release, err = s.updateReleaseWithDB(ctx, tx, req.Msg, updates)
-		if err != nil || !changed {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageReleaseContentUpdatedEvent(req.Msg))
-	}); err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			if err != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "UpdateRelease", failurecause.Attr(err))
+	var locked Release
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[releaseMetadataChange, Store]{
+		Lock:   lockReleaseRow(command.ID, &locked),
+		Access: s.releaseAccess(command.ID, releaseActionEdit),
+		Change: func(ctx context.Context, store Store) (releaseMetadataChange, error) {
+			return updateRelease(ctx, store, &locked, update)
+		},
+		Audit: func(change releaseMetadataChange) mutation.Audit {
+			if len(change.fields) == 0 {
+				return mutation.Unchanged()
 			}
-			return nil, errs.SlugAlreadyExists("release", "slug")
-		}
-		return nil, classifyReleaseMutationError(err, req.Msg.Id)
-	}
-
-	response := &managev1.UpdateReleaseResponse{
-		Id:        release.ID,
-		Changed:   changed,
-		UpdatedAt: timestamppb.New(release.UpdatedAt),
-	}
-	if release.ReleaseDate != nil {
-		response.ReleaseDate = timestamppb.New(*release.ReleaseDate)
-	}
-	return connect.NewResponse(response), nil
-}
-
-func (s *ReleaseService) buildReleaseUpdates(
-	ctx context.Context,
-	request *managev1.UpdateReleaseRequest,
-) (structured.Fields, error) {
-	updates := structured.Fields{}
-	if request.Slug != nil {
-		if err := validateSlugWithoutSlash(*request.Slug); err != nil {
-			return nil, err
-		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *request.Slug); err != nil {
-			return nil, err
-		}
-		updates["slug"] = *request.Slug
-	}
-	if request.Type != nil {
-		updates["type"] = releaseTypeToString(*request.Type)
-	}
-	switch change := request.ReleaseDateChange.(type) {
-	case *managev1.UpdateReleaseRequest_SetReleaseDate:
-		if change.SetReleaseDate == nil || !change.SetReleaseDate.IsValid() {
-			return nil, errs.InvalidArgument("release_date", "must be a valid timestamp")
-		}
-		updates["release_date"] = change.SetReleaseDate.AsTime()
-	case *managev1.UpdateReleaseRequest_ClearReleaseDate:
-		updates["release_date"] = nil
-	}
-	assignOptionalStringUpdate(updates, "spotify_url", request.SpotifyUrl)
-	assignOptionalStringUpdate(updates, "apple_music_url", request.AppleMusicUrl)
-	assignOptionalStringUpdate(updates, "bandcamp_url", request.BandcampUrl)
-	assignOptionalStringUpdate(updates, "youtube_music_url", request.YoutubeMusicUrl)
-	assignOptionalStringUpdate(updates, "catalog_number", request.CatalogNumber)
-	return updates, nil
-}
-
-func assignOptionalStringUpdate(updates structured.Fields, field string, value *string) {
-	if value != nil {
-		updates[field] = *value
-	}
-}
-
-func (s *ReleaseService) updateReleaseWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	request *managev1.UpdateReleaseRequest,
-	updates structured.Fields,
-) (bool, *model.Release, error) {
-	release, err := lockReleaseForUpdate(ctx, tx, request.Id)
+			return releaseMetadataAudit(change.release.ID, change.fields)
+		},
+		Outbox: func(ctx context.Context, store Store, change releaseMetadataChange) error {
+			if len(change.fields) == 0 {
+				return nil
+			}
+			return publishContentUpdated(ctx, store, buildReleaseContentUpdatedEvent(command.ID, releaseUpdatedFields(command)))
+		},
+	})
 	if err != nil {
-		return false, nil, err
-	}
-	if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, request.Id, releaseActionEdit); err != nil {
-		return false, nil, err
-	}
-	if request.Slug != nil {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "release", "releases", *request.Slug); err != nil {
-			return false, nil, err
+		if errors.Is(err, ErrSlugTaken) {
+			return ReleaseUpdate{}, slugTaken(err)
 		}
+		return ReleaseUpdate{}, releaseMissingAs(err, releaseNotFound(command.ID))
 	}
-	changed := releaseMetadataChangedFields(release, updates)
-	if len(changed) == 0 {
-		return false, release, nil
-	}
-	mutationNow := dbtime.Now()
-	updates["updated_at"] = mutationNow
-	result := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(updates)
-	if result.Error != nil {
-		return false, nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return false, nil, gorm.ErrRecordNotFound
-	}
-	if err := s.appendReleaseMetadataAudit(ctx, tx, release.ID, changed); err != nil {
-		return false, nil, err
-	}
-	release.UpdatedAt = mutationNow
-	if value, ok := updates["release_date"]; ok {
-		switch value := value.(type) {
-		case time.Time:
-			release.ReleaseDate = &value
-		case nil:
-			release.ReleaseDate = nil
-		}
-	}
-	return true, release, nil
+	return ReleaseUpdate{
+		ID: result.release.ID, Changed: len(result.fields) != 0,
+		UpdatedAt: result.release.UpdatedAt, ReleaseDate: result.release.ReleaseDate,
+	}, nil
 }
 
-func releaseMetadataChangedFields(release *model.Release, updates structured.Fields) []string {
-	fields := make([]string, 0, len(updates))
-	for field, next := range updates {
-		var current any
-		switch field {
-		case "slug":
-			current = release.Slug
-		case "type":
-			current = release.Type
-		case "release_date":
-			current = release.ReleaseDate
-		case "spotify_url":
-			current = release.SpotifyURL
-		case "apple_music_url":
-			current = release.AppleMusicURL
-		case "bandcamp_url":
-			current = release.BandcampURL
-		case "youtube_music_url":
-			current = release.YoutubeMusicURL
-		case "catalog_number":
-			current = release.CatalogNumber
-		default:
-			continue
+// releaseUpdate is a validated Release metadata update.
+type releaseUpdate = Settings
+
+// releaseMetadataChange is the Release after an update and the audit fields
+// that changed.
+type releaseMetadataChange struct {
+	release *Release
+	fields  []string
+}
+
+func (s *Service) buildReleaseUpdates(ctx context.Context, command UpdateReleaseCommand) (releaseUpdate, error) {
+	update := releaseUpdate{
+		Type:            command.Type,
+		SpotifyURL:      command.SpotifyURL,
+		AppleMusicURL:   command.AppleMusicURL,
+		BandcampURL:     command.BandcampURL,
+		YoutubeMusicURL: command.YoutubeMusicURL,
+		CatalogNumber:   command.CatalogNumber,
+	}
+	if command.Slug != nil {
+		if err := pathslug.Validate(*command.Slug); err != nil {
+			return releaseUpdate{}, err
 		}
-		if !releaseAuditMetadataValuesEqual(current, next) {
-			fields = append(fields, releaseAuditMetadataField(field))
+		if err := s.checkResourceRoute(ctx, *command.Slug); err != nil {
+			return releaseUpdate{}, err
+		}
+		update.Slug = command.Slug
+	}
+	switch command.ReleaseDateChange {
+	case ReleaseDateSet:
+		if command.ReleaseDate == nil {
+			return releaseUpdate{}, domainerr.InvalidField("release_date", "must be a valid timestamp")
+		}
+		update.ReleaseDateSet, update.ReleaseDate = true, command.ReleaseDate
+	case ReleaseDateCleared:
+		update.ReleaseDateSet = true
+	case ReleaseDateUnchanged:
+	}
+	return update, nil
+}
+
+// changedFields names the audit fields whose requested value differs from
+// release.
+func changedFields(u releaseUpdate, release *Release) []string {
+	fields := make([]string, 0, 4)
+	if u.Slug != nil && !sameOptionalString(release.Slug, u.Slug) {
+		fields = append(fields, "slug")
+	}
+	if u.Type != nil && release.Type != *u.Type {
+		fields = append(fields, "type")
+	}
+	if u.ReleaseDateSet && !sameOptionalTime(release.ReleaseDate, u.ReleaseDate) {
+		fields = append(fields, "date")
+	}
+	for _, link := range []struct{ current, next *string }{
+		{release.SpotifyURL, u.SpotifyURL},
+		{release.AppleMusicURL, u.AppleMusicURL},
+		{release.BandcampURL, u.BandcampURL},
+		{release.YoutubeMusicURL, u.YoutubeMusicURL},
+		{release.CatalogNumber, u.CatalogNumber},
+	} {
+		if link.next != nil && !sameOptionalString(link.current, link.next) {
+			fields = append(fields, "links")
+			break
 		}
 	}
 	return fields
 }
 
-func releaseAuditMetadataValuesEqual(current, next any) bool {
-	switch value := current.(type) {
-	case *string:
-		if next == nil {
-			return value == nil
+func sameOptionalTime(left, right *time.Time) bool {
+	return left == nil && right == nil || left != nil && right != nil && left.Equal(*right)
+}
+
+func updateRelease(
+	ctx context.Context,
+	store Store,
+	release *Release,
+	update releaseUpdate,
+) (releaseMetadataChange, error) {
+	if update.Slug != nil {
+		if err := store.LockResourceRoute(ctx, *update.Slug); err != nil {
+			return releaseMetadataChange{}, err
 		}
-		nextValue, ok := next.(string)
-		return ok && value != nil && *value == nextValue
-	case *time.Time:
-		nextValue, ok := next.(time.Time)
-		return ok && value != nil && value.Equal(nextValue)
-	default:
-		return current == next
 	}
+	changed := changedFields(update, release)
+	if len(changed) == 0 {
+		return releaseMetadataChange{release: release}, nil
+	}
+	mutationNow := dbtime.Now()
+	if err := store.UpdateReleaseSettings(ctx, release.ID, update, mutationNow); err != nil {
+		return releaseMetadataChange{}, err
+	}
+	release.UpdatedAt = mutationNow
+	if update.ReleaseDateSet {
+		release.ReleaseDate = update.ReleaseDate
+	}
+	return releaseMetadataChange{release: release, fields: changed}, nil
 }
 
-func releaseAuditMetadataField(field string) string {
-	switch field {
-	case "release_date":
-		return "date"
-	case "spotify_url", "apple_music_url", "bandcamp_url", "youtube_music_url", "catalog_number":
-		return "links"
-	default:
-		return field
-	}
+// releaseMetadataAudit records which Release settings or relations changed.
+func releaseMetadataAudit(releaseID string, fields []string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewReleaseMetadataAuditRecord(m, releaseID, fields)
+	})
 }
-
-// DeleteRelease deletes a release (admin or owner only)

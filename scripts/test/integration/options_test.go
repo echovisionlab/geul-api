@@ -3,11 +3,11 @@ package main
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestParseOptionsUsesMinIOEnvironmentDefaultAndExplicitOverride(t *testing.T) {
-	t.Setenv(testutil.AppIntegrationMinIOImageEnv, "environment-minio:local")
+	t.Setenv(pgtest.AppIntegrationMinIOImageEnv, "environment-minio:local")
 
 	defaults, err := parseOptions(nil)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--package", "./internal/translation"},
 		{"--package", "./internal/filemedia", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
 		{"--package", "./internal/member"},
-		{"--package", "./internal/testutil"},
+		{"--package", "./internal/testutil/pgtest"},
 		{"--go-work", "/workspace/go.work"},
 		{"--minio-image", "geul-test-minio:local"},
 	} {
@@ -146,8 +146,8 @@ func TestSelectedPackageTestConcurrencyMatchesOwnedResources(t *testing.T) {
 		{packagePath: "./internal/telemetry", wantParallel: "2"},
 		{packagePath: "./internal/transcode/application", wantParallel: "2"},
 		{packagePath: "./internal/member", wantParallel: "2"},
-		{packagePath: "./internal/filemedia", wantParallel: "1"},
-		{packagePath: "./internal/testutil", wantParallel: "1"},
+		{packagePath: "./internal/filemedia/runtimetest", wantParallel: "1"},
+		{packagePath: "./internal/testutil/pgtest", wantParallel: "1"},
 	} {
 		t.Run(testCase.packagePath, func(t *testing.T) {
 			t.Parallel()
@@ -188,7 +188,7 @@ func TestSelectedIntegrationPackagePreservesOwningResourcesAndRunsAlone(t *testi
 	}{
 		{packagePath: "./internal/translation", bandName: "db", resources: integrationPostgresOnly},
 		{packagePath: "./internal/member", bandName: "ory", resources: integrationSharedBackend},
-		{packagePath: "./internal/testutil", bandName: "serial", resources: integrationRuntimeExclusive},
+		{packagePath: "./internal/testutil/pgtest", bandName: "serial", resources: integrationRuntimeExclusive},
 	}
 	for _, test := range tests {
 		test := test

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ type recordingSourceLocaleAuditAppender struct {
 	records []sharedtelemetry.AuditRecord
 }
 
+// The registry hands each switch the owning domain's record; the mutation
+// appends it as a request audit, as AppendRequest does here.
 func TestLegalSourceLocaleAuditPortsKeepPolicyIdentity(t *testing.T) {
 	memberID := uuid.NewString()
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.62")
@@ -48,9 +51,9 @@ func TestLegalSourceLocaleAuditPortsKeepPolicyIdentity(t *testing.T) {
 				"INSERT INTO "+testCase.table+" (id, version) VALUES (?, 7)", entityID,
 			).Error)
 
-			require.NoError(t, registry.AppendSourceLocaleAudit(
-				ctx, db, testCase.entityType, entityID, "en", "ko",
-			))
+			audit, err := registry.SourceLocaleAudit(ctx, db, testCase.entityType, entityID, "en", "ko")
+			require.NoError(t, err)
+			require.NoError(t, domainaudit.AppendRequest(ctx, db, writer, audit.Action, audit.Build))
 			require.Len(t, writer.records, 1)
 			record := writer.records[0]
 			require.Equal(t, sharedtelemetry.AuditLegalPolicyUpdated, record.Action)
@@ -111,9 +114,9 @@ func TestSourceLocaleAuditPortsUseReviewedTypedBuilders(t *testing.T) {
 			registry := &DomainRegistry{ports: ports}
 			entityID := uuid.NewString()
 
-			require.NoError(t, registry.AppendSourceLocaleAudit(
-				ctx, nil, testCase.entityType, entityID, "en", "ko",
-			))
+			audit, err := registry.SourceLocaleAudit(ctx, nil, testCase.entityType, entityID, "en", "ko")
+			require.NoError(t, err)
+			require.NoError(t, domainaudit.AppendRequest(ctx, nil, writer, audit.Action, audit.Build))
 			require.Len(t, writer.records, 1)
 			record := writer.records[0]
 			require.Equal(t, testCase.action, record.Action)

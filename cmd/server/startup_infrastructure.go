@@ -31,14 +31,14 @@ func connectDatabase(ctx context.Context, dsn string, maxOpenConnections, maxIdl
 	sqlDB.SetMaxIdleConns(maxIdleConnections)
 	if err := sqlDB.PingContext(ctx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
-			slog.Error("Database close after failed ping failed", "failure_cause", failurecause.Message(closeErr))
+			slog.ErrorContext(ctx, "Database close after failed ping failed", "failure_cause", failurecause.Message(closeErr))
 		}
 		return nil, nil, fmt.Errorf("ping database: %w", err)
 	}
 	if err := db.Use(newDatabaseTracingPlugin()); err != nil {
-		slog.Warn("Failed to enable GORM tracing", "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Failed to enable GORM tracing", "failure_cause", failurecause.Message(err))
 	}
-	slog.Info("Connected to database")
+	slog.InfoContext(ctx, "Connected to database")
 	return db, sqlDB, nil
 }
 

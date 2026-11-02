@@ -1,18 +1,14 @@
 package maptheme
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 )
 
@@ -28,7 +24,8 @@ var (
 	}
 )
 
-type mapThemeSettingsSnapshot struct {
+// Settings are the callout and label settings of a Map Theme.
+type Settings struct {
 	CalloutScale        float64  `json:"callout_scale"`
 	CalloutOffsetX      int32    `json:"callout_offset_x"`
 	CalloutOffsetY      int32    `json:"callout_offset_y"`
@@ -38,7 +35,8 @@ type mapThemeSettingsSnapshot struct {
 	ShowPoiLabels       bool     `json:"show_poi_labels"`
 }
 
-type mapThemeVariantSnapshot struct {
+// Variant is the color set of one Map Theme color scheme.
+type Variant struct {
 	BackgroundColor              string `json:"background_color"`
 	WaterColor                   string `json:"water_color"`
 	LandColor                    string `json:"land_color"`
@@ -62,56 +60,87 @@ type mapThemeVariantSnapshot struct {
 	CalloutHoverBackgroundColor  string `json:"callout_hover_background_color"`
 }
 
-type mapThemeSnapshot struct {
-	Name         string                   `json:"name"`
-	Settings     mapThemeSettingsSnapshot `json:"settings"`
-	LightVariant mapThemeVariantSnapshot  `json:"light_variant"`
-	DarkVariant  mapThemeVariantSnapshot  `json:"dark_variant"`
+// Snapshot is the complete editable state of a Map Theme.
+type Snapshot struct {
+	Name         string   `json:"name"`
+	Settings     Settings `json:"settings"`
+	LightVariant Variant  `json:"light_variant"`
+	DarkVariant  Variant  `json:"dark_variant"`
+}
+
+// SnapshotInput is a Snapshot as a caller submits it; a nil part is missing.
+type SnapshotInput struct {
+	Name         string
+	Settings     *Settings
+	LightVariant *Variant
+	DarkVariant  *Variant
+}
+
+// snapshot validates and normalizes input. prefix qualifies the field of a
+// missing part, as a collaboration save nests the snapshot.
+func (input *SnapshotInput) snapshot(prefix string) (*Snapshot, error) {
+	if input == nil {
+		return nil, domainerr.Required("snapshot")
+	}
+	if input.Settings == nil {
+		return nil, domainerr.Required(prefix + "settings")
+	}
+	if input.LightVariant == nil {
+		return nil, domainerr.Required(prefix + "light_variant")
+	}
+	if input.DarkVariant == nil {
+		return nil, domainerr.Required(prefix + "dark_variant")
+	}
+	snapshot := &Snapshot{
+		Name: input.Name, Settings: *input.Settings,
+		LightVariant: *input.LightVariant, DarkVariant: *input.DarkVariant,
+	}
+	snapshot.Settings.CalloutFields = append([]string(nil), input.Settings.CalloutFields...)
+	return snapshot, validateMapThemeSnapshot(snapshot)
 }
 
 func normalizeMapThemeName(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", errs.Required("name")
+		return "", domainerr.Required("name")
 	}
 	if utf8.RuneCountInString(value) > 255 {
-		return "", errs.InvalidArgument("name", "must be at most 255 characters")
+		return "", domainerr.InvalidField("name", "must be at most 255 characters")
 	}
 	return value, nil
 }
 
 func normalizeMapThemeID(value, field string) (string, error) {
 	if value == "" {
-		return "", errs.Required(field)
+		return "", domainerr.Required(field)
 	}
 	if _, err := uuidutil.ParseCanonical(value, field); err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "maptheme", "operation", "normalizeMapThemeID", failurecause.Attr(err))
-		return "", errs.InvalidArgument(field, "must be a canonical UUID")
+		return "", domainerr.InvalidField(field, "must be a canonical UUID")
 	}
 	return value, nil
 }
 
-func validateMapThemeSettings(settings mapThemeSettingsSnapshot) error {
+func validateMapThemeSettings(settings Settings) error {
 	if math.IsNaN(settings.CalloutScale) || math.IsInf(settings.CalloutScale, 0) ||
 		settings.CalloutScale < 0.5 || settings.CalloutScale > 2 {
-		return errs.InvalidArgument("settings.callout_scale", "must be between 0.5 and 2")
+		return domainerr.InvalidField("settings.callout_scale", "must be between 0.5 and 2")
 	}
 	if settings.CalloutOffsetX < -50 || settings.CalloutOffsetX > 50 {
-		return errs.InvalidArgument("settings.callout_offset_x", "must be an integer between -50 and 50")
+		return domainerr.InvalidField("settings.callout_offset_x", "must be an integer between -50 and 50")
 	}
 	if settings.CalloutOffsetY < -50 || settings.CalloutOffsetY > 50 {
-		return errs.InvalidArgument("settings.callout_offset_y", "must be an integer between -50 and 50")
+		return domainerr.InvalidField("settings.callout_offset_y", "must be an integer between -50 and 50")
 	}
 	if len(settings.CalloutFields) < 1 || len(settings.CalloutFields) > 8 {
-		return errs.InvalidArgument("settings.callout_fields", "must contain between 1 and 8 fields")
+		return domainerr.InvalidField("settings.callout_fields", "must contain between 1 and 8 fields")
 	}
 	for _, field := range settings.CalloutFields {
 		if _, ok := mapThemeCalloutFields[field]; !ok {
-			return errs.InvalidArgument("settings.callout_fields", fmt.Sprintf("unsupported field %q", field))
+			return domainerr.InvalidField("settings.callout_fields", fmt.Sprintf("unsupported field %q", field))
 		}
 	}
 	if settings.AttributionFontSize < 9 || settings.AttributionFontSize > 14 {
-		return errs.InvalidArgument("settings.attribution_font_size", "must be an integer between 9 and 14")
+		return domainerr.InvalidField("settings.attribution_font_size", "must be an integer between 9 and 14")
 	}
 	return nil
 }
@@ -145,9 +174,9 @@ func normalizeMapThemeColor(value string) (string, bool) {
 	return "", false
 }
 
-func validateMapThemeVariant(field string, variant *mapThemeVariantSnapshot) error {
+func validateMapThemeVariant(field string, variant *Variant) error {
 	if variant == nil {
-		return errs.Required(field)
+		return domainerr.Required(field)
 	}
 	colors := []struct {
 		name  string
@@ -177,16 +206,16 @@ func validateMapThemeVariant(field string, variant *mapThemeVariantSnapshot) err
 	for _, color := range colors {
 		normalized, ok := normalizeMapThemeColor(*color.value)
 		if !ok {
-			return errs.InvalidArgument(field+"."+color.name, "must be hex, rgb(), rgba(), or transparent")
+			return domainerr.InvalidField(field+"."+color.name, "must be hex, rgb(), rgba(), or transparent")
 		}
 		*color.value = normalized
 	}
 	return nil
 }
 
-func validateMapThemeSnapshot(snapshot *mapThemeSnapshot) error {
+func validateMapThemeSnapshot(snapshot *Snapshot) error {
 	if snapshot == nil {
-		return errs.Required("snapshot")
+		return domainerr.Required("snapshot")
 	}
 	name, err := normalizeMapThemeName(snapshot.Name)
 	if err != nil {
@@ -200,47 +229,4 @@ func validateMapThemeSnapshot(snapshot *mapThemeSnapshot) error {
 		return err
 	}
 	return validateMapThemeVariant("dark_variant", &snapshot.DarkVariant)
-}
-
-func mapThemeVariantModel(input mapThemeVariantSnapshot) model.MapThemeVariant {
-	return model.MapThemeVariant{
-		BackgroundColor: input.BackgroundColor, WaterColor: input.WaterColor,
-		LandColor: input.LandColor, RoadColor: input.RoadColor,
-		BuildingFillColor: input.BuildingFillColor, BuildingStrokeEnabled: input.BuildingStrokeEnabled,
-		BuildingStrokeColor: input.BuildingStrokeColor, CalloutLineColor: input.CalloutLineColor,
-		CalloutTextColor: input.CalloutTextColor, CalloutBackgroundColor: input.CalloutBackgroundColor,
-		CalloutDescriptionColor: input.CalloutDescriptionColor, AttributionColor: input.AttributionColor,
-		LabelTextColor: input.LabelTextColor, ClusterColor: input.ClusterColor,
-		ClusterHoverColor: input.ClusterHoverColor, ClusterTextColor: input.ClusterTextColor,
-		ClusterTextHoverColor: input.ClusterTextHoverColor, CalloutHoverLineColor: input.CalloutHoverLineColor,
-		CalloutHoverTextColor:        input.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: input.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  input.CalloutHoverBackgroundColor,
-	}
-}
-
-func mapThemeVariantSnapshotFromModel(input model.MapThemeVariant) mapThemeVariantSnapshot {
-	return mapThemeVariantSnapshot{
-		BackgroundColor: input.BackgroundColor, WaterColor: input.WaterColor,
-		LandColor: input.LandColor, RoadColor: input.RoadColor,
-		BuildingFillColor: input.BuildingFillColor, BuildingStrokeEnabled: input.BuildingStrokeEnabled,
-		BuildingStrokeColor: input.BuildingStrokeColor, CalloutLineColor: input.CalloutLineColor,
-		CalloutTextColor: input.CalloutTextColor, CalloutBackgroundColor: input.CalloutBackgroundColor,
-		CalloutDescriptionColor: input.CalloutDescriptionColor, AttributionColor: input.AttributionColor,
-		LabelTextColor: input.LabelTextColor, ClusterColor: input.ClusterColor,
-		ClusterHoverColor: input.ClusterHoverColor, ClusterTextColor: input.ClusterTextColor,
-		ClusterTextHoverColor: input.ClusterTextHoverColor, CalloutHoverLineColor: input.CalloutHoverLineColor,
-		CalloutHoverTextColor:        input.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: input.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  input.CalloutHoverBackgroundColor,
-	}
-}
-
-func mapThemeSettingsFromModel(theme *model.MapTheme) mapThemeSettingsSnapshot {
-	return mapThemeSettingsSnapshot{
-		CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
-		CalloutOffsetY: int32(theme.CalloutOffsetY), CalloutFields: append([]string(nil), theme.CalloutFields...),
-		AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
-		ShowPoiLabels: theme.ShowPoiLabels,
-	}
 }

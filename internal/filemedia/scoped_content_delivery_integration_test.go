@@ -5,14 +5,20 @@ package filemedia
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/model"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/stretchr/testify/assert"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -81,23 +87,23 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 			case "wrong owner":
 				postID = uuid.NewString()
 			}
-			var items []*contentv1.ContentBlockMediaItem
+			var items []*fileref.BlockMediaItem
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 				if err := tx.Exec(`SELECT id FROM post WHERE id = ?::uuid FOR SHARE`, postID).Error; err != nil {
 					return err
 				}
 				var err error
-				items, err = fixture.service.HydrateAuthorizedPostBlockMediaWithDB(t.Context(), tx, postID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
+				items, err = fixture.service.HydrateAuthorizedPostBlockMedia(t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, postID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
 				return err
 			}))
 			require.Len(t, items, 1)
 			if state == "active" {
-				require.NotNil(t, items[0].GetDelivery().GetInline())
+				require.NotNil(t, optional.Value(optional.Value(items[0]).Delivery).Inline)
 			} else {
-				require.Nil(t, items[0].GetDelivery())
+				require.Nil(t, optional.Value(items[0]).Delivery)
 			}
-			require.Nil(t, items[0].GetDelivery().GetDownload())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, items[0].GetDownloadAvailability())
+			require.Nil(t, optional.Value(optional.Value(items[0]).Delivery).Download)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(items[0]).DownloadAvailability)
 		})
 	}
 }
@@ -141,21 +147,21 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 			fixture := seedScopedPageBlockFixture(t, db)
 			require.NoError(t, testCase.mutate(db, fixture))
 
-			var hydrated []*contentv1.ContentBlockMediaItem
+			var hydrated []*fileref.BlockMediaItem
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 				if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 					return err
 				}
 				var err error
-				hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-					t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+				hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(
+					t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 				)
 				return err
 			}))
 			require.Len(t, hydrated, 1)
-			require.Nil(t, hydrated[0].GetDelivery())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, hydrated[0].GetDownloadAvailability())
-			require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, hydrated[0].GetDownloadAction())
+			require.Nil(t, optional.Value(hydrated[0]).Delivery)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(hydrated[0]).DownloadAvailability)
+			require.Equal(t, fileref.NoDownload, optional.Value(hydrated[0]).DownloadAction)
 		})
 	}
 }
@@ -209,19 +215,19 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 				<-release
 			}
 			type resolution struct {
-				items []*contentv1.ContentBlockMediaItem
+				items []*fileref.BlockMediaItem
 				err   error
 			}
 			resolved := make(chan resolution, 1)
 			go func() {
-				var hydrated []*contentv1.ContentBlockMediaItem
+				var hydrated []*fileref.BlockMediaItem
 				err := db.Transaction(func(tx *gorm.DB) error {
 					if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 						return err
 					}
 					var hydrateErr error
-					hydrated, hydrateErr = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-						t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+					hydrated, hydrateErr = fixture.service.HydrateAuthorizedPageBlockMedia(
+						t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 					)
 					return hydrateErr
 				})
@@ -247,10 +253,10 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 			result := <-resolved
 			require.NoError(t, result.err)
 			require.Len(t, result.items, 1)
-			require.Equal(t, fixture.fileID, result.items[0].GetDelivery().GetFileId())
-			require.NotNil(t, result.items[0].GetDelivery().GetInline())
-			require.Nil(t, result.items[0].GetDelivery().GetDownload())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, result.items[0].GetDownloadAvailability())
+			require.Equal(t, fixture.fileID, optional.Value(optional.Value(result.items[0]).Delivery).FileID)
+			require.NotNil(t, optional.Value(optional.Value(result.items[0]).Delivery).Inline)
+			require.Nil(t, optional.Value(optional.Value(result.items[0]).Delivery).Download)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(result.items[0]).DownloadAvailability)
 			select {
 			case err := <-mutationDone:
 				require.NoError(t, err)
@@ -278,30 +284,30 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 		`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id) VALUES (?::uuid, 'file', 'active', ?::uuid)`,
 		ownedBlockID, fixture.replacementFileID,
 	).Error)
-	items := []*contentv1.ContentBlockMediaItem{
+	items := []*fileref.BlockMediaItem{
 		fixture.item(fixture.blockID, fixture.fileID),
 		fixture.item(ownedBlockID, fixture.replacementFileID),
 	}
 
-	var hydrated []*contentv1.ContentBlockMediaItem
+	var hydrated []*fileref.BlockMediaItem
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 			return err
 		}
 		var err error
-		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-			t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, items,
+		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(
+			t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, items,
 		)
 		return err
 	}))
 	require.Len(t, hydrated, 2)
-	require.NotNil(t, hydrated[0].GetDelivery().GetInline())
-	require.Nil(t, hydrated[0].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, hydrated[0].GetDownloadAvailability())
-	require.NotNil(t, hydrated[1].GetDelivery().GetInline())
-	require.NotNil(t, hydrated[1].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE, hydrated[1].GetDownloadAvailability())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, hydrated[1].GetDownloadAction())
+	require.NotNil(t, optional.Value(optional.Value(hydrated[0]).Delivery).Inline)
+	require.Nil(t, optional.Value(optional.Value(hydrated[0]).Delivery).Download)
+	require.Equal(t, fileref.DownloadUnavailable, optional.Value(hydrated[0]).DownloadAvailability)
+	require.NotNil(t, optional.Value(optional.Value(hydrated[1]).Delivery).Inline)
+	require.NotNil(t, optional.Value(optional.Value(hydrated[1]).Delivery).Download)
+	require.Equal(t, fileref.DownloadAvailable, optional.Value(hydrated[1]).DownloadAvailability)
+	require.Equal(t, fileref.Download, optional.Value(hydrated[1]).DownloadAction)
 }
 
 func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegration(t *testing.T) {
@@ -355,7 +361,7 @@ func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegrat
 				)
 				fileID := ""
 				if delivery != nil {
-					fileID = delivery.GetFileId()
+					fileID = delivery.FileID
 				}
 				resolved <- resolution{deliveryFileID: fileID, err: err}
 			}()
@@ -395,7 +401,7 @@ func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegrat
 
 type scopedFeaturedFixture struct {
 	db                *gorm.DB
-	service           *FileService
+	service           *Service
 	ctx               context.Context
 	ownerID           string
 	fileID            string
@@ -405,10 +411,10 @@ type scopedFeaturedFixture struct {
 func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixture {
 	t.Helper()
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Scoped featured Post author")
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Scoped featured Post author")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -427,17 +433,14 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	).Error)
 	seedFileDeliveryContentPolicy(t, spiceDB, "post", postID)
 	seedFileDeliveryPostAuthority(t, spiceDB, postID, identityID)
-	service := &FileService{
-		db: db, spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret",
-	}
-	WithPostAccess(newIntegrationPostAccess(db, spiceDB))(service)
+	service := withNativeFileUnits(&Service{spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret"}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB)})
 	return scopedFeaturedFixture{
 		db: db, service: service, ctx: ctx, ownerID: postID, fileID: fileID, replacementFileID: replacementFileID,
 	}
 }
 
 type scopedBlockFixture struct {
-	service           *FileService
+	service           *Service
 	principal         *auth.UserInfo
 	ownerID           string
 	documentID        string
@@ -446,14 +449,14 @@ type scopedBlockFixture struct {
 	replacementFileID string
 }
 
-func (fixture scopedBlockFixture) items() []*contentv1.ContentBlockMediaItem {
-	return []*contentv1.ContentBlockMediaItem{fixture.item(fixture.blockID, fixture.fileID)}
+func (fixture scopedBlockFixture) items() []*fileref.BlockMediaItem {
+	return []*fileref.BlockMediaItem{fixture.item(fixture.blockID, fixture.fileID)}
 }
 
-func (fixture scopedBlockFixture) item(blockID, fileID string) *contentv1.ContentBlockMediaItem {
-	return &contentv1.ContentBlockMediaItem{
-		Selector:   &contentv1.ContentBlockMediaSelector{BlockId: blockID, ReferencePath: "file"},
-		Attachment: &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: fileID}},
+func (fixture scopedBlockFixture) item(blockID, fileID string) *fileref.BlockMediaItem {
+	return &fileref.BlockMediaItem{
+		Selector:   &fileref.BlockMediaSelector{BlockID: blockID, ReferencePath: "file"},
+		Attachment: &fileref.Attachment{Kind: fileref.AttachmentActive, FileID: fileID},
 	}
 }
 
@@ -494,9 +497,7 @@ func seedScopedContentBlockFixture(t *testing.T, db *gorm.DB, owner scopedConten
 		blockID, fileID,
 	).Error)
 	return scopedBlockFixture{
-		service: &FileService{
-			db: db, mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret",
-		},
+		service: withNativeFileUnits(&Service{mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret"}, db, nativeFilePorts{}),
 		principal: &auth.UserInfo{
 			IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(memberID),
 			SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
@@ -579,4 +580,42 @@ func startScopedContentMutation(
 		done <- err
 	}()
 	return backendPID, attempted, done
+}
+
+func TestScopedMediaReadsUncommittedOwnerTransactionFactsIntegration(t *testing.T) {
+	t.Parallel()
+	db := newConcurrentServiceIntegrationDB(t)
+	fixture := seedScopedPageBlockFixture(t, db)
+	assetID := uuid.NewString()
+	aborted := errors.New("roll back owner transaction")
+	var hydrated []*fileref.BlockMediaItem
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
+			return err
+		}
+		if err := tx.Table("file").Where("id = ?", fixture.fileID).Update("file_name", "uncommitted-original").Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		size := int64(64)
+		if err := tx.Create(&model.PublicAsset{ID: assetID, SourceFileID: &fixture.fileID, Kind: "image", ObjectKey: "asset/" + assetID + ".webp", Extension: "webp", MimeType: "image/webp", FileSize: &size, SHA256: make([]byte, 32), Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			return err
+		}
+		var err error
+		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
+		if err != nil {
+			return err
+		}
+		return aborted
+	})
+	require.ErrorIs(t, err, aborted)
+	require.Len(t, hydrated, 1)
+	assert.Equal(t, "uncommitted-original", optional.Value(optional.Value(optional.Value(hydrated[0]).Delivery).FileName))
+	assert.Equal(t, assetID, optional.Value(optional.Value(optional.Value(hydrated[0]).Delivery).Asset).AssetID)
+	var file model.File
+	require.NoError(t, db.First(&file, "id = ?", fixture.fileID).Error)
+	require.Equal(t, fixture.fileID, file.FileName)
+	var count int64
+	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", assetID).Count(&count).Error)
+	require.Zero(t, count)
 }

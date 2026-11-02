@@ -2,6 +2,8 @@ package geoipadapter
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,6 +75,20 @@ func TestDownloadGeoIPArchiveRejectsDeclaredOversizeWithoutReadingBody(t *testin
 	require.Nil(t, archive)
 	require.ErrorContains(t, err, "size limit")
 	require.False(t, read)
+}
+
+func TestDownloadGeoIPArchiveKeepsTransportCauseWithoutLicenseKey(t *testing.T) {
+	downloadURL := geoIPDownloadURL("account-1", "license-secret-value")
+	doer := geoIPHTTPDoerFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Get", URL: req.URL.String(), Err: errors.New("dial tcp: connection refused")}
+	})
+
+	archive, err := downloadGeoIPArchive(context.Background(), doer, downloadURL)
+	require.Nil(t, archive)
+	require.EqualError(t, err, "download GeoIP database: provider request failed")
+	cause := failurecause.Message(fmt.Errorf("import latest GeoIP database: %w", err))
+	require.Contains(t, cause, "dial tcp: connection refused")
+	require.NotContains(t, cause, "license-secret-value")
 }
 
 func TestDownloadGeoIPArchiveRejectsRedirectResponse(t *testing.T) {

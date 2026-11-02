@@ -2,13 +2,16 @@ package publiccontent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -83,12 +86,9 @@ func Resolve(
 	spec Spec,
 	entityID string,
 	acceptLanguage string,
+	settingsReader translation.RuntimeSettingsReader,
 ) (Selection, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
-	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
-		settings = translation.DefaultRuntimeSettings()
-	}
+	settings := loadRuntimePolicy(ctx, db, spec, settingsReader)
 	return ResolveWithPolicy(ctx, db, spec, entityID, acceptLanguage, settings)
 }
 
@@ -123,7 +123,7 @@ func ResolveWithPolicy(
 	if availableErr == nil {
 		selection.AvailableLocales = available
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "entity_type", spec.EntityType, "entity_id", entityID)
+		slog.ErrorContext(ctx, "Available locale lookup failed; serving without the locale list", "domain", "publiccontent", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "entity_type", spec.EntityType, "entity_id", entityID)
 	}
 	if selection.Summary != nil {
 		resolved, err := sitevariable.ResolvePublicText(ctx, db, *selection.Summary)
@@ -143,12 +143,9 @@ func ResolveBatch(
 	spec Spec,
 	entityIDs []string,
 	acceptLanguage string,
+	settingsReader translation.RuntimeSettingsReader,
 ) (map[string]Selection, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
-	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
-		settings = translation.DefaultRuntimeSettings()
-	}
+	settings := loadRuntimePolicy(ctx, db, spec, settingsReader)
 	return ResolveBatchWithPolicy(ctx, db, spec, entityIDs, acceptLanguage, settings)
 }
 
@@ -166,7 +163,7 @@ func ResolveBatchWithPolicy(
 	if err := validateSpec(spec); err != nil {
 		return nil, err
 	}
-	ids := normalizedEntityIDs(entityIDs)
+	ids := sliceutil.UniqueTrimmed(entityIDs)
 	if len(ids) == 0 {
 		return map[string]Selection{}, nil
 	}
@@ -345,7 +342,7 @@ func loadSourceLocale(ctx context.Context, db *gorm.DB, spec Spec, entityID, fal
 		Select("source_locale").
 		Where("id = ?", entityID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return normalizedLocale(fallback, defaultLocale), nil
 		}
 		return "", err
@@ -360,7 +357,7 @@ func loadRows(
 	entityID string,
 	locales []string,
 ) (map[string]translationRow, error) {
-	locales = normalizedLocales(locales)
+	locales = sliceutil.UniqueTrimmed(locales)
 	if len(locales) == 0 {
 		return map[string]translationRow{}, nil
 	}
@@ -514,40 +511,6 @@ func normalizedLocale(locale, fallback string) string {
 	return localization.NormalizeWithDefault(locale, fallback)
 }
 
-func normalizedLocales(locales []string) []string {
-	result := make([]string, 0, len(locales))
-	seen := make(map[string]struct{}, len(locales))
-	for _, locale := range locales {
-		locale = strings.TrimSpace(locale)
-		if locale == "" {
-			continue
-		}
-		if _, exists := seen[locale]; exists {
-			continue
-		}
-		seen[locale] = struct{}{}
-		result = append(result, locale)
-	}
-	return result
-}
-
-func normalizedEntityIDs(entityIDs []string) []string {
-	result := make([]string, 0, len(entityIDs))
-	seen := make(map[string]struct{}, len(entityIDs))
-	for _, entityID := range entityIDs {
-		entityID = strings.TrimSpace(entityID)
-		if entityID == "" {
-			continue
-		}
-		if _, exists := seen[entityID]; exists {
-			continue
-		}
-		seen[entityID] = struct{}{}
-		result = append(result, entityID)
-	}
-	return result
-}
-
 func fallbackReason(reason localization.FallbackReason) openv1.LocalizationFallbackReason {
 	if reason == localization.FallbackSource {
 		return openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE
@@ -562,4 +525,21 @@ func ToProtoLocalizationInfo(selection Selection) *openv1.LocalizationInfo {
 		SourceLocale: selection.SourceLocale, IsFallback: selection.IsFallback, IsOriginal: selection.IsOriginal,
 		FallbackReason: selection.FallbackReason, AvailableLocales: selection.AvailableLocales,
 	}
+}
+
+func loadRuntimePolicy(ctx context.Context, db *gorm.DB, spec Spec, reader translation.RuntimeSettingsReader) translation.RuntimeSettings {
+	var settings translation.RuntimeSettings
+	var err error
+	if _, inTransaction := db.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+		settings, err = mutation.BestEffortRead(ctx, db, func(*gorm.DB) (translation.RuntimeSettings, error) {
+			return reader.RuntimeSettings(ctx)
+		})
+	} else {
+		settings, err = reader.RuntimeSettings(ctx)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
+		return translation.DefaultRuntimeSettings()
+	}
+	return settings
 }

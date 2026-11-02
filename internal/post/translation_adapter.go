@@ -3,53 +3,52 @@ package post
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"fmt"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-func LoadTypedTranslationSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	postID string,
-) (*translation.SourceDocument, error) {
-	if store == nil {
-		return nil, errors.New("post translation content Block store is not configured")
-	}
-	var sourceState struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("post").Select("source_locale").Where("id = ?::uuid", postID).
-		Take(&sourceState).Error; err != nil {
-		return nil, err
-	}
-	metadata, err := loadPostLocaleMetadataRow(ctx, db, postID, sourceState.SourceLocale)
+// TranslationJob is the translation job a delivery or interchange applies.
+type TranslationJob struct {
+	EntityType          string
+	EntityID            string
+	SourceLocale        string
+	TargetLocale        string
+	RequestedByMemberID string
+}
+
+// LoadTypedTranslationSourceDocument reads the Post's source-locale title,
+// summary and content document for translation, through store bound to the
+// translation domain's database handle.
+func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, postID string) (*translation.SourceDocument, error) {
+	store := joined.Store
+
+	sourceLocale, err := store.SourceLocale(ctx, postID)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadPostContentDocumentID(ctx, db, postID)
+	metadata, err := loadPostLocaleMetadataRow(ctx, store, postID, sourceLocale, false)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, sourceState.SourceLocale)
+	documentID, err := loadPostContentDocumentID(ctx, store, postID)
 	if err != nil {
 		return nil, err
 	}
-	document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, sourceState.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, sourceLocale)
+	if err != nil {
+		return nil, err
+	}
+	document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, sourceLocale)
 	if err != nil {
 		return nil, err
 	}
@@ -58,17 +57,21 @@ func LoadTypedTranslationSourceDocument(
 		ContentBlockDocument: document, ContentDocumentRevision: snapshot.Document.Revision.String(),
 	}, nil
 }
-func ApplyTypedTranslationCandidateWithDB(
+
+// ApplyTypedTranslationCandidate delivers a provider translation in the
+// translation domain's transaction, which store is bound to.
+func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadata, postTranslationCandidateRequireTitle, auditWriter,
+	store := joined.Store
+	auditWriter := joined.Audit
+
+	return applyTypedTranslationCandidate(
+		ctx, store, job, candidate, metadata, postTranslationCandidateRequireTitle, auditWriter,
 	)
 }
 
@@ -79,25 +82,24 @@ const (
 	postTranslationCandidateAllowSparseInterchange
 )
 
-func applyTypedTranslationCandidateWithDB(
+func applyTypedTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	validation postTranslationCandidateValidation,
 	auditWriter domainaudit.Appender,
 ) error {
-	if err := validatePostTranslationCandidate(store, job, candidate, validation); err != nil {
+	if err := validatePostTranslationCandidate(candidate, validation); err != nil {
 		return err
 	}
-	documentID, err := loadPostContentDocumentID(ctx, tx, job.EntityID)
+	documentID, err := loadPostContentDocumentID(ctx, store, job.EntityID)
 	if err != nil {
 		return err
 	}
 	if _, ok := candidate.ProviderPatch(); ok {
-		domain, fenceErr := postSystemTranslationDocumentFence(job.EntityID)(ctx, tx, documentID)
+		domain, fenceErr := postSystemTranslationDocumentFence(job.EntityID)(ctx, store, documentID)
 		if fenceErr != nil {
 			return fenceErr
 		}
@@ -108,62 +110,20 @@ func applyTypedTranslationCandidateWithDB(
 				return err
 			}
 			return applyPostProviderSourceCandidate(
-				ctx, tx, store, job, candidate, metadata, auditWriter, documentID, domain,
+				ctx, store, job, candidate, metadata, auditWriter, documentID, domain,
 			)
 		}
-		state, loadErr := loadPostTargetLocaleStateForDocument(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, "UPDATE",
-		)
-		if loadErr != nil {
-			return loadErr
-		}
-		batch, buildErr := translation.BuildProviderTargetRichTextBatch(
-			state.Snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, job.TargetLocale, candidate,
-		)
-		if buildErr != nil {
-			return buildErr
-		}
-		result, applyErr := applyPostTargetLocaleMutation(ctx, tx, store, postTargetLocaleMutationInput{
-			PostID: job.EntityID, Locale: job.TargetLocale,
-			ExpectedDocumentRevision: state.Snapshot.Document.Revision,
-			Batch:                    &batch,
-			AllowCreate:              true,
-			UseCurrentTargetRevision: true,
-			SetTitle:                 candidate.ProviderUnitRequested("entity:title"),
-			Title:                    candidate.Title,
-			SetSummary:               candidate.ProviderUnitRequested("entity:summary"),
-			Summary:                  candidate.Summary,
-			Now:                      metadata.Now,
-			Fence:                    postSystemTranslationDocumentFence(job.EntityID),
-		})
-		if applyErr != nil {
-			return applyErr
-		}
-		if !result.Changed {
-			return nil
-		}
-		if strings.TrimSpace(job.RequestedByMemberID) == "" {
-			return errors.New("post translation provider delivery requires its requesting Member")
-		}
-		operation := sharedtelemetry.AuditItemOperationUpdated
-		if result.LocaleCreated {
-			operation = sharedtelemetry.AuditItemOperationCreated
-		}
-		return appendPostMemberLocaleContentAudit(
-			ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
-			job.EntityID, job.TargetLocale, operation,
-		)
+		return applyPostProviderTargetCandidate(ctx, store, job, candidate, metadata, auditWriter, documentID)
 	}
 	expectedRevision, err := parsePostContentUUID(
 		"content_document_revision", candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "parse_translation_revision", "outcome", "failed", failurecause.Attr(err), "entity_id", job.EntityID, "target_locale", job.TargetLocale, "job_id", job.ID)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	var batch contentblock.Batch
 	if candidate.HasProviderUnitPatch() {
-		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, documentID, job.SourceLocale)
+		snapshot, loadErr := store.LockedContentSnapshot(ctx, documentID, job.SourceLocale)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -183,55 +143,49 @@ func applyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return err
 	}
-	result, err := store.ApplyBatch(
-		ctx, tx, batch, postSystemTranslationDocumentFence(job.EntityID),
-	)
+	result, err := store.ApplyContentBatch(ctx, batch, postSystemTranslationDocumentFence(job.EntityID))
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err
 	}
 	if result.TranslationSourceChanged {
-		return errs.InternalMsg("target Post translation changed the source-owned Block view")
+		return errors.New("target Post translation changed the source-owned Block view")
 	}
 	if result.Changed {
-		_, err = applyPostTranslatedMetadata(ctx, tx, job, candidate, metadata, validation)
+		_, err = applyPostTranslatedMetadata(ctx, store, job, candidate, metadata, validation)
 		return err
 	}
-	_, err = store.AdvanceRevision(
+	_, err = store.AdvanceContentRevision(
 		ctx,
-		tx,
 		contentblock.AdvanceInput{
 			DocumentID:       documentID,
 			ExpectedRevision: result.DocumentRevision,
 		},
 		postSystemTranslationDocumentFence(job.EntityID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			changed, err := applyPostTranslatedMetadata(ctx, tx, job, candidate, metadata, validation)
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			changed, err := applyPostTranslatedMetadata(ctx, store, job, candidate, metadata, validation)
 			return contentblock.MetadataEffect{Changed: changed}, err
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	return err
 }
 
 func applyPostProviderSourceCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	auditWriter domainaudit.Appender,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 ) error {
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return normalizePostContentBlockError(err)
 	}
@@ -243,9 +197,6 @@ func applyPostProviderSourceCandidate(
 	}
 	requesterID, err := uuid.Parse(job.RequestedByMemberID)
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != job.RequestedByMemberID {
-		if err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.applyPostProviderSourceCandidate", "outcome", "failed", failurecause.Attr(err))
-		}
 		return errors.New("post translation provider delivery requires its requesting Member")
 	}
 	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
@@ -259,15 +210,14 @@ func applyPostProviderSourceCandidate(
 			SetSummary: candidate.ProviderUnitRequested("entity:summary"), Summary: candidate.Summary,
 		},
 	}
-	result, err := store.ApplyBatchWithMetadata(
-		ctx, tx, batch, postSystemTranslationDocumentFence(job.EntityID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return applyPostAIDocumentMetadata(ctx, tx, mutation, domain.SourceLocale, metadata.Now, nil)
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, batch, postSystemTranslationDocumentFence(job.EntityID),
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			return applyPostAIDocumentMetadata(ctx, store, mutation, domain.SourceLocale, metadata.Now, nil)
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err
@@ -276,31 +226,28 @@ func applyPostProviderSourceCandidate(
 		return nil
 	}
 	if !result.TranslationSourceChanged {
-		return errs.InternalMsg("provider source Post translation did not advance source state")
+		return errors.New("provider source Post translation did not advance source state")
 	}
-	if err := tx.WithContext(ctx).Model(&model.Post{}).
-		Where("id = ?", job.EntityID).UpdateColumn("updated_at", metadata.Now).Error; err != nil {
+	if err := store.TouchPost(ctx, job.EntityID, metadata.Now); err != nil {
 		return err
 	}
 	return appendPostMemberLocaleContentAudit(
-		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
+		ctx, store, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
 		sharedtelemetry.AuditItemOperationUpdated,
 	)
 }
 
 func validatePostTranslationCandidate(
-	store *contentblock.Store,
-	job *model.TranslationJob,
 	candidate *translation.Candidate,
 	validation postTranslationCandidateValidation,
 ) error {
-	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
+	if candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed post translation candidate and content Block store are required")
 	}
 	switch validation {
 	case postTranslationCandidateRequireTitle:
 		if candidate.Title == nil {
-			return errs.FailedPrecondition("translated Post title is required")
+			return domainerr.Precondition("translated Post title is required")
 		}
 	case postTranslationCandidateAllowSparseInterchange:
 		// A nil title is a missing target unit, while a non-nil empty title is
@@ -313,32 +260,24 @@ func validatePostTranslationCandidate(
 
 func applyPostTranslatedMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	validation postTranslationCandidateValidation,
 ) (bool, error) {
-	if job == nil || candidate == nil {
-		return false, errs.FailedPrecondition("translated Post title is required")
+	if candidate == nil {
+		return false, domainerr.Precondition("translated Post title is required")
 	}
 	if validation == postTranslationCandidateRequireTitle && candidate.Title == nil {
-		return false, errs.FailedPrecondition("translated Post title is required")
+		return false, domainerr.Precondition("translated Post title is required")
 	}
 	if validation != postTranslationCandidateRequireTitle && validation != postTranslationCandidateAllowSparseInterchange {
 		return false, errors.New("post translation candidate validation profile is invalid")
 	}
-	var current struct {
-		Title   *string `gorm:"column:title"`
-		Summary *string `gorm:"column:summary"`
-	}
-	result := tx.WithContext(ctx).Table("post_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("title", "summary").
-		Where("entity_id = ? AND locale = ?", job.EntityID, job.TargetLocale).
-		Take(&current)
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return false, errs.Internal(result.Error)
+	current, exists, err := store.LocaleText(ctx, job.EntityID, job.TargetLocale, true)
+	if err != nil {
+		return false, err
 	}
 	nextTitle := candidate.Title
 	nextSummary := candidate.Summary
@@ -350,23 +289,11 @@ func applyPostTranslatedMetadata(
 			nextSummary = current.Summary
 		}
 	}
-	changed := errors.Is(result.Error, gorm.ErrRecordNotFound) ||
-		!sameNullableString(current.Title, nextTitle) ||
-		!sameNullableString(current.Summary, nextSummary)
-	update := tx.WithContext(ctx).Exec(
-		`INSERT INTO post_translation (
-		 entity_id, locale, title, summary, created_at, updated_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-		 title = EXCLUDED.title,
-		 summary = EXCLUDED.summary,
-		 updated_at = EXCLUDED.updated_at`,
-		job.EntityID, job.TargetLocale, nextTitle, nextSummary,
-		metadata.Now, metadata.Now,
-	)
-	if update.Error != nil {
-		return false, errs.Internal(update.Error)
+	changed := !exists ||
+		!nullableStringEqual(current.Title, nextTitle) ||
+		!nullableStringEqual(current.Summary, nextSummary)
+	if err := store.UpsertLocaleText(ctx, job.EntityID, job.TargetLocale, nextTitle, nextSummary, metadata.Now); err != nil {
+		return false, err
 	}
 	return changed, nil
 }
@@ -388,9 +315,54 @@ func validatePostProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentS
 	return nil
 }
 
-func sameNullableString(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
+// applyPostProviderTargetCandidate writes a provider delivery to a target
+// locale and audits it for the requesting Member when it changed.
+func applyPostProviderTargetCandidate(
+	ctx context.Context,
+	store Store,
+	job TranslationJob,
+	candidate *translation.Candidate,
+	metadata translation.EntryWrite,
+	auditWriter domainaudit.Appender,
+	documentID uuid.UUID,
+) error {
+	state, loadErr := loadPostTargetLocaleStateForDocument(ctx, store, job.EntityID, documentID, job.TargetLocale, true)
+	if loadErr != nil {
+		return loadErr
 	}
-	return *left == *right
+	batch, buildErr := translation.BuildProviderTargetRichTextBatch(
+		state.Snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, job.TargetLocale, candidate,
+	)
+	if buildErr != nil {
+		return buildErr
+	}
+	result, applyErr := applyPostTargetLocaleMutation(ctx, store, postTargetLocaleMutationInput{
+		PostID: job.EntityID, Locale: job.TargetLocale,
+		ExpectedDocumentRevision: state.Snapshot.Document.Revision,
+		Batch:                    &batch,
+		Policy:                   targetlocale.Policy{AllowCreate: true, RevisionMode: targetlocale.RevisionCurrent},
+		SetTitle:                 candidate.ProviderUnitRequested("entity:title"),
+		Title:                    candidate.Title,
+		SetSummary:               candidate.ProviderUnitRequested("entity:summary"),
+		Summary:                  candidate.Summary,
+		Now:                      metadata.Now,
+		Fence:                    postSystemTranslationDocumentFence(job.EntityID),
+	})
+	if applyErr != nil {
+		return applyErr
+	}
+	if !result.Changed {
+		return nil
+	}
+	if strings.TrimSpace(job.RequestedByMemberID) == "" {
+		return errors.New("post translation provider delivery requires its requesting Member")
+	}
+	operation := sharedtelemetry.AuditItemOperationUpdated
+	if result.LocaleCreated {
+		operation = sharedtelemetry.AuditItemOperationCreated
+	}
+	return appendPostMemberLocaleContentAudit(
+		ctx, store, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
+		job.EntityID, job.TargetLocale, operation,
+	)
 }

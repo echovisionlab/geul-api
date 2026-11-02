@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,22 +30,16 @@ type exactFormDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactFormDocumentAPI) LoadAIDocumentState(
-	context.Context,
-	string,
-	string,
-) (formdomain.AIDocumentState, error) {
+func (a *exactFormDocumentAPI) LoadAIDocument(context.Context, formdomain.LoadAIDocumentQuery) (formdomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
 }
 
 func (a *exactFormDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
-	formID string,
-	locale string,
-	_ formdomain.AIDocumentExecutionMode,
-	compiler formdomain.AIDocumentMutationCompiler,
+	command formdomain.ExecuteAIDocumentMutationCommand,
 ) (formdomain.AIDocumentMutationResult, error) {
+	formID, locale, compiler := command.FormID, command.Locale, command.Compile
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return formdomain.AIDocumentMutationResult{}, a.authorizeErr
@@ -314,9 +309,11 @@ func TestFormExactTargetMutationPassesTargetFenceAndMapsTargetConflict(t *testin
 	}
 
 	currentTarget := "form-target-3"
-	api.executeErr = &formdomain.AIDocumentRevisionConflictError{
-		Kind:                    formdomain.AIDocumentTargetRevisionConflict,
-		CurrentDocumentRevision: "form-document-1", CurrentTargetRevision: &currentTarget,
+	api.executeErr = &core.RevisionConflict{
+		Kind:                    core.ConflictTargetRevision,
+		CurrentDocumentRevision: "form-document-1",
+		CurrentTargetRevision:   &currentTarget,
+		Message:                 fmt.Sprintf("Form AI document %s revision conflict", "target"),
 	}
 	_, err = service.Apply(t.Context(), request)
 	var conflict *core.ConflictError
@@ -406,7 +403,7 @@ func TestFormSourcePayloadIdentityMustMatchStableHandle(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.payload), &inserted); err != nil {
 				t.Fatal(err)
 			}
-			inserted["id"] = formString(inserted, "id") + "-new"
+			inserted["id"] = formObjectID(inserted) + "-new"
 			if test.kind == formFieldKind {
 				inserted["key"] = "choice-new"
 			}

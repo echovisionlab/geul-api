@@ -8,9 +8,9 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	sitemapdomain "github.com/echovisionlab/geul-api/internal/sitemap"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // PostgresStore serves the Sitemap read model directly from authoritative
@@ -53,7 +53,7 @@ func (s *PostgresStore) LoadHomepage(ctx context.Context, pageID string) (*sitem
 		Table("page").
 		Select("id, published_at, updated_at").
 		Where("id = ?", pageID).
-		Where("status = ?", managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()).
+		Where("status = ?", string(model.PageStatusPublished)).
 		Where(pageaccess.PublicSQL).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -70,7 +70,7 @@ func (s *PostgresStore) ListPages(ctx context.Context) ([]sitemapdomain.Entry, e
 	return s.listEntries(
 		ctx,
 		"page",
-		[]string{managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()},
+		[]string{string(model.PageStatusPublished)},
 		"published_at DESC NULLS LAST, updated_at DESC",
 		true,
 	)
@@ -89,8 +89,8 @@ func (s *PostgresStore) ListPosts(ctx context.Context) ([]sitemapdomain.Entry, e
 		ctx,
 		"post",
 		[]string{
-			managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-			managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+			string(model.PostStatusPublished),
+			string(model.PostStatusArchived),
 		},
 		"published_at DESC NULLS LAST, updated_at DESC",
 		false,
@@ -102,8 +102,8 @@ func (s *PostgresStore) ListWorks(ctx context.Context) ([]sitemapdomain.Entry, e
 		ctx,
 		"work",
 		[]string{
-			managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-			managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
+			string(model.WorkStatusPublished),
+			string(model.WorkStatusArchived),
 		},
 		"published_at DESC NULLS LAST, updated_at DESC",
 		false,
@@ -114,7 +114,7 @@ func (s *PostgresStore) ListArtists(ctx context.Context) ([]sitemapdomain.Entry,
 	return s.listEntries(
 		ctx,
 		"artist",
-		[]string{managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()},
+		[]string{string(model.ArtistStatusPublished)},
 		"published_at DESC NULLS LAST, created_at DESC",
 		false,
 	)
@@ -124,7 +124,7 @@ func (s *PostgresStore) ListLabels(ctx context.Context) ([]sitemapdomain.Entry, 
 	return s.listEntries(
 		ctx,
 		"label",
-		[]string{managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()},
+		[]string{string(model.LabelStatusPublished)},
 		"published_at DESC NULLS LAST, updated_at DESC",
 		false,
 	)
@@ -134,7 +134,7 @@ func (s *PostgresStore) ListReleases(ctx context.Context) ([]sitemapdomain.Entry
 	return s.listEntries(
 		ctx,
 		"release",
-		[]string{managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()},
+		[]string{string(model.ReleaseStatusPublished)},
 		"published_at DESC NULLS LAST, updated_at DESC",
 		false,
 	)

@@ -4,11 +4,9 @@ package securityaccess
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -99,17 +97,16 @@ func (recorder *Recorder) append(
 	}
 	actor, err := sharedtelemetry.ActorForRecord(requestContext.Actor)
 	if err != nil || actor.Kind != sharedtelemetry.ActorKindMember {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "reason", "personal_data_access_actor_failed", failurecause.Attr(err))
-		}
 		apitelemetry.ReportSecurityAccessAppendFailure(
 			ctx,
 			sharedtelemetry.SecurityPersonalDataAccessed,
 			sharedtelemetry.AuditAppendFailureActorInvalid,
+			err,
 		)
 		return errors.New("personal data access requires a member actor")
 	}
-	err = apitelemetry.BuildAndAppendSecurityAccess(
+	// Each append failure emits its own typed failure record with the cause.
+	return apitelemetry.BuildAndAppendSecurityAccess(
 		ctx,
 		recorder.writer,
 		sharedtelemetry.SecurityPersonalDataAccessed,
@@ -117,17 +114,10 @@ func (recorder *Recorder) append(
 		recorder.now(),
 		build,
 	)
-	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "append_personal_data_access_failed", failurecause.Attr(err), "action", string(sharedtelemetry.SecurityPersonalDataAccessed))
-	}
-	return err
 }
 
-// Unavailable returns the transport error used when a required access record
-// cannot be persisted.
-func Unavailable() *connect.Error {
-	return connect.NewError(
-		connect.CodeUnavailable,
-		errors.New("personal data access record is temporarily unavailable"),
-	)
+// Unavailable is the outcome when a required access record cannot be
+// persisted.
+func Unavailable() *domainerr.Error {
+	return domainerr.New(domainerr.Unavailable, "", "personal data access record is temporarily unavailable")
 }

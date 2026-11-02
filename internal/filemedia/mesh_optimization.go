@@ -9,81 +9,66 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 const meshOptimizationCandidateTTL = 7 * 24 * time.Hour
 
 var errUnsupportedMeshOptimizationResource = errors.New("unsupported mesh optimization resource")
 
-type MeshOptimizationJobPublisher interface {
-	PublishMeshOptimizationJob(ctx context.Context, job *managev1.MeshOptimizationJob) error
-}
-
 type MeshOptimizationFileDeleter interface {
 	DeleteFileByID(ctx context.Context, fileID string) error
 }
 
 type MeshOptimizationService struct {
-	db          *gorm.DB
-	publisher   MeshOptimizationJobPublisher
+	units       mutation.UnitOfWork[Store]
 	fileDeleter MeshOptimizationFileDeleter
-	spiceDB     *auth.SpiceDBClient
+	authorizer  mutation.Authorizer
+}
+
+type MeshOptimizationDeps struct {
+	Units       mutation.UnitOfWork[Store]
+	FileDeleter MeshOptimizationFileDeleter
+	Authorizer  mutation.Authorizer
 }
 
 type MeshOptimizationListInput struct {
 	SourceFileID string
-	EntityType   managev1.TranscodeEntityType
+	EntityType   EntityType
 	EntityID     string
-	Profile      managev1.MeshOptimizationProfile
+	Profile      MeshProfile
 }
 
 type MeshOptimizationGenerateInput struct {
 	SourceFileID       string
-	EntityType         managev1.TranscodeEntityType
+	EntityType         EntityType
 	EntityID           string
 	TargetRatioPercent int32
 	Method             string
-	Profile            managev1.MeshOptimizationProfile
+	Profile            MeshProfile
 	PipelineVersion    string
 }
 
 type MeshOptimizationGenerateResult struct {
-	Candidate model.MeshOptimizationCandidate
+	Candidate domain.MeshCandidate
 	CacheHit  bool
 	Enqueued  bool
 }
 
-func NewMeshOptimizationService(
-	db *gorm.DB,
-	publisher MeshOptimizationJobPublisher,
-	fileDeleter MeshOptimizationFileDeleter,
-	spiceDB *auth.SpiceDBClient,
-) *MeshOptimizationService {
-	if db == nil {
-		panic("mesh optimization service: db is required")
+func NewMeshOptimizationService(deps MeshOptimizationDeps) *MeshOptimizationService {
+	if deps.Units == nil {
+		panic("mesh optimization service: units are required")
 	}
-	return &MeshOptimizationService{
-		db:          db,
-		publisher:   publisher,
-		fileDeleter: fileDeleter,
-		spiceDB:     spiceDB,
-	}
+	return &MeshOptimizationService{units: deps.Units, fileDeleter: deps.FileDeleter, authorizer: deps.Authorizer}
 }
 
 func BuildMeshOptimizationCacheKey(sourceFileID string, targetRatioPercent int32, method string, pipelineVersion string) string {
@@ -95,58 +80,30 @@ func BuildMeshOptimizationCacheKey(sourceFileID string, targetRatioPercent int32
 	}, ":")
 }
 
-func meshOptimizationJobFromCandidate(candidate model.MeshOptimizationCandidate, source model.File) (*managev1.MeshOptimizationJob, error) {
+func meshOptimizationJobFromCandidate(candidate domain.MeshCandidate, source File) (*domain.MeshJob, error) {
 	if err := validateMeshOptimizationTargetRatioPercent(candidate.TargetRatioPercent); err != nil {
 		return nil, err
 	}
 	if candidate.JobID == nil || strings.TrimSpace(*candidate.JobID) == "" {
-		return nil, errs.Required("job_id")
+		return nil, domainerr.Required("job_id")
 	}
 	if strings.TrimSpace(candidate.OutputObjectID) == "" {
-		return nil, errs.Required("output_object_id")
+		return nil, domainerr.Required("output_object_id")
 	}
-	sourceTarget, err := meshMediaObjectTarget(source.ID, source.Extension, source.MimeType)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	outputTarget, err := meshMediaObjectTarget(candidate.OutputObjectID, "glb", "model/gltf-binary")
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	entityType, entityID := candidatePermissionTarget(candidate)
-	return &managev1.MeshOptimizationJob{
-		JobId:         strings.TrimSpace(*candidate.JobID),
-		CorrelationId: candidate.ID,
-		Identity: &managev1.MeshOptimizationIdentity{
-			EntityType: entityType,
-			EntityId:   entityID,
-			FileId:     candidate.SourceFileID,
-			Source:     sourceTarget,
-			SlotId:     source.IngestSlotID,
-			AttemptId:  source.IngestAttemptID,
-		},
-		Options: &managev1.MeshOptimizationOptions{
-			CompressionMethod:  meshOptimizationCompressionMethod(candidate.Method),
-			TargetRatioPercent: candidate.TargetRatioPercent,
-			Profile:            meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion),
-		},
-		Output:      outputTarget,
-		TimestampMs: time.Now().UnixMilli(),
-	}, nil
-}
-
-func meshMediaObjectTarget(fileID, extension, mimeType string) (*commonv1.MediaObjectTarget, error) {
-	fileID = strings.TrimSpace(fileID)
-	extension = strings.ToLower(strings.TrimSpace(extension))
-	objectKey, err := mediaauth.MediaObjectKey(fileID, extension)
+	sourceTarget, err := domain.CanonicalObjectTarget(source)
 	if err != nil {
 		return nil, err
 	}
-	return &commonv1.MediaObjectTarget{
-		FileId:    fileID,
-		ObjectKey: objectKey,
-		Extension: extension,
-		MimeType:  strings.TrimSpace(mimeType),
+	outputTarget, err := domain.CanonicalObjectTarget(File{ID: candidate.OutputObjectID, Extension: "glb", MimeType: "model/gltf-binary"})
+	if err != nil {
+		return nil, err
+	}
+	entityType, entityID := candidatePermissionTarget(candidate)
+	return &domain.MeshJob{JobID: strings.TrimSpace(*candidate.JobID), CandidateID: candidate.ID,
+		EntityType: int32(entityType), EntityID: entityID, SourceFileID: candidate.SourceFileID,
+		Source: sourceTarget, SlotID: source.IngestSlotID, AttemptID: source.IngestAttemptID,
+		CompressionMethod: int32(meshOptimizationCompressionMethod(candidate.Method)), TargetRatioPercent: candidate.TargetRatioPercent,
+		Profile: int32(meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)), Output: outputTarget, TimestampMS: time.Now().UnixMilli(),
 	}, nil
 }
 
@@ -154,15 +111,15 @@ func ValidateMeshOptimizationRequest(targetRatioPercent int32, method string) er
 	if err := validateMeshOptimizationTargetRatioPercent(targetRatioPercent); err != nil {
 		return err
 	}
-	if normalizeMeshOptimizationMethod(method) != model.MeshOptimizationMethodDraco {
-		return errs.InvalidArgument("method", "only DRACO is supported")
+	if normalizeMeshOptimizationMethod(method) != domain.MeshMethodDraco {
+		return domainerr.InvalidField("method", "only DRACO is supported")
 	}
 	return nil
 }
 
 func validateMeshOptimizationTargetRatioPercent(targetRatioPercent int32) error {
 	if targetRatioPercent < 1 || targetRatioPercent > 100 {
-		return errs.InvalidArgument("target_ratio_percent", "must be between 1 and 100")
+		return domainerr.InvalidField("target_ratio_percent", "must be between 1 and 100")
 	}
 	return nil
 }
@@ -189,17 +146,17 @@ func optionalPositiveEventInt64(value int64) *int64 {
 	return &value
 }
 
-func meshOptimizationCompressionMethod(method string) managev1.MeshOptimizationCompressionMethod {
-	if normalizeMeshOptimizationMethod(method) == model.MeshOptimizationMethodDraco {
-		return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO
+func meshOptimizationCompressionMethod(method string) MeshCompressionMethod {
+	if normalizeMeshOptimizationMethod(method) == domain.MeshMethodDraco {
+		return MeshCompressionDraco
 	}
-	return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED
+	return MeshCompressionUnspecified
 }
 
 func normalizeMeshOptimizationMethod(method string) string {
 	method = strings.TrimSpace(method)
 	if method == "" {
-		return model.MeshOptimizationMethodDraco
+		return domain.MeshMethodDraco
 	}
 	return strings.ToUpper(method)
 }
@@ -207,55 +164,55 @@ func normalizeMeshOptimizationMethod(method string) string {
 func normalizeMeshOptimizationPipelineVersion(pipelineVersion string) string {
 	pipelineVersion = strings.TrimSpace(pipelineVersion)
 	if pipelineVersion == "" {
-		return model.MeshOptimizationPipelineVersionDracoWebpV1
+		return domain.MeshPipelineDracoWebpV1
 	}
 	return pipelineVersion
 }
 
-func meshOptimizationPipelineVersionForProfile(profile managev1.MeshOptimizationProfile) (string, error) {
+func meshOptimizationPipelineVersionForProfile(profile MeshProfile) (string, error) {
 	switch profile {
-	case managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED,
-		managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1:
-		return model.MeshOptimizationPipelineVersionDracoWebpV1, nil
-	case managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1:
-		return model.MeshOptimizationPipelineVersionParticleMeshV1, nil
+	case MeshProfileUnspecified,
+		MeshProfileDracoWebpV1:
+		return domain.MeshPipelineDracoWebpV1, nil
+	case MeshProfileParticleMeshV1:
+		return domain.MeshPipelineParticleMeshV1, nil
 	default:
-		return "", errs.InvalidArgument("profile", "unsupported mesh optimization profile")
+		return "", domainerr.InvalidField("profile", "unsupported mesh optimization profile")
 	}
 }
 
-func meshOptimizationProfileForPipelineVersion(pipelineVersion string) managev1.MeshOptimizationProfile {
+func meshOptimizationProfileForPipelineVersion(pipelineVersion string) MeshProfile {
 	switch normalizeMeshOptimizationPipelineVersion(pipelineVersion) {
-	case model.MeshOptimizationPipelineVersionParticleMeshV1:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1
-	case model.MeshOptimizationPipelineVersionDracoV1,
-		model.MeshOptimizationPipelineVersionDracoWebpV1:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1
+	case domain.MeshPipelineParticleMeshV1:
+		return MeshProfileParticleMeshV1
+	case domain.MeshPipelineDracoV1,
+		domain.MeshPipelineDracoWebpV1:
+		return MeshProfileDracoWebpV1
 	default:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED
+		return MeshProfileUnspecified
 	}
 }
 
 func validateMeshOptimizationOutputProfile(
-	candidate model.MeshOptimizationCandidate,
-	outputProfile managev1.MeshOptimizationProfile,
+	candidate domain.MeshCandidate,
+	outputProfile MeshProfile,
 ) error {
 	expected := meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)
-	if expected == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1 &&
-		outputProfile == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED {
+	if expected == MeshProfileDracoWebpV1 &&
+		outputProfile == MeshProfileUnspecified {
 		return nil
 	}
 	if outputProfile != expected {
-		return errs.InvalidArgument("output.profile", "does not match the requested mesh optimization profile")
+		return domainerr.InvalidField("output.profile", "does not match the requested mesh optimization profile")
 	}
 	return nil
 }
 
-func (s *MeshOptimizationService) ListCandidates(ctx context.Context, input MeshOptimizationListInput) ([]model.MeshOptimizationCandidate, error) {
+func (s *MeshOptimizationService) ListCandidates(ctx context.Context, input MeshOptimizationListInput) ([]domain.MeshCandidate, error) {
 	input.SourceFileID = strings.TrimSpace(input.SourceFileID)
 	input.EntityID = strings.TrimSpace(input.EntityID)
 	if input.SourceFileID == "" {
-		return nil, errs.Required("source_file_id")
+		return nil, domainerr.Required("source_file_id")
 	}
 	if err := s.ensureSourceFileReadable(ctx, input.SourceFileID, input.EntityType, input.EntityID); err != nil {
 		return nil, err
@@ -265,12 +222,13 @@ func (s *MeshOptimizationService) ListCandidates(ctx context.Context, input Mesh
 		return nil, err
 	}
 
-	var candidates []model.MeshOptimizationCandidate
-	if err := s.db.WithContext(ctx).
-		Where("source_file_id = ? AND pipeline_version = ?", input.SourceFileID, pipelineVersion).
-		Order("target_ratio_percent ASC, created_at DESC").
-		Find(&candidates).Error; err != nil {
-		return nil, errs.Internal(err)
+	var candidates []domain.MeshCandidate
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		candidates, err = store.MeshCandidates(ctx, input.SourceFileID, pipelineVersion)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	return candidates, nil
 }
@@ -288,7 +246,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 	}
 	input.PipelineVersion = pipelineVersion
 	if input.SourceFileID == "" {
-		return nil, errs.Required("source_file_id")
+		return nil, domainerr.Required("source_file_id")
 	}
 	if err := ValidateMeshOptimizationRequest(input.TargetRatioPercent, input.Method); err != nil {
 		return nil, err
@@ -303,19 +261,25 @@ func (s *MeshOptimizationService) GenerateCandidate(
 		input.Method,
 		input.PipelineVersion,
 	)
-	if s.publisher == nil {
-		return nil, errs.FailedPrecondition("mesh optimization publisher is not configured")
+	if err := s.units.Read(ctx, func(store Store) error {
+		if err := store.RequireMeshPublisher(ctx); err != nil {
+			return domainerr.Precondition(err.Error())
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	var (
-		candidate       model.MeshOptimizationCandidate
+		candidate       domain.MeshCandidate
 		cacheHit        bool
 		cleanupOutputID string
 		enqueued        bool
 	)
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
 		var err error
-		candidate, cacheHit, cleanupOutputID, err = s.findOrCreateCandidate(ctx, tx, input, cacheKey)
+		candidate, cacheHit, cleanupOutputID, err = s.findOrCreateCandidate(ctx, store, input, cacheKey)
 		if err != nil || (cacheHit && meshOptimizationCandidateCacheUsable(candidate.Status)) {
 			return err
 		}
@@ -323,28 +287,17 @@ func (s *MeshOptimizationService) GenerateCandidate(
 		if err != nil {
 			return err
 		}
-		if asyncPublisher, ok := s.publisher.(AsyncPublisher); ok {
-			if err := publishDurableProtoInTransaction(
-				ctx,
-				asyncPublisher,
-				tx,
-				eventpkg.QueueAssetOptimizerMesh,
-				job.GetJobId(),
-				job,
-			); err != nil {
-				return err
-			}
-		} else if err := s.publisher.PublishMeshOptimizationJob(ctx, job); err != nil {
+		if err := store.EnqueueMeshJob(ctx, *job); err != nil {
 			return err
 		}
 		enqueued = true
 		return nil
 	}); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to enqueue mesh optimization: %w", err))
+		return nil, fmt.Errorf("failed to enqueue mesh optimization: %w", err)
 	}
 	if cleanupOutputID != "" && s.fileDeleter != nil {
 		if err := s.fileDeleter.DeleteFileByID(ctx, cleanupOutputID); err != nil {
-			slog.Error("Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, failurecause.Attr(err))
 		}
 	}
 	return &MeshOptimizationGenerateResult{Candidate: candidate, CacheHit: cacheHit, Enqueued: enqueued}, nil
@@ -353,23 +306,17 @@ func (s *MeshOptimizationService) GenerateCandidate(
 func (s *MeshOptimizationService) MarkCandidateProcessing(ctx context.Context, candidateID string, startedAt time.Time) error {
 	candidateID = strings.TrimSpace(candidateID)
 	if candidateID == "" {
-		return errs.Required("candidate_id")
+		return domainerr.Required("candidate_id")
 	}
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
-	return s.db.WithContext(ctx).
-		Model(&model.MeshOptimizationCandidate{}).
-		Where("id = ? AND status = ?", candidateID, model.MeshOptimizationCandidateStatusPending).
-		Updates(structured.Fields{
-			"status":                model.MeshOptimizationCandidateStatusProcessing,
-			"processing_started_at": startedAt,
-			"expires_at":            startedAt.Add(meshOptimizationCandidateTTL),
-			"updated_at":            startedAt,
-		}).Error
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		return unit.Store().MarkMeshProcessing(ctx, candidateID, startedAt, startedAt.Add(meshOptimizationCandidateTTL))
+	})
 }
 
-func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID string) (*model.MeshOptimizationCandidate, error) {
+func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID string) (*domain.MeshCandidate, error) {
 	candidate, err := s.loadCandidate(ctx, candidateID)
 	if err != nil {
 		return nil, err
@@ -378,19 +325,12 @@ func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID 
 	if err := s.ensureSourceFileReadable(ctx, candidate.SourceFileID, entityType, entityID); err != nil {
 		return nil, err
 	}
-	if candidate.Status != model.MeshOptimizationCandidateStatusReady || candidate.OutputFileID == nil {
-		return nil, errs.FailedPrecondition("mesh optimization candidate is not ready")
+	if candidate.Status != domain.MeshStatusReady || candidate.OutputFileID == nil {
+		return nil, domainerr.Precondition("mesh optimization candidate is not ready")
 	}
 	now := dbtime.Now()
-	if err := s.db.WithContext(ctx).
-		Model(&model.MeshOptimizationCandidate{}).
-		Where("id = ?", candidate.ID).
-		Updates(structured.Fields{
-			"selected_at": now,
-			"expires_at":  nil,
-			"updated_at":  now,
-		}).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error { return unit.Store().SelectMeshCandidate(ctx, candidate.ID, now) }); err != nil {
+		return nil, err
 	}
 	candidate.SelectedAt = &now
 	candidate.ExpiresAt = nil
@@ -410,19 +350,13 @@ func (s *MeshOptimizationService) DiscardCandidate(ctx context.Context, candidat
 	if candidate.SelectedAt != nil {
 		return s.deleteCandidateAndOutput(ctx, *candidate)
 	}
-	if candidate.Status == model.MeshOptimizationCandidateStatusPending ||
-		candidate.Status == model.MeshOptimizationCandidateStatusProcessing {
+	if candidate.Status == domain.MeshStatusPending ||
+		candidate.Status == domain.MeshStatusProcessing {
 		now := time.Now()
-		if err := s.db.WithContext(ctx).
-			Model(&model.MeshOptimizationCandidate{}).
-			Where("id = ?", candidate.ID).
-			Updates(structured.Fields{
-				"status":       model.MeshOptimizationCandidateStatusCancelled,
-				"cancelled_at": now,
-				"expires_at":   now.Add(meshOptimizationCandidateTTL),
-				"updated_at":   now,
-			}).Error; err != nil {
-			return errs.Internal(err)
+		if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+			return unit.Store().CancelMeshCandidate(ctx, candidate.ID, now, now.Add(meshOptimizationCandidateTTL))
+		}); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -431,31 +365,21 @@ func (s *MeshOptimizationService) DiscardCandidate(ctx context.Context, candidat
 
 func (s *MeshOptimizationService) HandleProgress(
 	ctx context.Context,
-	event *managev1.MeshOptimizationProgressEvent,
-) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleProgress", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
+	event *domain.MeshProgressEvent,
+) (_ *domain.MeshCandidate, resultErr error) {
 	if event == nil {
-		return nil, errs.Required("event")
+		return nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
-		return nil, errs.Required("job_id")
+	if strings.TrimSpace(event.JobID) == "" {
+		return nil, domainerr.Required("job_id")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return nil, err
 	}
-	if candidate.Status == model.MeshOptimizationCandidateStatusPending {
-		if err := s.MarkCandidateProcessing(ctx, candidate.ID, unixMillisTime(event.GetTimestampMs())); err != nil {
-			return nil, errs.Internal(err)
+	if candidate.Status == domain.MeshStatusPending {
+		if err := s.MarkCandidateProcessing(ctx, candidate.ID, unixMillisTime(event.TimestampMS)); err != nil {
+			return nil, err
 		}
 		return s.loadCandidate(ctx, candidate.ID)
 	}
@@ -464,33 +388,24 @@ func (s *MeshOptimizationService) HandleProgress(
 
 func (s *MeshOptimizationService) HandleComplete(
 	ctx context.Context,
-	event *managev1.MeshOptimizationCompleteEvent,
-) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleComplete", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
+	event *domain.MeshCompleteEvent,
+) (_ *domain.MeshCandidate, resultErr error) {
 	completion, candidate, err := s.prepareMeshOptimizationCompletion(ctx, event)
 	if err != nil {
 		return nil, err
 	}
 	sourceAcceptsResults := false
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		updated, acceptsResults, err := applyMeshOptimizationCompletionWithDB(ctx, tx, candidate, completion)
+	err = s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		updated, acceptsResults, err := applyMeshOptimizationCompletion(ctx, store, candidate, completion)
 		candidate = updated
 		sourceAcceptsResults = acceptsResults
 		return err
 	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	if !sourceAcceptsResults || candidate.Status == model.MeshOptimizationCandidateStatusCancelled {
+	if !sourceAcceptsResults || candidate.Status == domain.MeshStatusCancelled {
 		candidate.OutputObjectID = completion.outputFileID
 		candidate.OutputFileID = &completion.outputFileID
 		if err := s.deleteCandidateAndOutput(ctx, *candidate); err != nil {
@@ -503,8 +418,8 @@ func (s *MeshOptimizationService) HandleComplete(
 }
 
 type meshOptimizationCompletion struct {
-	event        *managev1.MeshOptimizationCompleteEvent
-	output       *managev1.MeshOptimizationOutput
+	event        *domain.MeshCompleteEvent
+	output       *domain.MeshOutput
 	outputFileID string
 	fileSize     int64
 	sha256       []byte
@@ -514,23 +429,23 @@ type meshOptimizationCompletion struct {
 
 func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 	ctx context.Context,
-	event *managev1.MeshOptimizationCompleteEvent,
-) (meshOptimizationCompletion, *model.MeshOptimizationCandidate, error) {
+	event *domain.MeshCompleteEvent,
+) (meshOptimizationCompletion, *domain.MeshCandidate, error) {
 	if event == nil {
-		return meshOptimizationCompletion{}, nil, errs.Required("event")
+		return meshOptimizationCompletion{}, nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
-		return meshOptimizationCompletion{}, nil, errs.Required("job_id")
+	if strings.TrimSpace(event.JobID) == "" {
+		return meshOptimizationCompletion{}, nil, domainerr.Required("job_id")
 	}
-	output := event.GetOutput()
+	output := event.Output
 	if output == nil {
-		return meshOptimizationCompletion{}, nil, errs.Required("output")
+		return meshOptimizationCompletion{}, nil, domainerr.Required("output")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
-	if err := validateMeshOptimizationOutputProfile(*candidate, output.GetProfile()); err != nil {
+	if err := validateMeshOptimizationOutputProfile(*candidate, MeshProfile(output.Profile)); err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
 	completion, err := validateMeshOptimizationCompletionPayload(event, output, candidate.OutputObjectID)
@@ -538,116 +453,77 @@ func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 }
 
 func validateMeshOptimizationCompletionPayload(
-	event *managev1.MeshOptimizationCompleteEvent,
-	output *managev1.MeshOptimizationOutput,
+	event *domain.MeshCompleteEvent,
+	output *domain.MeshOutput,
 	expectedOutputObjectID string,
 ) (meshOptimizationCompletion, error) {
-	written := output.GetWritten()
+	written := output.Written
 	if written == nil {
-		return meshOptimizationCompletion{}, errs.Required("output.written")
+		return meshOptimizationCompletion{}, domainerr.Required("output.written")
 	}
-	outputFileID := strings.TrimSpace(written.GetFileId())
+	outputFileID := strings.TrimSpace(written.FileID)
 	expectedOutputObjectID = strings.TrimSpace(expectedOutputObjectID)
 	if expectedOutputObjectID == "" {
-		return meshOptimizationCompletion{}, errs.FailedPrecondition("mesh optimization output was not allocated")
+		return meshOptimizationCompletion{}, domainerr.Precondition("mesh optimization output was not allocated")
 	}
 	if outputFileID != expectedOutputObjectID {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.file_id", "does not match the allocated output file")
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.file_id", "does not match the allocated output file")
 	}
 	if output.OptimizedSizeBytes == nil {
-		return meshOptimizationCompletion{}, errs.Required("optimized_size_bytes")
+		return meshOptimizationCompletion{}, domainerr.Required("optimized_size_bytes")
 	}
-	if written.GetFileSize() <= 0 || written.GetFileSize() != output.GetOptimizedSizeBytes() {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.file_size", "must match optimized_size_bytes and be positive")
+	if written.FileSize <= 0 || written.FileSize != *output.OptimizedSizeBytes {
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.file_size", "must match optimized_size_bytes and be positive")
 	}
-	if len(written.GetSha256()) != 32 {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.sha256", "must be a 32-byte SHA-256 digest")
+	if len(written.SHA256) != 32 {
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.sha256", "must be a 32-byte SHA-256 digest")
 	}
-	completedAt := unixMillisTime(event.GetTimestampMs())
+	completedAt := unixMillisTime(event.TimestampMS)
 	return meshOptimizationCompletion{
 		event: event, output: output, outputFileID: outputFileID,
-		fileSize: *output.OptimizedSizeBytes, sha256: append([]byte(nil), written.GetSha256()...),
+		fileSize: *output.OptimizedSizeBytes, sha256: append([]byte(nil), written.SHA256...),
 		completedAt: completedAt, expiresAt: completedAt.Add(meshOptimizationCandidateTTL),
 	}, nil
 }
 
-func applyMeshOptimizationCompletionWithDB(
+func applyMeshOptimizationCompletion(
 	ctx context.Context,
-	tx *gorm.DB,
-	candidate *model.MeshOptimizationCandidate,
+	store Store,
+	candidate *domain.MeshCandidate,
 	completion meshOptimizationCompletion,
-) (*model.MeshOptimizationCandidate, bool, error) {
-	acceptsResults, err := lockMeshOptimizationCompletionFiles(
-		ctx,
-		tx,
-		candidate.SourceFileID,
-		completion.outputFileID,
-	)
+) (*domain.MeshCandidate, bool, error) {
+	acceptsResults, err := store.LockMeshCompletionFiles(ctx, candidate.SourceFileID, completion.outputFileID)
 	if err != nil {
 		return nil, false, err
 	}
-	lockedCandidate, err := lockMeshOptimizationCandidate(ctx, tx, candidate.ID)
+	lockedCandidate, err := store.MeshCandidate(ctx, candidate.ID, "", true)
 	if err != nil {
 		return nil, false, err
 	}
-	if err := ensureMeshOptimizationOutputFile(tx, completion); err != nil {
+	if err := ensureMeshOptimizationOutputFile(ctx, store, completion); err != nil {
 		return nil, false, err
 	}
 	updates, status := meshOptimizationCompletionUpdates(completion, acceptsResults, lockedCandidate.Status)
-	if err := tx.Model(&model.MeshOptimizationCandidate{}).
-		Where("id = ?", lockedCandidate.ID).Updates(updates).Error; err != nil {
+	if err := store.CompleteMeshCandidate(ctx, lockedCandidate.ID, updates); err != nil {
 		return nil, false, err
 	}
 	lockedCandidate.Status = status
 	return &lockedCandidate, acceptsResults, nil
 }
 
-func lockMeshOptimizationCompletionFiles(
-	ctx context.Context,
-	tx *gorm.DB,
-	sourceFileID string,
-	outputFileID string,
-) (bool, error) {
-	fileIDs := normalizedSortedFileIDs([]string{sourceFileID, outputFileID})
-	var files []model.File
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
-		return false, err
-	}
-	for _, file := range files {
-		if file.ID == sourceFileID {
-			return file.DeleteRequestedAt == nil, nil
-		}
-	}
-	return false, gorm.ErrRecordNotFound
-}
-
-func lockMeshOptimizationCandidate(
-	ctx context.Context,
-	tx *gorm.DB,
-	candidateID string,
-) (model.MeshOptimizationCandidate, error) {
-	var candidate model.MeshOptimizationCandidate
-	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", candidateID).Take(&candidate).Error
-	return candidate, err
-}
-
-func ensureMeshOptimizationOutputFile(tx *gorm.DB, completion meshOptimizationCompletion) error {
+func ensureMeshOptimizationOutputFile(ctx context.Context, store Store, completion meshOptimizationCompletion) error {
 	const mimeType = "model/gltf-binary"
-	outputFile := model.File{
+	outputFile := File{
 		ID: completion.outputFileID, FileName: completion.outputFileID, MimeType: mimeType,
 		FileSize: completion.fileSize, Extension: "glb", SHA256: completion.sha256,
 		CreatedAt: completion.completedAt,
 	}
-	created := tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "id"}}, DoNothing: true,
-	}).Create(&outputFile)
-	if created.Error != nil || created.RowsAffected == 1 {
-		return created.Error
+	created, err := store.InsertMeshOutputFile(ctx, outputFile)
+	if err != nil || created {
+		return err
 	}
-	var existing model.File
-	if err := tx.Where("id = ?", completion.outputFileID).Take(&existing).Error; err != nil {
+	existing, err := store.IngestFile(ctx, completion.outputFileID)
+	if err != nil {
 		return err
 	}
 	if existing.FileSize != completion.fileSize || existing.Extension != "glb" ||
@@ -661,80 +537,56 @@ func meshOptimizationCompletionUpdates(
 	completion meshOptimizationCompletion,
 	sourceAcceptsResults bool,
 	currentStatus string,
-) (structured.Fields, string) {
+) (domain.MeshCompletion, string) {
 	output := completion.output
-	updates := structured.Fields{
-		"output_file_id":      completion.outputFileID,
-		"optimized_file_size": optionalEventInt64(output.OptimizedSizeBytes),
-		"original_file_size":  optionalEventInt64(output.OriginalSizeBytes),
-		"original_vertexes":   optionalEventInt64(output.OriginalVertexCount),
-		"optimized_vertexes":  optionalEventInt64(output.OptimizedVertexCount),
-		"original_triangles":  optionalEventInt64(output.OriginalTriangleCount),
-		"optimized_triangles": optionalEventInt64(output.OptimizedTriangleCount),
-		"processing_time_ms":  optionalPositiveEventInt64(completion.event.GetProcessingTimeMs()),
-		"error_message":       nil, "completed_at": completion.completedAt,
-		"expires_at": completion.expiresAt, "updated_at": completion.completedAt,
+	status := domain.MeshStatusCancelled
+	if sourceAcceptsResults && currentStatus != domain.MeshStatusCancelled {
+		status = domain.MeshStatusReady
 	}
-	if sourceAcceptsResults && currentStatus != model.MeshOptimizationCandidateStatusCancelled {
-		updates["status"] = model.MeshOptimizationCandidateStatusReady
-		updates["failed_at"] = nil
-		updates["cancelled_at"] = nil
-		return updates, model.MeshOptimizationCandidateStatusReady
-	}
-	updates["status"] = model.MeshOptimizationCandidateStatusCancelled
-	updates["cancelled_at"] = completion.completedAt
-	return updates, model.MeshOptimizationCandidateStatusCancelled
+	return domain.MeshCompletion{OutputFileID: completion.outputFileID, Status: status,
+		OptimizedFileSize: optionalEventInt64(output.OptimizedSizeBytes), OriginalFileSize: optionalEventInt64(output.OriginalSizeBytes),
+		OriginalVertexes: optionalEventInt64(output.OriginalVertexCount), OptimizedVertexes: optionalEventInt64(output.OptimizedVertexCount),
+		OriginalTriangles: optionalEventInt64(output.OriginalTriangleCount), OptimizedTriangles: optionalEventInt64(output.OptimizedTriangleCount),
+		ProcessingTimeMS: optionalPositiveEventInt64(completion.event.ProcessingTimeMS), CompletedAt: completion.completedAt, ExpiresAt: completion.expiresAt,
+	}, status
 }
 
-func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleFailed", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
+func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *domain.MeshFailedEvent) (_ *domain.MeshCandidate, resultErr error) {
 	if event == nil {
-		return nil, errs.Required("event")
+		return nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
-		return nil, errs.Required("job_id")
+	if strings.TrimSpace(event.JobID) == "" {
+		return nil, domainerr.Required("job_id")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return nil, err
 	}
-	if candidate.Status == model.MeshOptimizationCandidateStatusCancelled {
+	if candidate.Status == domain.MeshStatusCancelled {
 		if err := s.deleteCandidateAndOutput(ctx, *candidate); err != nil {
 			return nil, err
 		}
 		return candidate, nil
 	}
-	failedAt := unixMillisTime(event.GetTimestampMs())
+	failedAt := unixMillisTime(event.TimestampMS)
 	expiresAt := failedAt.Add(meshOptimizationCandidateTTL)
-	errText := strings.TrimSpace(event.GetError())
+	reason := event.Reason
+	if reason == "" {
+		reason = domain.MeshFailureUnspecified
+	}
+	errText := strings.TrimSpace(event.Error)
 	if errText == "" {
-		errText = event.GetReason().String()
+		errText = reason
 	}
 	level := slog.LevelError
-	if event.GetReason() == managev1.MeshOptimizationFailureReason_MESH_OPTIMIZATION_FAILURE_REASON_REJECTED {
+	if reason == domain.MeshFailureRejected {
 		level = slog.LevelWarn
 	}
-	slog.Log(ctx, level, "Mesh optimization processing failed", failurecause.Attr(fmt.Errorf("%s", errText)), "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId(), "candidate_id", candidate.ID, "source_file_id", candidate.SourceFileID, "reason", event.GetReason().String())
-	if err := s.db.WithContext(ctx).
-		Model(&model.MeshOptimizationCandidate{}).
-		Where("id = ?", candidate.ID).
-		Updates(structured.Fields{
-			"status":        model.MeshOptimizationCandidateStatusFailed,
-			"error_message": errText,
-			"failed_at":     failedAt,
-			"expires_at":    expiresAt,
-			"updated_at":    failedAt,
-		}).Error; err != nil {
-		return nil, errs.Internal(err)
+	slog.Log(ctx, level, "Mesh optimization processing failed", failurecause.Attr(fmt.Errorf("%s", errText)), "job_id", event.JobID, "correlation_id", event.CorrelationID, "candidate_id", candidate.ID, "source_file_id", candidate.SourceFileID, "reason", reason)
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		return unit.Store().FailMeshCandidate(ctx, candidate.ID, errText, failedAt, expiresAt)
+	}); err != nil {
+		return nil, err
 	}
 	return s.loadCandidate(ctx, candidate.ID)
 }
@@ -743,11 +595,12 @@ func (s *MeshOptimizationService) ExpireStaleUnselectedCandidates(ctx context.Co
 	if now.IsZero() {
 		now = time.Now()
 	}
-	var candidates []model.MeshOptimizationCandidate
-	if err := s.db.WithContext(ctx).
-		Where("selected_at IS NULL").
-		Where("expires_at IS NOT NULL AND expires_at < ?", now).
-		Find(&candidates).Error; err != nil {
+	var candidates []domain.MeshCandidate
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		candidates, err = store.ExpiredMeshCandidates(ctx, now)
+		return err
+	}); err != nil {
 		return 0, err
 	}
 	for _, candidate := range candidates {
@@ -760,9 +613,9 @@ func (s *MeshOptimizationService) ExpireStaleUnselectedCandidates(ctx context.Co
 
 func meshOptimizationCandidateCacheUsable(status string) bool {
 	switch status {
-	case model.MeshOptimizationCandidateStatusPending,
-		model.MeshOptimizationCandidateStatusProcessing,
-		model.MeshOptimizationCandidateStatusReady:
+	case domain.MeshStatusPending,
+		domain.MeshStatusProcessing,
+		domain.MeshStatusReady:
 		return true
 	default:
 		return false
@@ -770,44 +623,39 @@ func meshOptimizationCandidateCacheUsable(status string) bool {
 }
 
 func MeshOptimizationOutputProtectionStatuses() []string {
-	return []string{
-		model.MeshOptimizationCandidateStatusPending,
-		model.MeshOptimizationCandidateStatusProcessing,
-		model.MeshOptimizationCandidateStatusReady,
-	}
+	return domain.MeshOutputProtectionStatuses()
 }
 
 func (s *MeshOptimizationService) findOrCreateCandidate(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	input MeshOptimizationGenerateInput,
 	cacheKey string,
-) (model.MeshOptimizationCandidate, bool, string, error) {
-	var candidate model.MeshOptimizationCandidate
-	err := db.WithContext(ctx).Where("cache_key = ?", cacheKey).Take(&candidate).Error
+) (domain.MeshCandidate, bool, string, error) {
+	candidate, err := store.MeshCandidateByCacheKey(ctx, cacheKey)
 	if err == nil {
 		if meshOptimizationCandidateCacheUsable(candidate.Status) {
 			return candidate, true, "", nil
 		}
-		revived, cleanupOutputID, err := s.requeueCandidate(ctx, db, candidate, input)
+		revived, cleanupOutputID, err := s.requeueCandidate(ctx, store, candidate, input)
 		return revived, false, cleanupOutputID, err
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+	if !errors.Is(err, domain.ErrMeshCandidateNotFound) {
+		return domain.MeshCandidate{}, false, "", err
 	}
 
 	now := dbtime.Now()
 	expiresAt := now.Add(meshOptimizationCandidateTTL)
 	candidateID := uuid.New().String()
 	outputObjectID := uuid.New().String()
-	if _, err := meshMediaObjectTarget(outputObjectID, "glb", "model/gltf-binary"); err != nil {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+	if _, err := domain.CanonicalObjectTarget(File{ID: outputObjectID, Extension: "glb", MimeType: "model/gltf-binary"}); err != nil {
+		return domain.MeshCandidate{}, false, "", err
 	}
 	jobID := uuid.New().String()
-	status := model.MeshOptimizationCandidateStatusPending
+	status := domain.MeshStatusPending
 	entityType := optionalMeshOptimizationEntityType(input.EntityType)
 	entityID := optionalNonEmptyString(input.EntityID)
-	candidate = model.MeshOptimizationCandidate{
+	candidate = domain.MeshCandidate{
 		ID:                 candidateID,
 		SourceFileID:       input.SourceFileID,
 		EntityType:         entityType,
@@ -825,58 +673,35 @@ func (s *MeshOptimizationService) findOrCreateCandidate(
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
-	if err := db.WithContext(ctx).Create(&candidate).Error; err != nil {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+	if err := store.InsertMeshCandidate(ctx, candidate); err != nil {
+		return domain.MeshCandidate{}, false, "", err
 	}
 	return candidate, false, "", nil
 }
 
 func (s *MeshOptimizationService) requeueCandidate(
 	ctx context.Context,
-	db *gorm.DB,
-	candidate model.MeshOptimizationCandidate,
+	store Store,
+	candidate domain.MeshCandidate,
 	input MeshOptimizationGenerateInput,
-) (model.MeshOptimizationCandidate, string, error) {
+) (domain.MeshCandidate, string, error) {
 	now := dbtime.Now()
 	expiresAt := now.Add(meshOptimizationCandidateTTL)
 	outputObjectID := uuid.New().String()
-	if _, err := meshMediaObjectTarget(outputObjectID, "glb", "model/gltf-binary"); err != nil {
-		return model.MeshOptimizationCandidate{}, "", errs.Internal(err)
+	if _, err := domain.CanonicalObjectTarget(File{ID: outputObjectID, Extension: "glb", MimeType: "model/gltf-binary"}); err != nil {
+		return domain.MeshCandidate{}, "", err
 	}
 	previousOutputObjectID := strings.TrimSpace(candidate.OutputObjectID)
 	jobID := uuid.New().String()
-	updates := structured.Fields{
-		"status":                model.MeshOptimizationCandidateStatusPending,
-		"output_object_id":      outputObjectID,
-		"output_file_id":        nil,
-		"job_id":                jobID,
-		"error_message":         nil,
-		"selected_at":           nil,
-		"expires_at":            expiresAt,
-		"enqueued_at":           now,
-		"processing_started_at": nil,
-		"completed_at":          nil,
-		"failed_at":             nil,
-		"cancelled_at":          nil,
-		"updated_at":            now,
-	}
 	entityType := optionalMeshOptimizationEntityType(input.EntityType)
-	if entityType != nil {
-		updates["entity_type"] = *entityType
-	}
 	entityID := optionalNonEmptyString(input.EntityID)
-	if entityID != nil {
-		updates["entity_id"] = *entityID
-	}
-	if err := db.WithContext(ctx).Model(&model.MeshOptimizationCandidate{}).
-		Where("id = ?", candidate.ID).
-		Updates(updates).Error; err != nil {
-		return model.MeshOptimizationCandidate{}, "", errs.Internal(err)
+	if err := store.RequeueMeshCandidate(ctx, candidate.ID, domain.MeshRequeue{OutputObjectID: outputObjectID, JobID: jobID, EntityType: entityType, EntityID: entityID, At: now, ExpiresAt: expiresAt}); err != nil {
+		return domain.MeshCandidate{}, "", err
 	}
 	candidate.OutputObjectID = outputObjectID
 	candidate.OutputFileID = nil
 	candidate.JobID = &jobID
-	candidate.Status = model.MeshOptimizationCandidateStatusPending
+	candidate.Status = domain.MeshStatusPending
 	candidate.EnqueuedAt = &now
 	candidate.ExpiresAt = &expiresAt
 	candidate.UpdatedAt = now
@@ -895,17 +720,22 @@ func (s *MeshOptimizationService) requeueCandidate(
 	return candidate, previousOutputObjectID, nil
 }
 
-func (s *MeshOptimizationService) loadCandidate(ctx context.Context, candidateID string) (*model.MeshOptimizationCandidate, error) {
+func (s *MeshOptimizationService) loadCandidate(ctx context.Context, candidateID string) (*domain.MeshCandidate, error) {
 	candidateID = strings.TrimSpace(candidateID)
 	if candidateID == "" {
-		return nil, errs.Required("candidate_id")
+		return nil, domainerr.Required("candidate_id")
 	}
-	var candidate model.MeshOptimizationCandidate
-	if err := s.db.WithContext(ctx).Where("id = ?", candidateID).Take(&candidate).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("mesh_optimization_candidate", candidateID)
+	var candidate domain.MeshCandidate
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		candidate, err = store.MeshCandidate(ctx, candidateID, "", false)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrMeshCandidateNotFound) {
+			return nil, domainerr.ResourceNotFound("mesh_optimization_candidate", candidateID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &candidate, nil
 }
@@ -914,44 +744,38 @@ func (s *MeshOptimizationService) loadCandidateForMeshEvent(
 	ctx context.Context,
 	jobID string,
 	correlationID string,
-	identity *managev1.MeshOptimizationIdentity,
-) (*model.MeshOptimizationCandidate, error) {
+	identity *domain.MeshIdentity,
+) (*domain.MeshCandidate, error) {
 	jobID = strings.TrimSpace(jobID)
 	correlationID = strings.TrimSpace(correlationID)
 	if jobID == "" || correlationID == "" || identity == nil {
-		return nil, errs.InvalidArgument("event", "job_id, correlation_id, and identity are required")
+		return nil, domainerr.InvalidField("event", "job_id, correlation_id, and identity are required")
 	}
 
-	var candidate model.MeshOptimizationCandidate
-	if err := s.db.WithContext(ctx).
-		Where("id = ? AND job_id = ?", correlationID, jobID).
-		Take(&candidate).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("mesh optimization candidate not found")
+	var candidate domain.MeshCandidate
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		candidate, err = store.MeshCandidate(ctx, correlationID, jobID, false)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrMeshCandidateNotFound) {
+			return nil, domainerr.New(domainerr.NotFound, "", "mesh optimization candidate not found")
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	entityType, entityID := candidatePermissionTarget(candidate)
-	if strings.TrimSpace(identity.GetFileId()) != candidate.SourceFileID ||
-		identity.GetEntityType() != entityType ||
-		strings.TrimSpace(identity.GetEntityId()) != strings.TrimSpace(entityID) {
-		return nil, errs.InvalidArgument("identity", "does not match the allocated mesh optimization job")
+	if strings.TrimSpace(identity.FileID) != candidate.SourceFileID ||
+		identity.EntityType != int32(entityType) ||
+		strings.TrimSpace(identity.EntityID) != strings.TrimSpace(entityID) {
+		return nil, domainerr.InvalidField("identity", "does not match the allocated mesh optimization job")
 	}
 	return &candidate, nil
 }
 
-func (s *MeshOptimizationService) deleteCandidateAndOutput(ctx context.Context, candidate model.MeshOptimizationCandidate) error {
+func (s *MeshOptimizationService) deleteCandidateAndOutput(ctx context.Context, candidate domain.MeshCandidate) error {
 	now := time.Now()
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Model(&model.MeshOptimizationCandidate{}).
-			Where("id = ?", candidate.ID).
-			Updates(structured.Fields{
-				"status":         model.MeshOptimizationCandidateStatusCancelled,
-				"output_file_id": nil,
-				"cancelled_at":   now,
-				"updated_at":     now,
-			}).Error
-	}); err != nil {
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error { return unit.Store().RetireMeshCandidate(ctx, candidate.ID, now) }); err != nil {
 		return err
 	}
 	outputObjectID := strings.TrimSpace(candidate.OutputObjectID)
@@ -960,24 +784,22 @@ func (s *MeshOptimizationService) deleteCandidateAndOutput(ctx context.Context, 
 			return err
 		}
 	}
-	return s.db.WithContext(ctx).
-		Where("id = ?", candidate.ID).
-		Delete(&model.MeshOptimizationCandidate{}).Error
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error { return unit.Store().DeleteMeshCandidate(ctx, candidate.ID) })
 }
 
 func (s *MeshOptimizationService) ensureSourceFileReadable(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	if sourceFileID == "" {
-		return errs.Required("source_file_id")
+		return domainerr.Required("source_file_id")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if err := s.ensureMeshOptimizationPermission(ctx, entityType, entityID); err != nil {
 		return err
@@ -988,29 +810,32 @@ func (s *MeshOptimizationService) ensureSourceFileReadable(
 func (s *MeshOptimizationService) ensureSourceFileOptimizable(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
-) (*model.File, error) {
+) (*File, error) {
 	if err := s.ensureMeshOptimizationPermission(ctx, entityType, entityID); err != nil {
 		return nil, err
 	}
 	if err := s.ensureSourceFileLinkedToEntity(ctx, sourceFileID, entityType, entityID); err != nil {
 		return nil, err
 	}
-	var file model.File
-	if err := s.db.WithContext(ctx).
-		Where("id = ? AND delete_requested_at IS NULL", sourceFileID).
-		Take(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("file", sourceFileID)
+	var file File
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.MeshSourceFile(ctx, sourceFileID)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrFileNotFound) {
+			return nil, domainerr.ResourceNotFound("file", sourceFileID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if strings.TrimSpace(file.MimeType) != "model/gltf-binary" {
-		return nil, errs.InvalidArgument("source_file_id", "source file must be a GLB mesh")
+		return nil, domainerr.InvalidField("source_file_id", "source file must be a GLB mesh")
 	}
 	if strings.TrimSpace(file.Extension) != "glb" {
-		return nil, errs.FailedPrecondition("source file extension is not canonical")
+		return nil, domainerr.Precondition("source file extension is not canonical")
 	}
 	return &file, nil
 }
@@ -1018,85 +843,82 @@ func (s *MeshOptimizationService) ensureSourceFileOptimizable(
 func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	entityID = strings.TrimSpace(entityID)
 	if sourceFileID == "" {
-		return errs.Required("source_file_id")
+		return domainerr.Required("source_file_id")
 	}
 	if entityID == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	var ownerTable string
 	switch entityType {
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
+	case EntityPost:
 		ownerTable = "post"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
+	case EntityPage:
 		ownerTable = "page"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
+	case EntityWork:
 		ownerTable = "work"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
+	case EntityProgramEvent:
 		ownerTable = "program_event"
 	default:
-		return errs.InvalidArgument("entity_type", "unsupported editor entity type")
+		return domainerr.InvalidField("entity_type", "unsupported editor entity type")
 	}
 
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Table("content_block_attachment AS cbf").
-		Joins("JOIN content_block AS cb ON cb.id = cbf.block_id").
-		Joins("JOIN "+ownerTable+" AS owner ON owner.content_document_id = cb.document_id").
-		Where("owner.id = ? AND cbf.selector_kind = 'active' AND cbf.file_id = ?", entityID, sourceFileID).
-		Count(&count).Error; err != nil {
-		return errs.Internal(err)
+	var linked bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		linked, err = store.MeshSourceLinked(ctx, ownerTable, entityID, sourceFileID)
+		return err
+	}); err != nil {
+		return err
 	}
-	if count == 0 {
-		return errs.NotFound("source_file", sourceFileID)
+	if !linked {
+		return domainerr.ResourceNotFound("source_file", sourceFileID)
 	}
 	return nil
 }
 
 func (s *MeshOptimizationService) ensureMeshOptimizationPermission(
 	ctx context.Context,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	resourceType := meshOptimizationResourceType(entityType)
 	if resourceType == "" || strings.TrimSpace(entityID) == "" {
-		return errs.PermissionDenied("mesh optimization requires an editable entity")
+		return domainerr.Denied("mesh optimization requires an editable entity")
 	}
 	return s.ensureUserCanEditResource(ctx, resourceType, entityID, user)
 }
 
 func (s *MeshOptimizationService) ensureUserCanEditResource(ctx context.Context, resourceType, entityID string, user *auth.UserInfo) error {
-	if s == nil || s.spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+	if s == nil || s.authorizer == nil {
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := meshOptimizationEditCan(resourceType, entityID)
 	if err != nil {
 		if errors.Is(err, errUnsupportedMeshOptimizationResource) {
-			return errs.PermissionDenied("mesh optimization requires an editable entity")
+			return domainerr.Denied("mesh optimization requires an editable entity")
 		}
-		return errs.InvalidArgument("entity_id", err.Error())
+		return domainerr.InvalidField("entity_id", err.Error())
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 	if err != nil {
-		slog.WarnContext(ctx, "ensureUserCanEditResource: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
-	ok, err := s.spiceDB.Can(ctx, decision)
+	ok, err := s.authorizer.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "ensureUserCanEditResource: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !ok {
-		return errs.NoPermission("optimize mesh for", resourceType)
+		return domainerr.NoPermission("optimize mesh for", resourceType)
 	}
 	return nil
 }
@@ -1116,34 +938,34 @@ func meshOptimizationEditCan(resourceType, resourceID string) (policyv1.Can, err
 	}
 }
 
-func meshOptimizationResourceType(entityType managev1.TranscodeEntityType) string {
+func meshOptimizationResourceType(entityType EntityType) string {
 	switch entityType {
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
+	case EntityPage:
 		return "page"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
+	case EntityPost:
 		return "post"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
+	case EntityWork:
 		return "work"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
+	case EntityProgramEvent:
 		return "program_event"
 	default:
 		return ""
 	}
 }
 
-func optionalMeshOptimizationEntityType(entityType managev1.TranscodeEntityType) *string {
-	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+func optionalMeshOptimizationEntityType(entityType EntityType) *string {
+	if entityType == EntityUnspecified {
 		return nil
 	}
 	value := entityType.String()
 	return &value
 }
 
-func candidatePermissionTarget(candidate model.MeshOptimizationCandidate) (managev1.TranscodeEntityType, string) {
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+func candidatePermissionTarget(candidate domain.MeshCandidate) (EntityType, string) {
+	entityType := EntityUnspecified
 	if candidate.EntityType != nil {
-		if value, ok := managev1.TranscodeEntityType_value[*candidate.EntityType]; ok {
-			entityType = managev1.TranscodeEntityType(value)
+		if value, ok := domain.ParseEntityType(*candidate.EntityType); ok {
+			entityType = EntityType(value)
 		}
 	}
 	entityID := ""

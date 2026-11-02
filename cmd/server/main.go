@@ -77,7 +77,6 @@ func run() int {
 		spicedbClient:           deps.spicedbClient,
 		kratosClient:            deps.kratosClient,
 		passwordHasher:          deps.passwordHasher,
-		metadataAIJobs:          deps.metadataAIJobs,
 		contentBlockStore:       deps.contentBlockStore,
 		authCodeIssuanceLimiter: deps.authCodeIssuanceLimiter,
 		adapterLoader:           deps.adapterLoader,
@@ -117,7 +116,7 @@ func run() int {
 	if err != nil {
 		return logStartupFailure("initialize MCP private HTTP server", err)
 	}
-	runtime.Start(ctx, server, mcpPrivateServer, registered.authInterceptor, deps, registered, runtimeFailures)
+	runtime.Start(ctx, server, mcpPrivateServer, registered.authInterceptor, registered, runtimeFailures)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -200,7 +199,8 @@ func logShutdownReason(signal os.Signal, runtimeErr error) {
 	case signal != nil:
 		slog.Info("Received signal, shutting down", "signal", signal)
 	case runtimeErr != nil:
-		slog.Error("Required runtime component failed; shutting down", "failure_cause", failurecause.Message(runtimeErr))
+		// reportRuntimeFailure already logged the failure and its cause.
+		slog.Error("Required runtime component failed; shutting down")
 	default:
 		slog.Info("Context cancelled, shutting down")
 	}

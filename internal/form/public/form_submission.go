@@ -4,26 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/requestip"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/google/uuid"
 )
 
 const (
@@ -48,68 +39,63 @@ type formSubmissionSystemMetadata struct {
 	timeZone    *string
 }
 
-// Submit validates access and stores one form submission atomically.
-func (s *FormService) Submit(
-	ctx context.Context,
-	req *connect.Request[openv1.SubmitFormRequest],
-) (rpcResponse *connect.Response[openv1.SubmitFormResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "Submit", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	if err := validateFormSubmissionDataPayload(req.Msg.Data); err != nil {
-		return nil, err
-	}
-	memberID := authenticatedFormMemberID(ctx)
-	metadata, err := s.resolveFormSubmissionMetadata(ctx, req, memberID)
-	if err != nil {
-		return nil, err
-	}
-
-	var submission model.FormSubmission
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		created, err := s.createFormSubmissionWithDB(ctx, tx, req.Msg, memberID, metadata)
-		submission = created
-		if err != nil {
-			return err
-		}
-		return s.appendFormSubmissionCreatedAudit(ctx, tx, submission.ID, submission.FormID, memberID)
-	})
-	if err != nil {
-		return nil, normalizeFormSubmissionError(err)
-	}
-	return connect.NewResponse(&openv1.SubmitFormResponse{SubmissionId: submission.ID}), nil
+// SubmitFormCommand submits a visitor's answers to a Form. ClientAddress,
+// UserAgent and AcceptLanguage describe the request the answers came in.
+type SubmitFormCommand struct {
+	FormID         string
+	Data           []byte
+	Password       *string
+	ClientAddress  string
+	UserAgent      string
+	AcceptLanguage string
 }
 
-func (s *FormService) appendFormSubmissionCreatedAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	submissionID, formID string,
-	memberID *string,
-) error {
-	if s.auditWriter == nil {
-		return nil
+// SubmitForm validates access and stores one form submission atomically. It
+// returns the submission's ID.
+func (s *Service) SubmitForm(ctx context.Context, command SubmitFormCommand) (string, error) {
+	if err := validateFormSubmissionDataPayload(command.Data); err != nil {
+		return "", err
 	}
-	actor := sharedtelemetry.RecordActor{Kind: sharedtelemetry.ActorKindAnonymous}
-	if memberID != nil {
-		resolved, err := sharedtelemetry.ActorForRecord(sharedtelemetry.MemberActor{MemberID: *memberID})
-		if err != nil {
-			return err
-		}
-		actor = resolved
-	}
-	record, err := sharedtelemetry.NewFormSubmissionCreatedAuditRecord(sharedtelemetry.AuditMetadata{
-		AuditID: uuid.NewString(), OccurredAt: time.Now().UTC(),
-		Correlation: sharedtelemetry.CorrelationFromContext(ctx), RecordActor: actor,
-	}, submissionID, formID)
+	memberID := authenticatedFormMemberID(ctx)
+	metadata, err := s.resolveFormSubmissionMetadata(ctx, command, memberID)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.auditWriter.AppendDomainAuditInTransaction(ctx, tx, record)
+	var locked form.Form
+	submission, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[form.Submission, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			locked, err = lockFormForSubmission(ctx, store, command.FormID)
+			return err
+		},
+		// A visitor needs no session: the Form's own access policy, read
+		// from the locked row, admits the submission.
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			return s.enforceLockedFormSubmissionAccess(ctx, store, &locked, command.Password)
+		}),
+		Change: func(ctx context.Context, store Store) (form.Submission, error) {
+			return createFormSubmission(ctx, store, &locked, command.Data, memberID, metadata)
+		},
+		Audit: func(submission form.Submission) mutation.Audit {
+			return formSubmissionCreatedAudit(submission, memberID)
+		},
+	})
+	if err != nil {
+		return "", normalizeFormSubmissionError(err)
+	}
+	return submission.ID, nil
+}
+
+// formSubmissionCreatedAudit attributes the submission to its Member, or to
+// an anonymous visitor.
+func formSubmissionCreatedAudit(submission form.Submission, memberID *string) mutation.Audit {
+	build := func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormSubmissionCreatedAuditRecord(metadata, submission.ID, submission.FormID)
+	}
+	if memberID != nil {
+		return mutation.MemberAudit(*memberID, sharedtelemetry.AuditFormSubmissionCreated, build)
+	}
+	return mutation.AnonymousAudit(sharedtelemetry.AuditFormSubmissionCreated, build)
 }
 
 func authenticatedFormMemberID(ctx context.Context) *string {
@@ -121,12 +107,12 @@ func authenticatedFormMemberID(ctx context.Context) *string {
 	return &memberID
 }
 
-func (s *FormService) resolveFormSubmissionMetadata(
+func (s *Service) resolveFormSubmissionMetadata(
 	ctx context.Context,
-	req connect.AnyRequest,
+	command SubmitFormCommand,
 	memberID *string,
 ) (formSubmissionSystemMetadata, error) {
-	metadata := buildFormSubmissionSystemMetadata(ctx, req)
+	metadata := buildFormSubmissionSystemMetadata(ctx, command)
 	if metadata.locale != nil || memberID == nil {
 		return metadata, nil
 	}
@@ -138,73 +124,64 @@ func (s *FormService) resolveFormSubmissionMetadata(
 	return metadata, nil
 }
 
-func (s *FormService) loadFormMemberPreferredLocale(ctx context.Context, memberID string) (*string, error) {
-	var member model.Member
-	err := s.db.WithContext(ctx).
-		Select("preferred_locale").
-		Where("id = ?", memberID).
-		Take(&member).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+func (s *Service) loadFormMemberPreferredLocale(ctx context.Context, memberID string) (*string, error) {
+	var preferred *string
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		preferred, err = store.PreferredLocale(ctx, memberID)
+		return err
+	}); err != nil || preferred == nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if member.PreferredLocale == nil {
-		return nil, nil
-	}
-	return localization.NormalizeSupportedLocale(*member.PreferredLocale), nil
+	return localization.NormalizeSupportedLocale(*preferred), nil
 }
 
-func (s *FormService) createFormSubmissionWithDB(
+func createFormSubmission(
 	ctx context.Context,
-	tx *gorm.DB,
-	request *openv1.SubmitFormRequest,
+	store Store,
+	locked *form.Form,
+	data []byte,
 	memberID *string,
 	metadata formSubmissionSystemMetadata,
-) (model.FormSubmission, error) {
-	form, err := lockFormForSubmission(tx, request.FormId)
+) (form.Submission, error) {
+	enriched, err := validateAndEnrichFormSubmission(ctx, store, locked.ID, data, metadata)
 	if err != nil {
-		return model.FormSubmission{}, err
+		return form.Submission{}, err
 	}
-	if err := s.enforceLockedFormSubmissionAccess(ctx, &form, request.Password); err != nil {
-		return model.FormSubmission{}, err
+	if err := enforceFormSubmissionLimits(ctx, store, locked, memberID); err != nil {
+		return form.Submission{}, err
 	}
-	data, err := s.validateAndEnrichFormSubmission(ctx, tx, form.ID, request.Data, metadata)
-	if err != nil {
-		return model.FormSubmission{}, err
-	}
-	if err := enforceFormSubmissionLimits(tx, &form, memberID); err != nil {
-		return model.FormSubmission{}, err
-	}
-	submission := model.FormSubmission{
-		FormID:      form.ID,
+	submission := form.Submission{
+		FormID:      locked.ID,
 		MemberID:    memberID,
-		Data:        data,
+		Data:        enriched,
 		IPAddress:   metadata.ipAddress,
 		CountryCode: metadata.countryCode,
 		UserAgent:   metadata.userAgent,
 		CreatedAt:   time.Now(),
 	}
-	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(&submission).Error; err != nil {
-		return model.FormSubmission{}, err
+	if err := store.InsertSubmission(ctx, &submission); err != nil {
+		return form.Submission{}, err
 	}
 	return submission, nil
 }
 
-func lockFormForSubmission(tx *gorm.DB, formID string) (model.Form, error) {
-	var form model.Form
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&form, "id = ?", formID).Error
-	return form, err
+func lockFormForSubmission(ctx context.Context, store Store, formID string) (form.Form, error) {
+	locked, err := store.LockForm(ctx, formID)
+	if errors.Is(err, form.ErrFormNotFound) {
+		return locked, errFormNotFound()
+	}
+	return locked, err
 }
 
-func (s *FormService) enforceLockedFormSubmissionAccess(
+func (s *Service) enforceLockedFormSubmissionAccess(
 	ctx context.Context,
-	form *model.Form,
+	store Store,
+	locked *form.Form,
 	password *string,
 ) error {
-	return s.enforceFormAccess(ctx, form, formAccessOptions{
-		context:                  openv1.FormAccessContext_FORM_ACCESS_CONTEXT_EMBED,
+	return s.enforceFormAccess(ctx, store, locked, formAccessOptions{
+		context:                  ContextEmbed,
 		hasValidPreviewToken:     false,
 		draftAsNotFound:          false,
 		enforcePassword:          true,
@@ -214,80 +191,75 @@ func (s *FormService) enforceLockedFormSubmissionAccess(
 	})
 }
 
-func (s *FormService) validateAndEnrichFormSubmission(
+func validateAndEnrichFormSubmission(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	formID string,
 	data []byte,
 	metadata formSubmissionSystemMetadata,
 ) ([]byte, error) {
-	sourceDocument, err := formdomain.LoadCurrentFormSourceDocument(
-		ctx, tx, formID,
-	)
+	sourceDocument, err := form.LoadCurrentFormSourceDocument(ctx, store, formID)
 	if err != nil {
 		return nil, err
 	}
-	if err := formdomain.ValidateFormSubmissionAgainstSchema(sourceDocument.Schema, data); err != nil {
-		return nil, errs.InvalidArgument("data", err.Error())
+	if err := form.ValidateFormSubmissionAgainstSchema(ctx, sourceDocument.Schema, data); err != nil {
+		return nil, domainerr.InvalidField("data", err.Error())
 	}
 	return mergeValidatedFormSubmissionSystemMetadata(data, metadata), nil
 }
 
-func enforceFormSubmissionLimits(tx *gorm.DB, form *model.Form, memberID *string) error {
-	if err := enforceFormSubmissionCapacity(tx, form); err != nil {
+func enforceFormSubmissionLimits(ctx context.Context, store Store, locked *form.Form, memberID *string) error {
+	if err := enforceFormSubmissionCapacity(ctx, store, locked); err != nil {
 		return err
 	}
-	return enforceDuplicateFormSubmissionPolicy(tx, form, memberID)
+	return enforceDuplicateFormSubmissionPolicy(ctx, store, locked, memberID)
 }
 
-func enforceFormSubmissionCapacity(tx *gorm.DB, form *model.Form) error {
-	if form.MaxSubmissions == nil {
+func enforceFormSubmissionCapacity(ctx context.Context, store Store, locked *form.Form) error {
+	if locked.MaxSubmissions == nil {
 		return nil
 	}
-	var count int64
-	if err := tx.Model(&model.FormSubmission{}).Where("form_id = ?", form.ID).Count(&count).Error; err != nil {
+	count, err := store.CountSubmissions(ctx, locked.ID)
+	if err != nil {
 		return err
 	}
-	if count >= int64(*form.MaxSubmissions) {
-		return errs.FailedPrecondition("submission limit reached")
+	if count >= int64(*locked.MaxSubmissions) {
+		return domainerr.Precondition("submission limit reached")
 	}
 	return nil
 }
 
-func enforceDuplicateFormSubmissionPolicy(tx *gorm.DB, form *model.Form, memberID *string) error {
-	if form.AllowDuplicateSubmission == nil || *form.AllowDuplicateSubmission || memberID == nil {
+func enforceDuplicateFormSubmissionPolicy(ctx context.Context, store Store, locked *form.Form, memberID *string) error {
+	if locked.AllowDuplicateSubmission == nil || *locked.AllowDuplicateSubmission || memberID == nil {
 		return nil
 	}
-	var existing model.FormSubmission
-	err := tx.Where("form_id = ? AND member_id = ?", form.ID, *memberID).First(&existing).Error
-	if err == nil {
-		return errs.FailedPrecondition(errs.MsgFormAlreadySubmitted)
+	exists, err := store.HasMemberSubmission(ctx, locked.ID, *memberID)
+	if err != nil {
+		return err
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+	if exists {
+		return domainerr.Precondition(msgFormAlreadySubmitted)
+	}
+	return nil
+}
+
+func normalizeFormSubmissionError(err error) error {
+	if !mutation.IsClassified(err) && errors.Is(err, form.ErrFormNotFound) {
+		return errFormNotFound()
 	}
 	return err
 }
 
-func normalizeFormSubmissionError(err error) error {
-	if connectErr, ok := err.(*connect.Error); ok {
-		return connectErr
+func buildFormSubmissionSystemMetadata(ctx context.Context, command SubmitFormCommand) formSubmissionSystemMetadata {
+	metadata := formSubmissionSystemMetadata{}
+	if command.ClientAddress != "" {
+		ip := command.ClientAddress
+		metadata.ipAddress = &ip
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg("form not found")
-	}
-	return errs.Internal(err)
-}
-
-func buildFormSubmissionSystemMetadata(
-	ctx context.Context,
-	req connect.AnyRequest,
-) formSubmissionSystemMetadata {
-	metadata := formSubmissionSystemMetadata{ipAddress: extractFormSubmissionClientIP(req)}
-	if userAgent := strings.TrimSpace(req.Header().Get("User-Agent")); userAgent != "" {
+	if userAgent := strings.TrimSpace(command.UserAgent); userAgent != "" {
 		metadata.userAgent = &userAgent
 	}
-	metadata.locale = localization.InferPreferredLocaleFromAcceptLanguage(req.Header().Get("Accept-Language"))
+	metadata.locale = localization.InferPreferredLocaleFromAcceptLanguage(command.AcceptLanguage)
 	if info := geoip.GetInfo(ctx); info != nil {
 		metadata.countryCode = optionalTrimmedFormMetadata(info.CountryCode)
 		metadata.timeZone = optionalTrimmedFormMetadata(info.TimeZone)
@@ -303,18 +275,6 @@ func optionalTrimmedFormMetadata(value string) *string {
 	return &trimmed
 }
 
-func extractFormSubmissionClientIP(req connect.AnyRequest) *string {
-	ip := requestip.TrustedClientIP(
-		req.Header().Get("X-Forwarded-For"),
-		req.Header().Get("X-Real-IP"),
-		req.Peer().Addr,
-	)
-	if ip == "" {
-		return nil
-	}
-	return &ip
-}
-
 func mergeValidatedFormSubmissionSystemMetadata(
 	rawData []byte,
 	metadata formSubmissionSystemMetadata,
@@ -328,17 +288,14 @@ func mergeValidatedFormSubmissionSystemMetadata(
 	return merged
 }
 
-func validateFormSubmissionDataPayload(rawData []byte) *connect.Error {
+func validateFormSubmissionDataPayload(rawData []byte) error {
 	var data map[string]json.RawMessage
 	if err := json.Unmarshal(rawData, &data); err != nil || data == nil {
-		if err != nil {
-			slog.Warn("Invalid form submission JSON", "domain", "form", "event", "form.submission_rejected", "outcome", "blocked", failurecause.Attr(err))
-		}
-		return errs.InvalidArgument("data", "must be a JSON object")
+		return domainerr.InvalidField("data", "must be a JSON object")
 	}
 	for key := range data {
 		if isReservedFormSubmissionDataKey(key) {
-			return errs.InvalidArgument(key, "reserved for server-managed form submission metadata")
+			return domainerr.InvalidField(key, "reserved for server-managed form submission metadata")
 		}
 	}
 	return nil

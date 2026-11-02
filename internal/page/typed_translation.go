@@ -4,32 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"gorm.io/gorm"
 )
 
 // BuildTranslationExtractionPlan extracts Page-owned locale units from the
 // canonical typed document.
 func BuildTranslationExtractionPlan(
-	job *model.TranslationJob,
+	job TranslationJob,
 	source *translation.SourceDocument,
 ) (*translation.ExtractionPlan, error) {
-	if job == nil || job.EntityType != "page" || source == nil || source.PageDocument == nil {
+	if job.EntityType != "page" || source == nil || source.PageDocument == nil {
 		return nil, fmt.Errorf("typed Page translation source is required")
 	}
 	if strings.TrimSpace(job.SourceLocale) == "" || source.PageDocument.GetLocale() != job.SourceLocale {
@@ -79,7 +75,7 @@ func BuildTranslationExtractionPlan(
 }
 
 func appendPageTypedTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	section *contentv1.PageSectionLocale,
 	units *[]translation.Unit,
 ) error {
@@ -131,7 +127,7 @@ func appendPageTypedTranslationUnits(
 }
 
 func appendPageTypedRichTextTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	sectionID string,
 	block *contentv1.RichTextBlockLocale,
 	units *[]translation.Unit,
@@ -150,7 +146,7 @@ func appendPageTypedRichTextTranslationUnits(
 }
 
 func appendPageTypedImmersiveTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	sectionID string,
 	unit *contentv1.PageImmersiveUnitLocale,
 	units *[]translation.Unit,
@@ -389,29 +385,29 @@ func walkMutablePageTypedTranslationStrings(
 	}
 }
 
-// ApplyTranslationCandidateWithDB atomically replaces one Page target locale
-// document after the shared runtime validates the current source authority.
-func ApplyTranslationCandidateWithDB(
+// ApplyTranslationCandidate atomically replaces one Page target locale
+// document, in the translation domain's transaction joined, after the shared
+// runtime validates the current source authority.
+func ApplyTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	if tx == nil || store == nil || job == nil || job.EntityType != "page" ||
+	store := joined.Store
+	if store == nil || job.EntityType != "page" ||
 		candidate == nil || candidate.PageDocument == nil || candidate.PageDocument.GetLocaleOverlay() == nil {
 		return errors.New("typed Page translation candidate and Content Block store are required")
 	}
 	if candidate.PageDocument.GetLocale() != job.TargetLocale ||
 		candidate.PageDocument.GetLocaleOverlay().GetLocale() != job.TargetLocale {
-		return errs.FailedPrecondition("typed Page translation target locale does not match the job")
+		return domainerr.Precondition("typed Page translation target locale does not match the job")
 	}
 	entry.Title = candidate.Title
 	entry.Summary = candidate.Summary
 
-	documentID, err := loadPageContentDocumentID(ctx, tx, job.EntityID)
+	documentID, err := loadPageContentDocumentID(ctx, store, job.EntityID, Unlocked)
 	if err != nil {
 		return err
 	}
@@ -420,142 +416,141 @@ func ApplyTranslationCandidateWithDB(
 		candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "parse_translation_revision", "outcome", "failed", failurecause.Attr(err), "entity_id", job.EntityID, "target_locale", job.TargetLocale, "job_id", job.ID)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
-	document := candidate.PageDocument
-	providerTargetExists := false
 	if providerPatch, ok := candidate.ProviderPatch(); ok {
-		domain, fenceErr := pageSystemTranslationDocumentFence(job.EntityID)(ctx, tx, documentID)
-		if fenceErr != nil {
-			return fenceErr
-		}
-		if job.TargetLocale == domain.SourceLocale {
-			if err := validatePageProviderSourceTarget(job.SourceLocale, job.TargetLocale, domain.SourceLocale); err != nil {
-				return err
-			}
-			return applyPageProviderSourceCandidate(
-				ctx, tx, store, job, candidate, entry, auditWriter, documentID, domain, providerPatch,
-			)
-		}
-		state, loadErr := loadPageTargetLocaleState(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, true,
-		)
-		if loadErr != nil {
-			return normalizePageContentBlockError(loadErr)
-		}
-		snapshot := state.Snapshot
-		providerTargetExists = state.TargetMetadata != nil
-		expectedRevision = snapshot.Document.Revision
-		sourceDocument, sourceErr := contentblock.SnapshotToLocalizedPageDocument(snapshot, state.SourceLocale)
-		if sourceErr != nil {
-			return normalizePageContentBlockError(sourceErr)
-		}
-		currentTarget, targetErr := contentblock.SnapshotToLocalizedPageDocument(snapshot, job.TargetLocale)
-		if targetErr != nil {
-			return normalizePageContentBlockError(targetErr)
-		}
-		document, err = buildProviderPageTargetDocument(
-			sourceDocument, currentTarget, candidate.PageDocument, providerPatch,
-		)
-		if err != nil {
-			return err
-		}
+		return applyPageProviderCandidate(ctx, joined, job, candidate, entry, documentID, providerPatch)
 	}
+	return applyPageTypedCandidate(ctx, store, job, candidate.PageDocument, entry, documentID, expectedRevision)
+}
+
+// applyPageTypedCandidate replaces the target locale document with the
+// typed candidate translated against expectedRevision.
+func applyPageTypedCandidate(
+	ctx context.Context,
+	store Store,
+	job TranslationJob,
+	document *contentv1.LocalizedPageDocument,
+	entry translation.EntryWrite,
+	documentID, expectedRevision uuid.UUID,
+) error {
 	mutations, err := pageTypedTranslationLocaleMutations(document)
 	if err != nil {
 		return err
 	}
-	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
-	if !candidate.HasProviderUnitPatch() || len(mutations) != 0 {
-		batch, err = contentblock.BatchFromPageSystemProto(documentID, &contentv1.PageSectionMutationBatch{
-			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
-			ExpectedRevision:        expectedRevision.String(),
-			LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
-				Locale: job.TargetLocale, Mutations: mutations,
-			}},
-		})
-	}
+	batch, err := pageTranslationLocaleBatch(documentID, expectedRevision, job.TargetLocale, mutations)
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
-	if candidate.HasProviderUnitPatch() {
-		result, _, applyErr := applyPageTargetLocaleBatchUsingCurrentRevision(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch,
-			pageTargetMetadataPatch{
-				EnsureLocale:  true,
-				UpdateTitle:   candidate.ProviderUnitRequested("entity:title"),
-				Title:         candidate.Title,
-				UpdateSummary: candidate.ProviderUnitRequested("entity:summary"),
-				Summary:       candidate.Summary,
-			},
-			true, false, entry.Now, pageSystemTranslationDocumentFence(job.EntityID),
-		)
-		if applyErr != nil {
-			return applyErr
-		}
-		if !result.Changed {
-			return nil
-		}
-		if err := tx.WithContext(ctx).Model(&model.Page{}).
-			Where("id = ?", job.EntityID).UpdateColumn("updated_at", entry.Now).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if strings.TrimSpace(job.RequestedByMemberID) == "" {
-			return errors.New("page translation provider delivery requires its requesting Member")
-		}
-		operation := sharedtelemetry.AuditItemOperationUpdated
-		if !providerTargetExists {
-			operation = sharedtelemetry.AuditItemOperationCreated
-		}
-		return appendPageMemberLocaleContentAudit(
-			ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
-			job.EntityID, job.TargetLocale, operation,
-		)
-	}
-	result, err := store.ApplyBatch(
-		ctx,
-		tx,
-		batch,
-		pageSystemTranslationDocumentFence(job.EntityID),
-	)
+	result, err := store.ApplyContentBatch(ctx, batch, pageSystemTranslationDocumentFence(job.EntityID))
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
 	if result.TranslationSourceChanged {
-		return errs.InternalMsg("target Page translation changed the source-owned Block view")
+		return errors.New("target Page translation changed the source-owned Block view")
 	}
-	if candidate.HasProviderUnitPatch() &&
-		(!candidate.ProviderUnitRequested("entity:title") || !candidate.ProviderUnitRequested("entity:summary")) {
-		var current struct {
-			Title   *string `gorm:"column:title"`
-			Summary *string `gorm:"column:summary"`
+	return upsertTranslationMetadataEntry(ctx, store, job.EntityID, job.TargetLocale, entry)
+}
+
+// applyPageProviderCandidate patches the surviving request-time units of a
+// provider response into the current target locale, or into the source
+// locale when the requested target became the source.
+func applyPageProviderCandidate(
+	ctx context.Context,
+	joined Joined,
+	job TranslationJob,
+	candidate *translation.Candidate,
+	entry translation.EntryWrite,
+	documentID uuid.UUID,
+	providerPatch *translation.ProviderUnitPatch,
+) error {
+	store := joined.Store
+	domain, err := pageSystemTranslationDocumentFence(job.EntityID)(ctx, store, documentID)
+	if err != nil {
+		return err
+	}
+	if job.TargetLocale == domain.SourceLocale {
+		if err := validatePageProviderSourceTarget(job.SourceLocale, job.TargetLocale, domain.SourceLocale); err != nil {
+			return err
 		}
-		loaded := tx.WithContext(ctx).Table("page_translation").
-			Select("title", "summary").
-			Where("entity_id = ? AND locale = ?", job.EntityID, job.TargetLocale).
-			Take(&current)
-		if loaded.Error != nil && !errors.Is(loaded.Error, gorm.ErrRecordNotFound) {
-			return errs.Internal(loaded.Error)
-		}
-		if !candidate.ProviderUnitRequested("entity:title") {
-			entry.Title = current.Title
-		}
-		if !candidate.ProviderUnitRequested("entity:summary") {
-			entry.Summary = current.Summary
+		return applyPageProviderSourceCandidate(
+			ctx, joined, job, candidate, entry, documentID, domain, providerPatch,
+		)
+	}
+	state, err := loadPageTargetLocaleState(ctx, store, job.EntityID, documentID, job.TargetLocale, true)
+	if err != nil {
+		return normalizePageContentBlockError(err)
+	}
+	sourceDocument, err := contentblock.SnapshotToLocalizedPageDocument(state.Snapshot, state.SourceLocale)
+	if err != nil {
+		return normalizePageContentBlockError(err)
+	}
+	currentTarget, err := contentblock.SnapshotToLocalizedPageDocument(state.Snapshot, job.TargetLocale)
+	if err != nil {
+		return normalizePageContentBlockError(err)
+	}
+	document, err := buildProviderPageTargetDocument(sourceDocument, currentTarget, candidate.PageDocument, providerPatch)
+	if err != nil {
+		return err
+	}
+	mutations, err := pageTypedTranslationLocaleMutations(document)
+	if err != nil {
+		return err
+	}
+	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: state.Snapshot.Document.Revision}
+	if len(mutations) != 0 {
+		if batch, err = pageTranslationLocaleBatch(documentID, state.Snapshot.Document.Revision, job.TargetLocale, mutations); err != nil {
+			return normalizePageContentBlockError(err)
 		}
 	}
-	return UpsertTranslationMetadataEntry(
-		ctx,
-		tx,
-		job.EntityID,
-		job.TargetLocale,
-		entry,
+	result, _, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
+		PageID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+		Patch: pageTargetMetadataPatch{
+			EnsureLocale:  true,
+			UpdateTitle:   candidate.ProviderUnitRequested("entity:title"),
+			Title:         candidate.Title,
+			UpdateSummary: candidate.ProviderUnitRequested("entity:summary"),
+			Summary:       candidate.Summary,
+		},
+		Policy: targetlocale.Policy{AllowCreate: true, RevisionMode: targetlocale.RevisionCurrent},
+		Now:    entry.Now, Fence: pageSystemTranslationDocumentFence(job.EntityID),
+	})
+	if err != nil || !result.Changed {
+		return err
+	}
+	if err := store.TouchPage(ctx, job.EntityID, entry.Now); err != nil {
+		return err
+	}
+	if strings.TrimSpace(job.RequestedByMemberID) == "" {
+		return errors.New("page translation provider delivery requires its requesting Member")
+	}
+	operation := sharedtelemetry.AuditItemOperationUpdated
+	if state.TargetMetadata == nil {
+		operation = sharedtelemetry.AuditItemOperationCreated
+	}
+	return appendPageMemberLocaleContentAudit(
+		ctx, joined.Audit, strings.TrimSpace(job.RequestedByMemberID),
+		job.EntityID, job.TargetLocale, operation,
 	)
+}
+
+// pageTranslationLocaleBatch is the system batch that upserts mutations in
+// locale at expectedRevision.
+func pageTranslationLocaleBatch(
+	documentID, expectedRevision uuid.UUID,
+	locale string,
+	mutations []*contentv1.PageSectionLocaleMutation,
+) (contentblock.Batch, error) {
+	return contentblock.BatchFromPageSystemProto(documentID, &contentv1.PageSectionMutationBatch{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+		ExpectedRevision:        expectedRevision.String(),
+		LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
+			Locale: locale, Mutations: mutations,
+		}},
+	})
 }
 
 func validatePageProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentSourceLocale string) error {
@@ -567,24 +562,20 @@ func validatePageProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentS
 
 func applyPageProviderSourceCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 	providerPatch *translation.ProviderUnitPatch,
 ) error {
 	requesterID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		if err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.applyPageProviderSourceCandidate", "outcome", "failed", failurecause.Attr(err))
-		}
 		return errors.New("page translation provider delivery requires its requesting Member")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	store := joined.Store
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
@@ -602,14 +593,7 @@ func applyPageProviderSourceCandidate(
 	}
 	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: snapshot.Document.Revision}
 	if len(mutations) != 0 {
-		batch, err = contentblock.BatchFromPageSystemProto(documentID, &contentv1.PageSectionMutationBatch{
-			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
-			ExpectedRevision:        snapshot.Document.Revision.String(),
-			LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
-				Locale: domain.SourceLocale, Mutations: mutations,
-			}},
-		})
-		if err != nil {
+		if batch, err = pageTranslationLocaleBatch(documentID, snapshot.Document.Revision, domain.SourceLocale, mutations); err != nil {
 			return normalizePageContentBlockError(err)
 		}
 	}
@@ -618,17 +602,16 @@ func applyPageProviderSourceCandidate(
 		SetTitle: candidate.ProviderUnitRequested("entity:title"), Title: candidate.Title,
 		SetSummary: candidate.ProviderUnitRequested("entity:summary"), Summary: candidate.Summary,
 	}
-	result, err := store.ApplyBatchWithMetadata(
-		ctx, tx, batch, pageSystemTranslationDocumentFence(job.EntityID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, batch, pageSystemTranslationDocumentFence(job.EntityID),
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 			return applyPageAIDocumentMetadata(
-				ctx, tx, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
+				ctx, store, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
 			)
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return normalizePageContentBlockError(err)
@@ -637,14 +620,13 @@ func applyPageProviderSourceCandidate(
 		return nil
 	}
 	if !result.TranslationSourceChanged {
-		return errs.InternalMsg("provider source Page translation did not advance source state")
+		return errors.New("provider source Page translation did not advance source state")
 	}
-	if err := tx.WithContext(ctx).Model(&model.Page{}).
-		Where("id = ?", job.EntityID).UpdateColumn("updated_at", entry.Now).Error; err != nil {
-		return errs.Internal(err)
+	if err := store.TouchPage(ctx, job.EntityID, entry.Now); err != nil {
+		return err
 	}
 	return appendPageMemberLocaleContentAudit(
-		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
+		ctx, joined.Audit, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
 		sharedtelemetry.AuditItemOperationUpdated,
 	)
 }
@@ -659,6 +641,43 @@ func buildProviderPageTargetDocument(
 		current.GetLocaleOverlay() == nil || candidate == nil || candidate.GetLocaleOverlay() == nil || patch == nil {
 		return nil, errors.New("provider Page source, target, candidate, and unit patch are required")
 	}
+	unitsBySection := providerPageUnitsBySection(patch)
+	result := &contentv1.LocalizedPageDocument{
+		BlockCatalogFingerprint: source.GetBlockCatalogFingerprint(),
+		Locale:                  current.GetLocale(), Base: source.GetBase(),
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: current.GetLocale()},
+	}
+	build := providerPageTargetBuild{
+		source: source, current: current, patch: patch,
+		sourceSections:    pageInterchangeLocaleSections(source.GetLocaleOverlay()),
+		currentSections:   pageInterchangeLocaleSections(current.GetLocaleOverlay()),
+		candidateSections: pageInterchangeLocaleSections(candidate.GetLocaleOverlay()),
+		baseSections:      pageInterchangeBaseSections(source.GetBase()),
+	}
+	for _, sourceSection := range source.GetLocaleOverlay().GetSections() {
+		sectionID := sourceSection.GetSectionId()
+		units := unitsBySection[sectionID]
+		if len(units) == 0 || build.candidateSections[sectionID] == nil || build.sourceSections[sectionID] == nil {
+			continue
+		}
+		var destination *contentv1.PageSectionLocale
+		var err error
+		if sourceSection.GetRichText() != nil {
+			destination, err = build.richTextSection(sourceSection, units)
+		} else {
+			destination, err = build.containerSection(sectionID, units)
+		}
+		if err != nil {
+			return nil, err
+		}
+		result.LocaleOverlay.Sections = append(result.LocaleOverlay.Sections, destination)
+	}
+	return result, nil
+}
+
+// providerPageUnitsBySection groups the translated units of patch by the
+// section their handle names.
+func providerPageUnitsBySection(patch *translation.ProviderUnitPatch) map[string][]translation.Unit {
 	unitsBySection := make(map[string][]translation.Unit)
 	for _, unit := range patch.Units {
 		if _, translated := patch.Results[unit.UnitID]; !translated {
@@ -669,106 +688,118 @@ func buildProviderPageTargetDocument(
 			unitsBySection[sectionID] = append(unitsBySection[sectionID], unit)
 		}
 	}
-	result := &contentv1.LocalizedPageDocument{
-		BlockCatalogFingerprint: source.GetBlockCatalogFingerprint(),
-		Locale:                  current.GetLocale(), Base: source.GetBase(),
-		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: current.GetLocale()},
-	}
-	sourceSections := pageInterchangeLocaleSections(source.GetLocaleOverlay())
-	currentSections := pageInterchangeLocaleSections(current.GetLocaleOverlay())
-	candidateSections := pageInterchangeLocaleSections(candidate.GetLocaleOverlay())
-	baseSections := pageInterchangeBaseSections(source.GetBase())
-	for _, sourceSection := range source.GetLocaleOverlay().GetSections() {
-		sectionID := sourceSection.GetSectionId()
-		units := unitsBySection[sectionID]
-		if len(units) == 0 {
-			continue
-		}
-		candidateSection := candidateSections[sectionID]
-		if candidateSection == nil || sourceSections[sectionID] == nil {
-			continue
-		}
-		if sourceSection.GetRichText() != nil {
-			baseSection := baseSections[sectionID]
-			if baseSection == nil || baseSection.GetRichText() == nil {
-				return nil, fmt.Errorf("provider Page Rich Text section %q is outside the current graph", sectionID)
-			}
-			scopedPatch := &translation.ProviderUnitPatch{Results: make(map[string]translation.UnitResult)}
-			for _, unit := range units {
-				_, rest, ok := pageInterchangeSectionHandle(unit.UnitID)
-				if !ok || !strings.HasPrefix(rest, "block:") {
-					continue
-				}
-				blockID, ok := pageInterchangeBlockID(rest)
-				if !ok {
-					return nil, fmt.Errorf("provider Page Rich Text unit %q is invalid", unit.UnitID)
-				}
-				scoped := unit
-				scoped.UnitID = rest
-				scoped.ContainerID = blockID
-				scopedPatch.Units = append(scopedPatch.Units, scoped)
-				providerResult := patch.Results[unit.UnitID]
-				providerResult.UnitID = rest
-				scopedPatch.Results[rest] = providerResult
-			}
-			currentOverlay := &contentv1.RichTextLocaleOverlay{Locale: current.GetLocale()}
-			if currentSection := currentSections[sectionID]; currentSection != nil && currentSection.GetRichText() != nil &&
-				currentSection.GetRichText().GetBlocks() != nil {
-				currentOverlay = currentSection.GetRichText().GetBlocks()
-			}
-			overlay, err := translation.BuildProviderTargetRichTextOverlay(
-				&contentv1.LocalizedRichTextDocument{
-					BlockCatalogFingerprint: source.GetBlockCatalogFingerprint(),
-					Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_PAGE, Locale: source.GetLocale(),
-					Base: baseSection.GetRichText().GetBlocks(), LocaleOverlay: sourceSection.GetRichText().GetBlocks(),
-				},
-				&contentv1.LocalizedRichTextDocument{
-					BlockCatalogFingerprint: source.GetBlockCatalogFingerprint(),
-					Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_PAGE, Locale: current.GetLocale(),
-					Base: baseSection.GetRichText().GetBlocks(), LocaleOverlay: currentOverlay,
-				},
-				scopedPatch,
-			)
-			if err != nil {
-				return nil, err
-			}
-			var destination *contentv1.PageSectionLocale
-			if existing := currentSections[sectionID]; existing != nil {
-				destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
-			} else {
-				destination = proto.Clone(candidateSection).(*contentv1.PageSectionLocale)
-			}
-			if destination.GetRichText() == nil {
-				// The target locale row may not carry a Rich Text value yet.
-				destination.Value = &contentv1.PageSectionLocale_RichText{RichText: &contentv1.RichTextSectionLocale{}}
-			}
-			destination.GetRichText().Blocks = overlay
-			result.LocaleOverlay.Sections = append(result.LocaleOverlay.Sections, destination)
-			continue
-		}
+	return unitsBySection
+}
 
-		destination := &contentv1.PageSectionLocale{SectionId: sectionID}
-		if existing := currentSections[sectionID]; existing != nil {
-			destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
-		}
-		for _, unit := range units {
-			_, rest, ok := pageInterchangeSectionHandle(unit.UnitID)
-			if !ok || strings.HasPrefix(rest, "block:") {
-				continue
-			}
-			path, ok := pageInterchangeContainerPath(rest, candidateSection)
-			if !ok {
-				return nil, fmt.Errorf("provider Page unit %q has an invalid stable path", unit.UnitID)
-			}
-			if err := translation.CopyStableProtoPath(
-				destination.ProtoReflect(), candidateSection.ProtoReflect(), path,
-			); err != nil {
-				return nil, fmt.Errorf("copy provider Page unit %q: %w", unit.UnitID, err)
-			}
-		}
-		result.LocaleOverlay.Sections = append(result.LocaleOverlay.Sections, destination)
+// providerPageTargetBuild merges provider results into the current target
+// sections of one Page document.
+type providerPageTargetBuild struct {
+	source, current   *contentv1.LocalizedPageDocument
+	patch             *translation.ProviderUnitPatch
+	sourceSections    map[string]*contentv1.PageSectionLocale
+	currentSections   map[string]*contentv1.PageSectionLocale
+	candidateSections map[string]*contentv1.PageSectionLocale
+	baseSections      map[string]*contentv1.PageSection
+}
+
+// richTextSection rebuilds the Rich Text overlay of one target section from
+// the provider results of its Block units.
+func (b providerPageTargetBuild) richTextSection(
+	sourceSection *contentv1.PageSectionLocale,
+	units []translation.Unit,
+) (*contentv1.PageSectionLocale, error) {
+	sectionID := sourceSection.GetSectionId()
+	baseSection := b.baseSections[sectionID]
+	if baseSection == nil || baseSection.GetRichText() == nil {
+		return nil, fmt.Errorf("provider Page Rich Text section %q is outside the current graph", sectionID)
 	}
-	return result, nil
+	scopedPatch, err := b.scopedRichTextPatch(units)
+	if err != nil {
+		return nil, err
+	}
+	currentOverlay := &contentv1.RichTextLocaleOverlay{Locale: b.current.GetLocale()}
+	if currentSection := b.currentSections[sectionID]; currentSection != nil && currentSection.GetRichText() != nil &&
+		currentSection.GetRichText().GetBlocks() != nil {
+		currentOverlay = currentSection.GetRichText().GetBlocks()
+	}
+	overlay, err := translation.BuildProviderTargetRichTextOverlay(
+		&contentv1.LocalizedRichTextDocument{
+			BlockCatalogFingerprint: b.source.GetBlockCatalogFingerprint(),
+			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_PAGE, Locale: b.source.GetLocale(),
+			Base: baseSection.GetRichText().GetBlocks(), LocaleOverlay: sourceSection.GetRichText().GetBlocks(),
+		},
+		&contentv1.LocalizedRichTextDocument{
+			BlockCatalogFingerprint: b.source.GetBlockCatalogFingerprint(),
+			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_PAGE, Locale: b.current.GetLocale(),
+			Base: baseSection.GetRichText().GetBlocks(), LocaleOverlay: currentOverlay,
+		},
+		scopedPatch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var destination *contentv1.PageSectionLocale
+	if existing := b.currentSections[sectionID]; existing != nil {
+		destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
+	} else {
+		destination = proto.Clone(b.candidateSections[sectionID]).(*contentv1.PageSectionLocale)
+	}
+	if destination.GetRichText() == nil {
+		// The target locale row may not carry a Rich Text value yet.
+		destination.Value = &contentv1.PageSectionLocale_RichText{RichText: &contentv1.RichTextSectionLocale{}}
+	}
+	destination.GetRichText().Blocks = overlay
+	return destination, nil
+}
+
+// scopedRichTextPatch keys the Block units of one section by their
+// section-relative handle, the form the Rich Text overlay builder reads.
+func (b providerPageTargetBuild) scopedRichTextPatch(units []translation.Unit) (*translation.ProviderUnitPatch, error) {
+	scopedPatch := &translation.ProviderUnitPatch{Results: make(map[string]translation.UnitResult)}
+	for _, unit := range units {
+		_, rest, ok := pageInterchangeSectionHandle(unit.UnitID)
+		if !ok || !strings.HasPrefix(rest, "block:") {
+			continue
+		}
+		blockID, ok := pageInterchangeBlockID(rest)
+		if !ok {
+			return nil, fmt.Errorf("provider Page Rich Text unit %q is invalid", unit.UnitID)
+		}
+		scoped := unit
+		scoped.UnitID = rest
+		scoped.ContainerID = blockID
+		scopedPatch.Units = append(scopedPatch.Units, scoped)
+		providerResult := b.patch.Results[unit.UnitID]
+		providerResult.UnitID = rest
+		scopedPatch.Results[rest] = providerResult
+	}
+	return scopedPatch, nil
+}
+
+// containerSection copies the provider candidate value of every translated
+// container unit into the current target section.
+func (b providerPageTargetBuild) containerSection(sectionID string, units []translation.Unit) (*contentv1.PageSectionLocale, error) {
+	candidateSection := b.candidateSections[sectionID]
+	destination := &contentv1.PageSectionLocale{SectionId: sectionID}
+	if existing := b.currentSections[sectionID]; existing != nil {
+		destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
+	}
+	for _, unit := range units {
+		_, rest, ok := pageInterchangeSectionHandle(unit.UnitID)
+		if !ok || strings.HasPrefix(rest, "block:") {
+			continue
+		}
+		path, ok := pageInterchangeContainerPath(rest, candidateSection)
+		if !ok {
+			return nil, fmt.Errorf("provider Page unit %q has an invalid stable path", unit.UnitID)
+		}
+		if err := translation.CopyStableProtoPath(
+			destination.ProtoReflect(), candidateSection.ProtoReflect(), path,
+		); err != nil {
+			return nil, fmt.Errorf("copy provider Page unit %q: %w", unit.UnitID, err)
+		}
+	}
+	return destination, nil
 }
 
 func pageTypedTranslationLocaleMutations(
@@ -825,11 +856,6 @@ func pageTypedTranslationLocaleMutations(
 	return mutations, nil
 }
 
-func pageSystemTranslationDocumentFence(pageID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		return loadPageContentDomainContext(ctx, tx, pageID)
-	}
+func pageSystemTranslationDocumentFence(pageID string) ContentFence {
+	return lockedPageContentFence(pageID)
 }

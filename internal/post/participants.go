@@ -6,100 +6,44 @@ import (
 	"log/slog"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// PostService implements the PostService Connect handler
-type postParticipantRow struct {
-	MemberID              string    `gorm:"column:member_id"`
-	IdentityID            string    `gorm:"column:identity_id"`
-	Role                  string    `gorm:"column:role"`
-	CreatedAt             time.Time `gorm:"column:created_at"`
-	HasEffectiveAuthority bool      `gorm:"column:has_effective_authority"`
-}
+// PostParticipantsQuery lists a Post's durable authors and collaborators.
+type PostParticipantsQuery struct{ PostID string }
+
+// PostParticipantCommand adds or removes one participant of a Post.
+type PostParticipantCommand struct{ PostID, MemberID string }
 
 // ListPostParticipants returns durable authors and collaborators separately.
-func (s *PostService) ListPostParticipants(
-	ctx context.Context,
-	req *connect.Request[managev1.ListPostParticipantsRequest],
-) (_ *connect.Response[managev1.ListPostParticipantsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+func (s *Service) ListPostParticipants(ctx context.Context, query PostParticipantsQuery) (_ []Participant, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", query.PostID))
 
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return errs.NotFound("post", req.Msg.PostId)
+	var status Status
+	if err := s.readLocked(ctx, mutation.Checked(func(ctx context.Context, store Store) error {
+		stored, err := store.KeyShareLockPost(ctx, query.PostID)
+		if err != nil {
+			if errors.Is(err, ErrPostNotFound) {
+				return domainerr.ResourceNotFound("post", query.PostID)
 			}
-			return errs.Internal(err)
+			return err
 		}
-		_, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, post.Status)
+		status = stored.Status
+		_, err = requirePostViewForStatus(ctx, s.spiceDB, stored.ID, stored.Status)
 		return err
-	}); err != nil {
+	}), func(context.Context, Store) error { return nil }); err != nil {
 		return nil, err
 	}
 
-	var rows []postParticipantRow
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT author.member_id::text AS member_id,
-		       identity.id::text AS identity_id,
-		       'author' AS role,
-		       author.created_at,
-		       CASE
-		         WHEN identity.id IS NULL THEN FALSE
-		         WHEN member.deleted_at IS NOT NULL OR member.onboarded = FALSE THEN FALSE
-		         WHEN identity.state <> 'active' THEN FALSE
-		         WHEN COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) THEN FALSE
-		         ELSE TRUE
-		       END AS has_effective_authority
-		FROM post_author AS author
-		JOIN member ON member.id = author.member_id
-		LEFT JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
-		WHERE author.post_id = ?::uuid
-		UNION ALL
-		SELECT collaborator.member_id::text AS member_id,
-		       identity.id::text AS identity_id,
-		       'collaborator' AS role,
-		       collaborator.created_at,
-		       CASE
-		         WHEN identity.id IS NULL THEN FALSE
-		         WHEN member.deleted_at IS NOT NULL OR member.onboarded = FALSE THEN FALSE
-		         WHEN identity.state <> 'active' THEN FALSE
-		         WHEN COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) THEN FALSE
-		         ELSE TRUE
-		       END AS has_effective_authority
-		FROM post_collaborator AS collaborator
-		JOIN member ON member.id = collaborator.member_id
-		LEFT JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
-		WHERE collaborator.post_id = ?::uuid
-		ORDER BY role ASC, created_at ASC, member_id ASC
-	`, req.Msg.PostId, req.Msg.PostId).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+	rows, err := readStore(ctx, s, func(store Store) ([]ParticipantRow, error) { return store.ListParticipants(ctx, query.PostID) })
+	if err != nil {
+		return nil, err
 	}
 	memberIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -107,424 +51,290 @@ func (s *PostService) ListPostParticipants(
 	}
 	summaries, err := s.members.LoadMemberSummaries(ctx, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	participants := make([]*managev1.PostParticipant, 0, len(rows))
-	action := postActionForStatus(post.Status, policyv1.Post.Edit, policyv1.Post.EditArchived)
-	can, err := action(req.Msg.PostId)
+	participants := make([]Participant, 0, len(rows))
+	action := postActionForStatus(status, policyv1.Post.Edit, policyv1.Post.EditArchived)
+	can, err := action(query.PostID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		summary := summaries[row.MemberID]
 		if summary == nil {
-			return nil, errs.InternalMsg("post participant member was not found")
-		}
-		role := managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR
-		if row.Role == "author" {
-			role = managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR
+			return nil, errors.New("post participant member was not found")
 		}
 		effective := row.HasEffectiveAuthority
 		if effective {
 			actor, actorErr := policyv1.NewAccountIdentityActor(row.IdentityID)
 			if actorErr != nil {
-				return nil, errs.Internal(actorErr)
+				return nil, actorErr
 			}
 			ok, checkErr := s.spiceDB.CheckActorCan(ctx, actor, can)
 			if checkErr != nil {
-				slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", failurecause.Attr(checkErr))
-				return nil, errs.DependencyUnavailable("SpiceDB")
+				return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 			}
 			effective = ok
 		}
-		participants = append(participants, &managev1.PostParticipant{
+		participants = append(participants, Participant{
 			Member:                summary,
-			Role:                  role,
-			CreatedAt:             timestamppb.New(row.CreatedAt),
+			Role:                  row.Role,
+			CreatedAt:             row.CreatedAt,
 			HasEffectiveAuthority: effective,
 		})
 	}
-	return connect.NewResponse(&managev1.ListPostParticipantsResponse{
-		Participants: participants,
-	}), nil
+	return participants, nil
 }
 
-func (s *PostService) AddPostAuthor(
-	ctx context.Context,
-	req *connect.Request[managev1.AddPostAuthorRequest],
-) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
-
-	principal := auth.GetUser(ctx)
-	if principal == nil {
-		return nil, errs.AuthenticationRequired()
-	}
-	var createdAt time.Time
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		status, err := lockPostParticipantRoot(ctx, tx, req.Msg.PostId)
-		if err != nil {
-			return err
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, req.Msg.PostId, status, policyv1.Post.ManageParticipants); err != nil {
-			return err
-		}
-		target, err := authorizationtarget.RequireLocked(ctx, tx, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		targetActor, actorErr := policyv1.NewAccountIdentityActor(target.IdentityID)
-		if actorErr != nil {
-			return errs.Internal(actorErr)
-		}
-		can, canErr := policyv1.Platform.IsAuthor()
-		if canErr != nil {
-			return errs.Internal(canErr)
-		}
-		canAuthor, checkErr := s.spiceDB.CheckActorCan(ctx, targetActor, can)
-		if checkErr != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", failurecause.Attr(checkErr))
-			return errs.DependencyUnavailable("SpiceDB")
-		}
-		if !canAuthor {
-			return errs.InvalidArgument("member_id", "post authors must have the site Author or Admin role")
-		}
-		var existing struct {
-			CreatedAt time.Time `gorm:"column:created_at"`
-		}
-		if err := tx.Table("post_author").
-			Select("created_at").
-			Where("post_id = ?::uuid AND member_id = ?::uuid", req.Msg.PostId, req.Msg.MemberId).
-			Scan(&existing).Error; err != nil {
-			return err
-		}
-		if !existing.CreatedAt.IsZero() {
-			createdAt = existing.CreatedAt
-			apply, compensate, mutationErr := postParticipantAuthorizationMutations(
-				req.Msg.PostId,
-				targetActor,
-				managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR,
-				managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR,
-			)
-			if mutationErr != nil {
-				return mutationErr
-			}
-			return write(apply, compensate)
-		}
-		collaboratorExists, err := postRelationExists(ctx, tx, "post_collaborator", req.Msg.PostId, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		// Author and Collaborator are mutually exclusive peer roles. Reassigning
-		// Collaborator -> Author changes both product attribution rows before the
-		// exact SpiceDB state transition is applied.
-		if err := tx.Exec(
-			"DELETE FROM post_collaborator WHERE post_id = ?::uuid AND member_id = ?::uuid",
-			req.Msg.PostId,
-			req.Msg.MemberId,
-		).Error; err != nil {
-			return err
-		}
-		createdAt = dbtime.Now()
-		if err := tx.Exec(`
-			INSERT INTO post_author (post_id, member_id, created_at)
-			VALUES (?::uuid, ?::uuid, ?)
-		`, req.Msg.PostId, req.Msg.MemberId, createdAt).Error; err != nil {
-			return err
-		}
-		previous := managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_UNSPECIFIED
-		if collaboratorExists {
-			previous = managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR
-		}
-		if err := s.appendPostParticipantAudit(ctx, tx, req.Msg.PostId, req.Msg.MemberId, postParticipantAuditRelationship(previous), sharedtelemetry.AuditRelationshipAuthor); err != nil {
-			return err
-		}
-		apply, compensate, err := postParticipantAuthorizationMutations(
-			req.Msg.PostId,
-			targetActor,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR,
-			previous,
-		)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
-	})
-	if err != nil {
-		return nil, mapPostParticipantMutationError(err)
-	}
-	response, err := s.postParticipantResponse(ctx, req.Msg.MemberId, managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR, createdAt, true)
-	if err != nil {
-		return nil, err
-	}
-	return response, nil
+// postParticipantChange is the outcome of a participant mutation: the
+// relationship batch the role change writes and the role's creation time.
+type postParticipantChange struct {
+	apply      []policyv1.RelationshipMutation
+	compensate []policyv1.RelationshipMutation
+	createdAt  time.Time
 }
 
-func (s *PostService) RemovePostAuthor(
-	ctx context.Context,
-	req *connect.Request[managev1.RemovePostAuthorRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
-
-	principal := auth.GetUser(ctx)
-	if principal == nil {
-		return nil, errs.AuthenticationRequired()
-	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		status, err := lockPostParticipantRoot(ctx, tx, req.Msg.PostId)
-		if err != nil {
-			return err
-		}
-		if _, err := requireLockedPostRemoveAuthor(ctx, tx, s.spiceDB, req.Msg.PostId, status); err != nil {
-			return err
-		}
-		var authorExists int64
-		if err := tx.Table("post_author").
-			Where("post_id = ?::uuid AND member_id = ?::uuid", req.Msg.PostId, req.Msg.MemberId).
-			Count(&authorExists).Error; err != nil {
-			return err
-		}
-		if authorExists == 0 {
-			return errs.NotFoundMsg("post author relation not found")
-		}
-		var authorCount int64
-		if err := tx.Table("post_author").Where("post_id = ?::uuid", req.Msg.PostId).Count(&authorCount).Error; err != nil {
-			return err
-		}
-		if authorCount <= 1 {
-			return errs.FailedPrecondition("a post must retain at least one durable author")
-		}
-		target, err := authorizationtarget.RequireLockedLinked(ctx, tx, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		targetActor, err := policyv1.NewAccountIdentityActor(target.IdentityID)
-		if err != nil {
-			return err
-		}
-		result := tx.Exec(
-			"DELETE FROM post_author WHERE post_id = ?::uuid AND member_id = ?::uuid",
-			req.Msg.PostId,
-			req.Msg.MemberId,
-		)
-		if result.Error != nil {
-			return result.Error
-		}
-		if err := s.appendPostParticipantAudit(ctx, tx, req.Msg.PostId, req.Msg.MemberId, sharedtelemetry.AuditRelationshipAuthor, sharedtelemetry.AuditRelationshipNone); err != nil {
-			return err
-		}
-		apply, compensate, err := postParticipantAuthorizationMutations(
-			req.Msg.PostId,
-			targetActor,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_UNSPECIFIED,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR,
-		)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
-	})
-	if err != nil {
-		return nil, mapPostParticipantMutationError(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (change postParticipantChange) relationships() ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	return change.apply, change.compensate, nil
 }
 
-func (s *PostService) AddPostCollaborator(
+// runPostParticipantChange runs change on postID's participants with the
+// access its locked state requires, writing the role's relationships.
+func (s *Service) runPostParticipantChange(
 	ctx context.Context,
-	req *connect.Request[managev1.AddPostCollaboratorRequest],
-) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
-
-	principal := auth.GetUser(ctx)
-	if principal == nil {
-		return nil, errs.AuthenticationRequired()
+	access mutation.Access,
+	change func(context.Context, Store, *postEffects) (postParticipantChange, error),
+) (postParticipantChange, error) {
+	if auth.GetUser(ctx) == nil {
+		return postParticipantChange{}, domainerr.AuthenticationRequired()
 	}
-	var createdAt time.Time
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		status, err := lockPostParticipantRoot(ctx, tx, req.Msg.PostId)
-		if err != nil {
-			return err
-		}
-		var existing struct {
-			CreatedAt time.Time `gorm:"column:created_at"`
-		}
-		if err := tx.Table("post_collaborator").
-			Select("created_at").
-			Where("post_id = ?::uuid AND member_id = ?::uuid", req.Msg.PostId, req.Msg.MemberId).
-			Scan(&existing).Error; err != nil {
-			return err
-		}
-		authorExists, err := postRelationExists(ctx, tx, "post_author", req.Msg.PostId, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		if authorExists {
-			if _, err := requireLockedPostRemoveAuthor(ctx, tx, s.spiceDB, req.Msg.PostId, status); err != nil {
-				return err
-			}
-		} else if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, req.Msg.PostId, status, policyv1.Post.ManageParticipants); err != nil {
-			return err
-		}
-		target, err := authorizationtarget.RequireLocked(ctx, tx, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		targetActor, err := policyv1.NewAccountIdentityActor(target.IdentityID)
-		if err != nil {
-			return err
-		}
-		if !existing.CreatedAt.IsZero() {
-			createdAt = existing.CreatedAt
-			apply, compensate, mutationErr := postParticipantAuthorizationMutations(
-				req.Msg.PostId,
-				targetActor,
-				managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR,
-				managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR,
-			)
-			if mutationErr != nil {
-				return mutationErr
-			}
-			return write(apply, compensate)
-		}
-		if authorExists {
-			var authorCount int64
-			if err := tx.Table("post_author").Where("post_id = ?::uuid", req.Msg.PostId).Count(&authorCount).Error; err != nil {
-				return err
-			}
-			if authorCount <= 1 {
-				return errs.FailedPrecondition("a post must retain at least one durable author")
-			}
-			// Author and Collaborator are mutually exclusive peer roles. Reassign
-			// the Author to Collaborator in this locked transaction.
-			if err := tx.Exec(
-				"DELETE FROM post_author WHERE post_id = ?::uuid AND member_id = ?::uuid",
-				req.Msg.PostId,
-				req.Msg.MemberId,
-			).Error; err != nil {
-				return err
-			}
-		}
-		createdAt = dbtime.Now()
-		if err := tx.Exec(`
-			INSERT INTO post_collaborator (post_id, member_id, created_at)
-			VALUES (?::uuid, ?::uuid, ?)
-		`, req.Msg.PostId, req.Msg.MemberId, createdAt).Error; err != nil {
-			return err
-		}
-		previous := managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_UNSPECIFIED
-		if authorExists {
-			previous = managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR
-		}
-		if err := s.appendPostParticipantAudit(ctx, tx, req.Msg.PostId, req.Msg.MemberId, postParticipantAuditRelationship(previous), sharedtelemetry.AuditRelationshipCollaborator); err != nil {
-			return err
-		}
-		apply, compensate, err := postParticipantAuthorizationMutations(
-			req.Msg.PostId,
-			targetActor,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR,
-			previous,
-		)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
-	})
+	result, _, err := runPostMutation(ctx, s, mutation.StoreSpec[postParticipantChange, Store]{
+		Access:        access,
+		Relationships: postParticipantChange.relationships,
+	}, change)
 	if err != nil {
-		return nil, mapPostParticipantMutationError(err)
+		return postParticipantChange{}, mapPostParticipantMutationError(err)
 	}
-	response, err := s.postParticipantResponse(ctx, req.Msg.MemberId, managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR, createdAt, true)
-	if err != nil {
-		return nil, err
-	}
-	return response, nil
+	return result, nil
 }
 
-func (s *PostService) RemovePostCollaborator(
-	ctx context.Context,
-	req *connect.Request[managev1.RemovePostCollaboratorRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
-
-	principal := auth.GetUser(ctx)
-	if principal == nil {
-		return nil, errs.AuthenticationRequired()
-	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		status, err := lockPostParticipantRoot(ctx, tx, req.Msg.PostId)
-		if err != nil {
-			return err
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, req.Msg.PostId, status, policyv1.Post.ManageParticipants); err != nil {
-			return err
-		}
-		target, err := authorizationtarget.RequireLockedLinked(ctx, tx, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		targetActor, err := policyv1.NewAccountIdentityActor(target.IdentityID)
-		if err != nil {
-			return err
-		}
-		result := tx.Exec(
-			"DELETE FROM post_collaborator WHERE post_id = ?::uuid AND member_id = ?::uuid",
-			req.Msg.PostId,
-			req.Msg.MemberId,
-		)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return errs.NotFoundMsg("post collaborator relation not found")
-		}
-		if err := s.appendPostParticipantAudit(ctx, tx, req.Msg.PostId, req.Msg.MemberId, sharedtelemetry.AuditRelationshipCollaborator, sharedtelemetry.AuditRelationshipNone); err != nil {
-			return err
-		}
-		apply, compensate, err := postParticipantAuthorizationMutations(
-			req.Msg.PostId,
-			targetActor,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_UNSPECIFIED,
-			managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR,
-		)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
-	})
+// roleChange records the move of memberID from previous to desired and
+// returns its relationship batch.
+func roleChange(effects *postEffects, postID, memberID string, actor policyv1.Actor, desired, previous ParticipantRole, createdAt time.Time) (postParticipantChange, error) {
+	apply, compensate, err := postParticipantAuthorizationMutations(postID, actor, desired, previous)
 	if err != nil {
-		return nil, mapPostParticipantMutationError(err)
+		return postParticipantChange{}, err
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	if desired != previous {
+		appendPostParticipantAudit(effects, postID, memberID, postParticipantAuditRelationship(previous), postParticipantAuditRelationship(desired))
+	}
+	return postParticipantChange{apply: apply, compensate: compensate, createdAt: createdAt}, nil
+}
+
+func (s *Service) AddPostAuthor(ctx context.Context, command PostParticipantCommand) (_ Participant, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
+
+	change, err := s.runPostParticipantChange(ctx, lockedPost(command.PostID, policyv1.Post.ManageParticipants, nil),
+		func(ctx context.Context, store Store, effects *postEffects) (postParticipantChange, error) {
+			return s.addPostAuthor(ctx, store, effects, command)
+		})
+	if err != nil {
+		return Participant{}, err
+	}
+	return s.postParticipant(ctx, command.MemberID, RoleAuthor, change.createdAt, true)
+}
+
+func (s *Service) addPostAuthor(ctx context.Context, store Store, effects *postEffects, command PostParticipantCommand) (postParticipantChange, error) {
+	targetIdentityID, err := store.LockMemberIdentity(ctx, command.MemberID)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	targetActor, err := policyv1.NewAccountIdentityActor(targetIdentityID)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	can, err := policyv1.Platform.IsAuthor()
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	canAuthor, err := s.spiceDB.CheckActorCan(ctx, targetActor, can)
+	if err != nil {
+		return postParticipantChange{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	if !canAuthor {
+		return postParticipantChange{}, domainerr.InvalidField("member_id", "post authors must have the site Author or Admin role")
+	}
+	existing, err := store.ParticipantCreatedAt(ctx, command.PostID, command.MemberID, RoleAuthor)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	if !existing.IsZero() {
+		return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleAuthor, RoleAuthor, existing)
+	}
+	collaboratorExists, err := store.ParticipantExists(ctx, command.PostID, command.MemberID, RoleCollaborator)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	// Author and Collaborator are mutually exclusive peer roles. Reassigning
+	// Collaborator -> Author changes both product attribution rows before the
+	// exact SpiceDB state transition is applied.
+	if _, err := store.DeleteParticipant(ctx, command.PostID, command.MemberID, RoleCollaborator); err != nil {
+		return postParticipantChange{}, err
+	}
+	createdAt := dbtime.Now()
+	if err := store.InsertParticipant(ctx, command.PostID, command.MemberID, RoleAuthor, createdAt); err != nil {
+		return postParticipantChange{}, err
+	}
+	previous := RoleNone
+	if collaboratorExists {
+		previous = RoleCollaborator
+	}
+	return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleAuthor, previous, createdAt)
+}
+
+func (s *Service) RemovePostAuthor(ctx context.Context, command PostParticipantCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
+
+	_, err := s.runPostParticipantChange(ctx, lockedPost(command.PostID, policyv1.Post.RemoveAuthor, nil),
+		func(ctx context.Context, store Store, effects *postEffects) (postParticipantChange, error) {
+			authorExists, err := store.CountAuthors(ctx, command.PostID, command.MemberID)
+			if err != nil {
+				return postParticipantChange{}, err
+			}
+			if authorExists == 0 {
+				return postParticipantChange{}, domainerr.New(domainerr.NotFound, "", "post author relation not found")
+			}
+			if err := requireAnotherPostAuthor(ctx, store, command.PostID); err != nil {
+				return postParticipantChange{}, err
+			}
+			targetActor, err := lockedLinkedParticipant(ctx, store, command.MemberID)
+			if err != nil {
+				return postParticipantChange{}, err
+			}
+			if _, err := store.DeleteParticipant(ctx, command.PostID, command.MemberID, RoleAuthor); err != nil {
+				return postParticipantChange{}, err
+			}
+			return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleNone, RoleAuthor, time.Time{})
+		})
+	return err
+}
+
+// requireAnotherPostAuthor keeps a Post from losing its last durable author.
+func requireAnotherPostAuthor(ctx context.Context, store Store, postID string) error {
+	authorCount, err := store.CountAuthors(ctx, postID, "")
+	if err != nil {
+		return err
+	}
+	if authorCount <= 1 {
+		return domainerr.Precondition("a post must retain at least one durable author")
+	}
+	return nil
+}
+
+func lockedLinkedParticipant(ctx context.Context, store Store, memberID string) (policyv1.Actor, error) {
+	identityID, err := store.LockLinkedMemberIdentity(ctx, memberID)
+	if err != nil {
+		return policyv1.Actor{}, err
+	}
+	return policyv1.NewAccountIdentityActor(identityID)
+}
+
+// collaboratorAccess is the access of adding a collaborator: reassigning an
+// author needs the author removal action, a new participant the
+// participant management action.
+func collaboratorAccess(command PostParticipantCommand, authorExists *bool) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		status, err := lockPostParticipantRoot(ctx, store, command.PostID)
+		if err != nil {
+			return err
+		}
+		if *authorExists, err = store.ParticipantExists(ctx, command.PostID, command.MemberID, RoleAuthor); err != nil {
+			return err
+		}
+		action := policyv1.Post.ManageParticipants
+		if *authorExists {
+			action = policyv1.Post.RemoveAuthor
+		}
+		_, err = requireLockedPostActionForStatus(require, command.PostID, status, action)
+		return err
+	})
+}
+
+func (s *Service) AddPostCollaborator(ctx context.Context, command PostParticipantCommand) (_ Participant, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
+
+	var authorExists bool
+	change, err := s.runPostParticipantChange(ctx, collaboratorAccess(command, &authorExists),
+		func(ctx context.Context, store Store, effects *postEffects) (postParticipantChange, error) {
+			return addPostCollaborator(ctx, store, effects, command, authorExists)
+		})
+	if err != nil {
+		return Participant{}, err
+	}
+	return s.postParticipant(ctx, command.MemberID, RoleCollaborator, change.createdAt, true)
+}
+
+func addPostCollaborator(ctx context.Context, store Store, effects *postEffects, command PostParticipantCommand, authorExists bool) (postParticipantChange, error) {
+	existing, err := store.ParticipantCreatedAt(ctx, command.PostID, command.MemberID, RoleCollaborator)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	targetIdentityID, err := store.LockMemberIdentity(ctx, command.MemberID)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	targetActor, err := policyv1.NewAccountIdentityActor(targetIdentityID)
+	if err != nil {
+		return postParticipantChange{}, err
+	}
+	if !existing.IsZero() {
+		return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleCollaborator, RoleCollaborator, existing)
+	}
+	previous := RoleNone
+	if authorExists {
+		if err := requireAnotherPostAuthor(ctx, store, command.PostID); err != nil {
+			return postParticipantChange{}, err
+		}
+		// Author and Collaborator are mutually exclusive peer roles. Reassign
+		// the Author to Collaborator in this locked transaction.
+		if _, err := store.DeleteParticipant(ctx, command.PostID, command.MemberID, RoleAuthor); err != nil {
+			return postParticipantChange{}, err
+		}
+		previous = RoleAuthor
+	}
+	createdAt := dbtime.Now()
+	if err := store.InsertParticipant(ctx, command.PostID, command.MemberID, RoleCollaborator, createdAt); err != nil {
+		return postParticipantChange{}, err
+	}
+	return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleCollaborator, previous, createdAt)
+}
+
+func (s *Service) RemovePostCollaborator(ctx context.Context, command PostParticipantCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.PostID))
+
+	_, err := s.runPostParticipantChange(ctx, lockedPost(command.PostID, policyv1.Post.ManageParticipants, nil),
+		func(ctx context.Context, store Store, effects *postEffects) (postParticipantChange, error) {
+			targetActor, err := lockedLinkedParticipant(ctx, store, command.MemberID)
+			if err != nil {
+				return postParticipantChange{}, err
+			}
+			removed, err := store.DeleteParticipant(ctx, command.PostID, command.MemberID, RoleCollaborator)
+			if err != nil {
+				return postParticipantChange{}, err
+			}
+			if removed == 0 {
+				return postParticipantChange{}, domainerr.New(domainerr.NotFound, "", "post collaborator relation not found")
+			}
+			return roleChange(effects, command.PostID, command.MemberID, targetActor, RoleNone, RoleCollaborator, time.Time{})
+		})
+	return err
 }
 
 func postParticipantAuthorizationMutations(
 	postID string,
 	actor policyv1.Actor,
-	desired managev1.PostParticipantRole,
-	previous managev1.PostParticipantRole,
+	desired ParticipantRole,
+	previous ParticipantRole,
 ) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 	apply, err := postParticipantAuthorizationState(postID, actor, desired)
 	if err != nil {
@@ -540,17 +350,15 @@ func postParticipantAuthorizationMutations(
 func postParticipantAuthorizationState(
 	postID string,
 	actor policyv1.Actor,
-	role managev1.PostParticipantRole,
+	role ParticipantRole,
 ) ([]policyv1.RelationshipMutation, error) {
-	if role != managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_UNSPECIFIED &&
-		role != managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR &&
-		role != managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR {
-		return nil, errs.InvalidArgument("participant_role", "is not supported")
+	if role != RoleNone && role != RoleAuthor && role != RoleCollaborator {
+		return nil, domainerr.InvalidField("participant_role", "is not supported")
 	}
 	var authorMutation policyv1.RelationshipMutation
 	var collaboratorMutation policyv1.RelationshipMutation
 	var err error
-	if role == managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR {
+	if role == RoleAuthor {
 		authorMutation, err = policyv1.Post.TouchAuthor(postID, actor)
 	} else {
 		authorMutation, err = policyv1.Post.DeleteAuthor(postID, actor)
@@ -558,7 +366,7 @@ func postParticipantAuthorizationState(
 	if err != nil {
 		return nil, err
 	}
-	if role == managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR {
+	if role == RoleCollaborator {
 		collaboratorMutation, err = policyv1.Post.TouchCollaborator(postID, actor)
 	} else {
 		collaboratorMutation, err = policyv1.Post.DeleteCollaborator(postID, actor)
@@ -569,66 +377,41 @@ func postParticipantAuthorizationState(
 	return []policyv1.RelationshipMutation{authorMutation, collaboratorMutation}, nil
 }
 
-func postParticipantAuditRelationship(role managev1.PostParticipantRole) sharedtelemetry.AuditRelationship {
+func postParticipantAuditRelationship(role ParticipantRole) sharedtelemetry.AuditRelationship {
 	switch role {
-	case managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR:
+	case RoleAuthor:
 		return sharedtelemetry.AuditRelationshipAuthor
-	case managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR:
+	case RoleCollaborator:
 		return sharedtelemetry.AuditRelationshipCollaborator
 	default:
 		return sharedtelemetry.AuditRelationshipNone
 	}
 }
 
-func (s *PostService) appendPostParticipantAudit(ctx context.Context, tx *gorm.DB, postID, memberID string, previous, next sharedtelemetry.AuditRelationship) error {
-	if s.auditWriter == nil {
-		return nil
-	}
-	return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+func appendPostParticipantAudit(effects *postEffects, postID, memberID string, previous, next sharedtelemetry.AuditRelationship) {
+	effects.updated(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewPostParticipantAuditRecord(metadata, postID, memberID, previous, next)
 	})
 }
 
-func lockPostParticipantRoot(ctx context.Context, tx *gorm.DB, postID string) (model.PostStatus, error) {
-	var row struct {
-		ID     string           `gorm:"column:id"`
-		Status model.PostStatus `gorm:"column:status"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "status").
-		Where("id = ?::uuid", postID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errs.NotFound("post", postID)
-		}
-		return "", errs.Internal(err)
-	}
-	return row.Status, nil
-}
-
-func (s *PostService) postParticipantResponse(
+func (s *Service) postParticipant(
 	ctx context.Context,
 	memberID string,
-	role managev1.PostParticipantRole,
+	role ParticipantRole,
 	createdAt time.Time,
 	effective bool,
-) (*connect.Response[managev1.PostParticipant], error) {
+) (Participant, error) {
 	summaries, err := s.members.LoadMemberSummaries(ctx, []string{memberID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return Participant{}, err
 	}
 	if summaries[memberID] == nil {
-		return nil, errs.NotFound("member", memberID)
+		return Participant{}, domainerr.ResourceNotFound("member", memberID)
 	}
-	return connect.NewResponse(&managev1.PostParticipant{
+	return Participant{
 		Member:                summaries[memberID],
 		Role:                  role,
-		CreatedAt:             timestamppb.New(createdAt),
+		CreatedAt:             createdAt,
 		HasEffectiveAuthority: effective,
-	}), nil
+	}, nil
 }
-
-// CheckSlugAvailable checks if a slug is available for posts
-// If excludePostId is provided, requires edit permission on that post

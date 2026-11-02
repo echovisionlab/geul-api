@@ -1,0 +1,373 @@
+package artist
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+)
+
+// CreateArtistCommand creates a draft Artist owned by the caller.
+// AcceptLanguage helps pick the source locale when the caller's Member has
+// no preference.
+type CreateArtistCommand struct {
+	Name           string
+	Slug           *string
+	RealName       *string
+	CountryCode    *string
+	Website        *string
+	ParentArtistID *string
+	SocialLinks    map[string]string
+	Document       *contentv1.RichTextDocument
+	AcceptLanguage string
+}
+
+// CreateArtist creates an Artist, its content document and source-locale
+// title, and makes the caller its first durable Owner atomically.
+func (s *Service) CreateArtist(ctx context.Context, command CreateArtistCommand) (View, error) {
+	user := auth.GetUser(ctx)
+	if user == nil {
+		return View{}, errAuthenticationRequired
+	}
+	name := strings.TrimSpace(command.Name)
+	if name == "" {
+		return View{}, domainerr.Required("name")
+	}
+	if err := s.validateNewArtistSlug(ctx, command.Slug); err != nil {
+		return View{}, err
+	}
+	artist := newArtist(command)
+	ownerMemberID := user.MemberID.String()
+	var ownerIdentityID string
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		// A new Artist has no resource row to lock yet. The fresh check locks
+		// the canonical principal before the first durable state change and
+		// keeps that lock for the rest of the transaction.
+		Access: mutation.FreshAdminCan(policyv1.Artist.Create()),
+		Lock: func(ctx context.Context, store Store) error {
+			if artist.ParentArtistID == nil {
+				return nil
+			}
+			return store.LockParentGraph(ctx)
+		},
+		Change: func(ctx context.Context, store Store) (string, error) {
+			var err error
+			ownerIdentityID, err = createArtist(ctx, store, &artist, name, command, ownerMemberID)
+			return artist.ID, err
+		},
+		Audit: func(id string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditArtistCreated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewArtistCreatedAuditRecord(m, id)
+			})
+		},
+		Relationships: func(id string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return artistEntity.CreateRelationships(id, ownerIdentityID, artist.ParentArtistID)
+		},
+	})
+	if err != nil {
+		return View{}, err
+	}
+	document, err := s.overlayArtistSourceLocaleDocument(ctx, &artist)
+	if err != nil {
+		return View{}, err
+	}
+	return s.artistWithReadyOg(ctx, artist, document)
+}
+
+func (s *Service) validateNewArtistSlug(ctx context.Context, slug *string) error {
+	if slug == nil || *slug == "" {
+		return nil
+	}
+	return s.units.Read(ctx, func(store Store) error {
+		if err := checkSlugAvailable(ctx, store, *slug, ""); err != nil {
+			return err
+		}
+		return store.CheckResourceRoute(ctx, *slug)
+	})
+}
+
+func newArtist(command CreateArtistCommand) Artist {
+	artist := Artist{
+		Status:   StatusDraft,
+		RealName: command.RealName, CountryCode: command.CountryCode,
+		Website: command.Website, SocialLinks: command.SocialLinks,
+	}
+	if command.Slug != nil && *command.Slug != "" {
+		artist.Slug = command.Slug
+	}
+	if command.ParentArtistID != nil && *command.ParentArtistID != "" {
+		artist.ParentArtistID = command.ParentArtistID
+	}
+	return artist
+}
+
+// createArtist stores artist with its content document, source-locale
+// title and owner, requests its OG image, and returns the owner's Identity.
+func createArtist(
+	ctx context.Context,
+	store Store,
+	artist *Artist,
+	name string,
+	command CreateArtistCommand,
+	ownerMemberID string,
+) (string, error) {
+	if artist.Slug != nil && *artist.Slug != "" {
+		if err := store.LockResourceRoute(ctx, *artist.Slug); err != nil {
+			return "", err
+		}
+	}
+	sourceLocale := store.ResolveInitialSourceLocale(ctx, command.AcceptLanguage)
+	artist.SourceLocale = sourceLocale
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
+		Profile:      creativeContentProfile,
+		SourceLocale: sourceLocale,
+	})
+	if err != nil {
+		return "", normalizeCreativeContentBlockError(err)
+	}
+	contentDocumentID := document.Document.ID.String()
+	artist.ContentDocumentID = &contentDocumentID
+	if err := store.InsertArtist(ctx, artist); err != nil {
+		return "", err
+	}
+	if artist.ParentArtistID != nil {
+		if err := artistEntity.ValidateParentTransition(ctx, store, artist.ID, *artist.ParentArtistID); err != nil {
+			return "", err
+		}
+	}
+	if _, err := initializeCreativeContentDocument(ctx, store, artist.ID, sourceLocale, document, command.Document); err != nil {
+		return "", err
+	}
+	now := time.Now().UTC()
+	if err := saveCreativeSourceLocaleMetadata(ctx, store, artist.ID, sourceLocale, translationLocaleDocumentSaveInput{
+		SourceLocale: sourceLocale, Title: &name, Now: now,
+	}); err != nil {
+		return "", err
+	}
+	if err := touchArtist(ctx, store, artist.ID, now); err != nil {
+		return "", err
+	}
+	if err := store.InsertCreatorOwner(ctx, artist.ID, ownerMemberID, now); err != nil {
+		return "", err
+	}
+	ownerIdentityID, err := store.LockMemberIdentity(ctx, ownerMemberID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := store.RequestOG(ctx, artist.ID, "", false, "artist_created"); err != nil {
+		return "", err
+	}
+	return ownerIdentityID, nil
+}
+
+// DeleteArtistCommand deletes an Artist whose relations still match the
+// preview revision the caller reviewed.
+type DeleteArtistCommand struct {
+	ID               string
+	ExpectedRevision string
+}
+
+// artistDeletion is the SpiceDB snapshot an Artist deletion removes.
+type artistDeletion struct {
+	deleted  []policyv1.RelationshipMutation
+	restored []policyv1.RelationshipMutation
+}
+
+// DeleteArtist deletes the Artist, its content document, share links,
+// image bindings, OG image and SpiceDB relationships.
+func (s *Service) DeleteArtist(ctx context.Context, command DeleteArtistCommand) error {
+	if strings.TrimSpace(command.ExpectedRevision) == "" {
+		return domainerr.Required("expected_revision")
+	}
+	snapshotPlan, err := policyv1.Artist.Snapshot(command.ID)
+	if err != nil {
+		return domainerr.InvalidField("id", "must identify an Artist")
+	}
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[artistDeletion, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			// Serialize the SpiceDB relationship snapshot with every Artist
+			// reparent. The parent graph comes before the root row, as in
+			// every hierarchy change, so a reparent onto this Artist cannot
+			// hold the graph while its foreign key waits on the root.
+			if err := store.LockParentGraph(ctx); err != nil {
+				return err
+			}
+			return artistEntity.LockRoot(ctx, store, command.ID)
+		},
+		Access: artistEntity.LockedAccess(s.spiceDB, command.ID, policyv1.Artist.Delete),
+		Change: func(ctx context.Context, store Store) (artistDeletion, error) {
+			return s.deleteArtist(ctx, store, command, snapshotPlan)
+		},
+		Audit: func(artistDeletion) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditArtistDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewArtistDeletedAuditRecord(m, command.ID)
+			})
+		},
+		Relationships: func(deletion artistDeletion) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return deletion.deleted, deletion.restored, nil
+		},
+	})
+	return err
+}
+
+func (s *Service) deleteArtist(ctx context.Context, store Store, command DeleteArtistCommand, snapshotPlan policyv1.RelationshipSnapshotPlan) (artistDeletion, error) {
+	impacts, err := loadArtistDeletionImpacts(ctx, store, command.ID)
+	if err != nil {
+		return artistDeletion{}, err
+	}
+	if artistDeletionRevision(impacts) != command.ExpectedRevision {
+		return artistDeletion{}, domainerr.Precondition("Artist relations changed; preview deletion again")
+	}
+	snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
+	if err != nil {
+		return artistDeletion{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	deleted, restored, err := artistEntity.DeletionRelationshipMutations(command.ID, snapshots)
+	if err != nil {
+		return artistDeletion{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	if err := validateResourceDeletionAuthorizationBatchSize("artist", deleted, restored); err != nil {
+		return artistDeletion{}, err
+	}
+	if err := store.DeleteShareLinks(ctx, command.ID); err != nil {
+		return artistDeletion{}, err
+	}
+	if err := store.CancelOG(ctx, command.ID); err != nil {
+		return artistDeletion{}, err
+	}
+	if err := store.ReleaseImageBindings(ctx, command.ID); err != nil {
+		return artistDeletion{}, err
+	}
+	documentID, err := loadCreativeContentDocumentID(ctx, store, command.ID)
+	if err != nil {
+		return artistDeletion{}, err
+	}
+	if err := store.DeleteContentDocument(ctx, documentID, creativeContentDocumentFence(command.ID)); err != nil {
+		return artistDeletion{}, normalizeCreativeContentBlockError(err)
+	}
+	if err := store.DeleteArtist(ctx, command.ID); err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
+			return artistDeletion{}, domainerr.ResourceNotFound("artist", command.ID)
+		}
+		return artistDeletion{}, err
+	}
+	return artistDeletion{deleted: deleted, restored: restored}, nil
+}
+
+// PublishArtistCommand publishes a draft Artist.
+type PublishArtistCommand struct {
+	ID string
+}
+
+// UnpublishArtistCommand returns a published Artist to draft.
+type UnpublishArtistCommand struct {
+	ID string
+}
+
+// LifecycleResult is the Artist's lifecycle after a publish or unpublish.
+type LifecycleResult struct {
+	ID          string
+	Changed     bool
+	Status      Status
+	PublishedAt *time.Time
+	UpdatedAt   *time.Time
+}
+
+// PublishArtist publishes the Artist; a published Artist is left unchanged.
+func (s *Service) PublishArtist(ctx context.Context, command PublishArtistCommand) (LifecycleResult, error) {
+	return s.transitionArtist(ctx, command.ID, artistTransition{
+		target: StatusPublished, previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
+		stampsPublication: true,
+		apply: func(artist *Artist, now time.Time) {
+			artist.Status = StatusPublished
+			artist.PublishedAt = &now
+			artist.UpdatedAt = &now
+		},
+		paths: []string{"state.status", "state.published_at"},
+	})
+}
+
+// UnpublishArtist returns the Artist to draft; a draft Artist is left
+// unchanged.
+func (s *Service) UnpublishArtist(ctx context.Context, command UnpublishArtistCommand) (LifecycleResult, error) {
+	return s.transitionArtist(ctx, command.ID, artistTransition{
+		target: StatusDraft, previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
+		apply: func(artist *Artist, now time.Time) {
+			artist.Status = StatusDraft
+			artist.UpdatedAt = &now
+		},
+		paths: []string{"state.status"},
+	})
+}
+
+// artistTransition moves an Artist to target, stamping published_at when
+// stampsPublication is set; apply mirrors the stored change on the read row
+// for the response, and paths are the changed fields its content.updated
+// signal names.
+type artistTransition struct {
+	target            Status
+	previous, next    sharedtelemetry.AuditState
+	stampsPublication bool
+	apply             func(*Artist, time.Time)
+	paths             []string
+}
+
+// transitionArtist locks the Artist row before the fresh Publish check, so
+// a role revoked while the transition waited on the row is observed.
+func (s *Service) transitionArtist(ctx context.Context, id string, transition artistTransition) (LifecycleResult, error) {
+	var artist Artist
+	now := dbtime.Now()
+	changed, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return artistEntity.LockRoot(ctx, store, id)
+		},
+		Access: artistEntity.LockedAccess(s.spiceDB, id, policyv1.Artist.Publish),
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			var err error
+			if artist, err = store.FindArtist(ctx, id); err != nil {
+				return false, err
+			}
+			if artist.Status == transition.target {
+				return false, nil
+			}
+			var publishedAt *time.Time
+			if transition.stampsPublication {
+				publishedAt = &now
+			}
+			return true, store.SetArtistStatus(ctx, id, transition.target, publishedAt, now)
+		},
+		Audit: func(changed bool) mutation.Audit {
+			if !changed {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditArtistUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewArtistLifecycleAuditRecord(m, artist.ID, transition.previous, transition.next)
+			})
+		},
+		Outbox: func(ctx context.Context, store Store, changed bool) error {
+			if !changed {
+				return nil
+			}
+			return store.PublishContentUpdate(ctx, ContentUpdate{ArtistID: artist.ID, Kind: StateUpdate, StatePaths: transition.paths})
+		},
+	})
+	if err != nil {
+		return LifecycleResult{}, err
+	}
+	if changed {
+		transition.apply(&artist, now)
+	}
+	return LifecycleResult{
+		ID: artist.ID, Changed: changed, Status: artist.Status,
+		PublishedAt: artist.PublishedAt, UpdatedAt: artist.UpdatedAt,
+	}, nil
+}

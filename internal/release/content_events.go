@@ -1,133 +1,147 @@
 package release
 
-import (
-	"context"
-	"time"
+import "context"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
+// FieldKind classifies a changed field of a content.updated signal.
+type FieldKind uint8
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
+const (
+	FieldText FieldKind = iota + 1
+	FieldConfiguration
+	FieldState
+	FieldRelation
+	FieldMedia
 )
+
+// ChangedField is one changed field of a content.updated signal.
+type ChangedField struct {
+	Path string
+	Kind FieldKind
+}
+
+// UpdateSource names the surface a content change came from.
+type UpdateSource uint8
+
+const (
+	SourceManage UpdateSource = iota + 1
+	SourceAI
+)
+
+// ContentUpdate is one content.updated signal of a Release the Outbox step
+// schedules. The locale fields describe an AI document change.
+type ContentUpdate struct {
+	ReleaseID            string
+	Source               UpdateSource
+	Fields               []ChangedField
+	ContributorMemberIDs []string
+	DocumentStateChanged bool
+	DocumentRevision     *string
+	Locale               *string
+	LocaleExists         *bool
+	TargetRevision       *string
+}
 
 type releaseContentUpdatedFieldSpec struct {
 	path string
-	kind managev1.ContentUpdatedFieldKind
+	kind FieldKind
 }
 
 var releaseContentUpdatedFieldSpecs = map[string]releaseContentUpdatedFieldSpec{
-	"title":           {path: "title", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
-	"description":     {path: "summary", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
-	"type":            {path: "settings.type", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"releaseDate":     {path: "state.release_date", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
-	"catalogNumber":   {path: "settings.catalog_number", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"spotifyUrl":      {path: "links.spotify", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"appleMusicUrl":   {path: "links.apple_music", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"bandcampUrl":     {path: "links.bandcamp", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"youtubeMusicUrl": {path: "links.youtube_music", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"artists":         {path: "relations.artists", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"credits":         {path: "relations.credits", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"labels":          {path: "relations.labels", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"categoryIds":     {path: "relations.categories", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"genreIds":        {path: "relations.genres", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"styleIds":        {path: "relations.styles", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"formats":         {path: "relations.formats", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
-	"tracks":          {path: "document.tracks", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
-	"slug":            {path: "settings.slug", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
-	"status":          {path: "state.status", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
-	"artworkUrl":      {path: "media.artwork", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA},
+	"title":           {path: "title", kind: FieldText},
+	"description":     {path: "summary", kind: FieldText},
+	"type":            {path: "settings.type", kind: FieldConfiguration},
+	"releaseDate":     {path: "state.release_date", kind: FieldState},
+	"catalogNumber":   {path: "settings.catalog_number", kind: FieldConfiguration},
+	"spotifyUrl":      {path: "links.spotify", kind: FieldConfiguration},
+	"appleMusicUrl":   {path: "links.apple_music", kind: FieldConfiguration},
+	"bandcampUrl":     {path: "links.bandcamp", kind: FieldConfiguration},
+	"youtubeMusicUrl": {path: "links.youtube_music", kind: FieldConfiguration},
+	"artists":         {path: "relations.artists", kind: FieldRelation},
+	"credits":         {path: "relations.credits", kind: FieldRelation},
+	"labels":          {path: "relations.labels", kind: FieldRelation},
+	"categoryIds":     {path: "relations.categories", kind: FieldRelation},
+	"genreIds":        {path: "relations.genres", kind: FieldRelation},
+	"styleIds":        {path: "relations.styles", kind: FieldRelation},
+	"formats":         {path: "relations.formats", kind: FieldRelation},
+	"tracks":          {path: "document.tracks", kind: FieldText},
+	"slug":            {path: "settings.slug", kind: FieldConfiguration},
+	"status":          {path: "state.status", kind: FieldState},
+	"artworkUrl":      {path: "media.artwork", kind: FieldMedia},
 }
 
-// publishContentUpdatedEvent schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
-func buildManageReleaseContentUpdatedEvent(request *managev1.UpdateReleaseRequest) *managev1.ContentUpdatedEvent {
-	if request == nil {
+// publishContentUpdated schedules content.updated in the caller's mutation
+// transaction so the signal commits or rolls back with the data. A nil
+// update schedules nothing.
+func publishContentUpdated(ctx context.Context, store Store, update *ContentUpdate) error {
+	if update == nil {
 		return nil
 	}
-	return buildReleaseContentUpdatedEvent(request.Id, releaseUpdatedFields(request))
+	return store.PublishContentUpdate(ctx, *update)
 }
 
-func buildReleaseStateTransitionContentUpdatedEvent(releaseID string, paths []string) *managev1.ContentUpdatedEvent {
-	fields := make([]*managev1.ContentUpdatedField, 0, len(paths))
+func buildReleaseStateTransitionContentUpdatedEvent(releaseID string, paths []string) *ContentUpdate {
+	fields := make([]ChangedField, 0, len(paths))
 	for _, path := range paths {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: path, Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE})
+		fields = append(fields, ChangedField{Path: path, Kind: FieldState})
 	}
 	return newReleaseContentUpdatedEvent(releaseID, fields)
 }
 
-func buildReleaseMediaMutationContentUpdatedEvent(releaseID string, path string) *managev1.ContentUpdatedEvent {
-	return newReleaseContentUpdatedEvent(releaseID, []*managev1.ContentUpdatedField{{
-		Path: path, Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA,
-	}})
+func buildReleaseMediaMutationContentUpdatedEvent(releaseID string, path string) *ContentUpdate {
+	return newReleaseContentUpdatedEvent(releaseID, []ChangedField{{Path: path, Kind: FieldMedia}})
 }
 
-func buildReleaseRelationMutationContentUpdatedEvent(releaseID string, paths []string) *managev1.ContentUpdatedEvent {
-	fields := make([]*managev1.ContentUpdatedField, 0, len(paths))
+func buildReleaseRelationMutationContentUpdatedEvent(releaseID string, paths []string) *ContentUpdate {
+	fields := make([]ChangedField, 0, len(paths))
 	for _, path := range paths {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: path, Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION})
+		fields = append(fields, ChangedField{Path: path, Kind: FieldRelation})
 	}
 	return newReleaseContentUpdatedEvent(releaseID, fields)
 }
 
-func buildReleaseContentUpdatedEvent(releaseID string, patchMask []string) *managev1.ContentUpdatedEvent {
-	fields := make([]*managev1.ContentUpdatedField, 0, len(patchMask))
+func buildReleaseContentUpdatedEvent(releaseID string, patchMask []string) *ContentUpdate {
+	fields := make([]ChangedField, 0, len(patchMask))
 	seen := make(map[string]struct{}, len(patchMask))
 	for _, key := range patchMask {
 		spec, ok := releaseContentUpdatedFieldSpecs[key]
 		if !ok {
-			spec = releaseContentUpdatedFieldSpec{path: key, kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION}
+			spec = releaseContentUpdatedFieldSpec{path: key, kind: FieldConfiguration}
 		}
 		if _, exists := seen[spec.path]; exists {
 			continue
 		}
 		seen[spec.path] = struct{}{}
-		fields = append(fields, &managev1.ContentUpdatedField{Path: spec.path, Kind: spec.kind})
+		fields = append(fields, ChangedField{Path: spec.path, Kind: spec.kind})
 	}
 	return newReleaseContentUpdatedEvent(releaseID, fields)
 }
 
-func newReleaseContentUpdatedEvent(releaseID string, fields []*managev1.ContentUpdatedField) *managev1.ContentUpdatedEvent {
+func newReleaseContentUpdatedEvent(releaseID string, fields []ChangedField) *ContentUpdate {
 	if releaseID == "" || len(fields) == 0 {
 		return nil
 	}
-	return &managev1.ContentUpdatedEvent{
-		EntityType: managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE,
-		EntityId:   releaseID, Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-		ChangedFields: fields, TimestampMs: time.Now().UnixMilli(),
-	}
+	return &ContentUpdate{ReleaseID: releaseID, Source: SourceManage, Fields: fields}
 }
 
-func releaseUpdatedFields(request *managev1.UpdateReleaseRequest) []string {
+// releaseUpdatedFields names the settings an update supplies.
+func releaseUpdatedFields(command UpdateReleaseCommand) []string {
 	fields := make([]string, 0, 7)
-	if request.Slug != nil {
-		fields = append(fields, "slug")
-	}
-	if request.Type != nil {
-		fields = append(fields, "type")
-	}
-	if request.SpotifyUrl != nil {
-		fields = append(fields, "spotifyUrl")
-	}
-	if request.AppleMusicUrl != nil {
-		fields = append(fields, "appleMusicUrl")
-	}
-	if request.BandcampUrl != nil {
-		fields = append(fields, "bandcampUrl")
-	}
-	if request.YoutubeMusicUrl != nil {
-		fields = append(fields, "youtubeMusicUrl")
-	}
-	if request.CatalogNumber != nil {
-		fields = append(fields, "catalogNumber")
+	for _, field := range []struct {
+		name     string
+		supplied bool
+	}{
+		{"slug", command.Slug != nil},
+		{"type", command.Type != nil},
+		{"spotifyUrl", command.SpotifyURL != nil},
+		{"appleMusicUrl", command.AppleMusicURL != nil},
+		{"bandcampUrl", command.BandcampURL != nil},
+		{"youtubeMusicUrl", command.YoutubeMusicURL != nil},
+		{"catalogNumber", command.CatalogNumber != nil},
+		{"releaseDate", command.ReleaseDateChange != ReleaseDateUnchanged},
+	} {
+		if field.supplied {
+			fields = append(fields, field.name)
+		}
 	}
 	return fields
 }

@@ -2,20 +2,14 @@ package application
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -26,10 +20,10 @@ func (h *Handlers) HandleTranscodeProgress(ctx context.Context, body []byte) (re
 	}
 
 	var event managev1.TranscodeProgressEvent
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeProgress", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal transcode progress event: %w", err)
@@ -89,23 +83,17 @@ func validateTranscodeCompletionOutputs(event *managev1.TranscodeCompleteEvent) 
 
 func completeAssetDerivative(
 	ctx context.Context,
-	tx *gorm.DB,
-	lifecycle *mediaasset.Lifecycle,
+	store Store,
 	fileID string,
 	derivativeType managev1.FileDerivativeType,
 	expectedKind string,
 	result *commonv1.AssetWriteResult,
 ) error {
-	var previous struct {
-		AssetID *string `gorm:"column:asset_id"`
-	}
-	if err := tx.Table("file_derivative").
-		Select("asset_id").
-		Where("file_id = ? AND type = ?", fileID, derivativeType.String()).
-		Take(&previous).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	previousAssetID, _, err := store.DerivativeAsset(ctx, fileID, derivativeType.String())
+	if err != nil {
 		return err
 	}
-	asset, err := lifecycle.CompletePublicAsset(ctx, result)
+	asset, err := store.CompleteAsset(ctx, result)
 	if err != nil {
 		return err
 	}
@@ -116,52 +104,45 @@ func completeAssetDerivative(
 		return fmt.Errorf("asset %s kind %s does not match %s", asset.ID, asset.Kind, expectedKind)
 	}
 	assetID := asset.ID
-	if err := upsertFileDerivative(ctx, tx, model.FileDerivative{
+	if err := store.UpsertDerivative(ctx, Derivative{
 		ID:      uuid.NewString(),
 		FileID:  fileID,
-		Type:    derivativeType,
+		Type:    derivativeType.String(),
 		AssetID: &assetID,
 	}); err != nil {
 		return err
 	}
-	return retireReplacedDerivativeAsset(ctx, tx, lifecycle, previous.AssetID, assetID)
+	return retireReplacedDerivativeAsset(ctx, store, previousAssetID, assetID)
 }
 
 func retireReplacedDerivativeAsset(
 	ctx context.Context,
-	tx *gorm.DB,
-	lifecycle *mediaasset.Lifecycle,
+	store Store,
 	previousAssetID *string,
 	currentAssetID string,
 ) error {
 	if previousAssetID == nil || strings.TrimSpace(*previousAssetID) == "" || strings.TrimSpace(*previousAssetID) == currentAssetID {
 		return nil
 	}
-	var references int64
-	if err := tx.Table("file_derivative").Where("asset_id = ?", *previousAssetID).Count(&references).Error; err != nil {
+	references, err := store.AssetDerivativeCount(ctx, *previousAssetID)
+	if err != nil || references > 0 {
 		return err
 	}
-	if references > 0 {
-		return nil
-	}
-	if err := tx.Table("public_asset_binding").Where("asset_id = ?", *previousAssetID).Count(&references).Error; err != nil {
+	references, err = store.AssetBindingCount(ctx, *previousAssetID)
+	if err != nil || references > 0 {
 		return err
 	}
-	if references > 0 {
-		return nil
-	}
-	return lifecycle.RequestPublicAssetDeletion(ctx, *previousAssetID)
+	return store.RequestAssetDeletion(ctx, *previousAssetID)
 }
 
 func completeGenerationDerivative(
 	ctx context.Context,
-	tx *gorm.DB,
-	lifecycle *mediaasset.Lifecycle,
+	store Store,
 	fileID string,
 	derivativeType managev1.FileDerivativeType,
 	result *commonv1.MediaGenerationWriteResult,
 ) error {
-	generation, err := lifecycle.CompleteMediaGeneration(ctx, result)
+	generation, err := store.CompleteMediaGeneration(ctx, result)
 	if err != nil {
 		return err
 	}
@@ -169,22 +150,12 @@ func completeGenerationDerivative(
 		return fmt.Errorf("media generation %s is not allocated for source file %s", generation.ID, fileID)
 	}
 	generationID := generation.ID
-	return upsertFileDerivative(ctx, tx, model.FileDerivative{
+	return store.UpsertDerivative(ctx, Derivative{
 		ID:                uuid.NewString(),
 		FileID:            fileID,
-		Type:              derivativeType,
+		Type:              derivativeType.String(),
 		MediaGenerationID: &generationID,
 	})
-}
-
-func upsertFileDerivative(ctx context.Context, db *gorm.DB, derivative model.FileDerivative) error {
-	return db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "file_id"}, {Name: "type"}},
-		DoUpdates: clause.Assignments(structured.Fields{
-			"asset_id":            derivative.AssetID,
-			"media_generation_id": derivative.MediaGenerationID,
-		}),
-	}).Create(&derivative).Error
 }
 
 func (h *Handlers) removeFileDerivative(
@@ -192,28 +163,17 @@ func (h *Handlers) removeFileDerivative(
 	fileID string,
 	derivativeType managev1.FileDerivativeType,
 ) error {
-	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing struct {
-			AssetID *string `gorm:"column:asset_id"`
-		}
-		result := tx.Table("file_derivative").
-			Select("asset_id").
-			Where("file_id = ? AND type = ?", fileID, derivativeType.String()).
-			First(&existing)
-		if result.Error != nil {
-			if result.Error == gorm.ErrRecordNotFound {
-				return nil
-			}
-			return result.Error
-		}
-		if existing.AssetID == nil || strings.TrimSpace(*existing.AssetID) == "" {
-			return fmt.Errorf("%s derivative for file %s has no asset ID", derivativeType.String(), fileID)
-		}
-		if err := tx.Table("file_derivative").
-			Where("file_id = ? AND type = ?", fileID, derivativeType.String()).
-			Delete(nil).Error; err != nil {
+	return h.transaction(ctx, func(store Store) error {
+		assetID, found, err := store.DerivativeAsset(ctx, fileID, derivativeType.String())
+		if err != nil || !found {
 			return err
 		}
-		return mediaasset.NewLifecycle(tx, "").RequestPublicAssetDeletion(ctx, *existing.AssetID)
+		if assetID == nil || strings.TrimSpace(*assetID) == "" {
+			return fmt.Errorf("%s derivative for file %s has no asset ID", derivativeType.String(), fileID)
+		}
+		if err := store.DeleteDerivative(ctx, fileID, derivativeType.String()); err != nil {
+			return err
+		}
+		return store.RequestAssetDeletion(ctx, *assetID)
 	})
 }

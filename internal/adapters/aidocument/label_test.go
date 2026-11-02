@@ -3,6 +3,7 @@ package aidocumentadapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -170,7 +171,11 @@ func TestLabelExactApplyCompilesOnceAndMapsRevisionConflict(t *testing.T) {
 	require.Equal(t, uuid.MustParse(labelRevision), api.mutation.Batch.ExpectedRevision)
 	require.Equal(t, []uuid.UUID{uuid.MustParse(labelMemberID)}, api.mutation.Batch.ContributorMemberIDs)
 
-	api.applyErr = &labeldomain.AIDocumentRevisionConflictError{Kind: labeldomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: labelNextRevision}
+	api.applyErr = &core.RevisionConflict{
+		Kind:                    core.ConflictDocumentRevision,
+		CurrentDocumentRevision: labelNextRevision,
+		Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "55555555-5555-4555-8555-555555555555"),
+	}
 	_, err = service.Apply(t.Context(), request)
 	var conflict *core.ConflictError
 	require.ErrorAs(t, err, &conflict)
@@ -194,7 +199,11 @@ func TestLabelExactValidationDryRunsOwningMutationAndMapsConflict(t *testing.T) 
 	require.NotNil(t, api.mutation.Batch)
 	require.Equal(t, uuid.MustParse(labelRevision), api.mutation.Batch.ExpectedRevision)
 
-	api.validateErr = &labeldomain.AIDocumentRevisionConflictError{Kind: labeldomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: labelNextRevision}
+	api.validateErr = &core.RevisionConflict{
+		Kind:                    core.ConflictDocumentRevision,
+		CurrentDocumentRevision: labelNextRevision,
+		Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "55555555-5555-4555-8555-555555555555"),
+	}
 	_, err = service.Validate(t.Context(), request)
 	var conflict *core.ConflictError
 	require.ErrorAs(t, err, &conflict)

@@ -5,9 +5,15 @@ import (
 	"strings"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
 	"gorm.io/gorm"
 )
 
@@ -38,12 +44,12 @@ func (m *PublicMedia) ReadySourceAssets(
 	db *gorm.DB,
 	fileIDs []string,
 	kinds ...string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	rows, err := loadReadyPublicAssetsForSourceFiles(ctx, db, fileIDs, kinds...)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*commonv1.AssetRef, len(rows))
+	result := make(map[string]*mediaasset.Reference, len(rows))
 	for fileID, row := range rows {
 		ref, err := projectReadyPublicAsset(m.cdnDomain, row)
 		if err != nil {
@@ -58,7 +64,7 @@ func (m *PublicMedia) TrackWaveforms(
 	ctx context.Context,
 	db *gorm.DB,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	return loadTrackWaveformRefs(ctx, db, m.mediaDomain, fileIDs)
 }
 
@@ -66,7 +72,7 @@ func (m *PublicMedia) TrackSpectrograms(
 	ctx context.Context,
 	db *gorm.DB,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	return loadTrackSpectrogramRefs(ctx, db, m.mediaDomain, fileIDs)
 }
 
@@ -74,15 +80,16 @@ func (m *PublicMedia) TrackHLS(
 	ctx context.Context,
 	db *gorm.DB,
 	fileIDs []string,
-) (map[string]*commonv1.HlsMediaRef, error) {
+) (map[string]*fileref.HLSReference, error) {
 	return loadTrackHLSRefs(ctx, db, m.mediaDomain, fileIDs)
 }
 
-func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-	return buildExpiringFileRef(
+func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
+	return mediaauth.ExpiringReference(
 		m.mediaDomain, m.mediaSecret, file.ID, file.Extension, file.MimeType,
 		file.FileName, mediaauth.PurposeDownload, m.downloadTTL,
 	)
 }
 
-var _ releasepublic.MediaRuntime = (*PublicMedia)(nil)
+var _ releasepublicpostgres.Media = (*PublicMedia)(nil)
+var _ releasepublic.DownloadSigner = (*PublicMedia)(nil)

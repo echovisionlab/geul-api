@@ -81,11 +81,7 @@ func WithMutation(
 			return err
 		}
 		defer func() {
-			releaseErr := authzmutation.ReleaseSession(ctx, connection)
-			if releaseErr != nil {
-				slog.ErrorContext(context.WithoutCancel(ctx), "Operation failed", "reason", "authorization_session_unlock_failed", failurecause.Attr(releaseErr))
-			}
-			returnErr = errors.Join(returnErr, releaseErr)
+			returnErr = errors.Join(returnErr, authzmutation.ReleaseSession(ctx, connection))
 		}()
 		if err := connection.Exec(
 			"SELECT pg_advisory_lock(hashtextextended(?, ?))",
@@ -104,12 +100,15 @@ func WithMutation(
 				identityStateFenceSeed,
 			).Scan(&released).Error
 			if unlockErr != nil {
-				slog.ErrorContext(unlockCtx, "Operation failed", "reason", "identity_state_unlock_failed", failurecause.Attr(unlockErr), "identity_id", identityID)
-				returnErr = errors.Join(returnErr, fmt.Errorf("release user identity state fence: %w", unlockErr))
+				returnErr = errors.Join(returnErr, failurecause.WithAttrs(
+					fmt.Errorf("release user identity state fence: %w", unlockErr),
+					slog.String("identity_id", identityID),
+				))
 			} else if !released {
-				unlockErr := fmt.Errorf("release user identity state fence: lock was not held")
-				slog.ErrorContext(unlockCtx, "Identity state fence release failed", failurecause.Attr(unlockErr), "identity_id", identityID)
-				returnErr = errors.Join(returnErr, unlockErr)
+				returnErr = errors.Join(returnErr, failurecause.WithAttrs(
+					fmt.Errorf("release user identity state fence: lock was not held"),
+					slog.String("identity_id", identityID),
+				))
 			}
 		}()
 		mutationCtx, cancel := context.WithTimeout(ctx, MutationTimeout)
@@ -134,7 +133,7 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	}
 	result := tx.WithContext(ctx).
 		Table("member").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id, onboarded, deleted_at IS NULL AS active").
 		Where("id = ? AND account_identity_id = ?", principal.MemberID.String(), principal.IdentityID.String()).
 		Take(&member)
@@ -151,7 +150,7 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	}
 	result = tx.WithContext(ctx).
 		Table("kratos.identities").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id, state, LOWER(COALESCE(metadata_admin ->> 'banned', 'false')) IN ('true', '1') AS banned").
 		Where("id = ? AND external_id = ?", principal.IdentityID.String(), principal.MemberID.String()).
 		Take(&identity)
@@ -164,13 +163,41 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	return member.Active && member.Onboarded && identity.State == auth.KratosStateActive && !identity.Banned, nil
 }
 
-// RequireFreshCan locks the authenticated principal lifecycle and checks one
-// generated domain action with fully-consistent authorization before a domain
-// mutation. The caller owns the action; this lifecycle fence does not replace
-// it with a generic platform role check.
+// Fence is the Identity lifecycle fence a use case takes: Lock,
+// LockActivePrincipal and WithMutation. PostgresFence is the production
+// fence; identitystatetest.Fence stands in for it in unit tests.
+type Fence interface {
+	Lock(tx *gorm.DB, identityID string) error
+	LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserInfo) (bool, error)
+	WithMutation(ctx context.Context, db *gorm.DB, identityID string, work func(context.Context, *gorm.DB) error) error
+}
+
+// PostgresFence is the production Fence: this package's functions, which
+// take PostgreSQL advisory locks and share-lock the Member and its Kratos
+// Identity.
+type PostgresFence struct{}
+
+// Lock calls Lock.
+func (PostgresFence) Lock(tx *gorm.DB, identityID string) error { return Lock(tx, identityID) }
+
+// LockActivePrincipal calls LockActivePrincipal.
+func (PostgresFence) LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserInfo) (bool, error) {
+	return LockActivePrincipal(ctx, tx, principal)
+}
+
+// WithMutation calls WithMutation.
+func (PostgresFence) WithMutation(ctx context.Context, db *gorm.DB, identityID string, work func(context.Context, *gorm.DB) error) error {
+	return WithMutation(ctx, db, identityID, work)
+}
+
+// RequireFreshCan locks the authenticated principal lifecycle through fence
+// and checks one generated domain action with fully-consistent authorization
+// before a domain mutation. The caller owns the action; this lifecycle fence
+// does not replace it with a generic platform role check.
 func RequireFreshCan(
 	ctx context.Context,
 	tx *gorm.DB,
+	fence Fence,
 	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 ) error {
@@ -178,29 +205,40 @@ func RequireFreshCan(
 	if principal == nil || !principal.Authenticated {
 		return errs.AuthenticationRequired()
 	}
-	active, err := LockActivePrincipal(ctx, tx, principal)
+	active, err := fence.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireFreshCan", failurecause.Attr(err))
-		return errs.Internal(err)
+		return errs.Internal(fmt.Errorf("lock active principal: %w", err))
 	}
 	if !active {
 		if can.Valid() {
-			return errs.NoPermission(can.Action().Name(), can.Resource().Type())
+			return inactivePrincipalError{errs.NoPermission(can.Action().Name(), can.Resource().Type())}
 		}
-		return errs.NoPermission("access", "resource")
+		return inactivePrincipalError{errs.NoPermission("access", "resource")}
 	}
 	return authz.RequireCan(ctx, spiceDB, can)
 }
+
+// ErrInactivePrincipal marks RequireFreshCan's denial of a principal that is
+// no longer active, for a domain that answers that principal as if its target
+// did not exist instead of denying the action. The denial itself is unchanged.
+var ErrInactivePrincipal = errors.New("principal is not active")
+
+type inactivePrincipalError struct{ denial *connect.Error }
+
+func (err inactivePrincipalError) Error() string    { return err.denial.Error() }
+func (err inactivePrincipalError) Unwrap() error    { return err.denial }
+func (inactivePrincipalError) Is(target error) bool { return target == ErrInactivePrincipal }
 
 // RequireFreshAdminCan preserves the AdminRequired denial contract for an
 // admin-only domain mutation while using the common exact-Can lifecycle seam.
 func RequireFreshAdminCan(
 	ctx context.Context,
 	tx *gorm.DB,
+	fence Fence,
 	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 ) error {
-	err := RequireFreshCan(ctx, tx, spiceDB, can)
+	err := RequireFreshCan(ctx, tx, fence, spiceDB, can)
 	if connect.CodeOf(err) == connect.CodePermissionDenied {
 		return errs.AdminRequired()
 	}

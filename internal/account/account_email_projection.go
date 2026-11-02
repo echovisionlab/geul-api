@@ -6,8 +6,25 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
+
+// EmailSourceType is what proves an email candidate; the values are the
+// stored source types.
+type EmailSourceType string
+
+// The email source types.
+const (
+	EmailSourceIdentityCurrent EmailSourceType = "identity_current"
+	EmailSourceEmailCode       EmailSourceType = "email_code"
+	EmailSourceOIDCProvider    EmailSourceType = "oidc_provider"
+)
+
+// EmailSource is one proof of an email candidate.
+type EmailSource struct {
+	Type            EmailSourceType
+	Provider        *string
+	ProviderSubject *string
+}
 
 type accountEmailProjectionDraft struct {
 	displayEmail     string
@@ -15,7 +32,7 @@ type accountEmailProjectionDraft struct {
 	identityVerified bool
 	emailCodeUsable  bool
 	oidcVerified     bool
-	providerSources  []model.AccountEmailSource
+	providerSources  []EmailSource
 }
 
 type AccountEmailProjection struct {
@@ -25,7 +42,7 @@ type AccountEmailProjection struct {
 	IdentityVerified  bool
 	EffectiveTrusted  bool
 	UsableForDelivery bool
-	Sources           []model.AccountEmailSource
+	Sources           []EmailSource
 }
 
 func buildAccountEmailProjectionDrafts(
@@ -54,8 +71,8 @@ func buildAccountEmailProjectionDrafts(
 	if currentEmail != "" {
 		add(currentEmail, func(draft *accountEmailProjectionDraft) {
 			draft.identityVerified = identity.CurrentEmailVerified()
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType: model.AccountEmailSourceTypeIdentityCurrent,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type: EmailSourceIdentityCurrent,
 			})
 		})
 	}
@@ -65,23 +82,23 @@ func buildAccountEmailProjectionDrafts(
 		}
 		add(address.Value, func(draft *accountEmailProjectionDraft) {
 			draft.identityVerified = draft.identityVerified || address.Verified
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType: model.AccountEmailSourceTypeIdentityCurrent,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type: EmailSourceIdentityCurrent,
 			})
 		})
 	}
 	if pendingEmail := identity.PendingEmail(); pendingEmail != "" {
 		add(pendingEmail, func(draft *accountEmailProjectionDraft) {
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType: model.AccountEmailSourceTypeIdentityCurrent,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type: EmailSourceIdentityCurrent,
 			})
 		})
 	}
 	if credential, ok := identity.Credentials["code"]; ok && auth.CodeCredentialHasAddress(credential, currentEmail) {
 		add(currentEmail, func(draft *accountEmailProjectionDraft) {
 			draft.emailCodeUsable = true
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType: model.AccountEmailSourceTypeEmailCode,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type: EmailSourceEmailCode,
 			})
 		})
 	}
@@ -94,8 +111,8 @@ func buildAccountEmailProjectionDrafts(
 		subject := strings.TrimSpace(credential.Subject)
 		add(email, func(draft *accountEmailProjectionDraft) {
 			draft.oidcVerified = true
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType:      model.AccountEmailSourceTypeOIDCProvider,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type:            EmailSourceOIDCProvider,
 				Provider:        optionalAccountEmailString(provider),
 				ProviderSubject: optionalAccountEmailString(subject),
 			})
@@ -106,8 +123,8 @@ func buildAccountEmailProjectionDrafts(
 		subject := strings.TrimSpace(candidate.ProviderSubject)
 		add(candidate.Email, func(draft *accountEmailProjectionDraft) {
 			draft.oidcVerified = draft.oidcVerified || candidate.Verified
-			draft.providerSources = append(draft.providerSources, model.AccountEmailSource{
-				SourceType:      model.AccountEmailSourceTypeOIDCProvider,
+			draft.providerSources = append(draft.providerSources, EmailSource{
+				Type:            EmailSourceOIDCProvider,
 				Provider:        optionalAccountEmailString(provider),
 				ProviderSubject: optionalAccountEmailString(subject),
 			})
@@ -169,13 +186,13 @@ func FindAccountEmailProjection(rows []AccountEmailProjection, email string) *Ac
 	return findProjectionRow(rows, email)
 }
 
-func dedupeAccountEmailSources(sources []model.AccountEmailSource) []model.AccountEmailSource {
+func dedupeAccountEmailSources(sources []EmailSource) []EmailSource {
 	seen := map[string]bool{}
-	result := make([]model.AccountEmailSource, 0, len(sources))
+	result := make([]EmailSource, 0, len(sources))
 	for _, source := range sources {
 		provider := strings.ToLower(strings.TrimSpace(ptrStringValue(source.Provider)))
 		subject := strings.TrimSpace(ptrStringValue(source.ProviderSubject))
-		key := string(source.SourceType) + ":" + provider + ":" + subject
+		key := string(source.Type) + ":" + provider + ":" + subject
 		if seen[key] {
 			continue
 		}
@@ -185,8 +202,8 @@ func dedupeAccountEmailSources(sources []model.AccountEmailSource) []model.Accou
 		result = append(result, source)
 	}
 	sort.SliceStable(result, func(i, j int) bool {
-		if result[i].SourceType != result[j].SourceType {
-			return result[i].SourceType < result[j].SourceType
+		if result[i].Type != result[j].Type {
+			return result[i].Type < result[j].Type
 		}
 		if ptrStringValue(result[i].Provider) != ptrStringValue(result[j].Provider) {
 			return ptrStringValue(result[i].Provider) < ptrStringValue(result[j].Provider)

@@ -2,39 +2,91 @@ package public
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+	"github.com/echovisionlab/geul-api/internal/form"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// FormService implements the public FormService
-func (s *FormService) validateShareToken(
+// AccessReason is why a visitor may or may not open a Form.
+type AccessReason uint8
+
+const (
+	ReasonUnspecified AccessReason = iota
+	ReasonAllowed
+	ReasonFormNotFound
+	ReasonFormNotPublished
+	ReasonNotPublic
+	ReasonAuthRequired
+	ReasonRoleNotAllowed
+	ReasonPasswordRequired
+	ReasonNotYetOpen
+	ReasonClosed
+	ReasonMaxSubmissionsReached
+	ReasonAlreadySubmitted
+)
+
+var accessReasonNames = [...]string{
+	ReasonUnspecified:           "FORM_ACCESS_REASON_UNSPECIFIED",
+	ReasonAllowed:               "FORM_ACCESS_REASON_ALLOWED",
+	ReasonFormNotFound:          "FORM_ACCESS_REASON_FORM_NOT_FOUND",
+	ReasonFormNotPublished:      "FORM_ACCESS_REASON_FORM_NOT_PUBLISHED",
+	ReasonNotPublic:             "FORM_ACCESS_REASON_NOT_PUBLIC",
+	ReasonAuthRequired:          "FORM_ACCESS_REASON_AUTH_REQUIRED",
+	ReasonRoleNotAllowed:        "FORM_ACCESS_REASON_ROLE_NOT_ALLOWED",
+	ReasonPasswordRequired:      "FORM_ACCESS_REASON_PASSWORD_REQUIRED",
+	ReasonNotYetOpen:            "FORM_ACCESS_REASON_NOT_YET_OPEN",
+	ReasonClosed:                "FORM_ACCESS_REASON_CLOSED",
+	ReasonMaxSubmissionsReached: "FORM_ACCESS_REASON_MAX_SUBMISSIONS_REACHED",
+	ReasonAlreadySubmitted:      "FORM_ACCESS_REASON_ALREADY_SUBMITTED",
+}
+
+// String names the reason as the API does.
+func (r AccessReason) String() string {
+	if int(r) < len(accessReasonNames) {
+		return accessReasonNames[r]
+	}
+	return fmt.Sprintf("AccessReason(%d)", uint8(r))
+}
+
+// AccessContext is where a Form is opened: its own URL or an embed.
+type AccessContext uint8
+
+const (
+	ContextURL AccessContext = iota + 1
+	ContextEmbed
+)
+
+// validateShareToken validates that the share token allows access to the form
+// for one of the given share link entity types.
+func (s *Service) validateShareToken(
 	ctx context.Context,
-	form *model.Form,
+	found *form.Form,
 	shareToken *string,
 	sharePassword *string,
-	allowedTypes ...managev1.ShareLinkEntityType,
+	allowedTypes ...string,
 ) formShareTokenState {
 	if shareToken == nil || *shareToken == "" {
 		return formShareTokenState{}
 	}
 
-	var shareLink model.ShareLink
-	if err := s.db.WithContext(ctx).First(&shareLink, "token = ?", *shareToken).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
+	var shareLink ShareLink
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		shareLink, err = store.ShareLink(ctx, *shareToken)
+		return err
+	})
+	if err != nil {
+		if !errors.Is(err, ErrShareLinkNotFound) {
+			slog.ErrorContext(ctx, "Share link lookup failed; treating the share token as invalid", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
 		}
 		return formShareTokenState{}
 	}
@@ -49,7 +101,7 @@ func (s *FormService) validateShareToken(
 		}
 		matched, err := s.password.Verify(*sharePassword, *shareLink.PasswordHash)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_share_password", "outcome", "failed", failurecause.Attr(err, *sharePassword, *shareLink.PasswordHash))
+			slog.ErrorContext(ctx, "Share link password hash verification failed; treating the share token as invalid", "domain", "form", "event", "form.operation_failed", "operation", "verify_share_password", "outcome", "failed", failurecause.Attr(err, *sharePassword, *shareLink.PasswordHash))
 		}
 		if err != nil || !matched {
 			return formShareTokenState{}
@@ -57,46 +109,67 @@ func (s *FormService) validateShareToken(
 	}
 
 	// Check entity ID
-	if shareLink.EntityID != form.ID {
+	if shareLink.EntityID != found.ID {
 		return formShareTokenState{}
 	}
 
-	shareTypeValue, ok := managev1.ShareLinkEntityType_value[shareLink.EntityType]
-	if !ok {
-		return formShareTokenState{}
-	}
-
-	shareType := managev1.ShareLinkEntityType(shareTypeValue)
-	allowed := slices.Contains(allowedTypes, shareType)
-	if !allowed {
+	if !slices.Contains(allowedTypes, shareLink.EntityType) {
 		return formShareTokenState{}
 	}
 
 	return formShareTokenState{valid: true}
 }
 
-func (s *FormService) findFormBySlugOrID(ctx context.Context, slugOrID string) (*model.Form, error) {
-	var form model.Form
-	var err error
-
-	if formdomain.IsValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).First(&form, "id = ?", slugOrID).Error
-	} else {
-		err = s.db.WithContext(ctx).First(&form, "slug = ?", slugOrID).Error
-	}
-
+func (s *Service) findFormBySlugOrID(ctx context.Context, slugOrID string) (form.Form, error) {
+	var found form.Form
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		found, err = store.FindForm(ctx, form.LocatorOf(slugOrID), slugOrID)
+		return err
+	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("form not found")
+		if errors.Is(err, form.ErrFormNotFound) {
+			return form.Form{}, errFormNotFound()
 		}
-		return nil, errs.Internal(err)
+		return form.Form{}, err
 	}
+	return found, nil
+}
 
-	return &form, nil
+// submissionReads are the submission reads of an access check: the Store of
+// a submission's transaction, or reads of their own outside one.
+type submissionReads interface {
+	CountSubmissions(ctx context.Context, formID string) (int64, error)
+	HasMemberSubmission(ctx context.Context, formID, memberID string) (bool, error)
+}
+
+// reads runs each submission read in a read snapshot of its own.
+func (s *Service) reads() submissionReads { return ownReads{s} }
+
+type ownReads struct{ service *Service }
+
+func (r ownReads) CountSubmissions(ctx context.Context, formID string) (int64, error) {
+	var count int64
+	err := r.service.read(ctx, func(store Store) error {
+		var err error
+		count, err = store.CountSubmissions(ctx, formID)
+		return err
+	})
+	return count, err
+}
+
+func (r ownReads) HasMemberSubmission(ctx context.Context, formID, memberID string) (bool, error) {
+	var exists bool
+	err := r.service.read(ctx, func(store Store) error {
+		var err error
+		exists, err = store.HasMemberSubmission(ctx, formID, memberID)
+		return err
+	})
+	return exists, err
 }
 
 type formAccessOptions struct {
-	context                  openv1.FormAccessContext
+	context                  AccessContext
 	hasValidPreviewToken     bool
 	bypassAuth               bool
 	bypassRoles              bool
@@ -108,8 +181,8 @@ type formAccessOptions struct {
 }
 
 // enforceFormAccess applies the unified public form policy across Get/Submit/VerifyPassword.
-func (s *FormService) enforceFormAccess(ctx context.Context, form *model.Form, opts formAccessOptions) error {
-	reason, err := s.evaluateFormAccess(ctx, form, opts)
+func (s *Service) enforceFormAccess(ctx context.Context, reads submissionReads, found *form.Form, opts formAccessOptions) error {
+	reason, err := s.evaluateFormAccess(ctx, reads, found, opts)
 	if err != nil {
 		return err
 	}
@@ -117,180 +190,159 @@ func (s *FormService) enforceFormAccess(ctx context.Context, form *model.Form, o
 	return mapFormAccessReasonToError(reason, opts.draftAsNotFound)
 }
 
-func (s *FormService) evaluateFormAccess(
+func (s *Service) evaluateFormAccess(
 	ctx context.Context,
-	form *model.Form,
+	reads submissionReads,
+	found *form.Form,
 	opts formAccessOptions,
-) (openv1.FormAccessReason, error) {
+) (AccessReason, error) {
 	user := auth.GetUser(ctx)
 
-	isPublished := form.Status == model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())
+	isPublished := found.Status == form.StatusPublished
 	if !isPublished && !opts.hasValidPreviewToken {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED, nil
+		return ReasonFormNotPublished, nil
 	}
 
 	// Public URL access is allowed only when explicitly enabled,
 	// unless this is preview-token access.
-	if normalizeFormAccessContext(opts.context) == openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL &&
+	if opts.context != ContextEmbed &&
 		!opts.hasValidPreviewToken &&
-		!form.IsPublic {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_PUBLIC, nil
+		!found.IsPublic {
+		return ReasonNotPublic, nil
 	}
 
-	requireAuthActive := form.RequireAuth != nil && *form.RequireAuth && !opts.bypassAuth
-	allowedRolesActive := len(form.AllowedRoles) > 0 && !opts.bypassRoles
+	requireAuthActive := found.RequireAuth != nil && *found.RequireAuth && !opts.bypassAuth
+	allowedRolesActive := len(found.AllowedRoles) > 0 && !opts.bypassRoles
 
 	if requireAuthActive && (user == nil || !user.Authenticated || user.Banned) {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_AUTH_REQUIRED, nil
+		return ReasonAuthRequired, nil
 	}
-	if reason, handled, err := s.evaluateDuplicateFormSubmission(
-		ctx, form, opts, user, requireAuthActive || allowedRolesActive,
+	if reason, handled, err := evaluateDuplicateFormSubmission(
+		ctx, reads, found, opts, user, requireAuthActive || allowedRolesActive,
 	); handled || err != nil {
 		return reason, err
 	}
 	if reason, err := s.evaluateFormRoleAccess(
-		ctx, user, form.AllowedRoles, allowedRolesActive,
-	); err != nil || reason != openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED {
+		ctx, user, found.AllowedRoles, allowedRolesActive,
+	); err != nil || reason != ReasonAllowed {
 		if err != nil {
-			return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, errs.Internal(err)
+			return ReasonUnspecified, err
 		}
 		return reason, nil
 	}
 	if reason := evaluateFormScheduleAccess(
-		form, opts.hasValidPreviewToken, time.Now(),
-	); reason != openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED {
+		found, opts.hasValidPreviewToken, time.Now(),
+	); reason != ReasonAllowed {
 		return reason, nil
 	}
-	if reason, err := s.evaluateFormSubmissionLimit(
-		ctx, form, opts.checkSubmissionLimit,
-	); err != nil || reason != openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED {
+	if reason, err := evaluateFormSubmissionLimit(
+		ctx, reads, found, opts.checkSubmissionLimit,
+	); err != nil || reason != ReasonAllowed {
 		return reason, err
 	}
-	if formPasswordRequired(s, form, opts) {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_PASSWORD_REQUIRED, nil
+	if formPasswordRequired(ctx, s, found, opts) {
+		return ReasonPasswordRequired, nil
 	}
 
-	return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
+	return ReasonAllowed, nil
 }
 
-func (s *FormService) evaluateDuplicateFormSubmission(
+func evaluateDuplicateFormSubmission(
 	ctx context.Context,
-	form *model.Form,
+	reads submissionReads,
+	found *form.Form,
 	opts formAccessOptions,
 	user *auth.UserInfo,
 	requiresAuthenticatedIdentity bool,
-) (openv1.FormAccessReason, bool, error) {
+) (AccessReason, bool, error) {
 	shouldCheck := opts.checkDuplicateSubmission && requiresAuthenticatedIdentity && !opts.hasValidPreviewToken &&
-		user != nil && form.AllowDuplicateSubmission != nil && !*form.AllowDuplicateSubmission
+		user != nil && found.AllowDuplicateSubmission != nil && !*found.AllowDuplicateSubmission
 	if !shouldCheck {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, false, nil
+		return ReasonAllowed, false, nil
 	}
-	exists, err := s.hasMemberSubmission(ctx, form.ID, user.MemberID.String())
+	exists, err := reads.HasMemberSubmission(ctx, found.ID, user.MemberID.String())
 	if err != nil {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, true, errs.Internal(err)
+		return ReasonUnspecified, true, err
 	}
 	if exists {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_ALREADY_SUBMITTED, true, nil
+		return ReasonAlreadySubmitted, true, nil
 	}
-	return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, false, nil
+	return ReasonAllowed, false, nil
 }
 
-func (s *FormService) evaluateFormRoleAccess(
+func (s *Service) evaluateFormRoleAccess(
 	ctx context.Context,
 	user *auth.UserInfo,
 	allowedRoles []string,
 	active bool,
-) (openv1.FormAccessReason, error) {
+) (AccessReason, error) {
 	if !active {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
+		return ReasonAllowed, nil
 	}
 	if user == nil {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_AUTH_REQUIRED, nil
+		return ReasonAuthRequired, nil
 	}
 	if !user.Authenticated || user.Banned || strings.TrimSpace(user.IdentityID.String()) == "" {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_AUTH_REQUIRED, nil
+		return ReasonAuthRequired, nil
 	}
 	for _, role := range allowedRoles {
 		can, ok, err := formRoleCan(role)
 		if err != nil {
-			return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, err
+			return ReasonUnspecified, err
 		}
 		if !ok {
 			continue
 		}
 		decision, err := auth.AuthorizationDecision(ctx, can)
 		if err != nil {
-			return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, err
+			return ReasonUnspecified, err
 		}
 		allowed, err := s.spiceDB.Can(ctx, decision)
 		if err != nil {
-			return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, err
+			return ReasonUnspecified, err
 		}
 		if allowed {
-			return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
+			return ReasonAllowed, nil
 		}
 	}
-	return openv1.FormAccessReason_FORM_ACCESS_REASON_ROLE_NOT_ALLOWED, nil
+	return ReasonRoleNotAllowed, nil
 }
 
-func evaluateFormScheduleAccess(form *model.Form, preview bool, now time.Time) openv1.FormAccessReason {
+func evaluateFormScheduleAccess(found *form.Form, preview bool, now time.Time) AccessReason {
 	if preview {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED
+		return ReasonAllowed
 	}
-	if form.OpensAt != nil && now.Before(*form.OpensAt) {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_YET_OPEN
+	if found.OpensAt != nil && now.Before(*found.OpensAt) {
+		return ReasonNotYetOpen
 	}
-	if form.ClosesAt != nil && now.After(*form.ClosesAt) {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_CLOSED
+	if found.ClosesAt != nil && now.After(*found.ClosesAt) {
+		return ReasonClosed
 	}
-	return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED
+	return ReasonAllowed
 }
 
-func (s *FormService) evaluateFormSubmissionLimit(
+func evaluateFormSubmissionLimit(
 	ctx context.Context,
-	form *model.Form,
+	reads submissionReads,
+	found *form.Form,
 	check bool,
-) (openv1.FormAccessReason, error) {
-	if !check || form.MaxSubmissions == nil {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
+) (AccessReason, error) {
+	if !check || found.MaxSubmissions == nil {
+		return ReasonAllowed, nil
 	}
-	count, err := s.countSubmissions(ctx, form.ID)
+	count, err := reads.CountSubmissions(ctx, found.ID)
 	if err != nil {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_UNSPECIFIED, errs.Internal(err)
+		return ReasonUnspecified, err
 	}
-	if count >= int64(*form.MaxSubmissions) {
-		return openv1.FormAccessReason_FORM_ACCESS_REASON_MAX_SUBMISSIONS_REACHED, nil
+	if count >= int64(*found.MaxSubmissions) {
+		return ReasonMaxSubmissionsReached, nil
 	}
-	return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
+	return ReasonAllowed, nil
 }
 
-func formPasswordRequired(service *FormService, form *model.Form, opts formAccessOptions) bool {
-	return opts.enforcePassword && form.AccessPassword != nil && *form.AccessPassword != "" &&
-		(opts.password == nil || *opts.password == "" || !service.verifyFormPassword(*opts.password, *form.AccessPassword))
-}
-
-func (s *FormService) countSubmissions(ctx context.Context, formID string) (int64, error) {
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.FormSubmission{}).
-		Where("form_id = ?", formID).
-		Count(&count).Error; err != nil {
-		return 0, err
-	}
-
-	return count, nil
-}
-
-func (s *FormService) hasMemberSubmission(ctx context.Context, formID, memberID string) (bool, error) {
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.FormSubmission{}).
-		Where("form_id = ? AND member_id = ?", formID, memberID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
+func formPasswordRequired(ctx context.Context, service *Service, found *form.Form, opts formAccessOptions) bool {
+	return opts.enforcePassword && found.HasPassword() &&
+		(opts.password == nil || *opts.password == "" || !service.verifyFormPassword(ctx, *opts.password, *found.AccessPassword))
 }
 
 func formRoleCan(role string) (policyv1.Can, bool, error) {
@@ -309,56 +361,41 @@ func formRoleCan(role string) (policyv1.Can, bool, error) {
 	}
 }
 
-func mapFormAccessReasonToError(reason openv1.FormAccessReason, draftAsNotFound bool) error {
+func mapFormAccessReasonToError(reason AccessReason, draftAsNotFound bool) error {
 	switch reason {
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED:
+	case ReasonAllowed:
 		return nil
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_FOUND:
-		return errs.NotFoundMsg("form not found")
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED:
+	case ReasonFormNotFound:
+		return errFormNotFound()
+	case ReasonFormNotPublished:
 		if draftAsNotFound {
-			return errs.NotFoundMsg("form not found")
+			return errFormNotFound()
 		}
-		return errs.FailedPrecondition(errs.MsgFormNotAccepting)
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_PUBLIC:
-		return errs.NotFoundMsg("form not found")
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_AUTH_REQUIRED:
-		return errs.AuthenticationRequired()
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_ROLE_NOT_ALLOWED:
-		return errs.PermissionDenied("you do not have permission to access this form")
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_PASSWORD_REQUIRED:
-		return errs.PermissionDenied("invalid form password")
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_YET_OPEN:
-		return errs.FailedPrecondition(errs.MsgFormNotOpenYet)
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_CLOSED:
-		return errs.FailedPrecondition(errs.MsgFormClosed)
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_MAX_SUBMISSIONS_REACHED:
-		return errs.FailedPrecondition("submission limit reached")
-	case openv1.FormAccessReason_FORM_ACCESS_REASON_ALREADY_SUBMITTED:
-		return errs.FailedPrecondition(errs.MsgFormAlreadySubmitted)
+		return domainerr.Precondition("form is not accepting submissions")
+	case ReasonNotPublic:
+		return errFormNotFound()
+	case ReasonAuthRequired:
+		return domainerr.AuthenticationRequired()
+	case ReasonRoleNotAllowed:
+		return domainerr.Denied("you do not have permission to access this form")
+	case ReasonPasswordRequired:
+		return domainerr.Denied("invalid form password")
+	case ReasonNotYetOpen:
+		return domainerr.Precondition("form is not open yet")
+	case ReasonClosed:
+		return domainerr.Precondition("form is closed")
+	case ReasonMaxSubmissionsReached:
+		return domainerr.Precondition("submission limit reached")
+	case ReasonAlreadySubmitted:
+		return domainerr.Precondition(msgFormAlreadySubmitted)
 	default:
-		return errs.InternalMsg("failed to evaluate form access")
+		return fmt.Errorf("failed to evaluate form access: reason %v", reason)
 	}
 }
 
-func normalizeFormAccessContext(context openv1.FormAccessContext) openv1.FormAccessContext {
-	switch context {
-	case openv1.FormAccessContext_FORM_ACCESS_CONTEXT_EMBED:
-		return openv1.FormAccessContext_FORM_ACCESS_CONTEXT_EMBED
-	case openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL:
-		return openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL
-	default:
-		return openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL
-	}
-}
+const msgFormAlreadySubmitted = "you have already submitted this form"
 
-func normalizeFormAccessTarget(target openv1.FormAccessTarget) openv1.FormAccessTarget {
-	switch target {
-	case openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD:
-		return openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD
-	case openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM:
-		return openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM
-	default:
-		return openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM
-	}
+// errFormNotFound answers every Form a visitor may not see.
+func errFormNotFound() error {
+	return domainerr.New(domainerr.NotFound, "", "form not found")
 }

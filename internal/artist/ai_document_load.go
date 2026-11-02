@@ -2,38 +2,20 @@ package artist
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"log/slog"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // LoadAIDocumentState preserves published visibility while keeping non-public
 // reads behind Artist's current SpiceDB authority fence.
-func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentState{}, errs.Internal(errors.New("artist AI document dependencies are not configured"))
-	}
+func (s *Service) LoadAIDocumentState(ctx context.Context, artistID, locale string) (AIDocumentState, error) {
 	id, err := canonicalArtistUUID(artistID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "LoadAIDocumentState", failurecause.Attr(err))
-		return AIDocumentState{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
+		return AIDocumentState{}, domainerr.InvalidField("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)
 	if err != nil {
@@ -41,68 +23,53 @@ func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistI
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.Banned || principal.IdentityID == "" || principal.MemberID == "" {
-		return AIDocumentState{}, errs.AuthenticationRequired()
+		return AIDocumentState{}, errAuthenticationRequired
 	}
 
 	var state AIDocumentState
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadArtistAIDocumentRoot(ctx, tx, id.String(), "KEY SHARE")
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadArtistAIDocumentRoot(ctx, store, id.String(), KeyShareLock)
 		if err != nil {
 			return err
 		}
 		published, valid := artistAIDocumentLifecycle(root.Status)
 		if !valid {
-			return errs.InternalMsg("Artist has an unsupported lifecycle status")
+			return errors.New("Artist has an unsupported lifecycle status")
 		}
 		if !published {
-			if err := requireArtistPermission(ctx, s.spiceDB, id.String(), policyv1.Artist.View); err != nil {
+			if err := artistEntity.RequirePermission(ctx, s.spiceDB, id.String(), policyv1.Artist.View); err != nil {
 				return err
 			}
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return state, err
 }
 
-type artistAIDocumentRoot struct {
-	ID         string     `gorm:"column:id"`
-	Status     string     `gorm:"column:status"`
-	DocumentID *uuid.UUID `gorm:"column:content_document_id"`
-}
-
-func loadArtistAIDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	artistID string,
-	lock string,
-) (artistAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).
-		Table("artist").
-		Select("id::text AS id", "status", "content_document_id").
-		Where("id = ?::uuid", artistID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root artistAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return artistAIDocumentRoot{}, errs.NotFound("artist", artistID)
+// loadArtistAIDocumentRoot reads the Artist root with lock; a missing
+// Artist answers not found and one without a document fails its
+// precondition.
+func loadArtistAIDocumentRoot(ctx context.Context, store Store, artistID string, lock RowLock) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, artistID, lock)
+	if err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
+			return DocumentRoot{}, domainerr.ResourceNotFound("artist", artistID)
 		}
-		return artistAIDocumentRoot{}, errs.Internal(err)
+		return DocumentRoot{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return artistAIDocumentRoot{}, errs.FailedPrecondition("Artist content document is not initialized")
+		return DocumentRoot{}, domainerr.Precondition("Artist content document is not initialized")
 	}
 	return root, nil
 }
 
-func (s *InternalArtistService) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root artistAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
@@ -110,9 +77,7 @@ func (s *InternalArtistService) loadAIDocumentStateAfterAuthorization(
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-	localeState, err := loadArtistTargetLocaleState(
-		ctx, tx, s.contentBlocks, root.ID, *root.DocumentID, locale, false,
-	)
+	localeState, err := loadArtistTargetLocaleState(ctx, store, root.ID, *root.DocumentID, locale, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -125,7 +90,7 @@ func (s *InternalArtistService) loadAIDocumentStateAfterAuthorization(
 		targetRevision = &localeState.TargetRevision
 	}
 	return AIDocumentState{
-		ArtistID: root.ID, Status: root.Status, DocumentID: *root.DocumentID,
+		ArtistID: root.ID, Status: string(root.Status), DocumentID: *root.DocumentID,
 		Revision: localeState.Snapshot.Document.Revision.String(), TargetRevision: targetRevision,
 		SourceLocale: localeState.SourceLocale,
 		Locale:       locale, LocaleExists: localeState.TargetMetadata != nil, Document: document,
@@ -133,11 +98,11 @@ func (s *InternalArtistService) loadAIDocumentStateAfterAuthorization(
 	}, nil
 }
 
-func artistAIDocumentLifecycle(status string) (published, valid bool) {
+func artistAIDocumentLifecycle(status Status) (published, valid bool) {
 	switch status {
-	case managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String():
+	case StatusDraft:
 		return false, true
-	case managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String():
+	case StatusPublished:
 		return true, true
 	default:
 		return false, false

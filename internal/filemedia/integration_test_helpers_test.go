@@ -9,17 +9,26 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
+
+	"github.com/echovisionlab/geul-api/internal/mq"
+
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediamembers"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -32,6 +41,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func testFileDB(s *Service) *gorm.DB { return s.units.(nativeFileUnits).db }
+
 type postSeriesAuditRow struct {
 	Action        string
 	TargetType    string `gorm:"column:target_type"`
@@ -41,16 +52,22 @@ type postSeriesAuditRow struct {
 	Attributes    []byte `gorm:"column:attributes"`
 }
 
+type directTrackFileManager struct{ *Service }
+
+func (m directTrackFileManager) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, id string) error {
+	return m.RequireNoTrackUploadSessions(ctx, filemediapostgres.Bind(tx, filemediapostgres.Ports{}, nil), id)
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start File/Media integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close File/Media integration suite: %v\n", err)
 		code = 1
@@ -58,16 +75,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
+	stack := orytest.PrepareOryIntegrationConcurrentTest(t)
 	require.NotNil(t, stack)
 	return openConcurrentServiceIntegrationDB(t, stack)
 }
@@ -77,11 +87,11 @@ func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 // whose remote REPEATABLE READ transactions do not wait like production.
 func newLocalKratosConcurrentServiceIntegrationDB(t *testing.T) (*gorm.DB, *auth.SpiceDBClient) {
 	t.Helper()
-	stack := testutil.SetupOryStackWithLocalKratos(t)
+	stack := orytest.SetupOryStackWithLocalKratos(t)
 	return openConcurrentServiceIntegrationDB(t, stack), stack.SpiceDBClient
 }
 
-func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) *gorm.DB {
+func openConcurrentServiceIntegrationDB(t *testing.T, stack *orytest.OryStack) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -93,41 +103,20 @@ func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) 
 	return db
 }
 
-func integrationTestUUID() string { return uuid.NewString() }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("geul-file-media-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
-}
-
-type integrationMemberSummaries struct {
-	db        *gorm.DB
-	cdnDomain string
+	return orytest.SetupOryStack(t).SpiceDBClient
 }
 
 func newIntegrationMemberSummaries(db *gorm.DB, cdnDomain string) MemberSummaries {
-	return &integrationMemberSummaries{db: db, cdnDomain: cdnDomain}
-}
-
-func (s *integrationMemberSummaries) Load(
-	ctx context.Context,
-	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
-	return memberdomain.LoadSummaries(ctx, s.db, s.cdnDomain, memberIDs)
+	return filemediamembers.NewMemberSummaries(db, cdnDomain)
 }
 
 func releaseAuditContext(t *testing.T, identityID, memberID string) context.Context {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := orytest.IntegrationUUID()
 	request, err := sharedtelemetry.NewPropagatedRequestContext(
-		integrationTestUUID(),
+		orytest.IntegrationUUID(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
 			MemberID:   memberID,
@@ -141,14 +130,6 @@ func releaseAuditContext(t *testing.T, identityID, memberID string) context.Cont
 	})
 }
 
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
-}
-
 func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
@@ -157,54 +138,13 @@ func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (conte
 
 func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) context.Context {
 	t.Helper()
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "File/Media integration Admin")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	return auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-}
-
-func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {
-	t.Helper()
-	mutation, err := policyv1.Page.TouchPolicy(resourceID)
-	require.NoError(t, err)
-	_, err = spiceDB.ApplyRelationships(t.Context(), mutation)
-	require.NoError(t, err)
-}
-
-func durableAudienceSpiceDB(t *testing.T) *auth.SpiceDBClient {
-	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	t.Helper()
-	email := identityID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
-		ID: identityID, Email: email, Name: name,
-	})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO account_identity (id, created_at)
-			SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
-			ON CONFLICT (id) DO NOTHING
-		`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{
-			ID: memberID, AccountIdentityID: &identityID, Nickname: name,
-			Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email},
-			SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
-		}).Error
-	}))
-	return memberID
 }
 
 func seedFileDeliveryPostAuthority(
@@ -220,40 +160,6 @@ func seedFileDeliveryPostAuthority(
 	require.NoError(t, err)
 	_, err = spiceDB.ApplyRelationships(t.Context(), grant)
 	require.NoError(t, err)
-}
-
-func seedAudienceSegmentRelationsForTest(
-	t *testing.T,
-	db *gorm.DB,
-	segmentID string,
-	config model.AudienceSegmentConfig,
-) {
-	t.Helper()
-	for _, tagID := range config.MemberTagIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{AudienceSegmentID: segmentID, UserTagID: tagID}).Error)
-	}
-	for _, role := range config.AccountRoles {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserRole{AudienceSegmentID: segmentID, Role: role}).Error)
-	}
-	for _, memberID := range config.ExcludeMemberIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{AudienceSegmentID: segmentID, MemberID: memberID}).Error)
-	}
-}
-
-type fileTestAudienceRecipientCounter struct{}
-
-func (fileTestAudienceRecipientCounter) Count(context.Context, *model.AudienceSegment) (int64, error) {
-	return 0, nil
-}
-
-type fileTestAudienceMemberReferences struct{}
-
-func (fileTestAudienceMemberReferences) EligibleIDs(_ context.Context, _ *gorm.DB, memberIDs []string) ([]string, error) {
-	return memberIDs, nil
-}
-
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.AudienceService {
-	return audience.NewAudienceService(db, spiceDB, fileTestAudienceRecipientCounter{}, fileTestAudienceMemberReferences{})
 }
 
 func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {
@@ -279,26 +185,40 @@ func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID st
 	`, blockID, fileID).Error)
 }
 
-func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *FileService {
-	return NewFileService(
-		stack.DB, s3Client, &hardCutAsyncPublisher{}, stack.S3MediaBucket,
-		stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{}, stack.SpiceDBClient,
-	)
+func newEditorUploadSerializationFileService(stack *runtimetest.RuntimeStack, s3Client *s3.Client) *Service {
+	return newTestService(Deps{
+		S3:             s3Client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 }
 
 type directTrackAttachment struct {
-	authority *releasepkg.TrackAuthority
+	audit domainaudit.Appender
 }
 
-func directTrackAttachmentOption(db *gorm.DB) FileServiceOption {
-	return WithTrackAttachment(&directTrackAttachment{
-		authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db)),
-	})
+func newDirectTrackAttachment(db *gorm.DB) *directTrackAttachment {
+	return &directTrackAttachment{audit: apitelemetry.NewDurableWriter(db)}
 }
 
 func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+	return releaseConnectError(releasepkg.LockTrackForUpload(ctx, releasepostgres.NewStore(tx, releasepostgres.Ports{}), trackID))
+}
+
+func (a *directTrackAttachment) CurrentReleaseForAudio(ctx context.Context, tx *gorm.DB, track, file string) (string, error) {
+	row, err := releasepostgres.NewStore(tx, releasepostgres.Ports{}).FindTrack(ctx, track)
+	if err != nil {
+		return "", err
+	}
+	if row.AudioOriginalFileID == nil || *row.AudioOriginalFileID != file {
+		return "", gorm.ErrRecordNotFound
+	}
+	return row.ReleaseID, nil
 }
 
 func (a *directTrackAttachment) AttachOriginalWithDB(
@@ -306,7 +226,7 @@ func (a *directTrackAttachment) AttachOriginalWithDB(
 	tx *gorm.DB,
 	input TrackOriginalAudioInput,
 ) (TrackOriginalAudioAttachment, error) {
-	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasepkg.TrackOriginalAudioInput{
+	attachment, err := releasepkg.AttachTrackOriginalAudio(ctx, releasepostgres.Bind(tx, releasepostgres.Ports{}, a.audit), releasepkg.TrackOriginalAudioInput{
 		TrackID:               input.TrackID,
 		VerifiedFileID:        input.VerifiedFileID,
 		ExpectedCurrentFileID: input.ExpectedCurrentFileID,
@@ -315,7 +235,16 @@ func (a *directTrackAttachment) AttachOriginalWithDB(
 		AlreadyApplied: attachment.AlreadyApplied,
 		CurrentFileID:  attachment.CurrentFileID,
 		ReleaseID:      attachment.ReleaseID,
-	}, err
+	}, releaseConnectError(err)
+}
+
+// releaseConnectError gives a Release answer its Connect form, as the
+// production Track attachment adapter does.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }
 
 type flakyAttachedConfirmPublisher struct {
@@ -336,14 +265,14 @@ func (p *flakyAttachedConfirmPublisher) NotifyProtobuf(ctx context.Context, sign
 	return nil
 }
 
-func loadEditorUploadSession(t *testing.T, db *gorm.DB, uploadID string) model.UploadSession {
+func loadEditorUploadSession(t *testing.T, db *gorm.DB, uploadID string) domain.UploadSession {
 	t.Helper()
 	var session model.UploadSession
 	require.NoError(t, db.First(&session, "upload_id = ?", uploadID).Error)
-	return session
+	return filemediapostgres.UploadSession(session)
 }
 
-func requireEditorUploadSessionStatus(t *testing.T, db *gorm.DB, uploadID string, status model.UploadSessionStatus) {
+func requireEditorUploadSessionStatus(t *testing.T, db *gorm.DB, uploadID string, status domain.UploadSessionStatus) {
 	t.Helper()
 	require.Equal(t, status, loadEditorUploadSession(t, db, uploadID).Status)
 }
@@ -353,4 +282,93 @@ func requireEditorUploadSessionAbsent(t *testing.T, db *gorm.DB, uploadID string
 	var count int64
 	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", uploadID).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+// memberRequestContext carries the request context the domain audit
+// attributes its records to, without a principal, for a File boundary that
+// audits but neither authorizes nor attributes the upload to its caller.
+func memberRequestContext() context.Context {
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: uuid.NewString(), MemberID: uuid.NewString(), SessionID: uuid.NewString(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), request)
+}
+
+func seedFileDeliveryContentPolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceType string, resourceID string) {
+	t.Helper()
+	var policy policyv1.RelationshipMutation
+	var err error
+	switch resourceType {
+	case "post":
+		policy, err = policyv1.Post.TouchPolicy(resourceID)
+	case "page":
+		policy, err = policyv1.Page.TouchPolicy(resourceID)
+	case "work":
+		policy, err = policyv1.Work.TouchPolicy(resourceID)
+	case "program_event":
+		policy, err = policyv1.ProgramEvent.TouchPolicy(resourceID)
+	default:
+		require.FailNow(t, "unsupported FileDelivery content policy resource", resourceType)
+		return
+	}
+	require.NoError(t, err)
+	_, err = spiceDB.ApplyRelationships(t.Context(), policy)
+	require.NoError(t, err)
+}
+
+func decodeHardCutRoutedMessages[T proto.Message](
+	t *testing.T,
+	messages []hardCutPublishedMessage,
+	exchange string,
+	routingKey string,
+	newMessage func() T,
+) []T {
+	t.Helper()
+	decoded := make([]T, 0)
+	for _, message := range messages {
+		target := newMessage()
+		if message.exchange != exchange || message.key != routingKey ||
+			message.messageType != string(target.ProtoReflect().Descriptor().FullName()) {
+			continue
+		}
+		require.NoError(t, proto.Unmarshal(message.body, target))
+		decoded = append(decoded, target)
+	}
+	return decoded
+}
+
+func hardCutPtrString(value string) *string { return &value }
+
+func seedHardCutPageFixture(t *testing.T, db *gorm.DB) string {
+	t.Helper()
+	pageID := uuid.NewString()
+	documentID := uuid.NewString()
+	require.NoError(t, db.Exec(
+		`INSERT INTO content_document (id, profile) VALUES (?, 'page')`,
+		documentID,
+	).Error)
+	require.NoError(t, db.Exec(`
+		INSERT INTO page (id, content_document_id, status, show_title, created_at, updated_at)
+		VALUES (?, ?, 'PAGE_STATUS_DRAFT', TRUE, NOW(), NOW())
+	`, pageID, documentID).Error)
+	return pageID
+}
+
+func (p *flakyAttachedConfirmPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *flakyAttachedConfirmPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
+}
+
+type nativeLifecyclePublisher struct{ *mq.Publisher }
+
+func (p nativeLifecyclePublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p.Publisher).PublishIngest(ctx, event)
+}
+func (p nativeLifecyclePublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p.Publisher).PublishProcessing(ctx, event)
 }

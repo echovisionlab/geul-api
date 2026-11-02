@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -41,7 +42,7 @@ func TestCheckSeriesActionMasksPrivateDenialAndPreservesDependencyFailure(t *tes
 		t.Parallel()
 		checker := &recordingSeriesPermissionChecker{}
 		err := checkSeriesPermission(t.Context(), checker, seriesID, policyv1.PostSeries.Manage, principal)
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 		require.Len(t, checker.calls, 1)
 	})
 
@@ -49,7 +50,7 @@ func TestCheckSeriesActionMasksPrivateDenialAndPreservesDependencyFailure(t *tes
 		t.Parallel()
 		checker := &recordingSeriesPermissionChecker{err: errors.New("SpiceDB unavailable")}
 		err := checkSeriesPermission(t.Context(), checker, seriesID, policyv1.PostSeries.Manage, principal)
-		require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+		require.Equal(t, connect.CodeUnavailable, errs.CodeOf(err))
 		require.Len(t, checker.calls, 1)
 	})
 }
@@ -118,13 +119,13 @@ func TestSeriesPlatformBoundaryUsesOneGlobalCreationAction(t *testing.T) {
 func TestSeriesUpdateSelectsEditOrPublishAction(t *testing.T) {
 	t.Parallel()
 	seriesID := uuid.NewString()
-	got, err := seriesUpdateAction(&managev1.UpdateSeriesRequest{})(seriesID)
+	got, err := seriesUpdateAction(UpdateSeriesCommand{})(seriesID)
 	require.NoError(t, err)
 	want, err := policyv1.PostSeries.Edit(seriesID)
 	require.NoError(t, err)
 	require.Equal(t, want.EngineKey(), got.EngineKey())
 	status := managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String()
-	got, err = seriesUpdateAction(&managev1.UpdateSeriesRequest{Status: &status})(seriesID)
+	got, err = seriesUpdateAction(UpdateSeriesCommand{Status: &status})(seriesID)
 	require.NoError(t, err)
 	want, err = policyv1.PostSeries.Publish(seriesID)
 	require.NoError(t, err)

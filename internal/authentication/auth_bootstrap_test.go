@@ -1,89 +1,212 @@
-package authentication
+package authentication_test
 
 import (
 	"errors"
-	"net"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"google.golang.org/grpc"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm/logger"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/account"
+	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authentication"
+	"github.com/echovisionlab/geul-api/internal/authentication/authenticationtest"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func TestNewAuthBootstrapServiceRejectsMissingRequiredDependencies(t *testing.T) {
-	db := &gorm.DB{}
-	spicedb := &auth.SpiceDBClient{}
+// loginRoles is the login role sync of one test on fakes.
+type loginRoles struct {
+	service *authentication.Service
+	store   *authenticationtest.Store
+	units   *mutationtest.UnitOfWork[authentication.Store]
+	spiceDB *authenticationtest.Authorizer
+	fence   *identitystatetest.Fence
+	audit   *audittest.Recorder
+}
 
-	require.Panics(t, func() {
-		NewAuthBootstrapService(nil, spicedb, nil, nil)
+func newLoginRoles(t *testing.T, audit *audittest.Recorder) loginRoles {
+	t.Helper()
+	store, units := authenticationtest.New()
+	roles := loginRoles{
+		store: store, units: units, audit: audit,
+		spiceDB: authenticationtest.NewAuthorizer(&authztest.Checker{}), fence: &identitystatetest.Fence{},
+	}
+	var err error
+	roles.service, err = authentication.NewService(authentication.Deps{
+		Units: units, SpiceDB: roles.spiceDB, Fence: roles.fence, Audit: audit,
+		Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationtest.NewSessions(),
 	})
-	require.Panics(t, func() {
-		NewAuthBootstrapService(db, nil, nil, nil)
-	})
+	require.NoError(t, err)
+	return roles
 }
 
-type unchangedLoginRoleServer struct {
-	v1.UnimplementedPermissionsServiceServer
+// seedMember stores an onboarded Member linked to a new Identity.
+func (r loginRoles) seedMember() (identityID, memberID string) {
+	identityID, memberID = uuid.NewString(), uuid.NewString()
+	r.store.SeedMember(memberID, authenticationtest.Member{IdentityID: identityID, Onboarded: true})
+	return identityID, memberID
 }
 
-func (unchangedLoginRoleServer) ReadRelationships(req *v1.ReadRelationshipsRequest, stream grpc.ServerStreamingServer[v1.ReadRelationshipsResponse]) error {
-	filter := req.GetRelationshipFilter()
-	return stream.Send(&v1.ReadRelationshipsResponse{Relationship: &v1.Relationship{
-		Resource: &v1.ObjectReference{ObjectType: filter.GetResourceType(), ObjectId: policyv1.Role.User().ID()},
-		Relation: filter.GetOptionalRelation(), Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: filter.GetOptionalSubjectFilter().GetSubjectType(), ObjectId: filter.GetOptionalSubjectFilter().GetOptionalSubjectId()}},
-	}})
+func replacement(t *testing.T, identityID string, role policyv1.RoleID) []policyv1.RelationshipMutation {
+	t.Helper()
+	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
+	require.NoError(t, err)
+	apply, err := account.RoleReplacementMutations(subject, role)
+	require.NoError(t, err)
+	return apply
 }
 
-func TestUnchangedLoginRoleDoesNotHideRollbackFailure(t *testing.T) {
-	for _, rollbackFails := range []bool{false, true} {
-		name := "successful rollback"
-		if rollbackFails {
-			name = "failed rollback"
-		}
-		t.Run(name, func(t *testing.T) {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+var (
+	committedRoleWrite = []mutation.Step{mutation.StepAuthorizationLock, mutation.StepAccess, mutation.StepChange, mutation.StepAudit, mutation.StepRelationships, mutation.StepCommit}
+	unchangedRole      = []mutation.Step{mutation.StepAuthorizationLock, mutation.StepAccess, mutation.StepChange, mutation.StepRollback}
+)
+
+func TestNewServiceRejectsMissingRequiredDependencies(t *testing.T) {
+	_, err := authentication.NewService(authentication.Deps{SpiceDB: authenticationtest.NewAuthorizer(&authztest.Checker{})})
+	require.EqualError(t, err, "authentication dependencies are required: Audit, Fence, Roles, Sessions, Units")
+	_, units := authenticationtest.New()
+	_, err = authentication.NewService(authentication.Deps{Units: units, Sessions: authenticationtest.NewSessions()})
+	require.EqualError(t, err, "authentication dependencies are required: Audit, Fence, Roles, SpiceDB")
+}
+
+func TestFirstLoginOfTheGreenfieldClaimsTheFirstAdminAsTheBackend(t *testing.T) {
+	roles := newLoginRoles(t, &audittest.Recorder{})
+	identityID, memberID := roles.seedMember()
+
+	result, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
+	require.NoError(t, err)
+	require.Equal(t, authentication.LoginRoleSyncResult{Role: policyv1.Role.Admin(), FirstAdmin: true}, result)
+	claimedBy, claimedFor, claimed := roles.store.FirstAdmin()
+	require.True(t, claimed)
+	require.Equal(t, []string{identityID, memberID}, []string{claimedBy, claimedFor})
+	require.Equal(t, [][]policyv1.RelationshipMutation{replacement(t, identityID, policyv1.Role.Admin())}, roles.spiceDB.Applied())
+	require.Equal(t, []string{identityID}, roles.fence.Locked())
+	require.Equal(t, []string{identityID}, roles.spiceDB.Reads())
+	require.Equal(t, committedRoleWrite, roles.units.Steps())
+	records := roles.audit.Records()
+	require.Len(t, records, 1)
+	require.Equal(t, sharedtelemetry.AuditMemberUpdated, records[0].Action)
+	require.Equal(t, sharedtelemetry.ActorKindSystem, records[0].Kind)
+	require.Equal(t, string(sharedtelemetry.ServiceBackend), records[0].Service)
+	require.Equal(t, memberID, records[0].TargetID)
+	require.Equal(t, policyv1.Role.User().ID(), records[0].PreviousRole)
+	require.Equal(t, policyv1.Role.Admin().ID(), records[0].NewRole)
+
+	again, err := roles.service.EnsureLoginRole(t.Context(), identityID, memberID)
+	require.NoError(t, err)
+	require.False(t, again, "only the claiming login reports the first admin")
+}
+
+func TestLoginWithoutADirectRoleBecomesAUserWithoutAudit(t *testing.T) {
+	roles := newLoginRoles(t, &audittest.Recorder{})
+	roles.store.SeedIdentity(uuid.NewString())
+	identityID, memberID := roles.seedMember()
+
+	result, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
+	require.NoError(t, err)
+	require.Equal(t, authentication.LoginRoleSyncResult{Role: policyv1.Role.User()}, result)
+	require.Equal(t, [][]policyv1.RelationshipMutation{replacement(t, identityID, policyv1.Role.User())}, roles.spiceDB.Applied())
+	require.Empty(t, roles.audit.Records())
+	_, _, claimed := roles.store.FirstAdmin()
+	require.False(t, claimed)
+	require.Equal(t, committedRoleWrite, roles.units.Steps())
+}
+
+func TestLoginKeepsAnExistingDirectRoleWithoutWriting(t *testing.T) {
+	for _, role := range []policyv1.RoleID{policyv1.Role.User(), policyv1.Role.Author(), policyv1.Role.Admin()} {
+		t.Run(role.ID(), func(t *testing.T) {
+			roles := newLoginRoles(t, &audittest.Recorder{})
+			roles.store.SeedIdentity(uuid.NewString())
+			identityID, memberID := roles.seedMember()
+			roles.spiceDB.SetRole(identityID, role)
+
+			result, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
 			require.NoError(t, err)
-			server := grpc.NewServer()
-			v1.RegisterPermissionsServiceServer(server, unchangedLoginRoleServer{})
-			go func() { _ = server.Serve(listener) }()
-			t.Cleanup(server.Stop)
-			spiceDB, err := auth.NewSpiceDBClient(listener.Addr().String(), "test-token", true)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, spiceDB.Close()) })
-			sqlDB, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			t.Cleanup(func() { mock.ExpectClose(); require.NoError(t, sqlDB.Close()) })
-			db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-			require.NoError(t, err)
-			mock.ExpectBegin()
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(`).WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended`).WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtext`).WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec(`INSERT INTO auth_bootstrap_state`).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectQuery(`SELECT COALESCE\(identity_id::text, ''\) FROM auth_bootstrap_state`).WillReturnRows(sqlmock.NewRows([]string{"identity_id"}).AddRow("another-identity"))
-			rollbackErr := errors.New("database rollback failed")
-			rollback := mock.ExpectRollback()
-			if rollbackFails {
-				rollback.WillReturnError(rollbackErr)
-			}
-			service := &AuthBootstrapService{db: db, spicedb: spiceDB}
-			result, err := service.SyncLoginRole(t.Context(), "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")
-			if rollbackFails {
-				require.ErrorIs(t, err, rollbackErr)
-				require.ErrorIs(t, err, errLoginRoleUnchanged)
-				require.Empty(t, result)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, policyv1.Role.User(), result.Role)
-			}
-			require.NoError(t, mock.ExpectationsWereMet())
+			require.Equal(t, authentication.LoginRoleSyncResult{Role: role}, result)
+			require.Empty(t, roles.spiceDB.Applied())
+			require.Empty(t, roles.audit.Records())
+			require.Equal(t, unchangedRole, roles.units.Steps(), "an unchanged role rolls its transaction back")
 		})
 	}
+}
+
+func TestLoginRepairsTheFirstAdminOwnerWithoutAuditingAgain(t *testing.T) {
+	roles := newLoginRoles(t, &audittest.Recorder{})
+	identityID, memberID := roles.seedMember()
+	_, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+	require.NoError(t, err)
+	roles.spiceDB.SetRole(identityID, policyv1.Role.User())
+
+	result, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
+	require.NoError(t, err)
+	require.Equal(t, authentication.LoginRoleSyncResult{Role: policyv1.Role.Admin()}, result)
+	require.Equal(t, [][]policyv1.RelationshipMutation{
+		replacement(t, identityID, policyv1.Role.Admin()), replacement(t, identityID, policyv1.Role.Admin()),
+	}, roles.spiceDB.Applied())
+	require.Len(t, roles.audit.Records(), 1, "only the claim is audited")
+}
+
+func TestFailedFirstAdminAuditLeavesNeitherClaimNorRole(t *testing.T) {
+	auditDown := errors.New("bootstrap audit unavailable")
+	roles := newLoginRoles(t, &audittest.Recorder{Err: auditDown})
+	identityID, memberID := roles.seedMember()
+
+	result, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
+	require.ErrorIs(t, err, auditDown)
+	require.Empty(t, result)
+	_, _, claimed := roles.store.FirstAdmin()
+	require.False(t, claimed)
+	require.Empty(t, roles.spiceDB.Applied(), "the audit precedes the relationship write")
+	require.Equal(t, []mutation.Step{mutation.StepAuthorizationLock, mutation.StepAccess, mutation.StepChange, mutation.StepAudit, mutation.StepRollback}, roles.units.Steps())
+}
+
+func TestFailedRoleWriteRollsTheClaimBack(t *testing.T) {
+	writeDown := errors.New("SpiceDB unavailable")
+	roles := newLoginRoles(t, &audittest.Recorder{})
+	roles.spiceDB.FailWrites(writeDown)
+	identityID, memberID := roles.seedMember()
+
+	_, err := roles.service.SyncLoginRole(t.Context(), identityID, memberID)
+
+	require.ErrorIs(t, err, writeDown)
+	_, _, claimed := roles.store.FirstAdmin()
+	require.False(t, claimed)
+	require.Equal(t, mutation.StepRollback, roles.units.Steps()[len(roles.units.Steps())-1])
+}
+
+func TestFailedRoleReadClaimsNothing(t *testing.T) {
+	readDown := errors.New("SpiceDB unavailable")
+	roles := newLoginRoles(t, &audittest.Recorder{})
+	roles.spiceDB.FailReads(readDown)
+	identityID, memberID := roles.seedMember()
+
+	_, err := roles.service.EnsureLoginRole(t.Context(), identityID, memberID)
+
+	require.ErrorIs(t, err, readDown)
+	require.ErrorContains(t, err, "read login direct global role")
+	_, _, claimed := roles.store.FirstAdmin()
+	require.False(t, claimed)
+	require.Empty(t, roles.spiceDB.Applied())
+}
+
+func TestLoginRoleSyncRejectsANonCanonicalIdentityBeforeItsTransaction(t *testing.T) {
+	roles := newLoginRoles(t, &audittest.Recorder{})
+
+	_, err := roles.service.SyncLoginRole(t.Context(), "not-an-identity", uuid.NewString())
+
+	require.Error(t, err)
+	require.Empty(t, roles.units.Steps())
+	require.Empty(t, roles.spiceDB.Reads())
 }

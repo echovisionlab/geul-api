@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,7 +92,7 @@ func (e *RefreshExecutor) ImportLatestIfOlderThan(
 	}
 	defer func() {
 		if err := archive.Close(); err != nil {
-			slog.Warn("Failed to remove temporary GeoIP archive", "failure_cause", failurecause.Message(err))
+			slog.WarnContext(ctx, "Failed to remove temporary GeoIP archive", "failure_cause", failurecause.Message(err))
 		}
 	}()
 
@@ -217,18 +218,18 @@ func createGeoIPStagingTables(tx *gorm.DB) error {
 }
 
 func importGeoIPStagingRows(tx *gorm.DB, files geoIPArchiveFiles) error {
-	slog.Info("Importing GeoIP locations")
+	slog.InfoContext(tx.Statement.Context, "Importing GeoIP locations")
 	if err := importLocationsGorm(tx, files.locations); err != nil {
 		return fmt.Errorf("failed to import locations: %w", err)
 	}
-	slog.Info("Importing GeoIP IPv4 blocks")
+	slog.InfoContext(tx.Statement.Context, "Importing GeoIP IPv4 blocks")
 	if err := importNetworksGorm(tx, files.ipv4); err != nil {
 		return fmt.Errorf("failed to import IPv4 blocks: %w", err)
 	}
 	if files.ipv6 == nil {
 		return nil
 	}
-	slog.Info("Importing GeoIP IPv6 blocks")
+	slog.InfoContext(tx.Statement.Context, "Importing GeoIP IPv6 blocks")
 	if err := importNetworksGorm(tx, files.ipv6); err != nil {
 		return fmt.Errorf("failed to import IPv6 blocks: %w", err)
 	}
@@ -357,10 +358,7 @@ func downloadGeoIPArchive(ctx context.Context, client httpDoer, downloadURL stri
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to download GeoIP database", "failure_cause", failurecause.Message(err))
-		// The request URL contains the MaxMind license key. Do not wrap transport
-		// errors because common HTTP clients include the full request URL.
-		return nil, fmt.Errorf("download GeoIP database: provider request failed")
+		return nil, &providerRequestError{cause: err, downloadURL: downloadURL}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -390,6 +388,27 @@ func downloadGeoIPArchive(ctx context.Context, client httpDoer, downloadURL stri
 	archive.size = written
 	return archive, nil
 }
+
+// providerRequestError keeps a transport failure for the record that logs it
+// while its Error text stays generic: the request URL holds the MaxMind
+// license key, and common HTTP clients include the full URL in their errors.
+// It does not unwrap, so no caller can reach the transport error's text.
+type providerRequestError struct {
+	cause       error
+	downloadURL string
+}
+
+func (e *providerRequestError) Error() string {
+	return "download GeoIP database: provider request failed"
+}
+
+// OperationContext lets failurecause.Message render the transport cause, with
+// the download URL redacted through PrivateValues.
+func (e *providerRequestError) OperationContext() (rendered, operation string) {
+	return e.Error(), "download GeoIP database: " + e.cause.Error()
+}
+
+func (e *providerRequestError) PrivateValues() []string { return []string{e.downloadURL} }
 
 func currentImportedAt(ctx context.Context, db *gorm.DB) (*time.Time, error) {
 	var importedAt sql.NullTime
@@ -435,7 +454,7 @@ func importLocationsGorm(tx *gorm.DB, f *zip.File) error {
 	for {
 		row++
 		record, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -520,7 +539,7 @@ func importNetworksGorm(tx *gorm.DB, f *zip.File) error {
 	for {
 		row++
 		record, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

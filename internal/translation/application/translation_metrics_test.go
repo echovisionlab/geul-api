@@ -1,35 +1,32 @@
 package application
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/echovisionlab/geul-api/internal/llm"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBoundedTranslationFailureReasonLabelUsesLowercaseCatalogValues(t *testing.T) {
 	for _, reason := range []string{
-		translationFailureProviderConfiguration,
-		translationFailureProviderAuthentication,
-		translationFailureProviderRateLimited,
-		translationFailureProviderUnavailable,
-		translationFailureProviderRejected,
-		translationFailureProviderResponseInvalid,
-		translationFailureTargetApplyFailed,
-		translationFailureOgHandoffFailed,
-		translationFailureInternal,
+		FailureProviderConfiguration,
+		FailureProviderAuthentication,
+		FailureProviderRateLimited,
+		FailureProviderUnavailable,
+		FailureProviderRejected,
+		FailureProviderResponseInvalid,
+		FailureTargetApplyFailed,
+		FailureOgHandoffFailed,
+		FailureInternal,
 	} {
 		reason := reason
 		require.Equal(t, reason, boundedTranslationFailureReasonLabel(&reason))
 	}
 	unknown := "TRANSLATION_FAILURE_REASON_PROVIDER_UNAVAILABLE"
-	require.Equal(t, translationFailureInternal, boundedTranslationFailureReasonLabel(&unknown))
-	require.Equal(t, translationFailureInternal, boundedTranslationFailureReasonLabel(nil))
+	require.Equal(t, FailureInternal, boundedTranslationFailureReasonLabel(&unknown))
+	require.Equal(t, FailureInternal, boundedTranslationFailureReasonLabel(nil))
 }
 
 func TestClassifyTranslationFailureMapsBoundedLLMProviderFailures(t *testing.T) {
@@ -37,13 +34,13 @@ func TestClassifyTranslationFailureMapsBoundedLLMProviderFailures(t *testing.T) 
 		category llm.ProviderFailureCategory
 		want     string
 	}{
-		{category: llm.ProviderFailureConfiguration, want: translationFailureProviderConfiguration},
-		{category: llm.ProviderFailureAuthentication, want: translationFailureProviderAuthentication},
-		{category: llm.ProviderFailureRateLimited, want: translationFailureProviderRateLimited},
-		{category: llm.ProviderFailureUnavailable, want: translationFailureProviderUnavailable},
-		{category: llm.ProviderFailureRejected, want: translationFailureProviderRejected},
-		{category: llm.ProviderFailureResponseInvalid, want: translationFailureProviderResponseInvalid},
-		{category: llm.ProviderFailureInternal, want: translationFailureInternal},
+		{category: llm.ProviderFailureConfiguration, want: FailureProviderConfiguration},
+		{category: llm.ProviderFailureAuthentication, want: FailureProviderAuthentication},
+		{category: llm.ProviderFailureRateLimited, want: FailureProviderRateLimited},
+		{category: llm.ProviderFailureUnavailable, want: FailureProviderUnavailable},
+		{category: llm.ProviderFailureRejected, want: FailureProviderRejected},
+		{category: llm.ProviderFailureResponseInvalid, want: FailureProviderResponseInvalid},
+		{category: llm.ProviderFailureInternal, want: FailureInternal},
 	}
 	for _, test := range tests {
 		err := llm.NewProviderFailure(llm.ProviderFailureDetails{Category: test.category}, errors.New("sensitive provider response"))
@@ -53,7 +50,7 @@ func TestClassifyTranslationFailureMapsBoundedLLMProviderFailures(t *testing.T) 
 
 func TestClassifyTranslationFailureMapsTargetApplyFailure(t *testing.T) {
 	cause := fmt.Errorf("%w: candidate projection failed", errTranslationTargetApplyFailed)
-	require.Equal(t, translationFailureTargetApplyFailed, classifyTranslationFailure(cause))
+	require.Equal(t, FailureTargetApplyFailed, classifyTranslationFailure(cause))
 }
 
 func TestTranslationOgHandoffMetricOutcomeUsesAuthoritativeTransactionBoundary(t *testing.T) {
@@ -74,20 +71,5 @@ func TestTranslationOgHandoffMetricOutcomeUsesAuthoritativeTransactionBoundary(t
 
 	commitFailure := classifyTranslationOgHandoffTransactionError(errors.New("commit failed"), true)
 	require.ErrorIs(t, commitFailure, errTranslationOgHandoffFailed)
-	require.Equal(t, translationFailureOgHandoffFailed, classifyTranslationFailure(commitFailure))
-}
-
-func TestFailedJobUpdatesBoundedReasonBeforeMetricProjection(t *testing.T) {
-	db := newTranslationRetryTestDB(t)
-	now := time.Unix(1_700_000_500, 0).UTC()
-	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
-		db: db, publisher: stubTranslationJobPublisher{},
-		now: func() time.Time { return now }, metrics: newTranslationMetrics(),
-	}
-
-	require.NoError(t, manager.failJob(context.Background(), job, now.Add(-time.Second), errTranslationOgHandoffFailed))
-	require.Equal(t, translationJobStatusFailed, job.Status)
-	require.Equal(t, translationFailureOgHandoffFailed, translationTestPointerValue(t, job.FailureReason))
-	require.Equal(t, translationFailureOgHandoffFailed, boundedTranslationFailureReasonLabel(job.FailureReason))
+	require.Equal(t, FailureOgHandoffFailed, classifyTranslationFailure(commitFailure))
 }

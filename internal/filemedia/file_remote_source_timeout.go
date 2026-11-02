@@ -12,7 +12,7 @@ const browserUploadSourceIdleTimeout = 120 * time.Second
 
 // openBrowserUploadSource allows arbitrarily long active downloads, while the
 // durable server import opener retains its existing total timeout.
-func (s *FileService) openBrowserUploadSource(ctx context.Context, request preparedRemoteImport) (*remoteImportSource, error) {
+func (s *Service) openBrowserUploadSource(ctx context.Context, request preparedRemoteImport) (*remoteImportSource, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	client := s.newBrowserUploadSourceClient(ctx, cancel, browserUploadSourceIdleTimeout)
 	source, err := s.openRemoteImportSourceWithClient(ctx, request, nil, remoteImportFailureReporter(nil), client)
@@ -24,7 +24,7 @@ func (s *FileService) openBrowserUploadSource(ctx context.Context, request prepa
 	return source, nil
 }
 
-func (s *FileService) newBrowserUploadSourceClient(ctx context.Context, cancel context.CancelFunc, idleTimeout time.Duration) *remoteImportHTTPClient {
+func (s *Service) newBrowserUploadSourceClient(ctx context.Context, cancel context.CancelFunc, idleTimeout time.Duration) *remoteImportHTTPClient {
 	resolver := s.remoteImportResolver
 	if resolver == nil {
 		resolver = net.DefaultResolver

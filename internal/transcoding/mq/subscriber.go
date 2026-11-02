@@ -58,7 +58,7 @@ func newCancelSubscriber(
 					startup <- nil
 					firstAttempt = false
 				}
-			}, func(payload []byte) { handleCancelSignal(payload, decode, handler) })
+			}, func(payload []byte) { handleCancelSignal(ctx, payload, decode, handler) })
 			subscriber.ready.Store(false)
 			if firstAttempt {
 				startup <- err
@@ -68,7 +68,7 @@ func newCancelSubscriber(
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Error("PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, failurecause.Attr(err))
 			timer := time.NewTimer(time.Second)
 			select {
 			case <-ctx.Done():
@@ -86,20 +86,20 @@ func newCancelSubscriber(
 	return subscriber, nil
 }
 
-func handleCancelSignal(payload []byte, decode func([]byte) (string, error), handler func(string) bool) {
+func handleCancelSignal(ctx context.Context, payload []byte, decode func([]byte) (string, error), handler func(string) bool) {
 	var envelope eventpkg.Envelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		slog.WarnContext(context.Background(), "Invalid cancellation envelope", failurecause.Attr(err))
+		slog.WarnContext(ctx, "Invalid cancellation envelope", failurecause.Attr(err))
 		return
 	}
 	body, err := envelope.Payload()
 	if err != nil {
-		slog.WarnContext(context.Background(), "Invalid cancellation payload", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
+		slog.WarnContext(ctx, "Invalid cancellation payload", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
 		return
 	}
 	id, err := decode(body)
 	if err != nil {
-		slog.WarnContext(context.Background(), "Invalid cancellation command", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
+		slog.WarnContext(ctx, "Invalid cancellation command", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
 		return
 	}
 	handler(id)

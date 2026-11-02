@@ -1,4 +1,5 @@
 // Package audience owns audience segment domain behavior and its Connect
-// handler. Its persistence and authorization seams are deliberately narrow so
-// callers provide recipient counting and durable member-reference validation.
+// handler. Its use cases depend on ports: the Store (audience/postgres in
+// production, audiencetest in unit tests), authorization, the identity
+// fence, audit and the recipient counter.
 package audience

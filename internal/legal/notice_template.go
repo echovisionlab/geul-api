@@ -3,8 +3,6 @@ package legal
 import (
 	"fmt"
 	"strings"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type emailDeliveryTemplateData struct {
@@ -18,7 +16,7 @@ type emailDeliveryTemplateData struct {
 func decodeEmailDeliveryTemplateData(
 	runKind string,
 	eventKey string,
-	raw model.JSONFields,
+	raw map[string]any,
 ) (emailDeliveryTemplateData, error) {
 	values := make(map[string]string, len(raw))
 	for key, value := range raw {

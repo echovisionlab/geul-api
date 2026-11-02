@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/work"
+
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -33,60 +37,60 @@ const (
 	ToolDocumentSlugCheck           = "document_slug_check"
 )
 
-var contentRelatedTools = []mcpserver.Tool{
-	oauthTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false),
-	oauthTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
-	oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group. Supply exactly one of artist_id, member_id, or name.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields. Supply group_id, credit_role, or both.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
-	oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false),
+var contentRelatedTools = toolRegistry[ContentRelatedTools]{
+	defineTool(oauthTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).featuredImage),
+	defineTool(oauthTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).featuredImage),
+	defineTool(oauthTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false), (*ContentRelatedTools).listPostParticipants),
+	defineTool(oauthTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false), (*ContentRelatedTools).getWorkCredits),
+	defineTool(oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group. Supply exactly one of artist_id, member_id, or name.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields. Supply group_id, credit_role, or both.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false), (*ContentRelatedTools).listDocumentVersions),
+	defineTool(oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).restoreDocumentVersion),
+	defineTool(oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false), (*ContentRelatedTools).checkDocumentSlug),
 }
 
 type PostRelatedApplication interface {
-	SetPostFeaturedImage(context.Context, *connect.Request[managev1.SetPostFeaturedImageRequest]) (*connect.Response[managev1.SetPostFeaturedImageResponse], error)
-	DeletePostFeaturedImage(context.Context, *connect.Request[managev1.DeletePostFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	ListPostParticipants(context.Context, *connect.Request[managev1.ListPostParticipantsRequest]) (*connect.Response[managev1.ListPostParticipantsResponse], error)
-	AddPostAuthor(context.Context, *connect.Request[managev1.AddPostAuthorRequest]) (*connect.Response[managev1.PostParticipant], error)
-	RemovePostAuthor(context.Context, *connect.Request[managev1.RemovePostAuthorRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	AddPostCollaborator(context.Context, *connect.Request[managev1.AddPostCollaboratorRequest]) (*connect.Response[managev1.PostParticipant], error)
-	RemovePostCollaborator(context.Context, *connect.Request[managev1.RemovePostCollaboratorRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	ListPostVersions(context.Context, *connect.Request[managev1.ListPostVersionsRequest]) (*connect.Response[managev1.ListPostVersionsResponse], error)
-	RestorePostVersion(context.Context, *connect.Request[managev1.RestorePostVersionRequest]) (*connect.Response[managev1.Post], error)
-	CheckSlugAvailable(context.Context, *connect.Request[managev1.CheckSlugAvailableRequest]) (*connect.Response[managev1.CheckSlugAvailableResponse], error)
+	SetPostFeaturedImage(context.Context, postdomain.SetPostFeaturedImageCommand) (postdomain.FeaturedImage, error)
+	DeletePostFeaturedImage(context.Context, postdomain.DeletePostFeaturedImageCommand) (*string, error)
+	ListPostParticipants(context.Context, postdomain.PostParticipantsQuery) ([]postdomain.Participant, error)
+	AddPostAuthor(context.Context, postdomain.PostParticipantCommand) (postdomain.Participant, error)
+	RemovePostAuthor(context.Context, postdomain.PostParticipantCommand) error
+	AddPostCollaborator(context.Context, postdomain.PostParticipantCommand) (postdomain.Participant, error)
+	RemovePostCollaborator(context.Context, postdomain.PostParticipantCommand) error
+	ListPostVersions(context.Context, postdomain.ListPostVersionsQuery) (postdomain.VersionPage, error)
+	RestorePostVersion(context.Context, postdomain.RestorePostVersionCommand) (postdomain.View, error)
+	CheckSlugAvailable(context.Context, postdomain.CheckSlugAvailableQuery) (bool, error)
 }
 
 type WorkRelatedApplication interface {
-	SetWorkFeaturedImage(context.Context, *connect.Request[managev1.SetWorkFeaturedImageRequest]) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error)
-	DeleteWorkFeaturedImage(context.Context, *connect.Request[managev1.DeleteWorkFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	GetWorkCredits(context.Context, *connect.Request[managev1.GetWorkCreditsRequest]) (*connect.Response[managev1.GetWorkCreditsResponse], error)
-	CreateWorkCreditGroup(context.Context, *connect.Request[managev1.CreateWorkCreditGroupRequest]) (*connect.Response[managev1.WorkCreditGroup], error)
-	UpdateWorkCreditGroup(context.Context, *connect.Request[managev1.UpdateWorkCreditGroupRequest]) (*connect.Response[managev1.WorkCreditGroup], error)
-	DeleteWorkCreditGroup(context.Context, *connect.Request[managev1.DeleteWorkCreditGroupRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	AddWorkCredit(context.Context, *connect.Request[managev1.AddWorkCreditRequest]) (*connect.Response[managev1.WorkCredit], error)
-	UpdateWorkCredit(context.Context, *connect.Request[managev1.UpdateWorkCreditRequest]) (*connect.Response[managev1.WorkCredit], error)
-	DeleteWorkCredit(context.Context, *connect.Request[managev1.DeleteWorkCreditRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	ListWorkVersions(context.Context, *connect.Request[managev1.ListWorkVersionsRequest]) (*connect.Response[managev1.ListWorkVersionsResponse], error)
-	RestoreWorkVersion(context.Context, *connect.Request[managev1.RestoreWorkVersionRequest]) (*connect.Response[managev1.Work], error)
-	CheckWorkSlugAvailable(context.Context, *connect.Request[managev1.CheckWorkSlugAvailableRequest]) (*connect.Response[managev1.CheckWorkSlugAvailableResponse], error)
+	SetWorkFeaturedImage(context.Context, work.SetWorkFeaturedImageCommand) (work.FeaturedImageChange, error)
+	DeleteWorkFeaturedImage(context.Context, work.DeleteWorkFeaturedImageCommand) (*string, error)
+	GetWorkCredits(context.Context, work.GetWorkCreditsQuery) (work.Credits, error)
+	CreateWorkCreditGroup(context.Context, work.CreateWorkCreditGroupCommand) (work.CreditGroup, error)
+	UpdateWorkCreditGroup(context.Context, work.UpdateWorkCreditGroupCommand) (work.CreditGroup, error)
+	DeleteWorkCreditGroup(context.Context, work.DeleteWorkCreditGroupCommand) error
+	AddWorkCredit(context.Context, work.AddWorkCreditCommand) (work.CreditView, error)
+	UpdateWorkCredit(context.Context, work.UpdateWorkCreditCommand) (work.CreditView, error)
+	DeleteWorkCredit(context.Context, work.DeleteWorkCreditCommand) error
+	ListWorkVersions(context.Context, work.ListWorkVersionsQuery) (work.VersionPage, error)
+	RestoreWorkVersion(context.Context, work.RestoreWorkVersionCommand) (work.View, error)
+	CheckWorkSlugAvailable(context.Context, work.CheckWorkSlugAvailableQuery) (bool, error)
 }
 
 type PageRelatedApplication interface {
-	SetPageFeaturedImage(context.Context, *connect.Request[managev1.SetPageFeaturedImageRequest]) (*connect.Response[managev1.SetPageFeaturedImageResponse], error)
-	DeletePageFeaturedImage(context.Context, *connect.Request[managev1.DeletePageFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	ListPageVersions(context.Context, *connect.Request[managev1.ListPageVersionsRequest]) (*connect.Response[managev1.ListPageVersionsResponse], error)
-	RestorePageVersion(context.Context, *connect.Request[managev1.RestorePageVersionRequest]) (*connect.Response[managev1.Page], error)
-	CheckPageSlugAvailable(context.Context, *connect.Request[managev1.CheckPageSlugAvailableRequest]) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error)
+	SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (pagedomain.FeaturedImageResult, error)
+	DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*string, error)
+	ListPageVersions(context.Context, pagedomain.ListPageVersionsQuery) (pagedomain.VersionList, error)
+	RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (pagedomain.Detail, error)
+	CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (bool, error)
 }
 
 type ContentRelatedTools struct {
@@ -102,34 +106,13 @@ func NewContentRelatedTools(posts PostRelatedApplication, works WorkRelatedAppli
 	return &ContentRelatedTools{posts: posts, works: works, pages: pages}, nil
 }
 
-func (*ContentRelatedTools) ToolNames() []string { return toolDefinitionNames(contentRelatedTools) }
+func (*ContentRelatedTools) ToolNames() []string { return contentRelatedTools.names() }
 func (*ContentRelatedTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(contentRelatedTools), nil
+	return contentRelatedTools.list(), nil
 }
 
 func (tools *ContentRelatedTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolDocumentFeaturedImageSet, ToolDocumentFeaturedImageDelete:
-		return tools.featuredImage(ctx, name, arguments)
-	case ToolPostParticipantsList:
-		return tools.listPostParticipants(ctx, arguments)
-	case ToolPostAuthorAdd, ToolPostAuthorRemove, ToolPostCollaboratorAdd, ToolPostCollaboratorRemove:
-		return tools.mutatePostParticipant(ctx, name, arguments)
-	case ToolWorkCreditsGet:
-		return tools.getWorkCredits(ctx, arguments)
-	case ToolWorkCreditGroupCreate, ToolWorkCreditGroupUpdate, ToolWorkCreditGroupDelete:
-		return tools.mutateWorkCreditGroup(ctx, name, arguments)
-	case ToolWorkCreditAdd, ToolWorkCreditUpdate, ToolWorkCreditDelete:
-		return tools.mutateWorkCredit(ctx, name, arguments)
-	case ToolDocumentVersionsList:
-		return tools.listDocumentVersions(ctx, arguments)
-	case ToolDocumentVersionRestore:
-		return tools.restoreDocumentVersion(ctx, arguments)
-	case ToolDocumentSlugCheck:
-		return tools.checkDocumentSlug(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return contentRelatedTools.call(tools, ctx, name, arguments)
 }
 
 type featuredImageArguments struct {
@@ -138,32 +121,39 @@ type featuredImageArguments struct {
 	FileID       string `json:"file_id,omitempty"`
 }
 
-func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string, call toolCall[featuredImageArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if name == ToolDocumentFeaturedImageDelete {
+		if err := rejectUnadvertisedArguments(arguments, "document_type", "document_id"); err != nil {
+			return executionError(err)
+		}
+	}
 	var input featuredImageArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if name == ToolDocumentFeaturedImageSet {
 		var runID *string
 		switch input.DocumentType {
 		case "post":
-			response, err := tools.posts.SetPostFeaturedImage(ctx, connect.NewRequest(&managev1.SetPostFeaturedImageRequest{PostId: input.DocumentID, FileId: input.FileID}))
+			featured, err := tools.posts.SetPostFeaturedImage(ctx, postdomain.SetPostFeaturedImageCommand{PostID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.Msg.OgGenerationRunId
+			runID = featured.OgRunID
 		case "work":
-			response, err := tools.works.SetWorkFeaturedImage(ctx, connect.NewRequest(&managev1.SetWorkFeaturedImageRequest{WorkId: input.DocumentID, FileId: input.FileID}))
+			response, err := tools.works.SetWorkFeaturedImage(ctx, work.SetWorkFeaturedImageCommand{WorkID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.Msg.OgGenerationRunId
+			runID = response.OgGenerationRunID
 		case "page":
-			response, err := tools.pages.SetPageFeaturedImage(ctx, connect.NewRequest(&managev1.SetPageFeaturedImageRequest{PageId: input.DocumentID, FileId: input.FileID}))
+			response, err := tools.pages.SetPageFeaturedImage(ctx, pagedomain.SetPageFeaturedImageCommand{PageID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.Msg.OgGenerationRunId
+			runID = response.OgGenerationRunID
 		default:
 			return executionError(fmt.Errorf("document_type must be post, work, or page"))
 		}
@@ -173,31 +163,49 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 	var err error
 	switch input.DocumentType {
 	case "post":
-		response, err = tools.posts.DeletePostFeaturedImage(ctx, connect.NewRequest(&managev1.DeletePostFeaturedImageRequest{PostId: input.DocumentID}))
+		runID, err := tools.posts.DeletePostFeaturedImage(ctx, postdomain.DeletePostFeaturedImageCommand{PostID: input.DocumentID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return featuredImageDeleted(input, postdomain.FeaturedImageDeletedMessage(runID))
 	case "work":
-		response, err = tools.works.DeleteWorkFeaturedImage(ctx, connect.NewRequest(&managev1.DeleteWorkFeaturedImageRequest{WorkId: input.DocumentID}))
+		runID, err := tools.works.DeleteWorkFeaturedImage(ctx, work.DeleteWorkFeaturedImageCommand{WorkID: input.DocumentID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return featuredImageDeleted(input, &managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: runID})
 	case "page":
-		response, err = tools.pages.DeletePageFeaturedImage(ctx, connect.NewRequest(&managev1.DeletePageFeaturedImageRequest{PageId: input.DocumentID}))
+		var runID *string
+		if runID, err = tools.pages.DeletePageFeaturedImage(ctx, pagedomain.DeletePageFeaturedImageCommand{PageID: input.DocumentID}); err == nil {
+			var deleted *managev1.OgAssetDeleteResponse
+			deleted, err = pagedomain.FeaturedImageDeleteMessage(runID)
+			response = connect.NewResponse(deleted)
+		}
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"resource_type": "featured_image", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": response.Msg.Success, "deleted": response.Msg.Success, "og_generation_run_id": optionalStringValue(response.Msg.OgGenerationRunId)})
+	return featuredImageDeleted(input, response.Msg)
 }
 
-func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func featuredImageDeleted(input featuredImageArguments, deleted *managev1.OgAssetDeleteResponse) (mcpserver.ToolResult, error) {
+	return contentResult(map[string]any{"resource_type": "featured_image", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": deleted.Success, "deleted": deleted.Success, "og_generation_run_id": optionalStringValue(deleted.OgGenerationRunId)})
+}
+
+func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.posts.ListPostParticipants(ctx, connect.NewRequest(&managev1.ListPostParticipantsRequest{PostId: input.DocumentID}))
+	listed, err := tools.posts.ListPostParticipants(ctx, postdomain.PostParticipantsQuery{PostID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	participants := make([]map[string]any, 0, len(response.Msg.Participants))
-	for _, participant := range response.Msg.Participants {
+	response := postdomain.ParticipantsMessage(listed)
+	participants := make([]map[string]any, 0, len(response.Participants))
+	for _, participant := range response.Participants {
 		if participant == nil || participant.Member == nil {
 			continue
 		}
@@ -216,60 +224,51 @@ type postParticipantArguments struct {
 	MemberID   string `json:"member_id"`
 }
 
-func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, name string, call toolCall[postParticipantArguments]) (mcpserver.ToolResult, error) {
 	var input postParticipantArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	role := "author"
 	if name == ToolPostCollaboratorAdd || name == ToolPostCollaboratorRemove {
 		role = "collaborator"
 	}
-	changed := true
+	command := postdomain.PostParticipantCommand{PostID: input.DocumentID, MemberID: input.MemberID}
+	var err error
 	switch name {
 	case ToolPostAuthorAdd:
-		_, err := tools.posts.AddPostAuthor(ctx, connect.NewRequest(&managev1.AddPostAuthorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
+		_, err = tools.posts.AddPostAuthor(ctx, command)
 	case ToolPostAuthorRemove:
-		response, err := tools.posts.RemovePostAuthor(ctx, connect.NewRequest(&managev1.RemovePostAuthorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		changed = response.Msg.Success
+		err = tools.posts.RemovePostAuthor(ctx, command)
 	case ToolPostCollaboratorAdd:
-		_, err := tools.posts.AddPostCollaborator(ctx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
+		_, err = tools.posts.AddPostCollaborator(ctx, command)
 	case ToolPostCollaboratorRemove:
-		response, err := tools.posts.RemovePostCollaborator(ctx, connect.NewRequest(&managev1.RemovePostCollaboratorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		changed = response.Msg.Success
+		err = tools.posts.RemovePostCollaborator(ctx, command)
 	}
-	return contentResult(map[string]any{"resource_type": "post_participant", "resource_id": input.MemberID, "document_type": "post", "document_id": input.DocumentID, "member_id": input.MemberID, "role": role, "changed": changed, "deleted": name == ToolPostAuthorRemove || name == ToolPostCollaboratorRemove})
-}
-
-func (tools *ContentRelatedTools) getWorkCredits(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	response, err := tools.works.GetWorkCredits(ctx, connect.NewRequest(&managev1.GetWorkCreditsRequest{WorkId: input.DocumentID}))
 	if err != nil {
 		return expectedToolError(err)
 	}
-	groups := make([]map[string]any, 0, len(response.Msg.Groups))
-	for _, group := range response.Msg.Groups {
+	return contentResult(map[string]any{"resource_type": "post_participant", "resource_id": input.MemberID, "document_type": "post", "document_id": input.DocumentID, "member_id": input.MemberID, "role": role, "changed": true, "deleted": name == ToolPostAuthorRemove || name == ToolPostCollaboratorRemove})
+}
+
+func (tools *ContentRelatedTools) getWorkCredits(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
+	var input contentIDArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	workCredits, err := tools.works.GetWorkCredits(ctx, work.GetWorkCreditsQuery{WorkID: input.DocumentID})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	response := work.CreditsMessage(workCredits)
+	groups := make([]map[string]any, 0, len(response.Groups))
+	for _, group := range response.Groups {
 		if group != nil {
 			groups = append(groups, map[string]any{"id": group.Id, "name": group.Name})
 		}
 	}
-	credits := make([]map[string]any, 0, len(response.Msg.Credits))
-	for _, credit := range response.Msg.Credits {
+	credits := make([]map[string]any, 0, len(response.Credits))
+	for _, credit := range response.Credits {
 		if credit != nil {
 			credits = append(credits, workCreditOutput(credit))
 		}
@@ -283,32 +282,46 @@ type workCreditGroupArguments struct {
 	Name       string `json:"name,omitempty"`
 }
 
-func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+// workCreditGroupAdvertisedArguments mirrors each work credit group tool
+// schema; the tools share workCreditGroupArguments.
+var workCreditGroupAdvertisedArguments = map[string][]string{
+	ToolWorkCreditGroupCreate: {"document_id", "name"},
+	ToolWorkCreditGroupUpdate: {"group_id", "name"},
+	ToolWorkCreditGroupDelete: {"group_id"},
+}
+
+func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, toolName string, call toolCall[workCreditGroupArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if err := rejectUnadvertisedArguments(arguments, workCreditGroupAdvertisedArguments[toolName]...); err != nil {
+		return executionError(err)
+	}
 	var input workCreditGroupArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "work_credit_group"}
 	switch toolName {
 	case ToolWorkCreditGroupCreate:
-		response, err := tools.works.CreateWorkCreditGroup(ctx, connect.NewRequest(&managev1.CreateWorkCreditGroupRequest{WorkId: input.DocumentID, Name: input.Name}))
+		group, err := tools.works.CreateWorkCreditGroup(ctx, work.CreateWorkCreditGroupCommand{WorkID: input.DocumentID, Name: input.Name})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"], output["document_type"], output["document_id"], output["name"] = response.Msg.Id, "work", input.DocumentID, response.Msg.Name
+		response := work.CreditGroupMessage(group)
+		output["resource_id"], output["document_type"], output["document_id"], output["name"] = response.Id, "work", input.DocumentID, response.Name
 		output["changed"] = true
 	case ToolWorkCreditGroupUpdate:
-		response, err := tools.works.UpdateWorkCreditGroup(ctx, connect.NewRequest(&managev1.UpdateWorkCreditGroupRequest{GroupId: input.GroupID, Name: &input.Name}))
+		group, err := tools.works.UpdateWorkCreditGroup(ctx, work.UpdateWorkCreditGroupCommand{GroupID: input.GroupID, Name: &input.Name})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"], output["name"] = response.Msg.Id, response.Msg.Name
+		response := work.CreditGroupMessage(group)
+		output["resource_id"], output["name"] = response.Id, response.Name
 	case ToolWorkCreditGroupDelete:
-		response, err := tools.works.DeleteWorkCreditGroup(ctx, connect.NewRequest(&managev1.DeleteWorkCreditGroupRequest{GroupId: input.GroupID}))
-		if err != nil {
+		if err := tools.works.DeleteWorkCreditGroup(ctx, work.DeleteWorkCreditGroupCommand{GroupID: input.GroupID}); err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"], output["changed"], output["deleted"] = input.GroupID, response.Msg.Success, response.Msg.Success
+		output["resource_id"], output["changed"], output["deleted"] = input.GroupID, true, true
 	}
 	return contentResult(output)
 }
@@ -323,9 +336,22 @@ type workCreditArguments struct {
 	CreditRole *string `json:"credit_role,omitempty"`
 }
 
-func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+// workCreditAdvertisedArguments mirrors each work credit tool schema; the
+// tools share workCreditArguments.
+var workCreditAdvertisedArguments = map[string][]string{
+	ToolWorkCreditAdd:    {"document_id", "group_id", "artist_id", "member_id", "name", "credit_role"},
+	ToolWorkCreditUpdate: {"credit_id", "group_id", "credit_role"},
+	ToolWorkCreditDelete: {"credit_id"},
+}
+
+func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName string, call toolCall[workCreditArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if err := rejectUnadvertisedArguments(arguments, workCreditAdvertisedArguments[toolName]...); err != nil {
+		return executionError(err)
+	}
 	var input workCreditArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "work_credit"}
@@ -340,29 +366,30 @@ func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName
 		if subjects != 1 {
 			return executionError(errors.New("exactly one of artist_id, member_id, or name is required"))
 		}
-		response, err := tools.works.AddWorkCredit(ctx, connect.NewRequest(&managev1.AddWorkCreditRequest{WorkId: input.DocumentID, GroupId: input.GroupID, ArtistId: input.ArtistID, MemberId: input.MemberID, Name: input.Name, CreditRole: input.CreditRole}))
+		credit, err := tools.works.AddWorkCredit(ctx, work.AddWorkCreditCommand{WorkID: input.DocumentID, GroupID: input.GroupID, ArtistID: input.ArtistID, MemberID: input.MemberID, Name: input.Name, CreditRole: input.CreditRole})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"], output["document_type"], output["document_id"] = response.Msg.Id, "work", input.DocumentID
+		response := work.CreditMessage(credit)
+		output["resource_id"], output["document_type"], output["document_id"] = response.Id, "work", input.DocumentID
 		output["changed"] = true
-		copyWorkCreditMutationFields(output, response.Msg)
+		copyWorkCreditMutationFields(output, response)
 	case ToolWorkCreditUpdate:
 		if input.GroupID == nil && input.CreditRole == nil {
 			return executionError(errors.New("at least one of group_id or credit_role is required"))
 		}
-		response, err := tools.works.UpdateWorkCredit(ctx, connect.NewRequest(&managev1.UpdateWorkCreditRequest{CreditId: input.CreditID, GroupId: input.GroupID, CreditRole: input.CreditRole}))
+		credit, err := tools.works.UpdateWorkCredit(ctx, work.UpdateWorkCreditCommand{CreditID: input.CreditID, GroupID: input.GroupID, CreditRole: input.CreditRole})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"] = response.Msg.Id
-		copyWorkCreditMutationFields(output, response.Msg)
+		response := work.CreditMessage(credit)
+		output["resource_id"] = response.Id
+		copyWorkCreditMutationFields(output, response)
 	case ToolWorkCreditDelete:
-		response, err := tools.works.DeleteWorkCredit(ctx, connect.NewRequest(&managev1.DeleteWorkCreditRequest{CreditId: input.CreditID}))
-		if err != nil {
+		if err := tools.works.DeleteWorkCredit(ctx, work.DeleteWorkCreditCommand{CreditID: input.CreditID}); err != nil {
 			return expectedToolError(err)
 		}
-		output["resource_id"], output["changed"], output["deleted"] = input.CreditID, response.Msg.Success, response.Msg.Success
+		output["resource_id"], output["changed"], output["deleted"] = input.CreditID, true, true
 	}
 	return contentResult(output)
 }
@@ -412,56 +439,49 @@ type documentVersionsArguments struct {
 	Offset       int32  `json:"offset,omitempty"`
 }
 
-func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, _ string, call toolCall[documentVersionsArguments]) (mcpserver.ToolResult, error) {
+	input, err := decodeDocumentVersionsArguments(call)
+	if err != nil {
 		return executionError(err)
-	}
-	var input documentVersionsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	if _, supplied := arguments["limit"]; !supplied {
-		input.Limit = 20
-	}
-	if input.Limit < 1 || input.Limit > 100 {
-		return executionError(errors.New("limit must be between 1 and 100, or omitted for the default"))
-	}
-	if input.Offset < 0 {
-		return executionError(errors.New("offset must be nonnegative"))
 	}
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit, Offset: input.Offset}
 	versions := make([]map[string]any, 0)
 	var page *commonv1.PaginationResponse
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.ListPostVersions(ctx, connect.NewRequest(&managev1.ListPostVersionsRequest{PostId: input.DocumentID, Pagination: pagination}))
+		listed, err := tools.posts.ListPostVersions(ctx, postdomain.ListPostVersionsQuery{PostID: input.DocumentID, Page: postdomain.Page{Limit: input.Limit, Offset: input.Offset}})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		page = response.Msg.Pagination
-		for _, version := range response.Msg.Versions {
+		response := postdomain.VersionsMessage(listed)
+		page = response.Pagination
+		for _, version := range response.Versions {
 			if version != nil {
 				versions = append(versions, versionOutput(version.Id, version.Version, version.Title, version.Summary, version.CanonicalHash, version.SourceLocale, version.CreatedAt, version.Contributors))
 			}
 		}
 	case "work":
-		response, err := tools.works.ListWorkVersions(ctx, connect.NewRequest(&managev1.ListWorkVersionsRequest{WorkId: input.DocumentID, Pagination: pagination}))
+		workVersions, err := tools.works.ListWorkVersions(ctx, work.ListWorkVersionsQuery{WorkID: input.DocumentID, Page: work.Page{Limit: input.Limit, Offset: input.Offset}})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		page = response.Msg.Pagination
-		for _, version := range response.Msg.Versions {
+		response := work.VersionsMessage(workVersions)
+		page = response.Pagination
+		for _, version := range response.Versions {
 			if version != nil {
 				versions = append(versions, versionOutput(version.Id, version.Version, version.Title, version.Summary, version.CanonicalHash, version.SourceLocale, version.CreatedAt, version.Contributors))
 			}
 		}
 	case "page":
-		response, err := tools.pages.ListPageVersions(ctx, connect.NewRequest(&managev1.ListPageVersionsRequest{PageId: input.DocumentID, Pagination: pagination}))
+		list, err := tools.pages.ListPageVersions(ctx, pagedomain.ListPageVersionsQuery{
+			PageID: input.DocumentID, Page: pagedomain.Paging{Limit: pagination.GetLimit(), Offset: pagination.GetOffset()},
+		})
+		response, err := renderPage(list, err, pagedomain.VersionListMessage)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		page = response.Msg.Pagination
-		for _, version := range response.Msg.Versions {
+		page = response.Pagination
+		for _, version := range response.Versions {
 			if version != nil {
 				versions = append(versions, versionOutput(version.Id, version.Version, optionalString(version.Title), version.Summary, version.CanonicalHash, version.SourceLocale, version.CreatedAt, version.Contributors))
 			}
@@ -477,6 +497,28 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 		}
 	}
 	return contentResult(output)
+}
+
+func decodeDocumentVersionsArguments(call toolCall[documentVersionsArguments]) (documentVersionsArguments, error) {
+	arguments := call.Arguments
+
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return documentVersionsArguments{}, err
+	}
+	var input documentVersionsArguments
+	if err := call.Decode(&input); err != nil {
+		return documentVersionsArguments{}, err
+	}
+	if _, supplied := arguments["limit"]; !supplied {
+		input.Limit = 20
+	}
+	if input.Limit < 1 || input.Limit > 100 {
+		return documentVersionsArguments{}, errors.New("limit must be between 1 and 100, or omitted for the default")
+	}
+	if input.Offset < 0 {
+		return documentVersionsArguments{}, errors.New("offset must be nonnegative")
+	}
+	return input, nil
 }
 
 func versionOutput(id string, version int32, title string, summary *string, hash, sourceLocale string, createdAt *timestamppb.Timestamp, contributors []*managev1.VersionContributor) map[string]any {
@@ -506,31 +548,33 @@ type documentVersionRestoreArguments struct {
 	VersionID    string `json:"version_id"`
 }
 
-func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, _ string, call toolCall[documentVersionRestoreArguments]) (mcpserver.ToolResult, error) {
 	var input documentVersionRestoreArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "document", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": true}
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.RestorePostVersion(ctx, connect.NewRequest(&managev1.RestorePostVersionRequest{PostId: input.DocumentID, VersionId: input.VersionID}))
+		restored, err := tools.posts.RestorePostVersion(ctx, postdomain.RestorePostVersionCommand{PostID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "POST_STATUS_")
+		response := postdomain.PostMessage(restored)
+		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "POST_STATUS_")
 	case "work":
-		response, err := tools.works.RestoreWorkVersion(ctx, connect.NewRequest(&managev1.RestoreWorkVersionRequest{WorkId: input.DocumentID, VersionId: input.VersionID}))
+		restored, err := tools.works.RestoreWorkVersion(ctx, work.RestoreWorkVersionCommand{WorkID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "WORK_STATUS_")
+		output["title"], output["document_revision"], output["status"] = restored.Title, restored.Revision, contentStatus(work.WorkStatusName(restored.Status), "WORK_STATUS_")
 	case "page":
-		response, err := tools.pages.RestorePageVersion(ctx, connect.NewRequest(&managev1.RestorePageVersionRequest{PageId: input.DocumentID, VersionId: input.VersionID}))
+		detail, err := tools.pages.RestorePageVersion(ctx, pagedomain.RestorePageVersionCommand{PageID: input.DocumentID, VersionID: input.VersionID})
+		response, err := renderPage(detail, err, pagedomain.PageMessage)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "PAGE_STATUS_")
+		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "PAGE_STATUS_")
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}
@@ -543,31 +587,31 @@ type documentSlugArguments struct {
 	ExcludeDocumentID *string `json:"exclude_document_id,omitempty"`
 }
 
-func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, _ string, call toolCall[documentSlugArguments]) (mcpserver.ToolResult, error) {
 	var input documentSlugArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	var available bool
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.CheckSlugAvailable(ctx, connect.NewRequest(&managev1.CheckSlugAvailableRequest{Slug: input.Slug, ExcludePostId: input.ExcludeDocumentID}))
+		postAvailable, err := tools.posts.CheckSlugAvailable(ctx, postdomain.CheckSlugAvailableQuery{Slug: input.Slug, ExcludePostID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Msg.Available
+		available = postAvailable
 	case "work":
-		response, err := tools.works.CheckWorkSlugAvailable(ctx, connect.NewRequest(&managev1.CheckWorkSlugAvailableRequest{Slug: input.Slug, ExcludeWorkId: input.ExcludeDocumentID}))
+		workAvailable, err := tools.works.CheckWorkSlugAvailable(ctx, work.CheckWorkSlugAvailableQuery{Slug: input.Slug, ExcludeWorkID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Msg.Available
+		available = workAvailable
 	case "page":
-		response, err := tools.pages.CheckPageSlugAvailable(ctx, connect.NewRequest(&managev1.CheckPageSlugAvailableRequest{Slug: input.Slug, ExcludeId: input.ExcludeDocumentID}))
+		pageAvailable, err := tools.pages.CheckPageSlugAvailable(ctx, pagedomain.CheckPageSlugAvailableQuery{Slug: input.Slug, ExcludeID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Msg.Available
+		available = pageAvailable
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}

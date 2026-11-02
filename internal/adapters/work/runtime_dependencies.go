@@ -5,14 +5,15 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
-	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -23,10 +24,10 @@ import (
 type Runtime struct {
 	db        *gorm.DB
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(db *gorm.DB, cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(db *gorm.DB, cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if db == nil || refresher == nil {
 		panic("Work runtime database and OG refresher are required")
 	}
@@ -56,14 +57,14 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 	ownerType string,
 	ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, entityType, ownerID); err != nil {
 		return err
 	}
 	return r.ReleasePublicAssetBindings(ctx, tx, ownerType, ownerID, "og")
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -73,7 +74,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -81,8 +82,8 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	tx *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	refs := make(map[string]*commonv1.AssetRef, len(assetIDs))
+) (map[string]*mediaasset.Reference, error) {
+	refs := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return refs, nil
 	}
@@ -92,12 +93,12 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -111,8 +112,8 @@ func (r *Runtime) ReadyPublicAssetRefForSourceFile(
 	tx *gorm.DB,
 	sourceFileID string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, tx, r.cdnDomain, sourceFileID, expectedKind)
+) (*mediaasset.Reference, error) {
+	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind)
 }
 
 func (r *Runtime) BindReadyAssetForSourceFile(
@@ -123,8 +124,8 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	ownerID string,
 	bindingKey string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
 	)
 }
@@ -134,14 +135,14 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.NewAttachmentStore(tx), document)
 }
 
 func (r *Runtime) ResolveReadyOGAsset(
 	ctx context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	ids := normalizedAssetIDs(localizedAssetID, sourceAssetID)
 	refs, err := r.ResolveReadyAssetRefs(ctx, r.db, ids)
 	if err != nil {
@@ -167,15 +168,11 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 	ctx context.Context,
 	sourceFileID string,
 	kinds ...string,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	for _, kind := range kinds {
 		ref, err := r.ReadyPublicAssetRefForSourceFile(ctx, r.db, sourceFileID, kind)
 		if err != nil {
-			level := slog.LevelError
-			if connect.CodeOf(err) == connect.CodeNotFound {
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Failed to resolve Work public asset", "failure_cause", failurecause.Message(err), "file_id", sourceFileID, "kind", kind)
+			slog.Log(ctx, errs.OperationLogLevel(err), "Work public asset resolution failed; trying the next asset kind", failurecause.Attr(err), "file_id", sourceFileID, "kind", kind)
 		}
 		if err == nil && ref != nil {
 			return ref
@@ -184,7 +181,7 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 	return nil
 }
 
-func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) *commonv1.AssetRef {
+func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) *mediaasset.Reference {
 	var row struct {
 		FileID string `gorm:"column:file_id"`
 	}
@@ -193,7 +190,7 @@ func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) 
 		ORDER BY sort_order ASC LIMIT 1
 	`, artistID).Scan(&row).Error; err != nil || row.FileID == "" {
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to load Work artist image", "failure_cause", failurecause.Message(err), "artist_id", artistID)
+			slog.ErrorContext(ctx, "Work artist image lookup failed; serving the artist without an image", failurecause.Attr(err), "artist_id", artistID)
 		}
 		return nil
 	}

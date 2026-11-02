@@ -23,16 +23,19 @@ func TestEmitSystemUsesSharedTypedRecord(t *testing.T) {
 		SystemMetadata(ctx, time.Date(2026, 8, 10, 1, 2, 3, 0, time.FixedZone("KST", 9*60*60))),
 		"worker",
 	)
-	if err := EmitSystem(ctx, record, buildErr); err != nil {
-		t.Fatal(err)
+	if buildErr != nil {
+		t.Fatal(buildErr)
 	}
+	EmitSystem(ctx, record, buildErr)
 	if !strings.Contains(output.String(), `"event":"service.ready"`) ||
 		!strings.Contains(output.String(), `"occurred_at":"2026-08-09T16:02:03Z"`) {
 		t.Fatalf("system record = %s", output.String())
 	}
 
-	want := errors.New("build failed")
-	if err := EmitSystem(ctx, sharedtelemetry.SystemRecord{}, want); !errors.Is(err, want) {
-		t.Fatalf("build error = %v", err)
+	output.Reset()
+	EmitSystem(ctx, sharedtelemetry.SystemRecord{}, errors.New("build failed"))
+	if !strings.Contains(output.String(), `"msg":"Failed to build media system telemetry"`) ||
+		!strings.Contains(output.String(), `"failure_cause":"build failed"`) {
+		t.Fatalf("build failure log = %s", output.String())
 	}
 }

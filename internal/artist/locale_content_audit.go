@@ -1,30 +1,13 @@
 package artist
 
 import (
-	"context"
-
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
-func appendArtistMemberTargetLocaleAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	artistID string,
-	locale string,
-	operation sharedtelemetry.AuditItemOperation,
-) error {
-	return domainaudit.AppendMember(
-		ctx,
-		tx,
-		writer,
-		memberID,
-		sharedtelemetry.AuditArtistUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewArtistLocaleContentAuditRecord(metadata, artistID, locale, operation)
-		},
-	)
+// artistMemberLocaleAudit attributes a locale content change to memberID.
+func artistMemberLocaleAudit(memberID, artistID, locale string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+	return mutation.MemberAudit(memberID, sharedtelemetry.AuditArtistUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewArtistLocaleContentAuditRecord(metadata, artistID, locale, operation)
+	})
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/og"
-	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -20,24 +22,20 @@ func NewOG(cdnDomain string) *OG {
 }
 
 func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	if err := og.NewLifecycle(tx, o.cdnDomain).CancelEntityWithDB(
+	if err := ogpostgres.CancelEntity(
 		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_RELEASE, releaseID,
 	); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, o.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), o.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "release", releaseID, "og")
 }
 
-func (*OG) LocaleAware() bool {
-	return og.SupportsLocaleAware("release")
-}
-
 type ContentOG struct {
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewContentOG(refresher *og.Refresher) *ContentOG {
+func NewContentOG(refresher *ogpostgres.Refresher) *ContentOG {
 	if refresher == nil {
 		panic("Release OG refresher is required")
 	}
@@ -56,5 +54,5 @@ func (o *ContentOG) RequestCurrent(
 	return err
 }
 
-var _ releasedomain.OG = (*OG)(nil)
-var _ releasedomain.ContentOG = (*ContentOG)(nil)
+var _ releasepostgres.OG = (*OG)(nil)
+var _ releasepostgres.ContentOG = (*ContentOG)(nil)

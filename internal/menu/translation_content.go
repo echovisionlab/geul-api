@@ -1,4 +1,3 @@
-// Package menu owns Menu structure and locale-label projection rules.
 package menu
 
 import (
@@ -8,10 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -26,7 +22,7 @@ func BuildTranslationExtractionPlan(
 	if len(source.ContentJSON) == 0 {
 		return nil, translation.ErrNoTranslatableUnits
 	}
-	var items []model.MenuItem
+	var items []Item
 	if err := json.Unmarshal(source.ContentJSON, &items); err != nil {
 		return nil, fmt.Errorf("failed to parse menu items: %w", err)
 	}
@@ -49,59 +45,43 @@ func BuildTranslationExtractionPlan(
 }
 
 // LoadTranslationSourceDocument loads the source-owned Menu document exposed
-// to the translation pipeline.
+// to the translation pipeline, through store bound to its transaction. A
+// missing Menu answers ErrMenuNotFound.
 func LoadTranslationSourceDocument(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	menuID string,
 ) (*translation.SourceDocument, error) {
-	var root struct {
-		Items        []byte `gorm:"column:items"`
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	result := db.WithContext(ctx).Table("menu").Select("items, source_locale").Where("id = ?", menuID).Limit(1).Scan(&root)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, gorm.ErrRecordNotFound
-	}
-
-	root.SourceLocale = strings.TrimSpace(root.SourceLocale)
-	if root.SourceLocale == "" {
-		return nil, errs.FailedPrecondition("Menu source locale is not initialized")
-	}
-
-	var localeRow struct {
-		ItemsJSON []byte `gorm:"column:items_json"`
-	}
-	localeResult := db.WithContext(ctx).Table("menu_translation").Select("items_json").
-		Where("entity_id = ? AND locale = ?", menuID, root.SourceLocale).Take(&localeRow)
-	if localeResult.Error != nil {
-		if errors.Is(localeResult.Error, gorm.ErrRecordNotFound) {
-			return nil, errs.FailedPrecondition("Menu source locale values are not initialized")
-		}
-		return nil, localeResult.Error
-	}
-	items, err := decodeSourceItems(root.Items)
+	root, err := store.Menu(ctx, menuID)
 	if err != nil {
 		return nil, err
 	}
-	labels, err := DecodeTranslationLabelValues(localeRow.ItemsJSON)
-	if err != nil {
-		return nil, errs.Internal(err)
+	sourceLocale := strings.TrimSpace(root.SourceLocale)
+	if sourceLocale == "" {
+		return nil, domainerr.Precondition("Menu source locale is not initialized")
 	}
-	applyMenuLocaleLabels(items, root.SourceLocale, labels)
+	values, err := store.Locale(ctx, menuID, sourceLocale)
+	if err != nil {
+		if errors.Is(err, ErrLocaleNotFound) {
+			return nil, domainerr.Precondition("Menu source locale values are not initialized")
+		}
+		return nil, err
+	}
+	items, err := decodeSourceItems(root.ItemsJSON)
+	if err != nil {
+		return nil, err
+	}
+	applyMenuLocaleLabels(items, sourceLocale, values.Labels)
 	body, err := json.Marshal(items)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &translation.SourceDocument{ContentJSON: body}, nil
 }
 
-func applyMenuLocaleLabels(items []model.MenuItem, locale string, labels map[string]string) {
+func applyMenuLocaleLabels(items []Item, locale string, labels map[string]string) {
 	for i := range items {
-		if ShouldTranslateItemLabel(&items[i], locale) {
+		if items[i].ownsLabel(locale) {
 			items[i].Label = labels[items[i].ID]
 		}
 		applyMenuLocaleLabels(items[i].Children, locale, labels)
@@ -115,7 +95,7 @@ func BuildTranslationCandidate(
 	source *translation.SourceDocument,
 	results map[string]translation.UnitResult,
 ) (*translation.Candidate, error) {
-	var items []model.MenuItem
+	var items []Item
 	if err := json.Unmarshal(source.ContentJSON, &items); err != nil {
 		return nil, fmt.Errorf("failed to parse menu items: %w", err)
 	}
@@ -132,19 +112,19 @@ func collectTranslationUnits(
 	menuID string,
 	sourceLocale string,
 	targetLocale string,
-	items []model.MenuItem,
+	items []Item,
 	units *[]translation.Unit,
 ) {
 	for _, item := range items {
 		label := strings.TrimSpace(item.Label)
-		if label != "" && ShouldTranslateItemLabel(&item, targetLocale) {
+		if label != "" && item.ownsLabel(targetLocale) {
 			path := fmt.Sprintf("item:%s:label", item.ID)
 			*units = append(*units, translation.Unit{
 				UnitID: path, EntityType: "menu", EntityID: menuID, Path: path,
 				ContainerType: translation.ContainerTypeBlock, ContainerID: item.ID,
 				FieldName: "label", SourceText: label,
 				SourceFormat: translation.SourceFormatPlainText, SourceLocale: sourceLocale,
-				Context: stringPointer(strings.TrimSpace(item.LinkType)),
+				Context: stringPointer(strings.TrimSpace(string(item.LinkType))),
 			})
 		}
 		collectTranslationUnits(menuID, sourceLocale, targetLocale, item.Children, units)
@@ -152,7 +132,7 @@ func collectTranslationUnits(
 }
 
 func collectTranslationResultLabels(
-	items []model.MenuItem,
+	items []Item,
 	results map[string]translation.UnitResult,
 	labels map[string]string,
 ) {

@@ -1,18 +1,20 @@
 package public
 
 import (
-	"testing"
+	"context"
+	"errors"
 
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
-func newDryRunPublicServiceDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(postgres.New(postgres.Config{
-		DSN: "host=localhost user=geul dbname=geul sslmode=disable",
-	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
-	require.NoError(t, err)
-	return db
+var errUnusedTestDependency = errors.New("test did not configure this public Program Event dependency")
+
+type unusedAssets struct{}
+
+func (unusedAssets) ResolveReadyAssetForSourceFile(context.Context, string, ...string) *mediaasset.Reference {
+	return nil
+}
+
+func (unusedAssets) ResolveReadyAssetsForSourceFiles(context.Context, []string, ...string) (map[string]*mediaasset.Reference, error) {
+	return nil, errUnusedTestDependency
 }

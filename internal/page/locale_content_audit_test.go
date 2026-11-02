@@ -28,7 +28,7 @@ func TestPageLocaleContentAuditAttributesSourceAndTargetToOriginMember(t *testin
 	capture := &pageLocaleContentAuditCapture{}
 	for _, locale := range []string{"en", "ko"} {
 		require.NoError(t, appendPageMemberLocaleContentAudit(
-			t.Context(), nil, capture, memberID, "page-1", locale,
+			t.Context(), capture, memberID, "page-1", locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		))
 	}

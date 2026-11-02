@@ -1,20 +1,32 @@
 package release
 
-import (
-	"context"
+import "context"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-)
-
-func lockReleaseForUpdate(ctx context.Context, tx *gorm.DB, releaseID string) (*model.Release, error) {
-	var release model.Release
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		First(&release, "id = ?", releaseID).Error; err != nil {
-		return nil, err
+// lockReleaseRow is the Lock of a Release mutation: the root row FOR UPDATE,
+// answering not found before authorization when it is missing. into, when
+// set, receives the locked row.
+func lockReleaseRow(releaseID string, into *Release) func(context.Context, Store) error {
+	return func(ctx context.Context, store Store) error {
+		locked, err := store.LockRelease(ctx, releaseID, UpdateLock)
+		if err != nil {
+			return releaseMissingAs(err, releaseNotFound(releaseID))
+		}
+		if into != nil {
+			*into = locked
+		}
+		return nil
 	}
-	return &release, nil
+}
+
+// lockTrackRow locks the Track FOR UPDATE, answering not found before
+// authorization when it is missing. into, when set, receives the row.
+func lockTrackRow(ctx context.Context, store Store, trackID string, into *Track) error {
+	locked, err := store.LockTrack(ctx, trackID)
+	if err != nil {
+		return missingAs(err, ErrTrackNotFound, trackNotFound())
+	}
+	if into != nil {
+		*into = locked
+	}
+	return nil
 }

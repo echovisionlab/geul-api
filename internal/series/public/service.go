@@ -2,89 +2,84 @@ package public
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/series"
 )
+
+// Localization is how a public Series' copy was localized for the request.
+type Localization struct {
+	RequestedLocale string
+	DisplayedLocale string
+	SourceLocale    string
+	IsFallback      bool
+	IsOriginal      bool
+	// FallbackReason is numbered as the API's LocalizationFallbackReason.
+	FallbackReason   int32
+	AvailableLocales []string
+}
+
+// Series is a published Series as public readers see it.
+type Series struct {
+	ID                 string
+	Title              string
+	Slug               string
+	Description        *string
+	PostCount          int32
+	OgAsset            *series.Asset
+	FeaturedImageAsset *series.Asset
+	Localization       Localization
+}
 
 // Page is the public Series query result after storage filtering and
 // projection have been completed by the concrete adapter.
 type Page struct {
-	Items  []*openv1.Series
+	Items  []Series
 	Total  int32
 	Limit  int32
 	Offset int32
 }
 
-// Reader owns the concrete public Series query and localization projection.
-type Reader interface {
-	List(context.Context, *openv1.ListSeriesRequest, string) (Page, error)
-	Get(context.Context, string, string) (*openv1.Series, error)
+// HasMore reports whether Series follow the page.
+func (p Page) HasMore() bool {
+	return p.Offset+int32(len(p.Items)) < p.Total
 }
 
-type SeriesService struct {
-	openv1connect.UnimplementedSeriesServiceHandler
+// GetSeriesQuery reads one published Series by ID or slug.
+type GetSeriesQuery struct {
+	IDOrSlug       string
+	AcceptLanguage string
+}
+
+// Reader owns the concrete public Series query and localization projection.
+type Reader interface {
+	List(context.Context, ListSeriesQuery) (Page, error)
+	Get(context.Context, string, string) (Series, error)
+}
+
+// Service holds the public Series use cases.
+type Service struct {
 	reader Reader
 }
 
-func NewSeriesService(reader Reader) *SeriesService {
+// NewService returns the public Series use cases over reader.
+func NewService(reader Reader) (*Service, error) {
 	if reader == nil {
-		panic("public SeriesService: reader is required")
+		return nil, errors.New("public series reader is required")
 	}
-	return &SeriesService{reader: reader}
+	return &Service{reader: reader}, nil
 }
 
-func (s *SeriesService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListSeriesRequest],
-) (_ *connect.Response[openv1.ListSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	page, err := s.reader.List(ctx, req.Msg, req.Header().Get("Accept-Language"))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&openv1.ListSeriesResponse{
-		Series: page.Items,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   page.Total,
-			Limit:   page.Limit,
-			Offset:  page.Offset,
-			HasMore: page.Offset+int32(len(page.Items)) < page.Total,
-		},
-	}), nil
+func (s *Service) ListSeries(ctx context.Context, query ListSeriesQuery) (Page, error) {
+	return s.reader.List(ctx, query)
 }
 
-func (s *SeriesService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetSeriesRequest],
-) (_ *connect.Response[openv1.GetSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	idOrSlug := strings.TrimSpace(req.Msg.Slug)
+func (s *Service) GetSeries(ctx context.Context, query GetSeriesQuery) (Series, error) {
+	idOrSlug := strings.TrimSpace(query.IDOrSlug)
 	if idOrSlug == "" {
-		return nil, errs.Required("slug")
+		return Series{}, domainerr.Required("slug")
 	}
-	item, err := s.reader.Get(ctx, idOrSlug, req.Header().Get("Accept-Language"))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&openv1.GetSeriesResponse{Series: item}), nil
+	return s.reader.Get(ctx, idOrSlug, query.AcceptLanguage)
 }

@@ -4,122 +4,103 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/post"
 )
 
 type commentMembers struct{ MemberSummaryLoader }
 
-func (m commentMembers) LoadMemberSummaries(ctx context.Context, ids []string) (map[string]*commonv1.MemberSummary, error) {
+func (m commentMembers) LoadMemberSummaries(ctx context.Context, ids []string) (map[string]*memberref.Summary, error) {
 	return m.LoadPublicMemberSummaries(ctx, ids)
 }
 
-func (s *PostService) withCommentPost(
+// ListPostCommentsQuery reads a page of a public Post's comments. A draft
+// Post's comments are visible through its share link.
+type ListPostCommentsQuery struct {
+	PostID        string
+	Limit         int32
+	Cursor        *string
+	ReplyLimit    int32
+	ShareToken    string
+	SharePassword string
+}
+
+// LoadMorePostCommentRepliesQuery reads a page of a public comment's replies.
+type LoadMorePostCommentRepliesQuery struct {
+	PostID        string
+	CommentID     string
+	Limit         int32
+	Cursor        *string
+	ShareToken    string
+	SharePassword string
+}
+
+func (s *Service) withCommentPost(
 	ctx context.Context,
 	postID, shareToken, sharePassword string,
-	read func(*gorm.DB) error,
+	read func(Store) error,
 ) error {
 	if !isValidUUID(postID) {
-		return errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return domainerr.InvalidField("post_id", "must be a canonical UUID")
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var post model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
-			Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("post not found")
+	return s.units.ReadLocked(ctx, func(store Store) error {
+		commented, err := store.ShareLockCommentPost(ctx, postID)
+		if err != nil {
+			if errors.Is(err, post.ErrPostNotFound) {
+				return domainerr.New(domainerr.NotFound, "", "post not found")
 			}
-			return errs.Internal(err)
+			return err
 		}
-		if !isPublicPostStatus(post.Status) {
-			if _, _, err := s.requireDraftPostAccess(ctx, tx, post.ID, shareToken, sharePassword); err != nil {
+		if !isPublicPostStatus(commented.Status) {
+			if _, _, err := s.requireDraftPostAccess(ctx, store, commented.ID, shareToken, sharePassword); err != nil {
 				return err
 			}
 		}
-		if !post.CommentsEnabled {
-			return errs.FailedPrecondition(errs.MsgCommentsDisabled)
+		if !commented.CommentsEnabled {
+			return domainerr.Precondition("comments are disabled for this post")
 		}
-		return read(tx)
+		return read(store)
 	})
 }
 
-func (s *PostService) ListComments(
-	ctx context.Context,
-	req *connect.Request[openv1.ListPostCommentsRequest],
-) (*connect.Response[openv1.ListPostCommentsResponse], error) {
-	var response *openv1.ListPostCommentsResponse
-	err := s.withCommentPost(ctx, req.Msg.PostId, req.Msg.GetShareToken(), req.Msg.GetSharePassword(), func(tx *gorm.DB) error {
-		reader := postdomain.NewCommentService(tx, s.spiceDB, commentMembers{s.members})
-		result, err := reader.ReadCommentsByPost(ctx, connect.NewRequest(&managev1.ListCommentsByPostRequest{
-			PostId: req.Msg.PostId, Limit: req.Msg.Limit, Cursor: req.Msg.Cursor, ReplyLimit: req.Msg.ReplyLimit,
-		}))
-		if err != nil {
-			return err
-		}
-		response = &openv1.ListPostCommentsResponse{
-			Comments: publicCommentNodes(result.Msg.Comments), NextCursor: result.Msg.NextCursor,
-			HasMore: result.Msg.HasMore, TotalCount: result.Msg.TotalCount,
-		}
-		return nil
+// ListComments reads a page of a public Post's comments.
+func (s *Service) ListComments(ctx context.Context, query ListPostCommentsQuery) (post.CommentPage, error) {
+	var page post.CommentPage
+	err := s.withCommentPost(ctx, query.PostID, query.ShareToken, query.SharePassword, func(store Store) error {
+		var err error
+		page, err = post.ReadComments(ctx, store, commentMembers{s.members}, post.ListCommentsQuery{
+			PostID: query.PostID, Limit: query.Limit, Cursor: query.Cursor, ReplyLimit: query.ReplyLimit,
+		})
+		return err
 	})
 	if err != nil {
-		return nil, err
+		return post.CommentPage{}, err
 	}
-	return connect.NewResponse(response), nil
+	return page, nil
 }
 
-func (s *PostService) LoadMoreCommentReplies(
-	ctx context.Context,
-	req *connect.Request[openv1.LoadMorePostCommentRepliesRequest],
-) (*connect.Response[openv1.ListPostCommentsResponse], error) {
-	if !isValidUUID(req.Msg.CommentId) {
-		return nil, errs.InvalidArgument("comment_id", "must be a canonical UUID")
+// LoadMoreCommentReplies reads a page of a public comment's replies.
+func (s *Service) LoadMoreCommentReplies(ctx context.Context, query LoadMorePostCommentRepliesQuery) (post.CommentPage, error) {
+	if !isValidUUID(query.CommentID) {
+		return post.CommentPage{}, domainerr.InvalidField("comment_id", "must be a canonical UUID")
 	}
-	var response *openv1.ListPostCommentsResponse
-	err := s.withCommentPost(ctx, req.Msg.PostId, req.Msg.GetShareToken(), req.Msg.GetSharePassword(), func(tx *gorm.DB) error {
-		var parent model.Comment
-		if err := tx.First(&parent, "id = ? AND post_id = ?", req.Msg.CommentId, req.Msg.PostId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("comment not found")
+	var page post.CommentPage
+	err := s.withCommentPost(ctx, query.PostID, query.ShareToken, query.SharePassword, func(store Store) error {
+		parent, err := store.FindPostComment(ctx, query.PostID, query.CommentID)
+		if err != nil {
+			if errors.Is(err, post.ErrCommentNotFound) {
+				return domainerr.New(domainerr.NotFound, "", "comment not found")
 			}
-			return errs.Internal(err)
-		}
-		reader := postdomain.NewCommentService(tx, s.spiceDB, commentMembers{s.members})
-		result, err := reader.ReadCommentReplies(ctx, connect.NewRequest(&managev1.LoadMoreRepliesRequest{
-			CommentId: req.Msg.CommentId, Limit: req.Msg.Limit, Cursor: req.Msg.Cursor,
-		}), parent)
-		if err != nil {
 			return err
 		}
-		response = &openv1.ListPostCommentsResponse{
-			Comments: publicCommentNodes(result.Msg.Replies), NextCursor: result.Msg.NextCursor,
-			HasMore: result.Msg.HasMore, TotalCount: result.Msg.TotalCount,
-		}
-		return nil
+		page, err = post.ReadCommentReplies(ctx, store, commentMembers{s.members}, post.LoadMoreRepliesQuery{
+			CommentID: query.CommentID, Limit: query.Limit, Cursor: query.Cursor,
+		}, parent)
+		return err
 	})
 	if err != nil {
-		return nil, err
+		return post.CommentPage{}, err
 	}
-	return connect.NewResponse(response), nil
-}
-
-func publicCommentNodes(nodes []*managev1.CommentNode) []*openv1.PostCommentNode {
-	result := make([]*openv1.PostCommentNode, len(nodes))
-	for index, node := range nodes {
-		result[index] = &openv1.PostCommentNode{
-			Id: node.Id, PostId: node.PostId, ParentId: node.ParentId, Content: node.Content,
-			IsDeleted: node.IsDeleted, CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
-			Replies: publicCommentNodes(node.Replies), HasMoreReplies: node.HasMoreReplies,
-			TotalReplyCount: node.TotalReplyCount, MemberId: node.MemberId, Author: node.Author,
-		}
-	}
-	return result
+	return page, nil
 }

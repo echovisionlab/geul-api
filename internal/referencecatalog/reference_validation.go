@@ -1,62 +1,42 @@
 package referencecatalog
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
-const referenceValueMaxLength = 100
+// Reference kinds bound name and slug by their column length: varchar(100) for
+// genre, style and category, varchar(50) for format and tag.
+const (
+	referenceValueMaxLength      = 100
+	shortReferenceValueMaxLength = 50
+)
 
-func normalizeReferenceName(value string) (string, error) {
+func normalizeReferenceName(value string, maxLength int) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", errs.Required("name")
+		return "", domainerr.Required("name")
 	}
-	if utf8.RuneCountInString(value) > referenceValueMaxLength {
-		return "", errs.InvalidArgument("name", fmt.Sprintf("must be at most %d characters", referenceValueMaxLength))
+	if utf8.RuneCountInString(value) > maxLength {
+		return "", domainerr.InvalidField("name", fmt.Sprintf("must be at most %d characters", maxLength))
 	}
 	return value, nil
 }
 
-func normalizeReferenceSlug(value string) (string, error) {
+func normalizeReferenceSlug(value string, maxLength int) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", errs.Required("slug")
+		return "", domainerr.Required("slug")
 	}
-	if utf8.RuneCountInString(value) > referenceValueMaxLength {
-		return "", errs.InvalidArgument("slug", fmt.Sprintf("must be at most %d characters", referenceValueMaxLength))
+	if utf8.RuneCountInString(value) > maxLength {
+		return "", domainerr.InvalidField("slug", fmt.Sprintf("must be at most %d characters", maxLength))
 	}
-	if err := validateSlugWithoutSlash(value); err != nil {
+	if err := pathslug.Validate(value); err != nil {
 		return "", err
 	}
 	return value, nil
-}
-
-func classifyReferenceUniqueViolation(resource string, name string, slug string, err error) error {
-	if !isUniqueViolation(err) {
-		return errs.Internal(err)
-	}
-
-	slog.WarnContext(context.Background(), "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err), "resource", resource)
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.ConstraintName {
-		case resource + "_name_key":
-			return errs.AlreadyExists(resource, "name", name)
-		case resource + "_slug_key":
-			return errs.SlugAlreadyExists(resource, slug)
-		}
-	}
-
-	return errs.AlreadyExistsMsg(fmt.Sprintf("%s with the same name or slug already exists", resource))
 }

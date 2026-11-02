@@ -3,16 +3,18 @@ package translationadapter
 import (
 	"context"
 	"errors"
-	"time"
 
 	"gorm.io/gorm"
 
+	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -125,19 +127,16 @@ func loadPostInterchangeTarget(
 		plan.EntityID != entityID || plan.TargetLocale != locale {
 		return postInterchangeTarget{}, errs.InvalidArgument("target", "Post translation interchange identity does not match the extraction plan")
 	}
-	var root struct {
-		ContentDocumentID *string `gorm:"column:content_document_id"`
-	}
-	if err := db.WithContext(ctx).Table("post").Select("content_document_id").
-		Where("id = ?", entityID).Take(&root).Error; err != nil {
+	contentDocumentID, err := postadapter.TranslationInterchangeDocumentID(ctx, db, entityID)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return postInterchangeTarget{}, errs.NotFound("post", entityID)
 		}
 		return postInterchangeTarget{}, errs.Internal(err)
 	}
-	documentID, err := canonicalInterchangeDocumentID(root.ContentDocumentID)
+	documentID, err := canonicalInterchangeDocumentID(contentDocumentID)
 	if err != nil {
-		return postInterchangeTarget{}, errs.FailedPrecondition("Post content document identity is invalid")
+		return postInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, db, documentID, plan.SourceLocale)
 	if err != nil {
@@ -151,17 +150,10 @@ func loadPostInterchangeTarget(
 		return postInterchangeTarget{}, errs.FailedPrecondition("Post translation interchange requires the Post content profile")
 	}
 
-	var row struct {
-		Title     *string   `gorm:"column:title"`
-		Summary   *string   `gorm:"column:summary"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
+	row, exists, err := postadapter.TranslationInterchangeLocaleRow(ctx, db, entityID, locale)
+	if err != nil {
+		return postInterchangeTarget{}, errs.Internal(err)
 	}
-	query := db.WithContext(ctx).Table("post_translation").Select("title", "summary", "updated_at").
-		Where("entity_id = ? AND locale = ?", entityID, locale).Take(&row)
-	if query.Error != nil && !errors.Is(query.Error, gorm.ErrRecordNotFound) {
-		return postInterchangeTarget{}, errs.Internal(query.Error)
-	}
-	exists := query.Error == nil
 	if !exists && len(localized.GetLocaleOverlay().GetBlocks()) != 0 {
 		return postInterchangeTarget{}, errs.InternalMsg("Post target Blocks exist without owning locale metadata")
 	}
@@ -200,4 +192,4 @@ func buildPostInterchangeCandidate(
 	return candidate, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*PostInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*PostInterchange)(nil)

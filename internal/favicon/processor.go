@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,9 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
 )
 
 const (
@@ -33,20 +31,20 @@ const (
 
 // Spec describes one required generated favicon output.
 type Spec struct {
-	DerivativeType managev1.FileDerivativeType
+	DerivativeType DerivativeType
 	Extension      string
 	MimeType       string
 	PixelSize      int
 }
 
 var requiredOutputSpecs = []Spec{
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_ICO, "ico", "image/vnd.microsoft.icon", 0},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_16, "png", "image/png", 16},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32, "png", "image/png", 32},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_48, "png", "image/png", 48},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_APPLE_TOUCH_180, "png", "image/png", 180},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_192, "png", "image/png", 192},
-	{managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_512, "png", "image/png", 512},
+	{ICO, "ico", "image/vnd.microsoft.icon", 0},
+	{PNG16, "png", "image/png", 16},
+	{PNG32, "png", "image/png", 32},
+	{PNG48, "png", "image/png", 48},
+	{AppleTouch180, "png", "image/png", 180},
+	{Manifest192, "png", "image/png", 192},
+	{Manifest512, "png", "image/png", 512},
 }
 
 // RequiredOutputs returns the exact generated derivatives required for a favicon.
@@ -101,7 +99,7 @@ func (p *imageMagickProcessor) Process(
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	sourceExtension := model.GetExtensionFromMime(sourceMime)
+	sourceExtension := mediamime.GetExtensionFromMime(sourceMime)
 	if sourceExtension == "bin" {
 		return nil, fmt.Errorf("unsupported favicon source MIME %q", sourceMime)
 	}
@@ -289,7 +287,7 @@ func validateFaviconSVGSource(source []byte) error {
 	validator := faviconSVGValidator{decoder: xml.NewDecoder(bytes.NewReader(source))}
 	for {
 		token, err := validator.decoder.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -492,14 +490,14 @@ func parseICODirectory(data []byte) ([]icoDirectoryEntry, error) {
 
 // ValidateOutputs checks that a processor returned the exact required set.
 func ValidateOutputs(outputs []Output, _ string) error {
-	expected := make(map[managev1.FileDerivativeType]Spec, len(requiredOutputSpecs))
+	expected := make(map[DerivativeType]Spec, len(requiredOutputSpecs))
 	for _, spec := range requiredOutputSpecs {
 		expected[spec.DerivativeType] = spec
 	}
 	if len(outputs) != len(expected) {
 		return fmt.Errorf("favicon processor returned %d outputs, want %d", len(outputs), len(expected))
 	}
-	seen := make(map[managev1.FileDerivativeType]struct{}, len(outputs))
+	seen := make(map[DerivativeType]struct{}, len(outputs))
 	for _, output := range outputs {
 		if err := validateGeneratedFaviconOutput(output, expected, seen); err != nil {
 			return err
@@ -510,8 +508,8 @@ func ValidateOutputs(outputs []Output, _ string) error {
 
 func validateGeneratedFaviconOutput(
 	output Output,
-	expected map[managev1.FileDerivativeType]Spec,
-	seen map[managev1.FileDerivativeType]struct{},
+	expected map[DerivativeType]Spec,
+	seen map[DerivativeType]struct{},
 ) error {
 	spec, ok := expected[output.Spec.DerivativeType]
 	if !ok {
@@ -540,15 +538,31 @@ func validateGeneratedFaviconPNG(data []byte, spec Spec) error {
 	}
 	config, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width != spec.PixelSize || config.Height != spec.PixelSize {
-		if err != nil {
-			slog.ErrorContext(context.Background(), "Failed to decode generated favicon PNG", failurecause.Attr(err), "derivative_type", spec.DerivativeType.String())
+		return invalidDerivativeError{
+			message: fmt.Sprintf("favicon derivative %s must be %dx%d PNG", spec.DerivativeType.String(), spec.PixelSize, spec.PixelSize),
+			cause:   err,
 		}
-		return fmt.Errorf(
-			"favicon derivative %s must be %dx%d PNG",
-			spec.DerivativeType.String(), spec.PixelSize, spec.PixelSize,
-		)
 	}
 	return nil
+}
+
+// invalidDerivativeError states the requirement a derivative failed; callers
+// put that text in client messages. The decode failure behind it stays in
+// the chain and in the failure record.
+type invalidDerivativeError struct {
+	message string
+	cause   error
+}
+
+func (e invalidDerivativeError) Error() string { return e.message }
+func (e invalidDerivativeError) Unwrap() error { return e.cause }
+
+// OperationContext implements failurecause.OperationContext.
+func (e invalidDerivativeError) OperationContext() (rendered, operation string) {
+	if e.cause == nil {
+		return e.message, e.message
+	}
+	return e.message, e.message + ": " + e.cause.Error()
 }
 
 func validateGeneratedFaviconICO(data []byte, spec Spec) error {

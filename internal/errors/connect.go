@@ -11,6 +11,8 @@ import (
 	"connectrpc.com/connect"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // =============================================================================
@@ -62,20 +64,6 @@ const (
 	MsgExpiresInFuture    = "expires_at must be in the future"
 	MsgExpiresMaxOneYear  = "expires_at cannot exceed 1 year from now"
 	MsgLimitExceeded      = "limit must be <= %d"
-)
-
-// Failed precondition messages - Campaign
-const (
-	MsgCampaignCannotUpdateSent    = "only draft campaigns can be edited"
-	MsgCampaignCannotDeleteSending = "cannot delete campaign that is currently sending"
-	MsgCampaignOnlyScheduleDraft   = "only draft campaigns can be scheduled"
-	MsgCampaignNeedsContent        = "campaign must have content before scheduling"
-	MsgCampaignOnlyCancelScheduled = "can only cancel scheduled campaigns"
-	MsgCampaignAlreadySent         = "only draft campaigns can be sent"
-	MsgCampaignNoRecipients        = "no eligible recipients to send to"
-	MsgCampaignSegmentNotFound     = "campaign segment not found"
-	MsgCampaignOnlySetSegmentDraft = "only draft campaigns can change audience"
-	MsgCampaignOnlySetLayoutDraft  = "only draft campaigns can change layout"
 )
 
 // Failed precondition messages - Form
@@ -326,17 +314,45 @@ func Internal(err error) *connect.Error {
 	return Wrap(err)
 }
 
+// WithCause returns client with cause kept server-side: the client sees only
+// client's code, message and details, while errors.Is/As and the request
+// record see cause. Use it where a failure maps to a fixed client answer
+// (not found, unavailable, a rejected credential) that would otherwise drop
+// the reason.
+func WithCause(client *connect.Error, cause error) *connect.Error {
+	if cause == nil {
+		return client
+	}
+	// The operation renders the operation context of classified errors in
+	// cause in place of their client messages.
+	classified := newClassifiedError(client.Code(), &classifiedCause{
+		message: client.Message(), operation: failurecause.Message(cause), cause: cause,
+	})
+	for _, detail := range client.Details() {
+		classified.AddDetail(detail)
+	}
+	for key, values := range client.Meta() {
+		classified.Meta()[key] = append([]string(nil), values...)
+	}
+	return classified
+}
+
 // InternalMsg returns a CodeInternal error with a custom message.
 func InternalMsg(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s", msg))
 }
 
-// OperationLogLevel selects the severity for an operation-level failure log.
-// The request log already records every failed request once, with its status
-// and failure cause. Expected client outcomes therefore stay at Debug here,
-// server faults stay at Error, and the remaining client rejections stay at Warn.
+// OperationLogLevel grades a failure for a sink whose record has no HTTP
+// status to grade it by: the boundary fallback without a request log, the
+// MCP tool record, and degraded fallbacks that log and continue. Expected
+// client outcomes are Debug, server faults Error, and the remaining client
+// rejections Warn.
 func OperationLogLevel(err error) slog.Level {
-	switch connect.CodeOf(err) {
+	code := connect.CodeOf(err)
+	if classified, ok := Classified(err); ok {
+		code = classified.Code()
+	}
+	switch code {
 	case connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeUnauthenticated, connect.CodeCanceled:
 		return slog.LevelDebug
 	case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded, connect.CodeUnimplemented:
@@ -348,7 +364,7 @@ func OperationLogLevel(err error) slog.Level {
 
 // Wrap returns a Connect error with the appropriate code based on the error type.
 // If err contains a *connect.Error, its code, message, details and metadata are
-// preserved. Request cancellation and deadlines retain their transport
+// preserved; a use-case error (domainerr) is mapped by its kind. Request cancellation and deadlines retain their transport
 // classification. Otherwise, it returns a CodeInternal error.
 //
 // Wrap does not log: it has no request context. When the classification
@@ -356,21 +372,14 @@ func OperationLogLevel(err error) slog.Level {
 // the RPC boundary (BoundaryInterceptor), which logs it with the request
 // context. Clients only ever see the classified message.
 func Wrap(err error) *connect.Error {
-	var connectErr *connect.Error
-	if stderrors.As(err, &connectErr) && connectErr != nil {
-		if err == connectErr {
-			return connectErr
-		}
-		return withOperationContext(connectErr, err)
+	if classified, ok := Classified(err); ok {
+		return classified
 	}
 	if stderrors.Is(err, context.Canceled) {
 		return classifiedError(connect.CodeCanceled, context.Canceled.Error(), err)
 	}
 	if stderrors.Is(err, context.DeadlineExceeded) {
 		return classifiedError(connect.CodeDeadlineExceeded, context.DeadlineExceeded.Error(), err)
-	}
-	if isRequestUUIDRejection(err) {
-		return classifiedError(connect.CodeInvalidArgument, msgInvalidRequestUUID, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)
 }
@@ -419,37 +428,6 @@ func newClassifiedError(code connect.Code, cause *classifiedCause) *connect.Erro
 
 func classifiedError(code connect.Code, message string, cause error) *connect.Error {
 	return newClassifiedError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
-}
-
-// withOperationContext copies connectErr so that the outer operation context
-// in err survives classification without reaching the client.
-func withOperationContext(connectErr *connect.Error, err error) *connect.Error {
-	classified := newClassifiedError(connectErr.Code(), &classifiedCause{
-		message: connectErr.Message(), operation: operationCause(err), cause: err,
-	})
-	for _, detail := range connectErr.Details() {
-		classified.AddDetail(detail)
-	}
-	for key, values := range connectErr.Meta() {
-		classified.Meta()[key] = append([]string(nil), values...)
-	}
-	return classified
-}
-
-// operationCause returns the server-side description of err. Where err holds a
-// classified Connect error, that error's client-facing text is replaced by the
-// operation context it kept.
-func operationCause(err error) string {
-	text := err.Error()
-	var connectErr *connect.Error
-	if !stderrors.As(err, &connectErr) || connectErr == nil {
-		return text
-	}
-	classified, ok := connectErr.Unwrap().(*classifiedCause)
-	if !ok {
-		return text
-	}
-	return strings.Replace(text, connectErr.Error(), classified.operation, 1)
 }
 
 // CollaborationState preserves revisions read under the owning resource lock.

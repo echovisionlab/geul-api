@@ -4,14 +4,21 @@ import (
 	"context"
 	"strings"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"gorm.io/gorm"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -19,10 +26,10 @@ import (
 // narrow surface owned by Artist.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Artist runtime OG refresher is required")
 	}
@@ -38,7 +45,7 @@ func (r *Runtime) LoadArtistImages(
 	artistIDs []string,
 ) (map[string][]artistdomain.ArtistImageProjection, error) {
 	result := make(map[string][]artistdomain.ArtistImageProjection, len(artistIDs))
-	artistIDs = normalizedUniqueStrings(artistIDs)
+	artistIDs = sliceutil.UniqueTrimmed(artistIDs)
 	if len(artistIDs) == 0 {
 		return result, nil
 	}
@@ -85,17 +92,17 @@ func (r *Runtime) LoadArtistImages(
 		return nil, err
 	}
 
-	lifecycle := mediaasset.NewLifecycle(db, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain)
 	for _, row := range rows {
 		projection := artistdomain.ArtistImageProjection{
 			ArtistID: row.ArtistID, FileID: row.FileID, SortOrder: row.SortOrder,
 		}
 		if row.AssetID != nil && row.Extension != nil && row.MimeType != nil && row.FileSize != nil && row.Disposition != nil {
-			asset, err := lifecycle.AssetRef(model.PublicAsset{
+			asset, err := lifecycle.AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
 				ID: *row.AssetID, Kind: "image", Extension: *row.Extension,
 				MimeType: *row.MimeType, FileSize: row.FileSize, SHA256: row.SHA256,
 				Disposition: *row.Disposition,
-			})
+			}))
 			if err != nil {
 				return nil, err
 			}
@@ -110,9 +117,9 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	db *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
-	result := make(map[string]*commonv1.AssetRef, len(assetIDs))
+) (map[string]*mediaasset.Reference, error) {
+	assetIDs = sliceutil.UniqueTrimmed(assetIDs)
+	result := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return result, nil
 	}
@@ -122,12 +129,12 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(db, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -142,11 +149,11 @@ func (r *Runtime) ReplaceArtistImageBindings(
 	artistID string,
 	fileIDs []string,
 ) error {
-	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs); err != nil {
+	if err := mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs); err != nil {
 		return err
 	}
 	var currentKeys []string
-	if err := mediaasset.WhereBindingKeyFamily(
+	if err := mediaassetpostgres.WhereBindingKeyFamily(
 		tx.Model(&model.PublicAssetBinding{}).
 			Where("owner_type = ? AND owner_id = ?", "artist", artistID),
 		"image",
@@ -157,7 +164,7 @@ func (r *Runtime) ReplaceArtistImageBindings(
 	if err := tx.Where("artist_id = ?", artistID).Delete(&model.ArtistFile{}).Error; err != nil {
 		return err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
 	nextKeys := make(map[string]struct{}, len(fileIDs))
 	for index, fileID := range fileIDs {
 		if err := tx.Create(&model.ArtistFile{ArtistID: artistID, FileID: fileID, SortOrder: index}).Error; err != nil {
@@ -170,7 +177,7 @@ func (r *Runtime) ReplaceArtistImageBindings(
 		key := "image_" + fileID
 		nextKeys[key] = struct{}{}
 		if err := lifecycle.BindPublicAsset(ctx, mediaasset.Binding{
-			AssetID: asset.GetAssetId(), OwnerType: "artist", OwnerID: artistID,
+			AssetID: optional.Value(asset).AssetID, OwnerType: "artist", OwnerID: artistID,
 			BindingKey: key, SourceFileID: &fileID,
 		}); err != nil {
 			return err
@@ -208,7 +215,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 	ownerType string,
 	ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, entityType, ownerID); err != nil {
 		return err
 	}
 	return r.ReleasePublicAssetBindings(ctx, tx, ownerType, ownerID, "og")
@@ -221,7 +228,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -254,21 +261,4 @@ func (*Runtime) IsResourceRouteAvailable(
 	return routeregistry.IsResourceRouteAvailable(ctx, db, pathPrefix, slug)
 }
 
-func normalizedUniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-var _ artistdomain.Runtime = (*Runtime)(nil)
+var _ artistpostgres.Runtime = (*Runtime)(nil)

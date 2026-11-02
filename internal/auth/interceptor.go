@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/geoip"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/requestip"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"gorm.io/gorm"
@@ -175,9 +175,9 @@ func (ai *AuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		user, resolveErr := ai.resolveUserWithError(ctx, authCred)
 		if resolveErr != nil {
 			if errors.Is(resolveErr, ErrSessionPrincipalInvalid) {
-				return nil, errs.InvalidSession()
+				return nil, errs.WithCause(errs.InvalidSession(), resolveErr)
 			}
-			return nil, errs.DependencyUnavailable("authentication")
+			return nil, errs.WithCause(errs.DependencyUnavailable("authentication"), resolveErr)
 		}
 
 		if user.Banned {
@@ -205,16 +205,10 @@ func (ai *AuthInterceptor) handleOathkeeperSession(
 	// assertion represents an active identity.
 	user, err := ai.userFromOathkeeperAssertion(ctx, req)
 	if err != nil {
-		level := slog.LevelError
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
-			level = slog.LevelWarn
+			return nil, errs.WithCause(errs.InvalidSession(), err)
 		}
-		cause := failurecause.Message(err)
-		slog.Log(ctx, level, "Authentication principal resolution failed", "reason", "gateway_principal_resolution_failed", "failure_cause", cause)
-		if errors.Is(err, ErrSessionPrincipalInvalid) {
-			return nil, errs.InvalidSession()
-		}
-		return nil, errs.DependencyUnavailable("principal database")
+		return nil, errs.WithCause(errs.DependencyUnavailable("principal database"), err)
 	}
 	if user.Banned {
 		return nil, errs.AccountBanned()
@@ -268,7 +262,7 @@ func (ai *AuthInterceptor) handleDirectPublicRequest(
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
 			return next(ctx, req)
 		}
-		return nil, errs.DependencyUnavailable("authentication")
+		return nil, errs.WithCause(errs.DependencyUnavailable("authentication"), err)
 	}
 	if user == nil || !user.Onboarded {
 		return next(ctx, req)
@@ -341,12 +335,6 @@ func (ai *AuthInterceptor) resolveUserWithError(ctx context.Context, authCred st
 	// Extract user info from Kratos session
 	user, err := ResolveAuthenticatedPrincipalBySessionID(ctx, ai.db, session.ID)
 	if err != nil {
-		level := slog.LevelError
-		if errors.Is(err, ErrSessionPrincipalInvalid) {
-			level = slog.LevelWarn
-		}
-		cause := failurecause.Message(err)
-		slog.Log(ctx, level, "Authentication principal resolution failed", "reason", "principal_validation_failed", "failure_cause", cause)
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
 			ai.cacheInvalidCredential(authCred)
 		}
@@ -359,7 +347,6 @@ func (ai *AuthInterceptor) resolveUserWithError(ctx context.Context, authCred st
 func (ai *AuthInterceptor) checkSession(ctx context.Context, authCred string) (*kratosSession, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ai.kratosPublicURL+"/sessions/whoami", nil)
 	if err != nil {
-		slog.ErrorContext(ctx, "Create Kratos session request failed", failurecause.Attr(err, authCred))
 		return nil, err
 	}
 
@@ -367,9 +354,7 @@ func (ai *AuthInterceptor) checkSession(ctx context.Context, authCred string) (*
 	if len(authCred) > 7 && authCred[:7] == "cookie:" {
 		req.Header.Set("Cookie", authCred[7:])
 	} else {
-		err := fmt.Errorf("%w: invalid auth credential format", ErrSessionPrincipalInvalid)
-		slog.WarnContext(ctx, "Kratos session check rejected", failurecause.Attr(err, authCred))
-		return nil, err
+		return nil, fmt.Errorf("%w: invalid auth credential format", ErrSessionPrincipalInvalid)
 	}
 
 	privateValues := []string{authCred, strings.TrimPrefix(authCred, "cookie:")}
@@ -378,32 +363,25 @@ func (ai *AuthInterceptor) checkSession(ctx context.Context, authCred string) (*
 	}
 	resp, err := ai.httpClient.Do(req)
 	if err != nil {
-		slog.ErrorContext(ctx, "Kratos session request failed", failurecause.Attr(err, privateValues...))
-		return nil, fmt.Errorf("kratos request failed: %w", err)
+		return nil, failurecause.WithPrivate(fmt.Errorf("kratos request failed: %w", err), privateValues...)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		err := fmt.Errorf("%w: session not valid", ErrSessionPrincipalInvalid)
-		slog.WarnContext(ctx, "Kratos session check rejected", failurecause.Attr(err))
-		return nil, err
+		return nil, fmt.Errorf("%w: session not valid", ErrSessionPrincipalInvalid)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			slog.ErrorContext(ctx, "Read Kratos session error response failed", failurecause.Attr(readErr, privateValues...))
-		}
 		err := fmt.Errorf("kratos returned %d: %s", resp.StatusCode, string(body))
-		privateValues = append(privateValues, string(body))
-		cause := failurecause.Message(err, privateValues...)
-		slog.ErrorContext(ctx, "Kratos session check failed", "failure_cause", cause, "status_code", resp.StatusCode)
-		return nil, err
+		if readErr != nil {
+			err = errors.Join(err, fmt.Errorf("read Kratos session error response: %w", readErr))
+		}
+		return nil, failurecause.WithPrivate(err, append(privateValues, string(body))...)
 	}
 
 	var session kratosSession
 	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		slog.ErrorContext(ctx, "Decode Kratos session response failed", failurecause.Attr(err, privateValues...))
-		return nil, fmt.Errorf("failed to decode kratos response: %w", err)
+		return nil, failurecause.WithPrivate(fmt.Errorf("failed to decode kratos response: %w", err), privateValues...)
 	}
 	return &session, nil
 }
@@ -470,15 +448,12 @@ func resolveAuthenticatedPrincipalBySessionID(
 			session.authenticated_at AS authenticated_at,
 			COALESCE((i.metadata_admin ->> 'banned')::boolean, false) AS banned,
 			m.onboarded AS onboarded
-		FROM kratos.sessions AS session
-		JOIN kratos.identities AS i
-		  ON i.id = session.identity_id
+		FROM ` + identityread.SessionIdentitySQL("session", "i") + `
 		JOIN member AS m
 		  ON m.account_identity_id = i.id
 		 AND m.id::text = i.external_id
 		WHERE session.id = ?::uuid
-		  AND session.active = TRUE
-		  AND session.expires_at > NOW()
+		  AND ` + identityread.LiveSessionSQL("session") + `
 		  AND i.state = 'active'
 		  AND m.deleted_at IS NULL
 		LIMIT 1

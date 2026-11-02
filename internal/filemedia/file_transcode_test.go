@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -14,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -24,7 +28,6 @@ type recordingFileTranscoderPublisher struct {
 	videoJobs           []*managev1.TranscodeVideoEvent
 	registeredAudioJobs []*managev1.TranscodeAudioEvent
 	registeredVideoJobs []*managev1.TranscodeVideoEvent
-	cancelEvents        []*managev1.TranscodeCancelEvent
 	err                 error
 }
 
@@ -49,15 +52,6 @@ func (p *recordingFileTranscoderPublisher) RegisterTranscodeAudio(_ context.Cont
 
 func (p *recordingFileTranscoderPublisher) RegisterTranscodeVideo(_ context.Context, _ *gorm.DB, job *managev1.TranscodeVideoEvent) error {
 	p.registeredVideoJobs = append(p.registeredVideoJobs, job)
-	return nil
-}
-
-func (p *recordingFileTranscoderPublisher) PublishTranscodeCancel(_ context.Context, event *managev1.TranscodeCancelEvent) error {
-	p.cancelEvents = append(p.cancelEvents, event)
-	return nil
-}
-
-func (p *recordingFileTranscoderPublisher) MarkCancelled(context.Context, string, managev1.TranscodeCancelReason) error {
 	return nil
 }
 
@@ -102,15 +96,13 @@ func (p *recordingFileTranscoderPublisher) EnqueueProtobufWithExecutor(
 	return p.EnqueueProtobuf(ctx, queue, messageID, message)
 }
 
-var _ TransactionalAsyncPublisher = (*recordingFileTranscoderPublisher)(nil)
-
 func TestTriggerFileScopedProcessingPublishesAudioWithoutManualOptions(t *testing.T) {
 	t.Parallel()
 
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &FileService{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := withNativeFileUnits(&Service{asyncPublisher: publisher}, db, nativeFilePorts{Transcoder: publisher})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -148,7 +140,7 @@ func TestTriggerFileScopedProcessingPublishesVideo(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp4", "video/mp4")
-	svc := &FileService{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := withNativeFileUnits(&Service{asyncPublisher: publisher}, db, nativeFilePorts{Transcoder: publisher})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -182,7 +174,7 @@ func TestTriggerFileScopedProcessingRejectsPendingDelete(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &FileService{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := withNativeFileUnits(&Service{asyncPublisher: publisher}, db, nativeFilePorts{Transcoder: publisher})
 	now := time.Now().UTC()
 	require.NoError(t, db.Model(&model.File{}).Where("id = ?", fileID).Update("delete_requested_at", now).Error)
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
@@ -199,7 +191,7 @@ func TestTriggerFileScopedProcessingRetriesSameStableCommandAfterPublishError(t 
 	publisher := &recordingFileTranscoderPublisher{err: errors.New("confirm unavailable")}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &FileService{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := withNativeFileUnits(&Service{asyncPublisher: publisher}, db, nativeFilePorts{Transcoder: publisher})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.ErrorContains(t, err, "enqueue File audio transcode job")
 
@@ -230,9 +222,9 @@ func TestFileIngestAudioOutputAllocatorRejectsPendingSourceFile(t *testing.T) {
 		Where("id = ?", fileID).
 		Update("delete_requested_at", now).Error)
 
-	_, _, _, err := ensureStableFileIngestAudioOutputs(t.Context(), db, fileID)
+	_, _, _, err := ensureStableFileIngestAudioOutputs(t.Context(), testFileStore(&Service{}, db), fileID)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 
 	var assetCount int64
 	require.NoError(t, db.Model(&model.PublicAsset{}).Count(&assetCount).Error)
@@ -259,4 +251,11 @@ func seedTranscodeTargetSource(t *testing.T, db *gorm.DB, extension, mimeType st
 		CreatedAt: time.Now().UTC(),
 	}).Error)
 	return fileID
+}
+
+func (p *recordingFileTranscoderPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *recordingFileTranscoderPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
 }

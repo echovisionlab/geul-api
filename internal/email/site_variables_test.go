@@ -1,10 +1,10 @@
 package email
 
 import (
-	"github.com/echovisionlab/geul-api/internal/model"
+	"testing"
+
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSiteVariableHrefs(t *testing.T) {
@@ -25,7 +25,7 @@ func TestSiteVariableHrefs(t *testing.T) {
 }
 
 func TestEmailSnapshotExpandsSettingsOnceAcrossBodyAndLayout(t *testing.T) {
-	snapshot := model.JSONFields{
+	snapshot := structured.Fields{
 		"source_locale": "en", "subject": "{{site.title}}",
 		"content_html":         "<p>{{site.companyName}}</p>",
 		"layout_source_locale": "en",

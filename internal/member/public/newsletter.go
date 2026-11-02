@@ -2,100 +2,44 @@ package public
 
 import (
 	"context"
-	"log/slog"
-	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/member"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-type NewsletterService struct {
-	openv1connect.UnimplementedNewsletterServiceHandler
-	db          *gorm.DB
-	tokenSecret string
-	auditWriter domainaudit.Appender
-}
+// UnsubscribeNewsletterCommand opts out the Identity a signed unsubscribe
+// token names.
+type UnsubscribeNewsletterCommand struct{ Token string }
 
-func NewNewsletterService(db *gorm.DB, tokenSecret string) *NewsletterService {
-	if db == nil {
-		panic("db is required")
-	}
-	if strings.TrimSpace(tokenSecret) == "" {
-		panic("newsletter token secret is required")
-	}
-	return &NewsletterService{db: db, tokenSecret: tokenSecret}
-}
-
-func NewAuditedNewsletterService(
-	db *gorm.DB,
-	tokenSecret string,
-	auditWriter domainaudit.Appender,
-) *NewsletterService {
-	if auditWriter == nil {
-		panic("newsletter audit writer is required")
-	}
-	service := NewNewsletterService(db, tokenSecret)
-	service.auditWriter = auditWriter
-	return service
-}
-
-func (s *NewsletterService) Unsubscribe(
-	ctx context.Context,
-	req *connect.Request[openv1.UnsubscribeNewsletterRequest],
-) (*connect.Response[openv1.UnsubscribeNewsletterResponse], error) {
-	identityID, err := member.ValidateNewsletterUnsubscribeToken(req.Msg.GetToken(), s.tokenSecret)
+// UnsubscribeNewsletter removes the newsletter subscription of the token's
+// Identity. Repeating it changes nothing.
+func (s *Service) UnsubscribeNewsletter(ctx context.Context, command UnsubscribeNewsletterCommand) error {
+	identityID, err := member.ValidateNewsletterUnsubscribeToken(command.Token, s.tokenSecret)
 	if err != nil {
-		slog.WarnContext(ctx, "Newsletter unsubscribe token rejected", failurecause.Attr(err, req.Msg.GetToken(), s.tokenSecret))
-		return nil, errs.InvalidArgument("token", "must be a valid unsubscribe token")
+		return domainerr.InvalidField("token", "must be a valid unsubscribe token")
 	}
-	if err := s.unsubscribeWithAudit(ctx, identityID); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "Unsubscribe", failurecause.Attr(err))
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&openv1.UnsubscribeNewsletterResponse{Success: true}), nil
-}
-
-func (s *NewsletterService) unsubscribeWithAudit(ctx context.Context, identityID string) error {
-	if s.auditWriter == nil {
-		_, err := member.MutateNewsletterSubscription(ctx, s.db, identityID, false)
-		return err
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		memberID, err := newsletterMemberIDForIdentity(ctx, tx, identityID)
-		if err != nil {
+	var memberID string
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		// The signed token is the authority. It names an Identity whose live
+		// Member the opt-out is attributed to.
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			var err error
+			memberID, err = store.NewsletterMemberID(ctx, identityID)
 			return err
-		}
-		changed, err := member.MutateNewsletterSubscription(ctx, tx, identityID, false)
-		if err != nil || !changed {
-			return err
-		}
-		return member.AppendNewsletterSubscriptionMemberAudit(
-			ctx,
-			tx,
-			s.auditWriter,
-			memberID,
-			sharedtelemetry.AuditStateSubscribed,
-			sharedtelemetry.AuditStateUnsubscribed,
-		)
+		}),
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			return member.MutateNewsletterSubscription(ctx, store, identityID, false)
+		},
+		Audit: func(changed bool) mutation.Audit {
+			if !changed {
+				return mutation.Unchanged()
+			}
+			return mutation.MemberAudit(memberID, sharedtelemetry.AuditAccountUpdated, member.NewsletterSubscriptionAuditBuilder(
+				memberID, sharedtelemetry.AuditStateSubscribed, sharedtelemetry.AuditStateUnsubscribed,
+			))
+		},
 	})
-}
-
-func newsletterMemberIDForIdentity(ctx context.Context, tx *gorm.DB, identityID string) (string, error) {
-	var member struct {
-		ID string `gorm:"column:id"`
-	}
-	err := tx.WithContext(ctx).
-		Table("member AS m").
-		Select("m.id::text AS id").
-		Where("m.account_identity_id = ?::uuid AND m.deleted_at IS NULL", identityID).
-		Take(&member).Error
-	return member.ID, err
+	return err
 }

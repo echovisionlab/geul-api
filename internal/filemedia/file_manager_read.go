@@ -3,65 +3,53 @@ package filemedia
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sort"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
-func (s *FileService) GetFile(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFileRequest],
-) (_ *connect.Response[managev1.GetFileResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFile", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+// GetFileQuery reads one File of the File library.
+type GetFileQuery struct {
+	FileID string
+}
+
+func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*FileDetails, error) {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)
+	fileID, err := normalizeFileManagerUUID(query.FileID, "file_id", false)
 	if err != nil {
 		return nil, err
 	}
 	var row fileManagerCatalogRow
-	if err := s.db.WithContext(ctx).Raw(`SELECT 'file' AS item_type, id, folder_id AS parent_id, file_name AS name, extension, mime_type, file_size, duration_seconds, uploaded_by_member_id AS member_id, created_at, updated_at, 1 AS total FROM file WHERE id = ? AND delete_requested_at IS NULL`, *fileID).Scan(&row).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.units.Read(ctx, func(store Store) error { var err error; row, err = store.FileCatalog(ctx, *fileID); return err }); err != nil {
+		return nil, err
 	}
+
 	if row.ID == "" {
-		return nil, errs.NotFound("file", *fileID)
+		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
-	members := map[string]*commonv1.MemberSummary{}
+	members := map[string]MemberSummary{}
 	if row.MemberID != nil {
-		memberSummaries, dependencyErr := requireMemberSummaries(s.memberSummaries)
-		if dependencyErr != nil {
-			return nil, dependencyErr
-		}
+		memberSummaries := s.memberSummaries
 		members, err = memberSummaries.Load(ctx, []string{*row.MemberID})
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 	}
-	usageRows, err := loadFileUsages(ctx, s.db, []string{*fileID})
+	usageRows, err := s.loadLibraryFileUsages(ctx, []string{*fileID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	usageRows, err = s.filterVisibleFileUsages(ctx, usageRows)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	summary := summarizeFileUsages(usageRows)
 	generatedOutputs, err := s.loadFileGeneratedOutputs(ctx, *fileID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	files, generatedOutputs, changed, err := s.finalizeFileManagerDeliveries(
 		ctx,
@@ -71,75 +59,71 @@ func (s *FileService) GetFile(
 		generatedOutputs,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	file := files[*fileID]
 	if changed || file == nil {
-		return nil, errs.NotFound("file", *fileID)
+		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
-	return connect.NewResponse(&managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}), nil
+	return &FileDetails{File: file, UsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
 }
 
-type fileManagerMeshOutputRow struct {
-	ID           string  `gorm:"column:id"`
-	Status       string  `gorm:"column:status"`
-	OutputFileID *string `gorm:"column:output_file_id"`
-}
+type fileManagerMeshOutputRow = domain.MeshDeliveryOutput
 
-func (s *FileService) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
-	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, []string{fileID})
+func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*GeneratedOutput, error) {
+	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, s.units, []string{fileID})
 	if err != nil {
 		return nil, err
 	}
-	outputs := make([]*managev1.FileGeneratedOutput, 0, len(derivatives))
+	outputs := make([]*GeneratedOutput, 0, len(derivatives))
 	for _, derivative := range derivatives {
-		value, ok := managev1.FileDerivativeType_value[derivative.Type]
+		value, ok := domain.ParseDerivativeKind(derivative.Type)
 		if !ok {
 			continue
 		}
-		output := &managev1.FileGeneratedOutput{
-			Type:   managev1.FileDerivativeType(value),
+		output := &GeneratedOutput{
+			Type:   DerivativeKind(value),
 			Status: derivativeProcessingStatus(derivative),
 		}
 		if derivative.AssetID != nil {
-			output.Id = *derivative.AssetID
+			output.ID = *derivative.AssetID
 			if ref, refErr := s.assetRefForDerivative(derivative); refErr != nil {
 				return nil, refErr
 			} else if ref != nil {
-				output.Delivery = &commonv1.MediaDelivery{
-					FileId: fileID, Extension: ref.Extension, MimeType: ref.MimeType,
+				output.Delivery = &Delivery{
+					FileID: fileID, Extension: ref.Extension, MimeType: ref.MimeType,
 					FileSize: ref.FileSize, Asset: ref,
-					ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+					ProcessingStatus: ProcessingReady,
 				}
 			}
 		}
 		if derivative.MediaGenerationID != nil {
-			output.Id = *derivative.MediaGenerationID
+			output.ID = *derivative.MediaGenerationID
 			if ref, refErr := s.hlsPlaybackRef(fileID, derivative); refErr != nil {
 				return nil, refErr
 			} else if ref != nil {
-				output.Delivery = &commonv1.MediaDelivery{
-					FileId: fileID, Playback: ref,
-					ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+				output.Delivery = &Delivery{
+					FileID: fileID, Playback: ref,
+					ProcessingStatus: ProcessingReady,
 				}
 			}
 		}
-		if output.Id != "" {
+		if output.ID != "" {
 			outputs = append(outputs, output)
 		}
 	}
 
 	var meshRows []fileManagerMeshOutputRow
-	if err := s.db.WithContext(ctx).Table("mesh_optimization_candidate").
-		Select("id", "status", "output_file_id").
-		Where("source_file_id = ? AND output_file_id IS NOT NULL", fileID).
-		Order("created_at DESC, id DESC").
-		Find(&meshRows).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		meshRows, err = store.MeshDeliveryOutputs(ctx, fileID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	readyFileIDs := make([]string, 0, len(meshRows))
 	for _, row := range meshRows {
-		if row.Status == model.MeshOptimizationCandidateStatusReady && row.OutputFileID != nil {
+		if row.Status == "ready" && row.OutputFileID != nil {
 			readyFileIDs = append(readyFileIDs, *row.OutputFileID)
 		}
 	}
@@ -148,8 +132,8 @@ func (s *FileService) loadFileGeneratedOutputs(ctx context.Context, fileID strin
 		return nil, err
 	}
 	for _, row := range meshRows {
-		output := &managev1.FileGeneratedOutput{
-			Id: row.ID, Type: managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH,
+		output := &GeneratedOutput{
+			ID: row.ID, Type: DerivativeOptimizedMesh,
 			Status: fileManagerProcessingStatus(row.Status),
 		}
 		if row.OutputFileID != nil {
@@ -161,33 +145,33 @@ func (s *FileService) loadFileGeneratedOutputs(ctx context.Context, fileID strin
 		if outputs[i].Type != outputs[j].Type {
 			return outputs[i].Type < outputs[j].Type
 		}
-		return outputs[i].Id < outputs[j].Id
+		return outputs[i].ID < outputs[j].ID
 	})
 	return outputs, nil
 }
 
-func derivativeProcessingStatus(row storedDerivativeDeliveryRow) commonv1.MediaProcessingStatus {
+func derivativeProcessingStatus(row storedDerivativeDeliveryRow) ProcessingStatus {
 	if row.AssetStatus != nil {
 		return fileManagerProcessingStatus(*row.AssetStatus)
 	}
 	if row.MediaGenerationStatus != nil {
 		return fileManagerProcessingStatus(*row.MediaGenerationStatus)
 	}
-	return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING
+	return ProcessingActive
 }
 
-func fileManagerProcessingStatus(status string) commonv1.MediaProcessingStatus {
+func fileManagerProcessingStatus(status string) ProcessingStatus {
 	switch status {
 	case "ready":
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY
+		return ProcessingReady
 	case "failed", "retired", "cancelled", "deleted":
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED
+		return ProcessingFailed
 	default:
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING
+		return ProcessingActive
 	}
 }
 
-func summarizeFileUsages(rows []fileUsageRow) []*managev1.FileUsage {
+func summarizeFileUsages(rows []fileUsageRow) []*UsageView {
 	type key struct{ domain, entity, slot, block string }
 	counts := make(map[key]int32)
 	byKey := make(map[key]fileUsageRow)
@@ -207,9 +191,9 @@ func summarizeFileUsages(rows []fileUsageRow) []*managev1.FileUsage {
 	sort.Slice(keys, func(i, j int) bool {
 		return fmt.Sprintf("%s\x00%s\x00%s\x00%s", keys[i].domain, keys[i].entity, keys[i].slot, keys[i].block) < fmt.Sprintf("%s\x00%s\x00%s\x00%s", keys[j].domain, keys[j].entity, keys[j].slot, keys[j].block)
 	})
-	result := make([]*managev1.FileUsage, 0, len(keys))
+	result := make([]*UsageView, 0, len(keys))
 	for _, k := range keys {
-		usage := fileUsageProto(byKey[k])
+		usage := fileUsageView(byKey[k])
 		usage.Count = counts[k]
 		result = append(result, usage)
 	}

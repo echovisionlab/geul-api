@@ -1,4 +1,3 @@
-// Package page owns Page-specific domain behavior.
 package page
 
 import (

@@ -2,9 +2,12 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -12,10 +15,11 @@ import (
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // EmailAuthoring adapts Email Layout reads and locks to Campaign's narrow
@@ -48,7 +52,7 @@ func (EmailAuthoring) LockLayoutsForCampaign(
 	var layouts []campaigndomain.CampaignLayoutReference
 	if err := tx.WithContext(ctx).
 		Table("email_layout").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id, updated_at").
 		Where("id IN ?", ordered).
 		Order("id ASC").
@@ -67,7 +71,7 @@ func (EmailAuthoring) LoadLayoutSnapshot(
 	db *gorm.DB,
 	layoutID string,
 ) ([]campaigndomain.CampaignLayoutLocaleSnapshot, error) {
-	rows, err := email.LoadLayoutLocaleSnapshots(ctx, db, layoutID)
+	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailauthoringpostgres.NewRenderingStore(db), layoutID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +101,7 @@ func (EmailRendering) BuildRenderData(
 	input map[string]string,
 ) map[string]string {
 	return emaildelivery.BuildEmailRenderData(
-		ctx, db, cdnDomain, siteOrigin, requestedLocale, input,
+		ctx, emaildeliverypostgres.NewStore(db), cdnDomain, siteOrigin, requestedLocale, input,
 	)
 }
 
@@ -110,23 +114,9 @@ func (EmailRendering) WrapWithLayout(
 	data map[string]string,
 ) (string, error) {
 	wrapped, _, err := email.WrapWithLayoutForLocaleStrict(
-		ctx, db, layoutID, requestedLocale, content, data,
+		ctx, emailauthoringpostgres.NewRenderingStore(db), layoutID, requestedLocale, content, data,
 	)
 	return wrapped, err
-}
-
-func (EmailRendering) RenderVariables(value string, data map[string]string) string {
-	return email.RenderVars(value, data)
-}
-
-func (EmailRendering) NormalizeHTML(value string) string {
-	return email.NormalizeRenderedHTML(value)
-}
-
-func (EmailRendering) PlainText(value string) string { return email.StripHTML(value) }
-
-func (EmailRendering) TestRecipientContext(actorMemberID string) *managev1.SendEmailEvent_TestEmail {
-	return email.TestEmailContext(actorMemberID)
 }
 
 // LiveEmailRenderer composes Campaign's current Content Block projection with
@@ -151,13 +141,13 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 ) (*email.RenderedEmail, error) {
 	var root model.Campaign
 	if err := db.WithContext(ctx).First(&root, "id = ?", campaignID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("campaign not found: %s", campaignID)
 		}
 		return nil, fmt.Errorf("load Campaign email root: %w", err)
 	}
 	localized, campaignLocale, err := campaigndomain.ResolveLocalizedCampaign(
-		ctx, db, renderer.contentBlocks, root, requestedLocale,
+		ctx, campaignpostgres.NewStore(db, campaignpostgres.Ports{ContentBlocks: renderer.contentBlocks}), campaignpostgres.CampaignFromRow(root), requestedLocale,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Campaign email locale: %w", err)
@@ -176,7 +166,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 	layoutLocale := ""
 	if localized.LayoutID != nil {
 		html, layoutLocale, err = email.WrapWithLayoutForLocaleStrict(
-			ctx, db, *localized.LayoutID, requestedLocale, html, data,
+			ctx, emailauthoringpostgres.NewRenderingStore(db), *localized.LayoutID, requestedLocale, html, data,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("render Campaign email layout: %w", err)
@@ -215,5 +205,9 @@ func stringValue(value *string) string {
 	return *value
 }
 
-var _ campaigndomain.CampaignEmailAuthoringPort = EmailAuthoring{}
-var _ campaigndomain.CampaignEmailRenderingPort = EmailRendering{}
+var _ campaignpostgres.CampaignEmailAuthoringPort = EmailAuthoring{}
+var _ campaignpostgres.CampaignEmailRenderingPort = EmailRendering{}
+
+func (EmailRendering) CheckTestSendReadiness(ctx context.Context, db *gorm.DB, recipient string) error {
+	return email.CheckTestSendReadiness(ctx, emaildeliverypostgres.NewDeliveryReadStore(db), recipient)
+}

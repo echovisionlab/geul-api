@@ -8,12 +8,12 @@ import (
 )
 
 func TestBuildLabelDocumentMetadataPlanUsesTypedClear(t *testing.T) {
-	plan, err := buildLabelDocumentMetadataPlan(&intrav1.LabelDocumentMetadataUpdate{
+	plan, err := buildLabelDocumentMetadataPlan(documentMetadataUpdate(&intrav1.LabelDocumentMetadataUpdate{
 		ParentLabelId: &intrav1.NullableStringMutation{
 			Operation: &intrav1.NullableStringMutation_Clear{Clear: true},
 		},
-	})
+	}))
 	require.NoError(t, err)
-	require.True(t, plan.parentLabelID.present)
-	require.Nil(t, plan.parentLabelID.value)
+	require.True(t, plan.Parent.Present)
+	require.Nil(t, plan.Parent.Value)
 }

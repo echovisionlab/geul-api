@@ -7,7 +7,6 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -24,7 +23,7 @@ type exactWorkDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactWorkDocumentAPI) Load(
+func (a *exactWorkDocumentAPI) LoadAIDocument(
 	context.Context,
 	string,
 	string,
@@ -63,7 +62,7 @@ func TestWorkExactMutationPathDoesNotEnterPublicLoad(t *testing.T) {
 	contributor, revision, nextRevision := uuid.New(), uuid.New(), uuid.New()
 	title := "Work"
 	state := workdomain.AIDocumentState{
-		Work:             model.Work{ID: workID.String()},
+		Work:             workdomain.Work{ID: workID.String()},
 		SourceLocale:     "en",
 		Locale:           "en",
 		LocaleExists:     true,
@@ -110,7 +109,7 @@ func TestWorkExactMutationAuthorizesBeforeExposingValidationResult(t *testing.T)
 	workID := uuid.New()
 	denied := errors.New("work not found")
 	api := &exactWorkDocumentAPI{
-		state:        workdomain.AIDocumentState{Work: model.Work{ID: workID.String()}, Locale: "en"},
+		state:        workdomain.AIDocumentState{Work: workdomain.Work{ID: workID.String()}, Locale: "en"},
 		authorizeErr: denied,
 	}
 	port := &workPort{application: api, codec: codec, catalog: workCatalog(codec)}
@@ -142,7 +141,7 @@ func TestWorkExactTargetMutationCarriesSplitCAS(t *testing.T) {
 	document.Locale, document.LocaleOverlay.Locale = "ko", "ko"
 	api := &exactWorkDocumentAPI{
 		state: workdomain.AIDocumentState{
-			Work: model.Work{ID: workID.String()}, SourceLocale: "en", Locale: "ko", LocaleExists: true,
+			Work: workdomain.Work{ID: workID.String()}, SourceLocale: "en", Locale: "ko", LocaleExists: true,
 			DocumentRevision: revision.String(), TargetRevision: &targetRevision, Title: &title,
 			ViewerMemberID: contributor.String(),
 			Snapshot:       contentblock.Snapshot{Document: contentblock.Document{ID: documentID, Revision: revision}},
@@ -179,10 +178,12 @@ func TestWorkExactTargetConflictMapsCurrentSplitCAS(t *testing.T) {
 	workID, documentRevision := uuid.New(), uuid.New()
 	currentTarget := "work-target-current"
 	api := &exactWorkDocumentAPI{
-		state: workdomain.AIDocumentState{Work: model.Work{ID: workID.String()}, Locale: "ko"},
-		authorizeErr: &workdomain.AIDocumentRevisionConflictError{
-			Kind: workdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: documentRevision.String(),
-			CurrentTargetRevision: &currentTarget,
+		state: workdomain.AIDocumentState{Work: workdomain.Work{ID: workID.String()}, Locale: "ko"},
+		authorizeErr: &core.RevisionConflict{
+			Kind:                    core.ConflictTargetRevision,
+			CurrentDocumentRevision: documentRevision.String(),
+			CurrentTargetRevision:   &currentTarget,
+			Message:                 "Work AI document revision changed: current revision is " + documentRevision.String(),
 		},
 	}
 	port := &workPort{application: api, codec: codec, catalog: workCatalog(codec)}
@@ -238,7 +239,7 @@ func TestWorkMixedMetadataAndContentRejectionKeepsOriginalOperationIndex(t *test
 	document.Locale, document.LocaleOverlay.Locale = "en", "en"
 	workID, revision := uuid.NewString(), uuid.New()
 	api := &exactWorkDocumentAPI{state: workdomain.AIDocumentState{
-		Work: model.Work{ID: workID}, SourceLocale: "en", Locale: "en", LocaleExists: true,
+		Work: workdomain.Work{ID: workID}, SourceLocale: "en", Locale: "en", LocaleExists: true,
 		DocumentRevision: revision.String(), ViewerMemberID: uuid.NewString(), Document: document,
 		Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
 	}}

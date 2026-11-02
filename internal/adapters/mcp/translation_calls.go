@@ -2,58 +2,60 @@ package mcp
 
 import (
 	"context"
-	"errors"
 
 	"connectrpc.com/connect"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
-func (tools *TranslationTools) listJobs(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) listJobs(ctx context.Context, _ string, call toolCall[translationJobsListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "p", "d", "tl", "sl", "s", "n", "o", "k", "z"); err != nil {
 		return executionError(err)
 	}
 	var input translationJobsListArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	request, err := translationJobsListRequest(input)
+	query, err := translationJobsListQuery(input)
 	if err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.ListTranslationJobs(ctx, connect.NewRequest(request))
+	page, err := tools.application.ListTranslationJobs(ctx, query)
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil || response.Msg.Pagination == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete Job list")
-	}
-	return translationStructuredResult(encodeTranslationJobList(response.Msg.Jobs, response.Msg.Pagination))
+	return translationStructuredResult(encodeTranslationJobList(
+		translationapp.JobMessages(page.Jobs), translationapp.PaginationMessage(page.Pagination),
+	))
 }
 
-func (tools *TranslationTools) listTranslations(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) listTranslations(ctx context.Context, _ string, call toolCall[translationTargetArguments]) (mcpserver.ToolResult, error) {
 	var input translationTargetArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input)
 	if err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.ListEntityTranslations(ctx, connect.NewRequest(&managev1.ListEntityTranslationsRequest{Target: target}))
+	translations, err := tools.application.ListEntityTranslations(ctx, translationapp.ListEntityTranslationsQuery{
+		Target: translationapp.TargetFromMessage(target),
+	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete locale list")
-	}
-	return translationStructuredResult(encodeTranslationEntries(target, response.Msg.SourceLocale, response.Msg.Entries))
+	return translationStructuredResult(encodeTranslationEntries(
+		target, translations.SourceLocale, translationapp.EntryMessages(translations.Entries),
+	))
 }
 
-func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) getTranslation(ctx context.Context, _ string, call toolCall[translationGetArguments]) (mcpserver.ToolResult, error) {
 	var input translationGetArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input.translationTargetArguments)
@@ -63,39 +65,32 @@ func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcp
 	if err := validateCompactLocale(input.Locale); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.GetEntityTranslation(ctx, connect.NewRequest(&managev1.GetEntityTranslationRequest{
-		Target: target, Locale: string(input.Locale),
-	}))
+	entry, err := tools.application.GetEntityTranslation(ctx, translationapp.GetEntityTranslationQuery{
+		Target: translationapp.TargetFromMessage(target), Locale: string(input.Locale),
+	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil || response.Msg.Entry == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete locale entry")
-	}
-	return translationStructuredResult(encodeTranslationEntry(target, response.Msg.Entry))
+	return translationStructuredResult(encodeTranslationEntry(target, translationapp.EntryMessage(entry)))
 }
 
-func (tools *TranslationTools) cancelJob(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) cancelJob(ctx context.Context, _ string, call toolCall[translationJobArguments]) (mcpserver.ToolResult, error) {
 	var input translationJobArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("job ID", input.JobID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.CancelTranslationJob(ctx, connect.NewRequest(&managev1.CancelTranslationJobRequest{JobId: input.JobID}))
-	if err != nil {
+	if err := tools.application.CancelTranslationJob(ctx, translationapp.CancelTranslationJobCommand{JobID: input.JobID}); err != nil {
 		return translationCallError(err)
-	}
-	if response == nil || response.Msg == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete cancellation result")
 	}
 	return translationStructuredResult(encodeTranslationJobCancellation(input.JobID))
 }
 
-func (tools *TranslationTools) regenerate(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) regenerate(ctx context.Context, _ string, call toolCall[translationRegenerateArguments]) (mcpserver.ToolResult, error) {
 	var input translationRegenerateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input.translationTargetArguments)
@@ -106,57 +101,56 @@ func (tools *TranslationTools) regenerate(ctx context.Context, arguments mcpserv
 	if err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.RegenerateEntityTranslations(ctx, connect.NewRequest(&managev1.RegenerateEntityTranslationsRequest{
-		Target: target, Locales: locales,
-	}))
+	jobs, err := tools.application.RegenerateEntityTranslations(ctx, translationapp.RegenerateEntityTranslationsCommand{
+		Target: translationapp.TargetFromMessage(target), Locales: locales,
+	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete regeneration result")
-	}
-	return translationStructuredResult(encodeTranslationJobs(response.Msg.Jobs))
+	return translationStructuredResult(encodeTranslationJobs(translationapp.JobMessages(jobs)))
 }
 
-func (tools *TranslationTools) exportXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	request, err := translationXLIFFExportRequest(arguments)
+func (tools *TranslationTools) exportXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFExportArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+	command, err := translationXLIFFExportCommand(arguments)
 	if err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.ExportEntityTranslationXLIFF(ctx, connect.NewRequest(request))
+	exported, err := tools.application.ExportEntityTranslationXLIFF(ctx, command)
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete XLIFF export")
-	}
-	return translationStructuredResult(encodeXLIFFExport(response.Msg))
+	return translationStructuredResult(encodeXLIFFExport(exported))
 }
 
-func (tools *TranslationTools) importXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	request, err := translationXLIFFImportRequest(arguments)
+func (tools *TranslationTools) importXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFImportArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+	command, err := translationXLIFFImportCommand(arguments)
 	if err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.ImportEntityTranslationXLIFF(ctx, connect.NewRequest(request))
+	imported, err := tools.application.ImportEntityTranslationXLIFF(ctx, command)
 	if err != nil {
 		return translationCallError(err)
 	}
-	if response == nil || response.Msg == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete XLIFF import")
-	}
-	return translationStructuredResult(encodeXLIFFImport(response.Msg))
+	return translationStructuredResult(encodeXLIFFImport(translationapp.XLIFFImportMessage(imported)))
 }
 
 func translationCallError(err error) (mcpserver.ToolResult, error) {
 	if err == nil {
 		return mcpserver.ToolResult{}, nil
 	}
-	switch connect.CodeOf(err) {
+	classified, ok := errs.Classified(err)
+	if !ok {
+		return mcpserver.ToolResult{}, err
+	}
+	switch classified.Code() {
 	case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeAlreadyExists,
 		connect.CodePermissionDenied, connect.CodeUnauthenticated,
 		connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-		return executionError(err)
+		// The client sees the classified message, as the Connect boundary
+		// renders it; the use-case cause stays server-side.
+		return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: classified.Error(), Cause: err}
 	default:
 		return mcpserver.ToolResult{}, err
 	}

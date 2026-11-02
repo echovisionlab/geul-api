@@ -55,5 +55,7 @@ func TestSameCanonicalJSONComparesNestedObjectsSemantically(t *testing.T) {
 	}`)
 	right := json.RawMessage(`{"paragraph":{"content":[{"text":{"text":"hello","marks":{"bold":true,"italic":false}}}],"props":{"indent":1,"align":"left"}}}`)
 
-	require.True(t, sameCanonicalJSON(left, right))
+	same, err := sameCanonicalJSON(left, right)
+	require.NoError(t, err)
+	require.True(t, same)
 }

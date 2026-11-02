@@ -3,8 +3,6 @@ package application
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -12,7 +10,7 @@ import (
 func TestTranslationXLIFFFileIDIsStableAcrossJobCorrelation(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := &Job{
 		ID: uuid.NewString(), OperationID: uuid.NewString(), EntityType: "post",
 		EntityID: uuid.NewString(), SourceLocale: "ko", TargetLocale: "en",
 	}
@@ -28,7 +26,7 @@ func TestTranslationXLIFFFileIDIsStableAcrossJobCorrelation(t *testing.T) {
 func TestTranslationXLIFFFileIDTracksDocumentTarget(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := &Job{
 		EntityType: "series", EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "fr",
 	}
 	first := translationXLIFFFileID(job)

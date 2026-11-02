@@ -2,10 +2,9 @@ package form
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
 // AIDocumentState keeps Form's raw source topology and exact requested-locale
@@ -52,23 +51,6 @@ type AIDocumentMutationResult struct {
 	Changed          bool
 }
 
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf("Form AI document %s revision conflict", e.Kind)
-}
-
 // AIDocumentExecutionMode selects whether the exact owning-domain mutation
 // commits or deliberately rolls back after the same authorization, compiler,
 // CAS, validation, and persistence path has run.
@@ -91,10 +73,10 @@ func (e *formAIDocumentCompilerError) Unwrap() error { return e.cause }
 
 func validateFormAIDocumentMutation(input AIDocumentMutation) error {
 	if !IsValidUUID(input.FormID) {
-		return errs.InvalidArgument("form_id", "must be a canonical UUID")
+		return domainerr.InvalidField("form_id", "must be a canonical UUID")
 	}
 	if strings.TrimSpace(input.Locale) == "" || strings.TrimSpace(input.ExpectedSource) == "" || strings.TrimSpace(input.ExpectedDocumentRevision) == "" {
-		return errs.InvalidArgument("revision", "locale, source locale, and document revision are required")
+		return domainerr.InvalidField("revision", "locale, source locale, and document revision are required")
 	}
 	modes := 0
 	if input.SetTitle || input.SetSchema {
@@ -110,22 +92,22 @@ func validateFormAIDocumentMutation(input AIDocumentMutation) error {
 		modes++
 	}
 	if modes != 1 {
-		return errs.InvalidArgument("operation", "exactly one Form AI document mutation mode is required")
+		return domainerr.InvalidField("operation", "exactly one Form AI document mutation mode is required")
 	}
 	if input.CreateTranslation && (input.Locale == input.ExpectedSource || input.ExpectedPresence) {
-		return errs.InvalidArgument("locale", "only a missing non-source Form translation can be created")
+		return domainerr.InvalidField("locale", "only a missing non-source Form translation can be created")
 	}
 	if input.DeleteTranslation && (input.Locale == input.ExpectedSource || !input.ExpectedPresence) {
-		return errs.InvalidArgument("locale", "only an existing non-source Form translation can be deleted")
+		return domainerr.InvalidField("locale", "only an existing non-source Form translation can be deleted")
 	}
 	if input.Locale == input.ExpectedSource && input.SetTitle && (input.Title == nil || strings.TrimSpace(*input.Title) == "") {
-		return errs.Required("title")
+		return domainerr.Required("title")
 	}
 	if input.SetTitle && input.Title == nil {
-		return errs.InvalidArgument("title", "Form locale copy uses explicit empty instead of missing")
+		return domainerr.InvalidField("title", "Form locale copy uses explicit empty instead of missing")
 	}
 	if input.SetSchema && len(input.Schema) == 0 {
-		return errs.Required("schema")
+		return domainerr.Required("schema")
 	}
 	return nil
 }

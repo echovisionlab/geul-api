@@ -1,13 +1,14 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -25,11 +26,11 @@ type metadataContextPayload struct {
 	} `json:"source"`
 }
 
-func buildMetadataResponseJSONSchema(userPrompt string) structured.Fields {
+func buildMetadataResponseJSONSchema(ctx context.Context, userPrompt string) structured.Fields {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil || len(payload.Task.RequestedKeys) == 0 {
 		if err != nil {
-			slog.Error("Metadata response schema parsing failed", "domain", "ai", "event", "ai.metadata.schema_failed", failurecause.Attr(err, userPrompt))
+			slog.WarnContext(ctx, "Metadata response schema parsing failed; requesting without a schema", "domain", "ai", "event", "ai.metadata.schema_failed", failurecause.Attr(err, userPrompt))
 		}
 		return nil
 	}
@@ -79,15 +80,14 @@ func metadataAIUserPrompt(contextText, prompt string) string {
 func validateMetadataAIUserPrompt(userPrompt string) error {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil {
-		slog.Warn("Invalid metadata context", "domain", "ai", "event", "ai.metadata.context_rejected", "failure_cause", failurecause.Message(err, userPrompt))
-		return errs.InvalidArgument("context", "metadata-json requires a valid structured JSON payload")
+		return domainerr.InvalidField("context", "metadata-json requires a valid structured JSON payload")
 	}
 	if payload == nil || len(payload.Task.RequestedKeys) == 0 {
-		return errs.InvalidArgument("context", "metadata-json requires at least one requested key")
+		return domainerr.InvalidField("context", "metadata-json requires at least one requested key")
 	}
 	for _, key := range payload.Task.RequestedKeys {
 		if _, ok := metadataSuggestionRegistry[key]; !ok {
-			return errs.InvalidArgument("context", fmt.Sprintf("metadata-json does not support requested key %q", key))
+			return domainerr.InvalidField("context", fmt.Sprintf("metadata-json does not support requested key %q", key))
 		}
 	}
 	return nil

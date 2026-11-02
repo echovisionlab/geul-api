@@ -4,16 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -43,69 +40,37 @@ func (w manageFileDeliveryUsageWitness) key() string {
 	return w.kind + "\x00" + w.resourceType + "\x00" + w.resourceID + "\x00" + w.relationID + "\x00" + w.referencePath + "\x00" + w.fileID
 }
 
-func (s *FileService) authorizeManageFileDeliveries(ctx context.Context, fileIDs []string) error {
+func (s *Service) authorizeManageFileDeliveries(ctx context.Context, fileIDs []string) error {
 	_, err := s.authorizeManageFileDeliveriesWithWitness(ctx, fileIDs)
 	return err
 }
 
-func (s *FileService) authorizeManageFileDeliveriesWithWitness(
+func (s *Service) authorizeManageFileDeliveriesWithWitness(
 	ctx context.Context,
 	fileIDs []string,
 ) (*manageFileDeliveryAuthorization, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return nil, domainerr.AccountBanned()
 	}
-
-	uniqueFileIDs := make([]string, 0, len(fileIDs))
-	seen := make(map[string]struct{}, len(fileIDs))
-	for _, rawFileID := range fileIDs {
-		fileID := strings.TrimSpace(rawFileID)
-		if !IsValidUUID(fileID) {
-			return nil, errs.InvalidArgument("file_id", "must be a valid UUID")
-		}
-		if _, ok := seen[fileID]; ok {
-			continue
-		}
-		seen[fileID] = struct{}{}
-		uniqueFileIDs = append(uniqueFileIDs, fileID)
+	uniqueFileIDs, err := sortedUniqueManageDeliveryFileIDs(fileIDs)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(uniqueFileIDs)
-
-	var files []model.File
-	if err := s.db.WithContext(ctx).
-		Select("id", "uploaded_by_member_id", "delete_requested_at").
-		Where("id IN ?", uniqueFileIDs).
-		Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load File ownership: %w", err))
+	fileByID, err := s.loadManageDeliveryFiles(ctx, uniqueFileIDs)
+	if err != nil {
+		return nil, err
 	}
-	fileByID := make(map[string]model.File, len(files))
-	eligibleFileIDs := make(map[string]struct{}, len(files))
-	for _, file := range files {
-		if file.DeleteRequestedAt != nil {
-			continue
-		}
-		eligibleFileIDs[file.ID] = struct{}{}
-		fileByID[file.ID] = file
-	}
-	for _, fileID := range uniqueFileIDs {
-		if _, ok := eligibleFileIDs[fileID]; !ok {
-			return nil, errs.PermissionDenied("file access denied")
-		}
-	}
-
 	listCan, err := policyv1.File.List()
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFileDeliveriesWithWitness: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	hasLibraryAccess, err := checkSpiceDBCan(ctx, user, listCan, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFileDeliveriesWithWitness: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	authorization := &manageFileDeliveryAuthorization{
 		principal: user,
@@ -117,7 +82,6 @@ func (s *FileService) authorizeManageFileDeliveriesWithWitness(
 		}
 		return authorization, nil
 	}
-
 	bindings, err := s.loadOptionalManageFileIngestBindings(ctx, uniqueFileIDs)
 	if err != nil {
 		return nil, err
@@ -126,74 +90,125 @@ func (s *FileService) authorizeManageFileDeliveriesWithWitness(
 	if err != nil {
 		return nil, err
 	}
+	decided := make(map[string]error)
 	for _, fileID := range uniqueFileIDs {
-		file := fileByID[fileID]
-		ownerKind := manageFileOwnerDeliveryKind(user, file, bindings[fileID])
-		if ownerKind != "" {
-			grant := manageFileDeliveryGrant{lockFile: true}
-			if ownerKind == "avatar" {
-				grant.expectedAvatarOwner = user.MemberID.String()
-			} else {
-				grant.expectedUploader = user.MemberID.String()
-			}
+		if grant, owned := manageFileOwnerDeliveryGrant(user, fileByID[fileID], bindings[fileID]); owned {
 			authorization.files[fileID] = grant
 			continue
 		}
-		usages := usagesByFileID[fileID]
-		if len(usages) == 0 {
-			return nil, errs.PermissionDenied("file access denied")
+		grant, err := s.manageFileUsageDeliveryGrant(ctx, user, usagesByFileID[fileID], decided)
+		if err != nil {
+			return nil, err
 		}
-		authorizedTargets := make(map[string]bool)
-		authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
-		var denied error
-		for _, usage := range usages {
-			target := manageFilePermissionTarget{resourceType: usage.resourceType, resourceID: usage.resourceID}
-			allowed, checked := authorizedTargets[target.key()]
-			if !checked {
-				err := s.authorizeManageFilePermissionTarget(ctx, user, target)
-				if err == nil {
-					allowed = true
-				} else if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeNotFound {
-					if denied == nil {
-						denied = err
-					}
-				} else {
-					return nil, err
-				}
-				authorizedTargets[target.key()] = allowed
-			}
-			if allowed {
-				authorizedUsages = append(authorizedUsages, usage)
-			}
-		}
-		if len(authorizedUsages) == 0 {
-			if denied != nil {
-				return nil, denied
-			}
-			return nil, errs.PermissionDenied("file access denied")
-		}
-		authorization.files[fileID] = manageFileDeliveryGrant{usageWitnesses: authorizedUsages}
+		authorization.files[fileID] = grant
 	}
 	return authorization, nil
 }
 
-type currentContentFileDeliveryOwner struct {
-	table               string
-	resourceType        string
-	hasFeaturedImageRef bool
+func sortedUniqueManageDeliveryFileIDs(fileIDs []string) ([]string, error) {
+	uniqueFileIDs := make([]string, 0, len(fileIDs))
+	seen := make(map[string]struct{}, len(fileIDs))
+	for _, rawFileID := range fileIDs {
+		fileID := strings.TrimSpace(rawFileID)
+		if !IsValidUUID(fileID) {
+			return nil, domainerr.InvalidField("file_id", "must be a valid UUID")
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		uniqueFileIDs = append(uniqueFileIDs, fileID)
+	}
+	sort.Strings(uniqueFileIDs)
+	return uniqueFileIDs, nil
 }
 
-var currentContentFileDeliveryOwners = []currentContentFileDeliveryOwner{
-	{table: "post", resourceType: "post", hasFeaturedImageRef: true},
-	{table: "page", resourceType: "page", hasFeaturedImageRef: true},
-	{table: "work", resourceType: "work", hasFeaturedImageRef: true},
-	{table: "program_event", resourceType: "program_event"},
+// loadManageDeliveryFiles reads the ownership of each File, denying the
+// request when one is missing or pending deletion.
+func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string) (map[string]File, error) {
+	var files []File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		files, err = store.DeliveryFileOwnership(ctx, fileIDs)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("load File ownership: %w", err)
+	}
+	fileByID := make(map[string]File, len(files))
+	for _, file := range files {
+		if file.DeleteRequestedAt != nil {
+			continue
+		}
+		fileByID[file.ID] = file
+	}
+	for _, fileID := range fileIDs {
+		if _, ok := fileByID[fileID]; !ok {
+			return nil, domainerr.Denied("file access denied")
+		}
+	}
+	return fileByID, nil
+}
+
+// manageFileOwnerDeliveryGrant grants the File's uploader, or the Member
+// whose avatar it is, a delivery fenced on that ownership.
+func manageFileOwnerDeliveryGrant(user *auth.UserInfo, file File, binding domain.IngestBinding) (manageFileDeliveryGrant, bool) {
+	ownerKind := manageFileOwnerDeliveryKind(user, file, binding)
+	if ownerKind == "" {
+		return manageFileDeliveryGrant{}, false
+	}
+	grant := manageFileDeliveryGrant{lockFile: true}
+	if ownerKind == "avatar" {
+		grant.expectedAvatarOwner = user.MemberID.String()
+	} else {
+		grant.expectedUploader = user.MemberID.String()
+	}
+	return grant, true
+}
+
+// manageFileUsageDeliveryGrant grants a delivery witnessed by each usage
+// whose owner the principal may manage, answering the first owner denial
+// when there is none. decided holds each owner's answer across the request's
+// Files, so an owner shared by several Files is checked once.
+func (s *Service) manageFileUsageDeliveryGrant(
+	ctx context.Context,
+	user *auth.UserInfo,
+	usages []manageFileDeliveryUsageWitness,
+	decided map[string]error,
+) (manageFileDeliveryGrant, error) {
+	if len(usages) == 0 {
+		return manageFileDeliveryGrant{}, domainerr.Denied("file access denied")
+	}
+	authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
+	var denied error
+	for _, usage := range usages {
+		target := manageFilePermissionTarget{resourceType: usage.resourceType, resourceID: usage.resourceID}
+		answer, checked := decided[target.key()]
+		if !checked {
+			answer = s.authorizeManageFilePermissionTarget(ctx, user, target)
+			if answer != nil && !mutation.IsDenied(answer) && !mutation.IsNotFound(answer) {
+				return manageFileDeliveryGrant{}, answer
+			}
+			decided[target.key()] = answer
+		}
+		if answer == nil {
+			authorizedUsages = append(authorizedUsages, usage)
+		} else if denied == nil {
+			denied = answer
+		}
+	}
+	if len(authorizedUsages) == 0 {
+		if denied != nil {
+			return manageFileDeliveryGrant{}, denied
+		}
+		return manageFileDeliveryGrant{}, domainerr.Denied("file access denied")
+	}
+	return manageFileDeliveryGrant{usageWitnesses: authorizedUsages}, nil
 }
 
 // currentManageFileDeliveryUsages resolves exact current product references.
 // Immutable ingest provenance is deliberately excluded: after detach it is no
 // longer a delivery authority.
-func (s *FileService) currentManageFileDeliveryUsages(
+func (s *Service) currentManageFileDeliveryUsages(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string][]manageFileDeliveryUsageWitness, error) {
@@ -201,85 +216,13 @@ func (s *FileService) currentManageFileDeliveryUsages(
 	if len(fileIDs) == 0 {
 		return result, nil
 	}
-	var rows []struct {
-		FileID           string `gorm:"column:file_id"`
-		ResourceType     string `gorm:"column:resource_type"`
-		ResourceID       string `gorm:"column:resource_id"`
-		Kind             string `gorm:"column:kind"`
-		RelationID       string `gorm:"column:relation_id"`
-		ReferencePath    string `gorm:"column:reference_path"`
-		OwnerFingerprint string `gorm:"column:owner_fingerprint"`
-	}
-	queries := make([]string, 0, len(currentContentFileDeliveryOwners)*2)
-	arguments := make([]any, 0, len(currentContentFileDeliveryOwners)*2)
-	for _, owner := range currentContentFileDeliveryOwners {
-		ownerFingerprint := `COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':'`
-		if owner.resourceType == "post" || owner.resourceType == "program_event" {
-			ownerFingerprint = `COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':' || COALESCE(CAST(owner.status AS TEXT), '')`
-		}
-		attachmentQuery := fmt.Sprintf(`SELECT attachment.file_id, '%s' AS resource_type, owner.id AS resource_id,
-			'content_attachment' AS kind, attachment.block_id AS relation_id, attachment.reference_path,
-			%s AS owner_fingerprint
-			FROM content_block_attachment AS attachment
-			JOIN content_block AS block ON block.id = attachment.block_id
-			JOIN %s AS owner ON owner.content_document_id = block.document_id
-			WHERE attachment.selector_kind = 'active' AND attachment.file_id IN ?`, owner.resourceType, ownerFingerprint, owner.table)
-		queries = append(queries, attachmentQuery)
-		arguments = append(arguments, fileIDs)
-		if owner.hasFeaturedImageRef {
-			featuredImageQuery := fmt.Sprintf(
-				`SELECT owner.featured_image_file_id AS file_id, '%s' AS resource_type, owner.id AS resource_id,
-				'featured_image' AS kind, owner.id AS relation_id, 'featured_image' AS reference_path,
-				%s AS owner_fingerprint
-				FROM %s AS owner
-				WHERE owner.featured_image_file_id IN ?`,
-				owner.resourceType,
-				ownerFingerprint,
-				owner.table,
-			)
-			queries = append(queries, featuredImageQuery)
-			arguments = append(arguments, fileIDs)
-		}
-	}
-	queries = append(queries,
-		`SELECT relation.file_id, 'artist' AS resource_type, relation.artist_id AS resource_id,
-			'artist_file' AS kind, relation.artist_id AS relation_id, '' AS reference_path, '' AS owner_fingerprint
-		 FROM artist_file AS relation WHERE relation.file_id IN ?`,
-		`SELECT relation.file_id, 'release' AS resource_type, relation.release_id AS resource_id,
-			'release_file' AS kind, relation.release_id AS relation_id, '' AS reference_path, '' AS owner_fingerprint
-		 FROM release_file AS relation WHERE relation.file_id IN ?`,
-		`SELECT relation.file_id, 'program_event' AS resource_type, relation.event_id AS resource_id,
-			'program_event_media' AS kind, relation.id AS relation_id, relation.role AS reference_path,
-			COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':' || COALESCE(CAST(owner.status AS TEXT), '') AS owner_fingerprint
-		 FROM program_event_media AS relation JOIN program_event AS owner ON owner.id = relation.event_id WHERE relation.file_id IN ?`,
-		`SELECT track.audio_original_file_id AS file_id, 'release' AS resource_type, track.release_id AS resource_id,
-			'track' AS kind, track.id AS relation_id, 'audio_original' AS reference_path, '' AS owner_fingerprint
-		 FROM track WHERE track.audio_original_file_id IN ?`,
-		`SELECT label.logo_light_file_id AS file_id, 'label' AS resource_type, label.id AS resource_id,
-			'label_logo' AS kind, label.id AS relation_id, 'logo_light' AS reference_path, '' AS owner_fingerprint
-		 FROM label WHERE label.logo_light_file_id IN ?`,
-		`SELECT label.logo_dark_file_id AS file_id, 'label' AS resource_type, label.id AS resource_id,
-			'label_logo' AS kind, label.id AS relation_id, 'logo_dark' AS reference_path, '' AS owner_fingerprint
-		 FROM label WHERE label.logo_dark_file_id IN ?`,
-		`SELECT series.featured_image_file_id AS file_id, 'series' AS resource_type, series.id AS resource_id,
-			'series_featured_image' AS kind, series.id AS relation_id, 'featured_image' AS reference_path, '' AS owner_fingerprint
-		 FROM series WHERE series.featured_image_file_id IN ?`,
-		`SELECT form.featured_image_file_id AS file_id, 'form' AS resource_type, form.id AS resource_id,
-			'form_featured_image' AS kind, form.id AS relation_id, 'featured_image' AS reference_path, '' AS owner_fingerprint
-		 FROM form WHERE form.featured_image_file_id IN ?`)
-	for range 8 {
-		arguments = append(arguments, fileIDs)
-	}
-	query := `SELECT DISTINCT current_content_files.file_id,
-			current_content_files.resource_type,
-			current_content_files.resource_id,
-			current_content_files.kind,
-			current_content_files.relation_id,
-			current_content_files.reference_path,
-			current_content_files.owner_fingerprint
-		FROM (` + strings.Join(queries, ` UNION ALL `) + `) AS current_content_files`
-	if err := s.db.WithContext(ctx).Raw(query, arguments...).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load current Content file usage: %w", err))
+	var rows []domain.CurrentDeliveryUsage
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.CurrentDeliveryUsages(ctx, fileIDs)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	seen := make(map[string]map[string]struct{})
 	for _, row := range rows {
@@ -317,17 +260,21 @@ func currentManageFileDeliveryResourceType(value string) (string, bool) {
 	}
 }
 
-func (s *FileService) loadOptionalManageFileIngestBindings(
+func (s *Service) loadOptionalManageFileIngestBindings(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]model.FileIngestBinding, error) {
-	result := make(map[string]model.FileIngestBinding, len(fileIDs))
+) (map[string]domain.IngestBinding, error) {
+	result := make(map[string]domain.IngestBinding, len(fileIDs))
 	if len(fileIDs) == 0 {
 		return result, nil
 	}
-	var bindings []model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id IN ?", fileIDs).Find(&bindings).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load file ingest classification: %w", err))
+	var bindings []domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		bindings, err = store.DeliveryIngestBindings(ctx, fileIDs)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("load file ingest classification: %w", err)
 	}
 	for _, binding := range bindings {
 		result[binding.FileID] = binding
@@ -335,16 +282,16 @@ func (s *FileService) loadOptionalManageFileIngestBindings(
 	return result, nil
 }
 
-func manageFileOwnerDeliveryKind(user *auth.UserInfo, file model.File, binding model.FileIngestBinding) string {
+func manageFileOwnerDeliveryKind(user *auth.UserInfo, file File, binding domain.IngestBinding) string {
 	if user == nil {
 		return ""
 	}
-	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
+	uploadTypeValue, ok := domain.ParseUploadType(binding.UploadType)
 	if !ok {
 		return ""
 	}
-	uploadType := managev1.UploadType(uploadTypeValue)
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_USER_AVATAR {
+	uploadType := UploadType(uploadTypeValue)
+	if uploadType == UploadUserAvatar {
 		if strings.TrimSpace(binding.EntityID) == user.MemberID.String() {
 			return "avatar"
 		}
@@ -354,12 +301,12 @@ func manageFileOwnerDeliveryKind(user *auth.UserInfo, file model.File, binding m
 		return ""
 	}
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadGeneralFile,
+		UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		return "uploader"
 	default:
 		return ""
@@ -375,58 +322,45 @@ func (target manageFilePermissionTarget) key() string {
 	return target.resourceType + "\x00" + target.resourceID
 }
 
-func (s *FileService) authorizeManageFilePermissionTarget(
+func (s *Service) authorizeManageFilePermissionTarget(
 	ctx context.Context,
 	user *auth.UserInfo,
 	target manageFilePermissionTarget,
 ) error {
 	if target.resourceType == "post" {
-		access, err := requirePostAccess(s.postAccess)
-		if err != nil {
-			return err
-		}
-		return access.RequireView(ctx, target.resourceID)
+		return s.requireOwnerPreflight(ctx, "post", target.resourceID, false)
 	}
 	if target.resourceType == "program_event" {
-		access, err := requireProgramEventAttachment(s.programEventAttachment)
-		if err != nil {
-			return err
-		}
-		return access.RequireView(ctx, s.spiceDB, target.resourceID)
+		return s.requireOwnerPreflight(ctx, "program_event", target.resourceID, false)
 	}
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
 		return nil
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, target.resourceID)
 	if errors.Is(err, errUnsupportedUploadAuthorizationResource) {
-		return errs.PermissionDenied("file access denied")
+		return domainerr.Denied("file access denied")
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "authorizeManageFilePermissionTarget: PermissionDenied", failurecause.Attr(err))
-		return errs.PermissionDenied("file access denied")
+		return domainerr.Denied("file access denied").WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "authorizeManageFilePermissionTarget: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: InternalMsg", failurecause.Attr(err))
-		return errs.InternalMsg("permission check failed")
+		return fmt.Errorf("permission check failed: %w", err)
 	}
 	if !allowed {
-		return errs.PermissionDenied("file access denied")
+		return domainerr.Denied("file access denied")
 	}
 	return nil
 }

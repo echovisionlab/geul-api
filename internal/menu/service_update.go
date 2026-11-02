@@ -2,220 +2,227 @@ package menu
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// menuUpdate is a validated Menu update. name and items are nil when the
+// request leaves them alone or, once compared with the locked row, when they
+// are unchanged.
 type menuUpdate struct {
-	fields structured.Fields
-	now    time.Time
+	name  *string
+	items []byte
+	now   time.Time
 }
 
-func (s *MenuService) prepareMenuUpdate(request *managev1.UpdateMenuRequest, now time.Time) (menuUpdate, error) {
-	update := menuUpdate{fields: structured.Fields{}, now: now}
-	if request.Name != nil {
-		if err := s.validateMenuName(*request.Name); err != nil {
+func prepareMenuUpdate(command UpdateMenuCommand, now time.Time) (menuUpdate, error) {
+	update := menuUpdate{now: now}
+	if command.Name != nil {
+		if err := validateMenuName(*command.Name); err != nil {
 			return update, err
 		}
-		update.fields["name"] = strings.TrimSpace(*request.Name)
+		name := strings.TrimSpace(*command.Name)
+		update.name = &name
 	}
-	if request.Items == nil {
+	if command.Items == nil {
 		return update, nil
 	}
-	if err := s.validateMenuItems(request.Items.Items, 0); err != nil {
+	if err := validateMenuItems(*command.Items, 0); err != nil {
 		return update, err
 	}
-	items, err := s.protoItemsToJSON(request.Items.Items)
+	items, err := encodeRequestedItems(*command.Items)
 	if err != nil {
-		return update, errs.InvalidArgumentMsg(fmt.Sprintf("failed to convert menu items: %s", err.Error()))
+		return update, err
 	}
-	update.fields["items"] = items
+	update.items = items
 	return update, nil
 }
 
-func (s *MenuService) applyMenuUpdate(
-	ctx context.Context,
-	menuID string,
-	request *managev1.UpdateMenuRequest,
-	update menuUpdate,
-) (*model.Menu, bool, error) {
-	var menu model.Menu
-	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Target locks precede the Menu root throughout direct writes and target
-		// lifecycle rewrites. Preserve that global order before the final
-		// principal/permission fence below.
-		var targetErr error
-		if request.Items != nil {
-			targetErr = s.targets.ValidateAndLock(ctx, tx, collectMenuTargetReferences(request.Items.Items))
-		}
-		locked, err := lockMenuForUpdate(ctx, tx, menuID)
-		if err != nil {
-			return err
-		}
-		action := menuUpdateAction(*locked, request, update)
-		if err := requireFreshMenuPermission(ctx, tx, s.permissions, menuID, action); err != nil {
-			return err
-		}
-		if targetErr != nil {
+// menuUpdated is the outcome of an update: the stored Menu and the audit
+// fields that changed, none when the update matched the stored Menu.
+type menuUpdated struct {
+	root          Root
+	changedFields []string
+}
+
+func (s *Service) UpdateMenu(ctx context.Context, command UpdateMenuCommand) (_ Menu, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", command.ID))
+
+	menuID := strings.TrimSpace(command.ID)
+	if menuID == "" {
+		return Menu{}, domainerr.Required("id")
+	}
+	update, err := prepareMenuUpdate(command, time.Now())
+	if err != nil {
+		return Menu{}, err
+	}
+	var targets []TargetReference
+	if command.Items != nil {
+		targets = collectMenuTargetReferences(*command.Items)
+	}
+	var locked Root
+	updated, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[menuUpdated, Store]{
+		// Target locks precede the Menu root throughout direct writes and
+		// target lifecycle rewrites; the principal fence comes last.
+		Access: mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+			var targetErr error
+			if command.Items != nil {
+				targetErr = lockTargets(ctx, store, targets)
+			}
+			var err error
+			if locked, err = store.LockMenu(ctx, menuID); err != nil {
+				return err
+			}
+			action := menuUpdateAction(ctx, locked, command.Items != nil, update)
+			if err := requireFreshMenuPermission(ctx, require, menuID, action); err != nil {
+				return err
+			}
 			return targetErr
-		}
-		menu = *locked
-		changedFields := make([]string, 0, 2)
-		if request.Name != nil && update.fields["name"] != menu.Name {
-			if err := ensureUpdatedMenuNameAvailable(tx, menuID, request.Name); err != nil {
-				return err
+		}),
+		Change: func(ctx context.Context, store Store) (menuUpdated, error) {
+			return applyMenuUpdate(ctx, store, locked, command.Name, update)
+		},
+		Audit: func(updated menuUpdated) mutation.Audit {
+			if len(updated.changedFields) == 0 {
+				return mutation.Unchanged()
 			}
-			changedFields = append(changedFields, "name")
-		} else {
-			delete(update.fields, "name")
-		}
-		if request.Items != nil {
-			nextItems := []byte(update.fields["items"].(json.RawMessage))
-			if semanticMenuItemsEqual(menu.Items, nextItems) {
-				delete(update.fields, "items")
-			} else {
-				changedFields = append(changedFields, "items")
-			}
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		document, err := loadMenuContentDocumentStateFromRoot(ctx, tx, *locked, true)
-		if err != nil {
-			return err
-		}
-		sort.Strings(changedFields)
-		update.fields["updated_at"] = update.now
-		if err := updateMenuRow(tx, menuID, request.Name, update.fields); err != nil {
-			return err
-		}
-		if err := tx.First(&menu, "id = ?", menuID).Error; err != nil {
-			return errs.Internal(fmt.Errorf("failed to reload menu: %w", err))
-		}
-		if request.Items != nil && update.fields["items"] != nil {
-			nextItems, err := decodeSourceItems(menu.Items)
-			if err != nil {
-				return err
-			}
-			if err := SyncCurrentSourceLabelValues(ctx, tx, menu.ID, nextItems, update.now); err != nil {
-				return err
-			}
-			if err := ReconcileTranslationRowsWithSourceJSON(
-				ctx, tx, menu.ID, menu.Items, update.now,
-			); err != nil {
-				return err
-			}
-		}
-		if _, err := advanceMenuContentDocument(
-			ctx, tx, menu.ID, document.ID, document.Revision, update.now,
-		); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMenuUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, menu.ID, changedFields)
-			},
-		); err != nil {
-			return err
-		}
-		changed = true
-		return nil
+			return mutation.RequestAudit(sharedtelemetry.AuditMenuUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, updated.root.ID, updated.changedFields)
+			})
+		},
 	})
-	return &menu, changed, err
+	if err != nil {
+		if errors.Is(err, ErrMenuNotFound) {
+			return Menu{}, domainerr.ResourceNotFound("menu", menuID)
+		}
+		return Menu{}, fmt.Errorf("failed to update menu: %w", err)
+	}
+	menu, err := menuOf(updated.root)
+	if err != nil {
+		return Menu{}, fmt.Errorf("failed to convert menu: %w", err)
+	}
+	return menu, nil
+}
+
+// applyMenuUpdate writes the part of update that changes the locked Menu
+// and advances its content document.
+func applyMenuUpdate(ctx context.Context, store Store, locked Root, name *string, update menuUpdate) (menuUpdated, error) {
+	change, changedFields, err := lockedMenuChange(ctx, store, locked, name, update)
+	if err != nil || len(changedFields) == 0 {
+		return menuUpdated{root: locked}, err
+	}
+	document, err := loadMenuContentDocumentState(ctx, store, locked, true)
+	if err != nil {
+		return menuUpdated{}, err
+	}
+	sort.Strings(changedFields)
+	if err := updateMenuRow(ctx, store, locked.ID, name, change); err != nil {
+		return menuUpdated{}, err
+	}
+	root, err := store.Menu(ctx, locked.ID)
+	if err != nil {
+		return menuUpdated{}, fmt.Errorf("failed to reload menu: %w", err)
+	}
+	if change.items != nil {
+		if err := syncMenuSourceItemValues(ctx, store, root, update.now); err != nil {
+			return menuUpdated{}, err
+		}
+	}
+	if err := advanceMenuContentDocument(ctx, store, root.ID, document.ID, document.Revision, update.now); err != nil {
+		return menuUpdated{}, err
+	}
+	return menuUpdated{root: root, changedFields: changedFields}, nil
+}
+
+// lockedMenuChange compares update with the locked menu and returns the part
+// that changes it, with the changed audit fields.
+func lockedMenuChange(
+	ctx context.Context,
+	store Store,
+	menu Root,
+	name *string,
+	update menuUpdate,
+) (menuUpdate, []string, error) {
+	change := menuUpdate{now: update.now}
+	changedFields := make([]string, 0, 2)
+	if update.name != nil && *update.name != menu.Name {
+		if err := ensureUpdatedMenuNameAvailable(ctx, store, menu.ID, name); err != nil {
+			return change, nil, err
+		}
+		change.name = update.name
+		changedFields = append(changedFields, "name")
+	}
+	if update.items != nil && !semanticMenuItemsEqual(menu.ItemsJSON, update.items) {
+		change.items = update.items
+		changedFields = append(changedFields, "items")
+	}
+	return change, changedFields, nil
+}
+
+// syncMenuSourceItemValues brings the source label values and translation rows
+// in line with the items just written to root.
+func syncMenuSourceItemValues(ctx context.Context, store Store, root Root, now time.Time) error {
+	nextItems, err := decodeSourceItems(root.ItemsJSON)
+	if err != nil {
+		return err
+	}
+	if err := syncCurrentSourceLabelValues(ctx, store, root, nextItems, now); err != nil {
+		return err
+	}
+	return reconcileTranslationRowsWithSourceItems(ctx, store, root.ID, nextItems, now)
 }
 
 func menuUpdateAction(
-	current model.Menu,
-	request *managev1.UpdateMenuRequest,
+	ctx context.Context,
+	current Root,
+	replacesItems bool,
 	update menuUpdate,
 ) menuAction {
-	if request.Items == nil {
+	if !replacesItems {
 		return policyv1.Menu.Edit
 	}
-	requested, ok := update.fields["items"].(json.RawMessage)
-	if !ok || menuItemTopologyEqual(current.Items, requested) {
+	if update.items == nil || menuItemTopologyEqual(ctx, current.ID, current.ItemsJSON, update.items) {
 		return policyv1.Menu.Edit
 	}
 	return policyv1.Menu.Manage
 }
 
-func menuItemTopologyEqual(stored, requested []byte) bool {
-	var storedItems []model.MenuItem
-	if len(stored) != 0 {
-		if err := json.Unmarshal(stored, &storedItems); err != nil {
-			slog.ErrorContext(context.Background(), "failed to decode stored Menu topology", "domain", "menu", "operation", "compare_stored_topology", "outcome", "failed", failurecause.Attr(err))
-			return false
-		}
-	}
-	var requestedItems []model.MenuItem
-	if len(requested) != 0 {
-		if err := json.Unmarshal(requested, &requestedItems); err != nil {
-			slog.WarnContext(context.Background(), "failed to decode requested Menu topology", "domain", "menu", "operation", "compare_requested_topology", "outcome", "failed", failurecause.Attr(err))
-			return false
-		}
-	}
-	return reflectMenuItemTopology(storedItems, "") == reflectMenuItemTopology(requestedItems, "")
-}
-
-func reflectMenuItemTopology(items []model.MenuItem, parentID string) string {
-	var topology strings.Builder
-	for index := range items {
-		topology.WriteString(parentID)
-		topology.WriteByte('/')
-		topology.WriteString(items[index].ID)
-		topology.WriteByte('@')
-		fmt.Fprintf(&topology, "%d;", index)
-		topology.WriteString(reflectMenuItemTopology(items[index].Children, items[index].ID))
-	}
-	return topology.String()
-}
-
-func ensureUpdatedMenuNameAvailable(tx *gorm.DB, menuID string, name *string) error {
+func ensureUpdatedMenuNameAvailable(ctx context.Context, store Store, menuID string, name *string) error {
 	if name == nil {
 		return nil
 	}
-	normalized := strings.TrimSpace(*name)
-	var existingCount int64
-	if err := tx.Model(&model.Menu{}).Where("name = ? AND id != ?", normalized, menuID).Count(&existingCount).Error; err != nil {
-		return errs.Internal(fmt.Errorf("failed to check menu name uniqueness: %w", err))
+	return requireMenuNameAvailable(ctx, store, strings.TrimSpace(*name), menuID)
+}
+
+// requireMenuNameAvailable rejects name when a Menu other than exceptID
+// (any Menu when it is empty) has it.
+func requireMenuNameAvailable(ctx context.Context, store Store, name, exceptID string) error {
+	taken, err := store.MenuNameTaken(ctx, name, exceptID)
+	if err != nil {
+		return fmt.Errorf("failed to check menu name uniqueness: %w", err)
 	}
-	if existingCount > 0 {
-		return errs.AlreadyExists("menu", "name", normalized)
+	if taken {
+		return domainerr.Duplicate("menu", "name", name)
 	}
 	return nil
 }
 
-func updateMenuRow(tx *gorm.DB, menuID string, name *string, fields structured.Fields) error {
-	result := tx.Model(&model.Menu{}).Where("id = ?", menuID).Updates(fields)
-	if result.Error != nil {
-		if dberrors.IsUniqueViolation(result.Error) && name != nil {
-			return errs.AlreadyExists("menu", "name", strings.TrimSpace(*name))
-		}
-		return errs.Internal(fmt.Errorf("failed to update menu: %w", result.Error))
+// updateMenuRow writes the changed name and items of change. A unique
+// violation is reported against the requested name.
+func updateMenuRow(ctx context.Context, store Store, menuID string, name *string, change menuUpdate) error {
+	err := store.UpdateMenu(ctx, menuID, RootChange{Name: change.name, ItemsJSON: change.items, UpdatedAt: change.now})
+	if errors.Is(err, ErrMenuNameTaken) && name != nil {
+		return domainerr.Duplicate("menu", "name", strings.TrimSpace(*name))
 	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return err
 }

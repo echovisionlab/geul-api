@@ -9,15 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -26,27 +27,27 @@ type recordingMCPFileRuntime struct {
 	user        *auth.UserInfo
 
 	initiateRequest *managev1.InitiateMultipartUploadRequest
-	initiateResult  *managev1.InitiateMultipartUploadResponse
+	initiateResult  *filemediadomain.MultipartUpload
 	initiateError   error
 
 	findRequest *managev1.FindMultipartUploadCandidateRequest
-	findResult  *managev1.FindMultipartUploadCandidateResponse
+	findResult  *filemediadomain.MultipartCandidate
 	findError   error
 
 	completeRequest *managev1.CompleteMultipartUploadRequest
-	completeResult  *managev1.CompleteMultipartUploadResponse
+	completeResult  *filemediadomain.CompletedUpload
 	completeError   error
 
 	downloadRequest *managev1.DownloadFromUrlRequest
-	downloadResult  *managev1.DownloadFromUrlResponse
+	downloadResult  *filemediadomain.ImportedFile
 	downloadError   error
 
 	deliveryRequest *managev1.GetMediaDeliveryRequest
-	deliveryResult  *managev1.GetMediaDeliveryResponse
+	deliveryResult  *filemediadomain.MediaDeliveryResult
 	deliveryError   error
 }
 
-func (runtime *recordingMCPFileRuntime) ImportRemoteFile(ctx context.Context, input filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error) {
+func (runtime *recordingMCPFileRuntime) ImportRemoteFile(ctx context.Context, input filemediadomain.RemoteFileImportInput) (*filemediadomain.ImportedFile, error) {
 	runtime.capture(ctx)
 	runtime.importInput = &input
 	return runtime.downloadResult, runtime.downloadError
@@ -56,64 +57,73 @@ func (runtime *recordingMCPFileRuntime) capture(ctx context.Context) {
 	runtime.user = auth.GetUser(ctx)
 }
 
-func (runtime *recordingMCPFileRuntime) InitiateMultipartUpload(
-	ctx context.Context,
-	request *connect.Request[managev1.InitiateMultipartUploadRequest],
-) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
+// The fake records each command as the request a Connect client would have
+// sent, so the assertions read the native field names.
+func (runtime *recordingMCPFileRuntime) InitiateMultipartUpload(ctx context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error) {
 	runtime.capture(ctx)
-	runtime.initiateRequest = request.Msg
+	runtime.initiateRequest = &managev1.InitiateMultipartUploadRequest{
+		UploadType: managev1.UploadType(command.UploadType), EntityId: command.EntityID, FileSize: command.FileSize,
+		MimeType: command.MimeType, EntityType: (*managev1.TranscodeEntityType)(command.EntityType), FileName: command.FileName,
+		FileLastModified: command.FileLastModified, SlotId: command.SlotID, ExpectedCurrentFileId: command.ExpectedCurrentFileID,
+	}
 	if runtime.initiateError != nil {
 		return nil, runtime.initiateError
 	}
-	return connect.NewResponse(runtime.initiateResult), nil
+	return runtime.initiateResult, nil
 }
 
-func (runtime *recordingMCPFileRuntime) FindMultipartUploadCandidate(
-	ctx context.Context,
-	request *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
+func (runtime *recordingMCPFileRuntime) FindMultipartUploadCandidate(ctx context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error) {
 	runtime.capture(ctx)
-	runtime.findRequest = request.Msg
+	runtime.findRequest = &managev1.FindMultipartUploadCandidateRequest{
+		UploadType: managev1.UploadType(query.UploadType), EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
+		FileSize: query.FileSize, MimeType: query.MimeType, FileLastModified: query.FileLastModified,
+		EntityType: (*managev1.TranscodeEntityType)(query.EntityType), SlotId: query.SlotID, UploadId: query.UploadID, ExpectedCurrentFileId: query.ExpectedCurrentFileID,
+	}
 	if runtime.findError != nil {
 		return nil, runtime.findError
 	}
-	return connect.NewResponse(runtime.findResult), nil
+	return runtime.findResult, nil
 }
 
-func (runtime *recordingMCPFileRuntime) CompleteMultipartUpload(
-	ctx context.Context,
-	request *connect.Request[managev1.CompleteMultipartUploadRequest],
-) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
+func (runtime *recordingMCPFileRuntime) CompleteMultipartUpload(ctx context.Context, command filemediadomain.CompleteMultipartUploadCommand) (*filemediadomain.CompletedUpload, error) {
 	runtime.capture(ctx)
-	runtime.completeRequest = request.Msg
+	runtime.completeRequest = &managev1.CompleteMultipartUploadRequest{
+		FileId: command.FileID, UploadId: command.UploadID,
+		CorrelationId: optionalRecordedString(command.CorrelationID), ClientMediaBundleId: optionalRecordedString(command.ClientMediaBundleID),
+	}
 	if runtime.completeError != nil {
 		return nil, runtime.completeError
 	}
-	return connect.NewResponse(runtime.completeResult), nil
+	return runtime.completeResult, nil
 }
 
-func (runtime *recordingMCPFileRuntime) DownloadFromUrl(
-	ctx context.Context,
-	request *connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
+func (runtime *recordingMCPFileRuntime) DownloadFromURL(ctx context.Context, command filemediadomain.DownloadFromURLCommand) (*filemediadomain.ImportedFile, error) {
 	runtime.capture(ctx)
-	runtime.downloadRequest = request.Msg
+	runtime.downloadRequest = &managev1.DownloadFromUrlRequest{
+		UploadType: managev1.UploadType(command.UploadType), EntityId: command.EntityID, Url: command.URL, EntityType: (*managev1.TranscodeEntityType)(command.EntityType),
+		CorrelationId: optionalRecordedString(command.CorrelationID), SlotId: optionalRecordedString(command.SlotID),
+		ExpectedCurrentFileId: command.ExpectedCurrentFileID,
+	}
 	if runtime.downloadError != nil {
 		return nil, runtime.downloadError
 	}
-	return connect.NewResponse(runtime.downloadResult), nil
+	return runtime.downloadResult, nil
 }
 
-func (runtime *recordingMCPFileRuntime) GetMediaDelivery(
-	ctx context.Context,
-	request *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
+func (runtime *recordingMCPFileRuntime) GetMediaDelivery(ctx context.Context, query filemediadomain.GetMediaDeliveryQuery) (*filemediadomain.MediaDeliveryResult, error) {
 	runtime.capture(ctx)
-	runtime.deliveryRequest = request.Msg
+	runtime.deliveryRequest = &managev1.GetMediaDeliveryRequest{FileId: query.FileID}
 	if runtime.deliveryError != nil {
 		return nil, runtime.deliveryError
 	}
-	return connect.NewResponse(runtime.deliveryResult), nil
+	return runtime.deliveryResult, nil
+}
+
+func optionalRecordedString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func TestFileToolsExposeCompactReferenceOnlySurface(t *testing.T) {
@@ -174,18 +184,18 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 	bundleID := uuid.NewString()
 	lastActivity := time.Date(2026, 8, 23, 10, 11, 12, 123, time.FixedZone("test", 9*60*60))
 	runtime := &recordingMCPFileRuntime{
-		initiateResult: &managev1.InitiateMultipartUploadResponse{
-			FileId: fileID, UploadId: "upload-a", TotalParts: 3, ChunkSize: 1024,
-			Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
+		initiateResult: &filemediadomain.MultipartUpload{
+			FileID: fileID, UploadID: "upload-a", TotalParts: 3, ChunkSize: 1024,
+			Status: filemediadomain.UploadSessionStatusInitiated,
 		},
-		findResult: &managev1.FindMultipartUploadCandidateResponse{
-			ClientMediaBundleId: &bundleID,
-			FileId:              fileStringPointer(fileID), UploadId: fileStringPointer("upload-a"),
+		findResult: &filemediadomain.MultipartCandidate{
+			ClientMediaBundleID: &bundleID,
+			FileID:              fileStringPointer(fileID), UploadID: fileStringPointer("upload-a"),
 			FileName: fileStringPointer("audio.wav"), MimeType: fileStringPointer("audio/wav"), FileSize: 3072,
 			TotalParts: 3, ChunkSize: 1024,
-			Status:         managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
-			UploadedParts:  []*managev1.UploadPartInfo{{PartNumber: 1, Etag: "must-not-leak"}, {PartNumber: 3, Etag: "must-not-leak"}},
-			LastActivityAt: timestamppb.New(lastActivity),
+			Status:         filemediadomain.UploadSessionStatusUploading,
+			UploadedParts:  []*filemediadomain.UploadedPart{{PartNumber: 1, ETag: "must-not-leak"}, {PartNumber: 3, ETag: "must-not-leak"}},
+			LastActivityAt: &lastActivity,
 		},
 	}
 	tools := mustFileTools(t, runtime)
@@ -234,9 +244,9 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	bundleID := uuid.NewString()
 	delivery := fileTestDelivery(fileID)
 	runtime := &recordingMCPFileRuntime{
-		completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: delivery},
-		downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: delivery},
-		deliveryResult: &managev1.GetMediaDeliveryResponse{Delivery: delivery},
+		completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: delivery},
+		downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: delivery},
+		deliveryResult: &filemediadomain.MediaDeliveryResult{Delivery: delivery},
 	}
 	tools := mustFileTools(t, runtime)
 
@@ -277,9 +287,9 @@ func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
 		t.Run(current, func(t *testing.T) {
 			fileID, trackID, bundleID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 			runtime := &recordingMCPFileRuntime{
-				initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
-				findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: fileStringPointer(fileID), UploadId: fileStringPointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, ClientMediaBundleId: &bundleID},
-				completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)},
+				initiateResult: &filemediadomain.MultipartUpload{FileID: fileID, UploadID: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusInitiated},
+				findResult:     &filemediadomain.MultipartCandidate{FileID: fileStringPointer(fileID), UploadID: fileStringPointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusUploading, ClientMediaBundleID: &bundleID},
+				completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: fileTestDelivery(fileID)},
 			}
 			tools := mustFileTools(t, runtime)
 			arguments := `{"a":"begin","k":"track_audio","t":"browser_upload_page","track_id":"` + trackID + `","n":"track.wav","m":"audio/wav","s":1024`
@@ -314,7 +324,7 @@ func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
 
 func TestFileToolsRemoteTrackAudioForwardsStableRetryIdentity(t *testing.T) {
 	fileID, trackID, current, correlationID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	runtime := &recordingMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)}}
+	runtime := &recordingMCPFileRuntime{downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: fileTestDelivery(fileID)}}
 	tools := mustFileTools(t, runtime)
 	arguments := fileToolArguments(t, `{"a":"begin","k":"track_audio","t":"remote_https","track_id":"`+trackID+`","expected_current_file_id":"`+current+`","correlation_id":"`+correlationID+`","u":"https://example.com/track.wav"}`)
 	for attempt := 0; attempt < 2; attempt++ {
@@ -392,7 +402,7 @@ func TestFileToolsPreserveFacadeAuthorityAndInternalErrorBoundaries(t *testing.T
 	}
 
 	runtime.deliveryError = nil
-	runtime.deliveryResult = &managev1.GetMediaDeliveryResponse{}
+	runtime.deliveryResult = &filemediadomain.MediaDeliveryResult{}
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileRead, arguments)
 	if !errors.Is(err, filemedia.ErrInvalidMCPFileRuntime) || errors.As(err, &executionErr) {
 		t.Fatalf("runtime error = %T %v", err, err)
@@ -409,7 +419,7 @@ func TestFileToolsPreserveFacadeAuthorityAndInternalErrorBoundaries(t *testing.T
 func TestFileToolsUseWrappedAuthenticatedContext(t *testing.T) {
 	fileID := uuid.NewString()
 	runtime := &recordingMCPFileRuntime{
-		deliveryResult: &managev1.GetMediaDeliveryResponse{Delivery: fileTestDelivery(fileID)},
+		deliveryResult: &filemediadomain.MediaDeliveryResult{Delivery: fileTestDelivery(fileID)},
 	}
 	tools := mustFileTools(t, runtime)
 	dispatcher, err := WrapDispatcher(tools)
@@ -452,20 +462,20 @@ func fileToolArguments(t *testing.T, value string) mcpserver.ToolArguments {
 	return arguments
 }
 
-func fileTestDelivery(fileID string) *commonv1.MediaDelivery {
+func fileTestDelivery(fileID string) *filemediadomain.Delivery {
 	fileName := "video.mp4"
-	expiresAt := timestamppb.New(time.Date(2026, 8, 23, 11, 12, 13, 0, time.UTC))
-	return &commonv1.MediaDelivery{
-		FileId: fileID, FileName: &fileName, Extension: "mp4", MimeType: "video/mp4", FileSize: 42,
-		Inline: &commonv1.ExpiringMediaRef{
-			FileId: fileID, Url: "https://files.example.com/inline", ExpiresAt: expiresAt,
+	expiresAt := time.Date(2026, 8, 23, 11, 12, 13, 0, time.UTC)
+	return &filemediadomain.Delivery{
+		FileID: fileID, FileName: &fileName, Extension: "mp4", MimeType: "video/mp4", FileSize: 42,
+		Inline: &mediaauth.Reference{
+			FileID: fileID, URL: "https://files.example.com/inline", ExpiresAt: expiresAt,
 			Extension: "mp4", MimeType: "video/mp4", FileName: &fileName,
 		},
-		Asset: &commonv1.AssetRef{
-			AssetId: "asset-a", Url: "https://cdn.example.com/video.mp4", Extension: "mp4",
-			MimeType: "video/mp4", FileSize: 42, Sha256: []byte("sha256-must-not-leak"), DownloadFilename: &fileName,
+		Asset: &mediaasset.Reference{
+			AssetID: "asset-a", URL: "https://cdn.example.com/video.mp4", Extension: "mp4",
+			MimeType: "video/mp4", FileSize: 42, SHA256: []byte("sha256-must-not-leak"), DownloadFilename: &fileName,
 		},
-		ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+		ProcessingStatus: filemediadomain.ProcessingReady,
 	}
 }
 
@@ -473,7 +483,7 @@ func fileStringPointer(value string) *string { return &value }
 
 func TestFileToolsUploadAttachmentDescriptorAndStrictMapping(t *testing.T) {
 	fileID, correlationID := uuid.NewString(), uuid.NewString()
-	runtime := &recordingMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)}}
+	runtime := &recordingMCPFileRuntime{downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: fileTestDelivery(fileID)}}
 	tools := mustFileTools(t, runtime)
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	if err != nil {
@@ -493,7 +503,8 @@ func TestFileToolsUploadAttachmentDescriptorAndStrictMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filemediadomain.RemoteFileImportInput{UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, SourceURL: "https://attachments.example.com/download?signature=private", FileName: "Original.mp4", CorrelationID: correlationID}
+	want := filemediadomain.RemoteFileImportInput{UploadType: filemediadomain.
+		UploadEditorVideo, SourceURL: "https://attachments.example.com/download?signature=private", FileName: "Original.mp4", CorrelationID: correlationID}
 	if runtime.importInput == nil || !reflect.DeepEqual(*runtime.importInput, want) || runtime.downloadRequest != nil {
 		t.Fatalf("native input = %+v", runtime.importInput)
 	}
@@ -606,10 +617,10 @@ func TestFileToolsTransferEnforcesFlattenedSchemaRules(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			delivery := fileTestDelivery(fileID)
 			runtime := &recordingMCPFileRuntime{
-				initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
-				findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: fileStringPointer(fileID), UploadId: fileStringPointer("upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING},
-				completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: delivery},
-				downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: delivery},
+				initiateResult: &filemediadomain.MultipartUpload{FileID: fileID, UploadID: "upload", TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusInitiated},
+				findResult:     &filemediadomain.MultipartCandidate{FileID: fileStringPointer(fileID), UploadID: fileStringPointer("upload"), TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusUploading},
+				completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: delivery},
+				downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: delivery},
 			}
 			tools := mustFileTools(t, runtime)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, test.arguments))

@@ -3,6 +3,7 @@ package emaildelivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/mail"
@@ -10,24 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -41,547 +32,499 @@ func configJSONSemanticallyEqual(left, right []byte) bool {
 	return reflect.DeepEqual(leftValue, rightValue)
 }
 
-// MailAdapterService implements the MailAdapterService Connect handler
-type MailAdapterService struct {
-	managev1connect.UnimplementedMailAdapterServiceHandler
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	adapterLoader *email.AdapterLoader
-	publisher     MailAdapterChangePublisher
-	auditWriter   domainaudit.Appender
-}
-
-// NewMailAdapterService creates a new MailAdapterService
-type MailAdapterChangePublisher interface {
-	PublishMailAdapterChanged(context.Context, *managev1.MailAdapterChangedEvent) error
-}
-
-func NewMailAdapterService(db *gorm.DB, adapterLoader *email.AdapterLoader, publisher MailAdapterChangePublisher, spiceDB *auth.SpiceDBClient) *MailAdapterService {
-	dependencycheck.MustNotNil(db, "db")
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	return &MailAdapterService{
-		db:            db,
-		spiceDB:       spiceDB,
-		adapterLoader: adapterLoader,
-		publisher:     publisher,
-	}
-}
-
-// NewAuditedMailAdapterService creates a MailAdapterService whose mutations
-// require an in-transaction Domain Audit append.
-func NewAuditedMailAdapterService(
-	db *gorm.DB,
-	adapterLoader *email.AdapterLoader,
-	publisher MailAdapterChangePublisher,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-) *MailAdapterService {
-	if auditWriter == nil {
-		panic("mail adapter audit writer is required")
-	}
-	service := NewMailAdapterService(db, adapterLoader, publisher, spiceDB)
-	service.auditWriter = auditWriter
-	return service
-}
-
-func (s *MailAdapterService) requireMailAdapterCan(
+func (s *Service) requireMailAdapterCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
 ) error {
 	if canErr != nil {
-		return errs.Internal(canErr)
+		return canErr
 	}
 	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
-// Create creates a new mail adapter
-func (s *MailAdapterService) Create(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.CreateMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		private := []string{}
-		if cfg := req.Msg.GetSesConfig(); cfg != nil {
-			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-		}
-		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-		}
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Create", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
-
-	mailAdapterCan, err := policyv1.MailAdapter.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var adapter *model.MailAdapter
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
-			return err
-		}
-		name := strings.TrimSpace(req.Msg.Name)
-		if name == "" {
-			return errs.Required("name")
-		}
-		if len(name) > 255 {
-			return errs.InvalidArgument("name", "must be at most 255 characters")
-		}
-		adapterType := protoToModelAdapterType(req.Msg.Type)
-		if adapterType == "" {
-			return errs.InvalidArgument("type", "invalid adapter type")
-		}
-		config, err := s.buildConfig(adapterType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
-		if err != nil {
-			return errs.InvalidArgumentMsg(err.Error())
-		}
-		adapter = &model.MailAdapter{
-			Name:      name,
-			Type:      adapterType,
-			IsActive:  req.Msg.IsActive,
-			Priority:  int(req.Msg.GetPriority()),
-			CreatedAt: dbtime.Now(),
-		}
-		if err := adapter.SetConfig(config); err != nil {
-			return errs.Internal(fmt.Errorf("failed to set config: %w", err))
-		}
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(adapter).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMailAdapterCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMailAdapterCreatedAuditRecord(metadata, adapter.ID)
-		})
-	}); err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	// Invalidate local cache
-	if s.adapterLoader != nil {
-		s.adapterLoader.InvalidateCache()
-	}
-
-	// Publish change event for other processes
-	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_CREATED)
-
-	return connect.NewResponse(&managev1.CreateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(adapter, false),
-	}), nil
+// SESConfigInput is a requested Amazon SES provider configuration.
+type SESConfigInput struct {
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	FromEmail       string
+	FromName        *string
 }
 
-// Update updates a mail adapter
-func (s *MailAdapterService) Update(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateMailAdapterRequest],
-) (*connect.Response[managev1.UpdateMailAdapterResponse], error) {
-	return s.update(ctx, req, nil)
+// SMTPConfigInput is a requested SMTP provider configuration.
+type SMTPConfigInput struct {
+	Host      string
+	Port      int32
+	Secure    bool
+	User      string
+	Password  string
+	FromEmail string
+	FromName  *string
 }
 
-func (s *MailAdapterService) update(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateMailAdapterRequest],
-	sender *MailAdapterSenderUpdate,
-) (rpcResponse *connect.Response[managev1.UpdateMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		private := []string{}
-		if cfg := req.Msg.GetSesConfig(); cfg != nil {
-			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-		}
-		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-		}
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Update", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
-
-	mailAdapterCan, err := policyv1.MailAdapter.Update()
-	if err != nil {
-		return nil, errs.Internal(err)
+// privateValues are the submitted credentials and sender identity that no
+// failure log may keep.
+func providerConfigPrivateValues(ses *SESConfigInput, smtp *SMTPConfigInput) []string {
+	var private []string
+	if ses != nil {
+		private = append(private, ses.AccessKeyID, ses.SecretAccessKey, ses.FromEmail, optionalString(ses.FromName))
 	}
+	if smtp != nil {
+		private = append(private, smtp.User, smtp.Password, smtp.FromEmail, optionalString(smtp.FromName))
+	}
+	return private
+}
 
-	var adapter model.MailAdapter
-	changed := false
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
-			return err
-		}
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
 
-		requestedName := adapter.Name
-		if req.Msg.Name != nil {
-			name := strings.TrimSpace(*req.Msg.Name)
+// CreateMailAdapterCommand creates a mail adapter. Type selects which
+// provider configuration applies.
+type CreateMailAdapterCommand struct {
+	Name     string
+	Type     AdapterType
+	SES      *SESConfigInput
+	SMTP     *SMTPConfigInput
+	IsActive bool
+	Priority int32
+}
+
+// CreateMailAdapter stores the adapter and invalidates every process's
+// provider cache.
+func (s *Service) CreateMailAdapter(ctx context.Context, command CreateMailAdapterCommand) (_ MailAdapter, err error) {
+	defer failurecause.AnnotatePrivate(&err, providerConfigPrivateValues(command.SES, command.SMTP)...)
+	adapter, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[MailAdapter, Store]{
+		Access: freshAdmin(policyv1.MailAdapter.Create()),
+		Change: func(ctx context.Context, store Store) (MailAdapter, error) {
+			name := strings.TrimSpace(command.Name)
 			if name == "" {
-				return errs.InvalidArgument("name", "cannot be empty")
+				return MailAdapter{}, domainerr.Required("name")
 			}
 			if len(name) > 255 {
-				return errs.InvalidArgument("name", "must be at most 255 characters")
+				return MailAdapter{}, domainerr.InvalidField("name", "must be at most 255 characters")
 			}
-			requestedName = name
-		}
-
-		effectiveType := adapter.Type
-		typeChanged := false
-		if req.Msg.Type != nil {
-			nextType := protoToModelAdapterType(*req.Msg.Type)
-			if nextType == "" {
-				return errs.InvalidArgument("type", "invalid adapter type")
+			if !command.Type.Known() {
+				return MailAdapter{}, domainerr.InvalidField("type", "invalid adapter type")
 			}
-			if nextType != adapter.Type {
-				typeChanged = true
-				effectiveType = nextType
+			config, err := buildConfig(command.Type, command.SES, command.SMTP)
+			if err != nil {
+				return MailAdapter{}, invalidMailAdapter(err.Error())
 			}
-		}
-
-		senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
-		configChanged := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
-		var requestedConfig model.MailAdapterConfig
-		if configChanged {
-			var config structured.Value
-			if senderChanged {
-				requestedConfig, config, err = s.senderConfig(&adapter, *sender)
-				if err != nil {
-					return err
-				}
-			} else {
-				config, err = s.buildConfig(effectiveType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
-				if err != nil {
-					return errs.InvalidArgumentMsg(err.Error())
-				}
-				candidate := adapter
-				if err := candidate.SetConfig(config); err != nil {
-					return errs.Internal(fmt.Errorf("failed to set config: %w", err))
-				}
-				requestedConfig = candidate.Config
+			encoded, err := json.Marshal(config)
+			if err != nil {
+				return MailAdapter{}, fmt.Errorf("failed to set config: %w", err)
 			}
-			if !senderChanged || !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
-				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
-					if senderChanged {
-						// Provider diagnostics can contain credentials. Keep their cause
-						// in redacted logs, never in an actionable MCP error.
-						slog.ErrorContext(ctx, "mail adapter sender verification failed", "adapter_id", adapter.ID, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
-						return errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification")
-					}
-					return errs.InvalidArgument("config", err.Error())
-				}
-			}
-		}
-
-		updates := structured.Fields{}
-		changedFields := make([]string, 0, 5)
-		if req.Msg.Name != nil && adapter.Name != requestedName {
-			updates["name"] = requestedName
-			adapter.Name = requestedName
-			changedFields = append(changedFields, "name")
-		}
-		if req.Msg.IsActive != nil && adapter.IsActive != *req.Msg.IsActive {
-			updates["is_active"] = *req.Msg.IsActive
-			adapter.IsActive = *req.Msg.IsActive
-			changedFields = append(changedFields, "active")
-		}
-		if req.Msg.Priority != nil && adapter.Priority != int(*req.Msg.Priority) {
-			updates["priority"] = *req.Msg.Priority
-			adapter.Priority = int(*req.Msg.Priority)
-			changedFields = append(changedFields, "priority")
-		}
-		if req.Msg.Type != nil && adapter.Type != effectiveType {
-			updates["type"] = effectiveType
-			adapter.Type = effectiveType
-			changedFields = append(changedFields, "type")
-		}
-		if configChanged && !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
-			updates["config"] = requestedConfig
-			adapter.Config = requestedConfig
-			changedFields = append(changedFields, "config")
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		changed = true
-		now := dbtime.Now()
-		updates["updated_at"] = now
-		adapter.UpdatedAt = &now
-		if err := tx.Model(&adapter).Updates(updates).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMailAdapterUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMailAdapterConfigUpdatedAuditRecord(metadata, adapter.ID, changedFields)
-		})
+			return store.InsertMailAdapter(ctx, MailAdapter{
+				Name:      name,
+				Type:      command.Type,
+				IsActive:  command.IsActive,
+				Priority:  int(command.Priority),
+				Config:    encoded,
+				CreatedAt: s.dbNow(),
+			})
+		},
+		Audit: func(adapter MailAdapter) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMailAdapterCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMailAdapterCreatedAuditRecord(metadata, adapter.ID)
+			})
+		},
 	})
 	if err != nil {
-		if sender != nil {
-			slog.ErrorContext(ctx, "mail adapter sender update failed", "adapter_id", req.Msg.Id, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
-		}
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("mail adapter", req.Msg.Id)
-		}
-		if sender != nil {
-			return nil, errs.InternalMsg("mail adapter sender update failed")
-		}
-		return nil, errs.Internal(err)
+		return MailAdapter{}, err
 	}
-	if !changed {
-		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(&adapter, false)}), nil
-	}
-
-	// Invalidate local cache
-	if s.adapterLoader != nil {
-		s.adapterLoader.InvalidateCache()
-	}
-
-	// Publish change event for other processes
-	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_UPDATED)
-
-	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(&adapter, false),
-	}), nil
+	s.mailAdapterChanged(ctx, adapter.ID, MailAdapterCreated)
+	return adapter, nil
 }
 
-// Delete deletes a mail adapter
-func (s *MailAdapterService) Delete(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.DeleteMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Delete", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// dbNow is the current time at the precision the database keeps.
+func (s *Service) dbNow() time.Time {
+	return s.now().UTC().Truncate(dbtime.Precision)
+}
 
-	mailAdapterCan, err := policyv1.MailAdapter.Delete()
+// UpdateMailAdapterCommand changes a mail adapter. Nil fields keep their
+// stored values. A provider configuration for the stored provider merges
+// over the stored one: an empty SES secret access key or SMTP password keeps
+// the stored secret.
+type UpdateMailAdapterCommand struct {
+	ID       string
+	Name     *string
+	Type     *AdapterType
+	SES      *SESConfigInput
+	SMTP     *SMTPConfigInput
+	IsActive *bool
+	Priority *int32
+}
+
+// UpdateMailAdapter applies the change, verifying a changed sender or
+// delivery setting with a provider send, and invalidates every process's
+// provider cache when something changed.
+func (s *Service) UpdateMailAdapter(ctx context.Context, command UpdateMailAdapterCommand) (_ MailAdapter, err error) {
+	defer failurecause.AnnotatePrivate(&err, providerConfigPrivateValues(command.SES, command.SMTP)...)
+	return s.updateMailAdapter(ctx, command, nil)
+}
+
+// mailAdapterUpdate is an applied update and whether it changed anything.
+type mailAdapterUpdate struct {
+	adapter       MailAdapter
+	changedFields []string
+}
+
+func (s *Service) updateMailAdapter(ctx context.Context, command UpdateMailAdapterCommand, sender *MailAdapterSenderUpdate) (MailAdapter, error) {
+	var adapter MailAdapter
+	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[mailAdapterUpdate, Store]{
+		Access: freshAdmin(policyv1.MailAdapter.Update()),
+		Change: func(ctx context.Context, store Store) (mailAdapterUpdate, error) {
+			var err error
+			if adapter, err = store.LockMailAdapter(ctx, command.ID); err != nil {
+				return mailAdapterUpdate{}, err
+			}
+			requested, err := s.requestedMailAdapterState(ctx, adapter, command, sender)
+			if err != nil {
+				return mailAdapterUpdate{}, err
+			}
+			changedFields, err := s.persistMailAdapterUpdate(ctx, store, &adapter, command, requested)
+			return mailAdapterUpdate{adapter: adapter, changedFields: changedFields}, err
+		},
+		Audit: func(update mailAdapterUpdate) mutation.Audit {
+			if len(update.changedFields) == 0 {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditMailAdapterUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMailAdapterConfigUpdatedAuditRecord(metadata, update.adapter.ID, update.changedFields)
+			})
+		},
+	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return MailAdapter{}, classifyMailAdapterUpdateError(err, command.ID, sender, adapter)
 	}
-
-	var adapter model.MailAdapter
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
-			return err
-		}
-		if err := tx.Delete(&adapter).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMailAdapterDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMailAdapterDeletedAuditRecord(metadata, adapter.ID)
-		})
-	}); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("mail adapter", req.Msg.Id)
-		}
-		return nil, errs.Wrap(err)
+	if len(update.changedFields) != 0 {
+		s.mailAdapterChanged(ctx, update.adapter.ID, MailAdapterUpdated)
 	}
-
-	// Invalidate local cache
-	if s.adapterLoader != nil {
-		s.adapterLoader.InvalidateCache()
-	}
-
-	// Publish change event for other processes
-	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_DELETED)
-
-	return connect.NewResponse(&managev1.DeleteMailAdapterResponse{}), nil
+	return update.adapter, nil
 }
 
-// ListMailAdaptersAdmin lists all mail adapters (admin only)
-func (s *MailAdapterService) ListMailAdaptersAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMailAdaptersAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListMailAdaptersAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ListMailAdaptersAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// requestedMailAdapterState is the validated state an update asks for. config
+// is set only when configChanged.
+type requestedMailAdapterState struct {
+	name          string
+	adapterType   AdapterType
+	config        json.RawMessage
+	configChanged bool
+}
 
+func (s *Service) requestedMailAdapterState(
+	ctx context.Context,
+	adapter MailAdapter,
+	command UpdateMailAdapterCommand,
+	sender *MailAdapterSenderUpdate,
+) (requestedMailAdapterState, error) {
+	requested := requestedMailAdapterState{name: adapter.Name, adapterType: adapter.Type}
+	if command.Name != nil {
+		name := strings.TrimSpace(*command.Name)
+		if name == "" {
+			return requested, domainerr.InvalidField("name", "cannot be empty")
+		}
+		if len(name) > 255 {
+			return requested, domainerr.InvalidField("name", "must be at most 255 characters")
+		}
+		requested.name = name
+	}
+	typeChanged := false
+	if command.Type != nil {
+		if !command.Type.Known() {
+			return requested, domainerr.InvalidField("type", "invalid adapter type")
+		}
+		if *command.Type != adapter.Type {
+			typeChanged = true
+			requested.adapterType = *command.Type
+		}
+	}
+	var err error
+	requested.config, requested.configChanged, err = s.requestedMailAdapterConfig(ctx, adapter, command, sender, requested, typeChanged)
+	return requested, err
+}
+
+// requestedMailAdapterConfig builds the configuration an update asks for and
+// verifies it with the provider when it differs from the stored one.
+func (s *Service) requestedMailAdapterConfig(
+	ctx context.Context,
+	adapter MailAdapter,
+	command UpdateMailAdapterCommand,
+	sender *MailAdapterSenderUpdate,
+	requested requestedMailAdapterState,
+	typeChanged bool,
+) (json.RawMessage, bool, error) {
+	senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
+	if !typeChanged && command.SES == nil && command.SMTP == nil && !senderChanged {
+		return nil, false, nil
+	}
+	var requestedConfig json.RawMessage
+	var config structured.Value
+	var err error
+	if senderChanged {
+		requestedConfig, config, err = senderConfig(adapter, *sender)
+	} else {
+		requestedConfig, config, err = replacementConfig(adapter, requested.adapterType, typeChanged, command)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	// Only a changed sender or delivery setting needs a provider send to
+	// prove it; resending the stored config is a no-op.
+	if configJSONSemanticallyEqual(adapter.Config, requestedConfig) {
+		return requestedConfig, false, nil
+	}
+	if err := s.verifyAdapterBeforeSave(ctx, requested.name, requested.adapterType, config); err != nil {
+		if senderChanged {
+			// Provider diagnostics can contain credentials. Keep their cause
+			// for the redacted request record, never in an actionable MCP error.
+			return nil, false, domainerr.InvalidField("config", "sender configuration verification failed; check provider configuration and sender verification").WithCause(err)
+		}
+		return nil, false, domainerr.InvalidField("config", err.Error())
+	}
+	return requestedConfig, true, nil
+}
+
+// persistMailAdapterUpdate writes the fields the command changed to adapter
+// and the store. It returns the changed fields.
+func (s *Service) persistMailAdapterUpdate(
+	ctx context.Context,
+	store Store,
+	adapter *MailAdapter,
+	command UpdateMailAdapterCommand,
+	requested requestedMailAdapterState,
+) ([]string, error) {
+	var changes MailAdapterChanges
+	changedFields := make([]string, 0, 5)
+	if command.Name != nil && adapter.Name != requested.name {
+		changes.Name = &requested.name
+		adapter.Name = requested.name
+		changedFields = append(changedFields, "name")
+	}
+	if command.IsActive != nil && adapter.IsActive != *command.IsActive {
+		changes.IsActive = command.IsActive
+		adapter.IsActive = *command.IsActive
+		changedFields = append(changedFields, "active")
+	}
+	if command.Priority != nil && adapter.Priority != int(*command.Priority) {
+		changes.Priority = command.Priority
+		adapter.Priority = int(*command.Priority)
+		changedFields = append(changedFields, "priority")
+	}
+	if command.Type != nil && adapter.Type != requested.adapterType {
+		changes.Type = &requested.adapterType
+		adapter.Type = requested.adapterType
+		changedFields = append(changedFields, "type")
+	}
+	if requested.configChanged {
+		changes.Config = requested.config
+		adapter.Config = requested.config
+		changedFields = append(changedFields, "config")
+	}
+	if len(changedFields) == 0 {
+		return nil, nil
+	}
+	now := s.dbNow()
+	changes.UpdatedAt = now
+	adapter.UpdatedAt = &now
+	return changedFields, store.UpdateMailAdapter(ctx, adapter.ID, changes)
+}
+
+// classifyMailAdapterUpdateError maps an update failure to the client answer.
+// A sender update may carry provider credentials in its cause, so its
+// adapter's secrets are marked private and an unclassified failure answers
+// with a fixed message.
+func classifyMailAdapterUpdateError(err error, adapterID string, sender *MailAdapterSenderUpdate, adapter MailAdapter) error {
+	if errors.Is(err, ErrMailAdapterNotFound) {
+		return domainerr.ResourceNotFound("mail adapter", adapterID).WithCause(err)
+	}
+	if sender == nil {
+		return err
+	}
+	return failurecause.WithAttrs(
+		failurecause.WithPrivate(fmt.Errorf("mail adapter sender update failed: %w", err), mailAdapterPrivateValues(adapter)...),
+		slog.String("adapter_id", adapterID),
+	)
+}
+
+// DeleteMailAdapterCommand deletes a mail adapter.
+type DeleteMailAdapterCommand struct {
+	ID string
+}
+
+// DeleteMailAdapter deletes the adapter and invalidates every process's
+// provider cache.
+func (s *Service) DeleteMailAdapter(ctx context.Context, command DeleteMailAdapterCommand) error {
+	adapter, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[MailAdapter, Store]{
+		Access: freshAdmin(policyv1.MailAdapter.Delete()),
+		Change: func(ctx context.Context, store Store) (MailAdapter, error) {
+			adapter, err := store.LockMailAdapter(ctx, command.ID)
+			if err != nil {
+				return adapter, err
+			}
+			return adapter, store.DeleteMailAdapter(ctx, adapter.ID)
+		},
+		Audit: func(adapter MailAdapter) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMailAdapterDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMailAdapterDeletedAuditRecord(metadata, adapter.ID)
+			})
+		},
+	})
+	if err != nil {
+		if errors.Is(err, ErrMailAdapterNotFound) {
+			return domainerr.ResourceNotFound("mail adapter", command.ID)
+		}
+		return err
+	}
+	s.mailAdapterChanged(ctx, adapter.ID, MailAdapterDeleted)
+	return nil
+}
+
+// ListMailAdaptersQuery pages through mail adapters in priority order.
+type ListMailAdaptersQuery struct {
+	// Limit defaults and is capped as queryutil.DefaultPaginationConfig.
+	Limit  int32
+	Offset int32
+	// ActiveOnly lists only the active adapters.
+	ActiveOnly bool
+}
+
+// MailAdapterPage is one page of mail adapters and how many there are in
+// all.
+type MailAdapterPage struct {
+	Adapters []MailAdapter
+	Page     queryutil.Pagination
+	Total    int64
+}
+
+// ListMailAdapters returns one page of adapters. A response built from them
+// shows no secret (MailAdapter.ProviderConfig).
+func (s *Service) ListMailAdapters(ctx context.Context, query ListMailAdaptersQuery) (MailAdapterPage, error) {
 	can, canErr := policyv1.MailAdapter.List()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
-		return nil, err
+		return MailAdapterPage{}, err
 	}
-
-	query := s.db.WithContext(ctx).Model(&model.MailAdapter{})
-
-	// Apply filters (support is_active filter)
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		if f.GetField() == "is_active" && f.GetValue() == "true" {
-			query = query.Where("is_active = ?", true)
-		}
+	page := MailAdapterPage{Page: queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)}
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		page.Adapters, page.Total, err = store.MailAdapters(ctx, MailAdapterListing{
+			ActiveOnly: query.ActiveOnly, Limit: page.Page.Limit, Offset: page.Page.Offset,
+		})
+		return err
+	})
+	if err != nil {
+		return MailAdapterPage{}, err
 	}
-
-	// Count total
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit, offset := queryutil.NormalizePaginationParams(req.Msg.Pagination)
-
-	// Default sort
-	query = query.Order("priority ASC, created_at ASC")
-
-	var adapters []model.MailAdapter
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&adapters).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	protoAdapters := make([]*managev1.MailAdapter, len(adapters))
-	for i := range adapters {
-		protoAdapters[i] = toProtoMailAdapter(&adapters[i], false)
-	}
-
-	return connect.NewResponse(&managev1.ListMailAdaptersAdminResponse{
-		Adapters:   protoAdapters,
-		Pagination: (queryutil.Pagination{Limit: limit, Offset: offset}).BuildResponse(total),
-	}), nil
+	return page, nil
 }
 
-// TestConfig tests adapter configuration before saving by sending a test email
-func (s *MailAdapterService) TestConfig(
-	ctx context.Context,
-	req *connect.Request[managev1.TestMailAdapterConfigRequest],
-) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
-	private := []string{}
-	if cfg := req.Msg.GetSesConfig(); cfg != nil {
-		private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-	}
-	if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-		private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-	}
-	private = append(private, req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail))
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "TestConfig", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+// TestSendResult is the outcome of a test email: a provider failure is the
+// result, not an error.
+type TestSendResult struct {
+	Success bool
+	// Error is the provider failure.
+	Error *string
+	// MessageID is the provider's message ID of an accepted email.
+	MessageID *string
+}
+
+// TestMailAdapterConfigCommand sends a test email through an unsaved
+// adapter configuration.
+type TestMailAdapterConfigCommand struct {
+	Type      AdapterType
+	SES       *SESConfigInput
+	SMTP      *SMTPConfigInput
+	TestEmail string
+}
+
+// TestMailAdapterConfig reports whether the configuration delivered a test
+// email.
+func (s *Service) TestMailAdapterConfig(ctx context.Context, command TestMailAdapterConfigCommand) (_ TestSendResult, err error) {
+	private := append(providerConfigPrivateValues(command.SES, command.SMTP), command.TestEmail, strings.TrimSpace(command.TestEmail))
+	defer failurecause.AnnotatePrivate(&err, private...)
 
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
-		return nil, err
+		return TestSendResult{}, err
 	}
-
-	testEmail, err := validateTestEmail(req.Msg.TestEmail)
+	testEmail, err := validateTestEmail(command.TestEmail)
 	if err != nil {
-		return nil, err
+		return TestSendResult{}, err
 	}
-
-	adapterType := protoToModelAdapterType(req.Msg.Type)
-	if adapterType == "" {
-		return nil, errs.InvalidArgument("type", "invalid adapter type")
+	if !command.Type.Known() {
+		return TestSendResult{}, domainerr.InvalidField("type", "invalid adapter type")
 	}
-
-	config, err := s.buildConfig(adapterType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
+	config, err := buildConfig(command.Type, command.SES, command.SMTP)
 	if err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
+		return TestSendResult{}, invalidMailAdapter(err.Error())
 	}
-
-	tempAdapter := &model.MailAdapter{
-		ID:   "test-config",
-		Name: "Test Config",
-		Type: adapterType,
-	}
-	if err := tempAdapter.SetConfig(config); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to set config: %w", err))
-	}
-
-	factory := email.NewAdapterFactory()
-	adapter, err := factory.Create(tempAdapter)
+	encoded, err := json.Marshal(config)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
-		errStr := err.Error()
-		return connect.NewResponse(&managev1.TestMailAdapterResponse{
-			Success: false,
-			Error:   &errStr,
-		}), nil
+		return TestSendResult{}, fmt.Errorf("failed to set config: %w", err)
 	}
-
-	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
+	tempAdapter := MailAdapter{ID: "test-config", Name: "Test Config", Type: command.Type, Config: encoded}
+	return s.sendThroughTransientAdapter(ctx, tempAdapter, testEmail, private...), nil
 }
 
-// Test tests a mail adapter by sending a test email
-func (s *MailAdapterService) Test(
-	ctx context.Context,
-	req *connect.Request[managev1.TestMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
-	private := []string{req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail)}
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Test", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+// TestMailAdapterCommand sends a test email through a stored adapter.
+type TestMailAdapterCommand struct {
+	ID        string
+	TestEmail string
+}
+
+// TestMailAdapter reports whether the stored adapter delivered a test email.
+func (s *Service) TestMailAdapter(ctx context.Context, command TestMailAdapterCommand) (_ TestSendResult, err error) {
+	private := []string{command.TestEmail, strings.TrimSpace(command.TestEmail)}
+	defer func() { failurecause.AnnotatePrivate(&err, private...) }()
 
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
-		return nil, err
+		return TestSendResult{}, err
 	}
-
-	testEmail, err := validateTestEmail(req.Msg.TestEmail)
+	testEmail, err := validateTestEmail(command.TestEmail)
 	if err != nil {
-		return nil, err
+		return TestSendResult{}, err
 	}
-
-	// Get adapter from DB
-	var dbAdapter model.MailAdapter
-	if err := s.db.WithContext(ctx).First(&dbAdapter, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("mail adapter", req.Msg.Id)
+	var stored MailAdapter
+	if err := s.units.Read(ctx, func(store Store) (err error) {
+		stored, err = store.MailAdapter(ctx, command.ID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrMailAdapterNotFound) {
+			return TestSendResult{}, domainerr.ResourceNotFound("mail adapter", command.ID)
 		}
-		return nil, errs.Internal(err)
+		return TestSendResult{}, err
 	}
-
-	if cfg, err := dbAdapter.GetSESConfig(); err == nil {
+	if cfg, err := stored.SESConfig(); err == nil {
 		private = append(private, cfg.AccessKeyID, cfg.SecretAccessKey, cfg.FromEmail, cfg.FromName)
 	}
-	if cfg, err := dbAdapter.GetSMTPConfig(); err == nil {
+	if cfg, err := stored.SMTPConfig(); err == nil {
 		private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.FromName)
 	}
+	return s.sendThroughTransientAdapter(ctx, stored, testEmail, private...), nil
+}
 
-	// Create adapter instance
-	factory := email.NewAdapterFactory()
-	adapter, err := factory.Create(&dbAdapter)
+// sendThroughTransientAdapter opens a provider for one test send and
+// reports its outcome.
+func (s *Service) sendThroughTransientAdapter(ctx context.Context, stored MailAdapter, testEmail string, private ...string) TestSendResult {
+	provider, err := s.providers.Open(stored)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
+		slog.ErrorContext(ctx, "Mail adapter test failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
-		return connect.NewResponse(&managev1.TestMailAdapterResponse{
-			Success: false,
-			Error:   &errStr,
-		}), nil
+		return TestSendResult{Success: false, Error: &errStr}
 	}
+	defer closeTransientMailAdapter(ctx, provider)
+	return sendAdapterTestEmail(ctx, provider, testEmail, private...)
+}
 
-	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
+// invalidMailAdapter rejects a mail adapter request with message.
+func invalidMailAdapter(message string) error {
+	return domainerr.New(domainerr.Invalid, "", message)
 }
 
 // Helper functions
@@ -589,33 +532,30 @@ func (s *MailAdapterService) Test(
 func validateTestEmail(rawEmail string) (string, error) {
 	testEmail := strings.TrimSpace(rawEmail)
 	if testEmail == "" {
-		return "", errs.Required("test_email")
+		return "", domainerr.Required("test_email")
 	}
 	if _, err := mail.ParseAddress(testEmail); err != nil {
-		return "", errs.InvalidArgument("test_email", fmt.Sprintf("invalid email address: %s", testEmail))
+		return "", domainerr.InvalidField("test_email", fmt.Sprintf("invalid email address: %s", testEmail))
 	}
 	return testEmail, nil
 }
 
-func (s *MailAdapterService) verifyAdapterBeforeSave(
+func (s *Service) verifyAdapterBeforeSave(
 	ctx context.Context,
 	adapterName string,
-	adapterType model.MailAdapterType,
+	adapterType AdapterType,
 	config structured.Value) error {
-	tempAdapter := &model.MailAdapter{
-		ID:   "verify-config",
-		Name: adapterName,
-		Type: adapterType,
-	}
-	if err := tempAdapter.SetConfig(config); err != nil {
+	encoded, err := json.Marshal(config)
+	if err != nil {
 		return fmt.Errorf("failed to serialize adapter config: %w", err)
 	}
+	tempAdapter := MailAdapter{ID: "verify-config", Name: adapterName, Type: adapterType, Config: encoded}
 
-	factory := email.NewAdapterFactory()
-	sender, err := factory.Create(tempAdapter)
+	sender, err := s.providers.Open(tempAdapter)
 	if err != nil {
 		return fmt.Errorf("failed to initialize adapter: %w", err)
 	}
+	defer closeTransientMailAdapter(ctx, sender)
 
 	probeEmail, err := probeEmailForConfig(adapterType, config)
 	if err != nil {
@@ -635,18 +575,26 @@ func (s *MailAdapterService) verifyAdapterBeforeSave(
 	return nil
 }
 
-func probeEmailForConfig(adapterType model.MailAdapterType, config structured.Value) (string, error) {
+// closeTransientMailAdapter releases the provider connections that an
+// adapter opened for one verification or test send keeps pooled.
+func closeTransientMailAdapter(ctx context.Context, provider MailProvider) {
+	if err := provider.Close(); err != nil {
+		slog.WarnContext(ctx, "Failed to close transient mail adapter", "domain", "mail", failurecause.Attr(err))
+	}
+}
+
+func probeEmailForConfig(adapterType AdapterType, config structured.Value) (string, error) {
 	switch adapterType {
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING.String()):
+	case AdapterTypeLogging:
 		return "", nil
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
-		cfg, ok := config.(*model.SESAdapterConfig)
+	case AdapterTypeSES:
+		cfg, ok := config.(*SESConfig)
 		if !ok {
 			return "", fmt.Errorf("invalid SES config")
 		}
 		return strings.TrimSpace(cfg.FromEmail), nil
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
-		cfg, ok := config.(*model.SMTPAdapterConfig)
+	case AdapterTypeSMTP:
+		cfg, ok := config.(*SMTPConfig)
 		if !ok {
 			return "", fmt.Errorf("invalid SMTP config")
 		}
@@ -672,73 +620,42 @@ func sendAdapterTestEmail(
 	sender email.Sender,
 	testEmail string,
 	private ...string,
-) *connect.Response[managev1.TestMailAdapterResponse] {
+) TestSendResult {
 	result, err := sendVerificationEmail(ctx, sender, testEmail)
 	if err != nil {
 		private = append(private, testEmail)
 		if recipient, parseErr := mail.ParseAddress(testEmail); parseErr == nil {
 			private = append(private, recipient.Name)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
+		slog.ErrorContext(ctx, "Mail adapter test failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
-		return connect.NewResponse(&managev1.TestMailAdapterResponse{
-			Success: false,
-			Error:   &errStr,
-		})
+		return TestSendResult{Success: false, Error: &errStr}
 	}
 
-	response := &managev1.TestMailAdapterResponse{
-		Success: true,
-	}
+	response := TestSendResult{Success: true}
 	if result != nil && strings.TrimSpace(result.MessageID) != "" {
-		response.MessageId = &result.MessageID
+		response.MessageID = &result.MessageID
 	}
-	return connect.NewResponse(response)
+	return response
 }
 
-func protoToModelAdapterType(t managev1.MailAdapterType) model.MailAdapterType {
-	switch t {
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING:
-		return model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING.String())
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES:
-		return model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String())
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP:
-		return model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String())
-	default:
-		return ""
-	}
-}
-
-func modelToProtoAdapterType(t model.MailAdapterType) managev1.MailAdapterType {
-	switch t {
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING.String()):
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP
-	default:
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_UNSPECIFIED
-	}
-}
-
-func (s *MailAdapterService) buildConfig(
-	adapterType model.MailAdapterType,
-	sesConfig *managev1.SESConfig,
-	smtpConfig *managev1.SMTPConfig,
+func buildConfig(
+	adapterType AdapterType,
+	sesConfig *SESConfigInput,
+	smtpConfig *SMTPConfigInput,
 ) (structured.Value, error) {
 	switch adapterType {
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING.String()):
+	case AdapterTypeLogging:
 		return nil, fmt.Errorf("logging adapter is non-delivery and cannot be configured")
 
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
+	case AdapterTypeSES:
 		if sesConfig == nil {
 			return nil, fmt.Errorf("SES config is required for SES adapter")
 		}
 		if sesConfig.Region == "" {
 			return nil, fmt.Errorf("SES region is required")
 		}
-		if sesConfig.AccessKeyId == "" {
+		if sesConfig.AccessKeyID == "" {
 			return nil, fmt.Errorf("SES access key ID is required")
 		}
 		if sesConfig.SecretAccessKey == "" {
@@ -750,9 +667,9 @@ func (s *MailAdapterService) buildConfig(
 		if _, err := mail.ParseAddress(sesConfig.FromEmail); err != nil {
 			return nil, fmt.Errorf("invalid SES from email: %s", sesConfig.FromEmail)
 		}
-		cfg := &model.SESAdapterConfig{
+		cfg := &SESConfig{
 			Region:          sesConfig.Region,
-			AccessKeyID:     sesConfig.AccessKeyId,
+			AccessKeyID:     sesConfig.AccessKeyID,
 			SecretAccessKey: sesConfig.SecretAccessKey,
 			FromEmail:       sesConfig.FromEmail,
 		}
@@ -761,7 +678,7 @@ func (s *MailAdapterService) buildConfig(
 		}
 		return cfg, nil
 
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
+	case AdapterTypeSMTP:
 		if smtpConfig == nil {
 			return nil, fmt.Errorf("SMTP config is required for SMTP adapter")
 		}
@@ -777,7 +694,7 @@ func (s *MailAdapterService) buildConfig(
 		if _, err := mail.ParseAddress(smtpConfig.FromEmail); err != nil {
 			return nil, fmt.Errorf("invalid SMTP from email: %s", smtpConfig.FromEmail)
 		}
-		cfg := &model.SMTPAdapterConfig{
+		cfg := &SMTPConfig{
 			Host:      smtpConfig.Host,
 			Port:      int(smtpConfig.Port),
 			Secure:    smtpConfig.Secure,
@@ -795,88 +712,47 @@ func (s *MailAdapterService) buildConfig(
 	}
 }
 
-func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.MailAdapter {
-	proto := &managev1.MailAdapter{
-		Id:        a.ID,
-		Name:      a.Name,
-		Type:      modelToProtoAdapterType(a.Type),
-		IsActive:  a.IsActive,
-		Priority:  int32(a.Priority),
-		CreatedAt: a.CreatedAt.Format(time.RFC3339),
-	}
-
-	if a.UpdatedAt != nil {
-		proto.UpdatedAt = a.UpdatedAt.Format(time.RFC3339)
-	}
-
-	// Add type-specific config (masking secrets)
+// ProviderConfig is the stored configuration of the adapter's provider
+// that a response shows. A response never shows the SES secret access key
+// or SMTP password. A stored configuration that does not decode is logged
+// and shown as none.
+func (a MailAdapter) ProviderConfig(ctx context.Context) (*SESConfig, *SMTPConfig) {
 	switch a.Type {
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
-		if cfg, err := a.GetSESConfig(); err == nil {
-			sesConfig := &managev1.SESConfig{
-				Region:      cfg.Region,
-				AccessKeyId: cfg.AccessKeyID,
-				FromEmail:   cfg.FromEmail,
-			}
-			if cfg.FromName != "" {
-				sesConfig.FromName = &cfg.FromName
-			}
-			// Never return secret access key
-			if includeSecrets {
-				sesConfig.SecretAccessKey = cfg.SecretAccessKey
-			}
-			proto.Config = &managev1.MailAdapter_SesConfig{SesConfig: sesConfig}
-		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_ses_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+	case AdapterTypeSES:
+		cfg, err := a.SESConfig()
+		if err != nil {
+			slog.ErrorContext(ctx, "Stored mail adapter config decode failed; returning adapter without config", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_ses_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+			return nil, nil
 		}
-
-	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
-		if cfg, err := a.GetSMTPConfig(); err == nil {
-			smtpConfig := &managev1.SMTPConfig{
-				Host:      cfg.Host,
-				Port:      int32(cfg.Port),
-				Secure:    cfg.Secure,
-				User:      cfg.User,
-				FromEmail: cfg.FromEmail,
-			}
-			if cfg.FromName != "" {
-				smtpConfig.FromName = &cfg.FromName
-			}
-			// Never return password
-			if includeSecrets {
-				smtpConfig.Password = cfg.Password
-			}
-			proto.Config = &managev1.MailAdapter_SmtpConfig{SmtpConfig: smtpConfig}
-		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_smtp_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+		return &cfg, nil
+	case AdapterTypeSMTP:
+		cfg, err := a.SMTPConfig()
+		if err != nil {
+			slog.ErrorContext(ctx, "Stored mail adapter config decode failed; returning adapter without config", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_smtp_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+			return nil, nil
 		}
+		return nil, &cfg
+	default:
+		return nil, nil
 	}
-
-	return proto
 }
 
-// publishAdapterChangedEvent publishes a mail adapter changed event to PGMQ.
-// This notifies other processes (including other backend instances) to invalidate their caches.
-func (s *MailAdapterService) publishAdapterChangedEvent(ctx context.Context, adapterID string, changeType managev1.MailAdapterChangeType) {
-	if s.publisher == nil {
-		return
-	}
-
-	event := &managev1.MailAdapterChangedEvent{
-		AdapterId:   adapterID,
-		ChangeType:  changeType,
-		TimestampMs: time.Now().UnixMilli(),
-	}
-
-	if err := s.publisher.PublishMailAdapterChanged(ctx, event); err != nil {
-		slog.Error("Failed to publish mail adapter changed event",
+// mailAdapterChanged invalidates the local provider cache and publishes the
+// change so other processes (including other backend instances) invalidate
+// theirs. The mutation is committed; a failed publish leaves other caches
+// to expire.
+func (s *Service) mailAdapterChanged(ctx context.Context, adapterID string, changeType MailAdapterChangeType) {
+	s.adapterCache.InvalidateCache()
+	change := MailAdapterChange{AdapterID: adapterID, Type: changeType, At: s.now()}
+	if err := s.adapterChanges.PublishMailAdapterChanged(ctx, change); err != nil {
+		slog.ErrorContext(ctx, "Failed to publish mail adapter changed event",
 			"domain", "mail",
 			"event", "mail.adapter.invalidation_publish_failed",
 			"adapter_id", adapterID,
-			"change_type", changeType.String(),
+			"change_type", string(changeType),
 			"mutation_applied", true,
 			"cache_ttl_seconds", int(email.AdapterCacheTTL.Seconds()),
-			"error", err,
+			failurecause.Attr(err),
 		)
 		return
 	}
@@ -884,6 +760,6 @@ func (s *MailAdapterService) publishAdapterChangedEvent(ctx context.Context, ada
 		"domain", "mail",
 		"event", "mail.adapter.invalidation_published",
 		"adapter_id", adapterID,
-		"change_type", changeType.String(),
+		"change_type", string(changeType),
 	)
 }

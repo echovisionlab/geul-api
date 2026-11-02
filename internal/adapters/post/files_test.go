@@ -5,13 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"github.com/google/uuid"
 )
 
 func TestFilesDelegatesPostOwnedFileOperations(t *testing.T) {
@@ -23,7 +25,7 @@ func TestFilesDelegatesPostOwnedFileOperations(t *testing.T) {
 	require.ErrorIs(t, adapter.DeleteFileByID(t.Context(), "file-1"), wantErr)
 	_, err := adapter.ResolveAuthorizedPostFeaturedImage(t.Context(), "post-1", "file-2")
 	require.ErrorIs(t, err, wantErr)
-	_, err = adapter.ResolvePublicDisplayMedia(t.Context(), []string{"file-2", "file-3"})
+	_, err = adapter.ResolveDisplayMedia(t.Context(), []string{"file-2", "file-3"})
 	require.ErrorIs(t, err, wantErr)
 	require.Equal(t, "file-1", fake.deletedID)
 	require.Equal(t, "post-1", fake.postID)
@@ -44,18 +46,18 @@ func TestPublicFilesLoadsExactAuthorizedReferencesBeforeHydration(t *testing.T) 
 	items, err := NewPublicFiles(db, fake).ResolveAuthorizedContentBlockMedia(t.Context(), documentID)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, blockID.String(), items[0].GetSelector().GetBlockId())
-	require.Equal(t, "primary", items[0].GetSelector().GetReferencePath())
-	require.Equal(t, fileID, items[0].GetAttachment().GetActiveFileId())
+	require.Equal(t, blockID.String(), optional.Value(optional.Value(items[0]).Selector).BlockID)
+	require.Equal(t, "primary", optional.Value(optional.Value(items[0]).Selector).ReferencePath)
+	require.Equal(t, fileID, optional.Value(items[0]).Attachment.ActiveFileID())
 	require.Equal(t, items, fake.hydrated)
 }
 
 func TestPublicFilesDelegatesPublicDisplayMedia(t *testing.T) {
-	want := map[string]*commonv1.MediaDelivery{"file-1": {FileId: "file-1"}}
+	want := map[string]*fileref.Delivery{"file-1": {FileID: "file-1"}}
 	fake := &recordingPublicFiles{deliveries: want}
 
 	got, err := NewPublicFiles(newPostFilesAdapterDB(t), fake).
-		ResolvePublicDisplayMedia(t.Context(), []string{"file-1"})
+		ResolveDisplayMedia(t.Context(), []string{"file-1"})
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 	require.Equal(t, []string{"file-1"}, fake.resolvedIDs)
@@ -77,7 +79,7 @@ func (f *recordingManageFiles) ResolveAuthorizedPostFeaturedImage(
 	_ context.Context,
 	postID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*filemediadomain.Delivery, error) {
 	f.postID = postID
 	f.expectedFileID = expectedFileID
 	return nil, f.err
@@ -88,32 +90,32 @@ type recordingDisplayFiles struct {
 	err         error
 }
 
-func (f *recordingDisplayFiles) ResolvePublicDisplayMedia(
+func (f *recordingDisplayFiles) ResolveDisplayMedia(
 	_ context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	f.resolvedIDs = append([]string(nil), fileIDs...)
 	return nil, f.err
 }
 
 type recordingPublicFiles struct {
 	resolvedIDs []string
-	deliveries  map[string]*commonv1.MediaDelivery
-	hydrated    []*contentv1.ContentBlockMediaItem
+	deliveries  map[string]*fileref.Delivery
+	hydrated    []*fileref.BlockMediaItem
 }
 
-func (f *recordingPublicFiles) ResolvePublicDisplayMedia(
+func (f *recordingPublicFiles) ResolveDisplayMedia(
 	_ context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	f.resolvedIDs = append([]string(nil), fileIDs...)
 	return f.deliveries, nil
 }
 
 func (f *recordingPublicFiles) HydrateAuthorizedContentBlockMedia(
 	_ context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	f.hydrated = items
 	return items, nil
 }

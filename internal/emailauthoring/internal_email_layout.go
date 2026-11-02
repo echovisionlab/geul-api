@@ -2,295 +2,251 @@ package emailauthoring
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// InternalEmailLayoutService provides internal-only access for email layout document operations.
-type InternalEmailLayoutService struct {
-	db            *gorm.DB
-	auditWriter   domainaudit.Appender
-	checkpoints   persistencecheckpoint.ContributorFence
-	references    CampaignDeliveryReferences
-	contentBlocks *contentblock.Store
+// SaveLayoutDocumentCommand saves a collaboration room's Email Layout
+// document: the source HTML of the source locale room, or the unit values of
+// an existing target locale room.
+type SaveLayoutDocumentCommand struct {
+	LayoutID                 string
+	Locale                   string
+	ExpectedDocumentRevision string
+	ExpectedTargetRevision   *string
+	ContentHTML              string
+	ContentText              string
+	// LocaleValues are a target room's unit values; a nil entry is invalid.
+	LocaleValues []*LayoutUnitValue
+	Contributors []string
 }
 
-type InternalEmailLayoutServiceOption func(*InternalEmailLayoutService)
-
-func WithInternalEmailLayoutCampaignDeliveryReferences(references CampaignDeliveryReferences) InternalEmailLayoutServiceOption {
-	return func(service *InternalEmailLayoutService) { service.references = references }
+// LayoutUnitValue is a locale's value of the source unit Handle.
+type LayoutUnitValue struct {
+	Handle string
+	Value  string
 }
 
-func WithInternalEmailLayoutContentBlockStore(store *contentblock.Store) InternalEmailLayoutServiceOption {
-	return func(service *InternalEmailLayoutService) { service.contentBlocks = store }
+// LayoutDocumentSave is the revision state a layout room save left.
+type LayoutDocumentSave struct {
+	Locale           string
+	DocumentRevision string
+	TargetRevision   *string
 }
 
-func WithInternalEmailLayoutCheckpoints(checkpoints persistencecheckpoint.ContributorFence) InternalEmailLayoutServiceOption {
-	return func(service *InternalEmailLayoutService) { service.checkpoints = checkpoints }
+// layoutCollaborationSave is one saved layout room write and the record it
+// names.
+type layoutCollaborationSave struct {
+	LayoutDocumentSave
+	record mutation.Audit
 }
 
-func NewAuditedInternalEmailLayoutService(db *gorm.DB, auditWriter domainaudit.Appender, options ...InternalEmailLayoutServiceOption) *InternalEmailLayoutService {
-	if auditWriter == nil {
-		panic("email layout audit writer is required")
-	}
-	service := &InternalEmailLayoutService{db: db, auditWriter: auditWriter}
-	for _, option := range options {
-		option(service)
-	}
-	dependencycheck.MustNotNil(service.contentBlocks, "email layout Content Document store")
-	return service
+// layoutRoomWrite is a room save against the locked layout authority.
+type layoutRoomWrite struct {
+	command         SaveLayoutDocumentCommand
+	locale          string
+	expected        uuid.UUID
+	authority       LayoutAuthority
+	canonicalSource *emailutil.LayoutTranslationDocument
+	originMemberID  string
+	now             time.Time
 }
 
-// SaveDocument persists the exact source or existing target locale room.
-func (s *InternalEmailLayoutService) SaveDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.SaveEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.SaveEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "SaveDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	r := req.Msg
-	roomLocale, err := canonicalEmailLayoutRoomLocale(r.Locale)
+// SaveLayoutDocument persists the exact source or existing target locale
+// room.
+func (s *InternalService) SaveLayoutDocument(ctx context.Context, command SaveLayoutDocumentCommand) (LayoutDocumentSave, error) {
+	roomLocale, err := canonicalEmailLayoutRoomLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return LayoutDocumentSave{}, err
 	}
-	expectedDocumentRevision, err := parseEmailLayoutDocumentRevision(r.ExpectedDocumentRevision)
+	expected, err := parseEmailLayoutDocumentRevision(command.ExpectedDocumentRevision)
 	if err != nil {
-		return nil, err
+		return LayoutDocumentSave{}, err
 	}
-	now := dbtime.Now()
-	result := emailLayoutCollaborativeSaveResult{locale: roomLocale}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, r.EmailLayoutId, "UPDATE")
-		if err != nil {
-			return err
-		}
-		if authority.DocumentRevision != expectedDocumentRevision {
-			return errs.CollaborationConflict(
-				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"Email Layout Content Document changed; reload before saving", errs.CollaborationState{Document: authority.DocumentRevision.String()},
-			)
-		}
-		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.references, authority.LayoutID); err != nil {
-			return err
-		}
-		canonicalSource, err := emailutil.LoadCanonicalLayoutTranslationDocument(
-			ctx, tx, r.EmailLayoutId, authority.SourceLocale,
-		)
-		if err != nil {
-			return err
-		}
-		if roomLocale != authority.SourceLocale {
-			return s.saveTargetDocument(ctx, tx, r, authority, canonicalSource, now, &result)
-		}
-		if len(r.LocaleValues) != 0 {
-			return errs.InvalidArgument("locale_values", "source locale uses content_html")
-		}
-		if r.ExpectedTargetRevision != nil {
-			return errs.InvalidArgument("expected_target_revision", "source locale has no target revision")
-		}
-		originMemberID, err := requireEmailAuthoringMutationContributor(
-			ctx, tx, r.ContributorMemberIds,
-		)
-		if err != nil {
-			return err
-		}
-		if err := requireEmailLayoutCollaborationContributors(
-			ctx, tx, s.checkpoints, r.EmailLayoutId, r.ContributorMemberIds,
-		); err != nil {
-			return err
-		}
-
-		contentHTMLValue := emailutil.NormalizeTemplatePlaceholders(strings.ReplaceAll(r.ContentHtml, "\x00", ""))
-		canonicalHTMLValue, err := emailutil.CanonicalizeLayoutSourceMarkers(contentHTMLValue)
-		if err != nil {
-			return errs.InvalidArgument("html_content", err.Error())
-		}
-		contentHTMLValue = canonicalHTMLValue
-		if err := emailutil.ValidateLayoutHTMLContentError(contentHTMLValue); err != nil {
-			return errs.InvalidArgument("html_content", err.Error())
-		}
-		contentTextValue := strings.ReplaceAll(r.ContentText, "\x00", "")
-		if strings.TrimSpace(contentTextValue) == "" {
-			contentTextValue = emailutil.StripHTML(contentHTMLValue)
-		}
-		unchanged := derefString(canonicalSource.ContentHTML) == contentHTMLValue &&
-			derefString(canonicalSource.ContentText) == contentTextValue
-		advance, err := s.contentBlocks.AdvanceRevision(
-			ctx,
-			tx,
-			contentblock.AdvanceInput{DocumentID: authority.DocumentID, ExpectedRevision: expectedDocumentRevision},
-			emailLayoutContentFence(s.references, r.EmailLayoutId),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				if unchanged {
-					return contentblock.MetadataEffect{}, nil
-				}
-				if err := emailutil.SaveLayoutSourceLocaleDocument(
-					ctx, tx, r.EmailLayoutId, authority.SourceLocale,
-					emailutil.LayoutTranslationDocument{ContentHTML: &contentHTMLValue, ContentText: &contentTextValue},
-					now,
-				); err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				return contentblock.MetadataEffect{
-					Changed: true, AffectsTranslationSource: true,
-					ChangedLocales: []string{authority.SourceLocale},
-				}, nil
-			},
-		)
-		if err != nil {
-			return err
-		}
-		result.documentRevision = advance.DocumentRevision.String()
-		result.changed = advance.Changed
-		if advance.Changed {
-			return appendEmailLayoutLocaleContentAudit(
-				ctx, tx, s.auditWriter, originMemberID, r.EmailLayoutId, roomLocale,
-				emailAuthoringLocaleContentOperation(true, false, false, true),
-			)
-		}
-		return nil
-	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&intrav1.SaveEmailLayoutDocumentResponse{
-		Success: true, Locale: roomLocale,
-		DocumentRevision: result.documentRevision, TargetRevision: result.targetRevision,
-	}), nil
+	write := layoutRoomWrite{command: command, locale: roomLocale, expected: expected, now: dbtime.Now()}
+	saved, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[layoutCollaborationSave, Store]{
+		Access: emailcontent.CollaborationAccess,
+		Change: func(ctx context.Context, store Store) (layoutCollaborationSave, error) {
+			if err := lockLayoutRoom(ctx, store, &write); err != nil {
+				return layoutCollaborationSave{}, err
+			}
+			if roomLocale != write.authority.SourceLocale {
+				return saveLayoutTarget(ctx, store, write)
+			}
+			return saveLayoutSource(ctx, store, write)
+		},
+		Audit: func(saved layoutCollaborationSave) mutation.Audit { return saved.record },
+	})
+	return saved.LayoutDocumentSave, err
 }
 
-type emailLayoutCollaborativeSaveResult struct {
-	locale           string
-	documentRevision string
-	targetRevision   *string
-	changed          bool
-}
-
-func (s *InternalEmailLayoutService) saveTargetDocument(
-	ctx context.Context,
-	tx *gorm.DB,
-	request *intrav1.SaveEmailLayoutDocumentRequest,
-	authority emailLayoutDocumentAuthority,
-	canonicalSource *emailutil.LayoutTranslationDocument,
-	now time.Time,
-	output *emailLayoutCollaborativeSaveResult,
-) error {
-	contributorMemberID, err := requireEmailAuthoringMutationContributor(
-		ctx, tx, request.ContributorMemberIds,
-	)
+// lockLayoutRoom locks the layout authority of a room save, proves the
+// expected document revision and the delivery lifecycle, and reads the
+// canonical source.
+func lockLayoutRoom(ctx context.Context, store Store, write *layoutRoomWrite) error {
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, store, write.command.LayoutID, emailcontent.UpdateLock)
 	if err != nil {
 		return err
 	}
-	if err := requireEmailLayoutCollaborationContributors(
-		ctx, tx, s.checkpoints, request.EmailLayoutId, request.ContributorMemberIds,
-	); err != nil {
+	if authority.DocumentRevision != write.expected {
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+			"Email Layout Content Document changed; reload before saving",
+			domainerr.CollaborationRevisions{Document: authority.DocumentRevision.String()},
+		)
+	}
+	if err := store.RequireLayoutMutable(ctx, authority.LayoutID); err != nil {
 		return err
 	}
-	entry, err := emailutil.LoadLayoutTranslationEntry(
-		ctx, tx, request.EmailLayoutId, output.locale,
-	)
+	write.authority = authority
+	source, err := store.CanonicalLayoutSource(ctx, write.command.LayoutID, authority.SourceLocale)
+	write.canonicalSource = &source
+	return err
+}
+
+// requireLayoutContributors locks the room's single origin Member and proves
+// the room's contributors current.
+func requireLayoutContributors(ctx context.Context, store Store, write *layoutRoomWrite) error {
+	originMemberID, err := requireOriginMember(ctx, store, write.command.Contributors)
 	if err != nil {
 		return err
+	}
+	write.originMemberID = originMemberID
+	return store.RequireCurrentLayoutContributors(ctx, write.command.LayoutID, write.command.Contributors)
+}
+
+// saveLayoutSource stores the source room's HTML as the next document
+// revision.
+func saveLayoutSource(ctx context.Context, store Store, write layoutRoomWrite) (layoutCollaborationSave, error) {
+	if len(write.command.LocaleValues) != 0 {
+		return layoutCollaborationSave{}, domainerr.InvalidField("locale_values", "source locale uses content_html")
+	}
+	if write.command.ExpectedTargetRevision != nil {
+		return layoutCollaborationSave{}, domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
+	}
+	if err := requireLayoutContributors(ctx, store, &write); err != nil {
+		return layoutCollaborationSave{}, err
+	}
+	contentHTML := emailutil.NormalizeTemplatePlaceholders(strings.ReplaceAll(write.command.ContentHTML, "\x00", ""))
+	contentHTML, err := emailutil.CanonicalizeLayoutSourceMarkers(contentHTML)
+	if err != nil {
+		return layoutCollaborationSave{}, domainerr.InvalidField("html_content", err.Error())
+	}
+	if err := emailutil.ValidateLayoutHTMLContentError(contentHTML); err != nil {
+		return layoutCollaborationSave{}, domainerr.InvalidField("html_content", err.Error())
+	}
+	contentText := strings.ReplaceAll(write.command.ContentText, "\x00", "")
+	if strings.TrimSpace(contentText) == "" {
+		contentText = emailutil.StripHTML(contentHTML)
+	}
+	var document *emailutil.LayoutTranslationDocument
+	if derefString(write.canonicalSource.ContentHTML) != contentHTML || derefString(write.canonicalSource.ContentText) != contentText {
+		document = &emailutil.LayoutTranslationDocument{ContentHTML: &contentHTML, ContentText: &contentText}
+	}
+	advance, err := saveEmailLayoutSource(ctx, store, write.command.LayoutID, write.authority, write.expected, document, write.now)
+	if err != nil {
+		return layoutCollaborationSave{}, err
+	}
+	saved := layoutCollaborationSave{
+		LayoutDocumentSave: LayoutDocumentSave{Locale: write.locale, DocumentRevision: advance.DocumentRevision.String()},
+		record:             mutation.Unchanged(),
+	}
+	if advance.Changed {
+		saved.record = emailLayoutLocaleContentChange(write.originMemberID, write.command.LayoutID, write.locale, emailcontent.LocaleContentOperation(true, false, false, true))
+	}
+	return saved, nil
+}
+
+// saveLayoutTarget stores the target room's unit values over the source.
+func saveLayoutTarget(ctx context.Context, store Store, write layoutRoomWrite) (layoutCollaborationSave, error) {
+	if err := requireLayoutContributors(ctx, store, &write); err != nil {
+		return layoutCollaborationSave{}, err
+	}
+	entry, err := store.LayoutTranslationEntry(ctx, write.command.LayoutID, write.locale)
+	if err != nil {
+		return layoutCollaborationSave{}, err
 	}
 	if entry == nil {
-		return errs.FailedPrecondition("Email Layout target locale document does not exist")
+		return layoutCollaborationSave{}, domainerr.Precondition("Email Layout target locale document does not exist")
 	}
-	currentRevision, err := deriveEmailLayoutTargetRevision(authority.DocumentRevision.String(), entry)
+	documentRevision := write.authority.DocumentRevision.String()
+	currentRevision, err := deriveEmailLayoutTargetRevision(documentRevision, entry)
 	if err != nil {
-		return err
+		return layoutCollaborationSave{}, err
 	}
-	if err := translation.ValidateExpectedTargetRevision(
-		request.ExpectedTargetRevision, derefString(currentRevision), true,
-	); err != nil {
-		return errs.CollaborationConflict(
+	if err := translation.ValidateExpectedTargetRevision(write.command.ExpectedTargetRevision, derefString(currentRevision), true); err != nil {
+		return layoutCollaborationSave{}, domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Email Layout source or exact target changed since it was loaded; reload before saving", translation.WithDocumentRevision(err, authority.DocumentRevision.String()),
+			"Email Layout source or exact target changed since it was loaded; reload before saving",
+			domainerr.CollaborationRevisionsOf(translation.WithDocumentRevision(err, documentRevision)),
 		)
 	}
-	contentHTML, contentText, err := compileEmailLayoutTargetValues(
-		derefString(canonicalSource.ContentHTML), request.LocaleValues,
-	)
+	contentHTML, contentText, err := compileEmailLayoutTargetValues(derefString(write.canonicalSource.ContentHTML), write.command.LocaleValues)
 	if err != nil {
-		return err
+		return layoutCollaborationSave{}, err
 	}
-	changed := derefString(entry.ContentHTML) != derefString(contentHTML) ||
-		derefString(entry.ContentText) != derefString(contentText)
+	saved := layoutCollaborationSave{record: mutation.Unchanged()}
 	updatedAt := entry.UpdatedAt
-	if changed {
-		updatedAt = translation.NextTargetUpdatedAt(now, entry.UpdatedAt)
-		if err := emailutil.UpsertLayoutTranslationEntry(
-			ctx, tx, request.EmailLayoutId, output.locale,
+	if derefString(entry.ContentHTML) != derefString(contentHTML) || derefString(entry.ContentText) != derefString(contentText) {
+		updatedAt = translation.NextTargetUpdatedAt(write.now, entry.UpdatedAt)
+		if err := store.UpsertLayoutTranslation(
+			ctx, write.command.LayoutID, write.locale,
 			translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
 		); err != nil {
-			return err
+			return layoutCollaborationSave{}, err
 		}
-		if err := appendEmailLayoutLocaleContentAudit(
-			ctx, tx, s.auditWriter, contributorMemberID, request.EmailLayoutId, output.locale,
-			emailAuthoringLocaleContentOperation(false, false, false, true),
-		); err != nil {
-			return err
-		}
+		saved.record = emailLayoutLocaleContentChange(write.originMemberID, write.command.LayoutID, write.locale, emailcontent.LocaleContentOperation(false, false, false, true))
 	}
-	nextEntry := &emailutil.LayoutTranslationEntry{
+	nextRevision, err := deriveEmailLayoutTargetRevision(documentRevision, &emailutil.LayoutTranslationEntry{
 		LayoutTranslationDocument: emailutil.LayoutTranslationDocument{ContentHTML: contentHTML, ContentText: contentText, UpdatedAt: updatedAt},
-	}
-	nextRevision, err := deriveEmailLayoutTargetRevision(authority.DocumentRevision.String(), nextEntry)
+	})
 	if err != nil {
-		return err
+		return layoutCollaborationSave{}, err
 	}
-	output.documentRevision = authority.DocumentRevision.String()
-	output.targetRevision = nextRevision
-	output.changed = changed
-	return nil
+	saved.LayoutDocumentSave = LayoutDocumentSave{Locale: write.locale, DocumentRevision: documentRevision, TargetRevision: nextRevision}
+	return saved, nil
+}
+
+// emailLayoutLocaleContentChange is the record of a change to the layout's
+// content in locale, credited to memberID.
+func emailLayoutLocaleContentChange(memberID, layoutID, locale string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+	return mutation.MemberAudit(memberID, sharedtelemetry.AuditEmailLayoutUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewEmailLayoutLocaleContentAuditRecord(metadata, layoutID, locale, operation)
+	})
 }
 
 func canonicalEmailLayoutRoomLocale(value string) (string, error) {
 	locale := strings.TrimSpace(value)
 	if locale == "" {
-		return "", errs.Required("locale")
+		return "", domainerr.Required("locale")
 	}
 	canonical := localization.NormalizeSupportedLocale(locale)
 	if value != locale || canonical == nil || *canonical != locale {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return locale, nil
 }
 
 func compileEmailLayoutTargetValues(
 	canonicalSource string,
-	values []*intrav1.EmailLayoutLocaleValue,
+	values []*LayoutUnitValue,
 ) (*string, *string, error) {
 	units, err := emailutil.ExtractLayoutContentUnits(canonicalSource)
 	if err != nil {
-		slog.Error("Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return nil, nil, errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing")
+		return nil, nil, domainerr.Precondition("Email Layout source unit markers require backfill before collaboration editing").WithCause(failurecause.ServerFault(err))
 	}
 	allowed := make(map[string]struct{}, len(units))
 	for _, unit := range units {
@@ -299,117 +255,113 @@ func compileEmailLayoutTargetValues(
 	requested := make(map[string]string, len(values))
 	for _, value := range values {
 		if value == nil {
-			return nil, nil, errs.InvalidArgument("locale_values", "must not contain null values")
+			return nil, nil, domainerr.InvalidField("locale_values", "must not contain null values")
 		}
 		handle := strings.TrimSpace(value.Handle)
 		if _, ok := allowed[handle]; !ok {
-			return nil, nil, errs.InvalidArgument("locale_values", "contains an unknown Email Layout unit handle")
+			return nil, nil, domainerr.InvalidField("locale_values", "contains an unknown Email Layout unit handle")
 		}
 		if _, duplicate := requested[handle]; duplicate {
-			return nil, nil, errs.InvalidArgument("locale_values", "contains a duplicate Email Layout unit handle")
+			return nil, nil, domainerr.InvalidField("locale_values", "contains a duplicate Email Layout unit handle")
 		}
 		requested[handle] = strings.ReplaceAll(value.Value, "\x00", "")
 	}
 	contentHTML, contentText, err := emailutil.ApplyLayoutLocaleValues(canonicalSource, requested)
 	if err != nil {
-		return nil, nil, errs.InvalidArgument("locale_values", err.Error())
+		return nil, nil, domainerr.InvalidField("locale_values", err.Error())
 	}
 	return contentHTML, contentText, nil
 }
 
-// LoadDocument loads the exact locale room, falling back read-only to
-// the source projection when a requested target row does not exist.
-func (s *InternalEmailLayoutService) LoadDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.LoadEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
+// LoadLayoutDocumentQuery reads an Email Layout room in one locale.
+type LoadLayoutDocumentQuery struct {
+	LayoutID string
+	Locale   string
+}
 
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	roomLocale, err := canonicalEmailLayoutRoomLocale(req.Msg.Locale)
+// LayoutDocument is an Email Layout room: the source HTML for the source
+// locale, or the source units and the target's stored values for a target
+// locale.
+type LayoutDocument struct {
+	ContentHTML      string
+	ContentText      string
+	SourceLocale     string
+	Locale           string
+	DocumentRevision string
+	TargetRevision   *string
+	Units            []LayoutContentUnit
+	LocaleValues     []LayoutUnitValue
+}
+
+// LayoutContentUnit is one translatable unit of the source HTML.
+type LayoutContentUnit struct {
+	Handle      string
+	Kind        string
+	Element     string
+	Attribute   string
+	Order       uint32
+	SourceValue string
+}
+
+// LoadLayoutDocument loads the exact locale room. A target room reads
+// read-only against the source when its locale row does not exist.
+func (s *InternalService) LoadLayoutDocument(ctx context.Context, query LoadLayoutDocumentQuery) (LayoutDocument, error) {
+	roomLocale, err := canonicalEmailLayoutRoomLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return LayoutDocument{}, err
 	}
-	var response *connect.Response[intrav1.LoadEmailLayoutDocumentResponse]
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, req.Msg.EmailLayoutId, "SHARE")
+	var document LayoutDocument
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, store, query.LayoutID, emailcontent.ShareLock)
 		if err != nil {
 			return err
 		}
-		state, err := emailutil.LoadCanonicalLayoutTranslationDocument(
-			ctx, tx, req.Msg.EmailLayoutId, authority.SourceLocale,
-		)
+		source, err := store.CanonicalLayoutSource(ctx, query.LayoutID, authority.SourceLocale)
 		if err != nil {
 			return err
 		}
-		var targetRevision *string
-		var units []*intrav1.EmailLayoutContentUnit
-		var localeValues []*intrav1.EmailLayoutLocaleValue
-		if roomLocale != authority.SourceLocale {
-			entry, loadErr := emailutil.LoadLayoutTranslationEntry(
-				ctx, tx, req.Msg.EmailLayoutId, roomLocale,
-			)
-			if loadErr != nil {
-				return loadErr
-			}
-			sourceUnits, unitErr := emailutil.ExtractLayoutContentUnits(derefString(state.ContentHTML))
-			if unitErr != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(unitErr))
-				return errs.FailedPrecondition(
-					"Email Layout source unit markers require backfill before collaboration editing",
-				)
-			}
-			units = make([]*intrav1.EmailLayoutContentUnit, 0, len(sourceUnits))
-			for _, unit := range sourceUnits {
-				units = append(units, &intrav1.EmailLayoutContentUnit{
-					Handle: unit.Handle, Kind: unit.Kind, Element: unit.Element,
-					Attribute: unit.Attribute, Order: uint32(unit.Order), SourceValue: unit.SourceValue,
-				})
-			}
-			if entry != nil && entry.ContentHTML != nil {
-				storedValues, valueErr := emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
-				if valueErr != nil {
-					slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(valueErr))
-					return errs.FailedPrecondition(
-						"Email Layout target unit markers require backfill before collaboration editing",
-					)
-				}
-				localeValues = make([]*intrav1.EmailLayoutLocaleValue, 0, len(storedValues))
-				for _, unit := range sourceUnits {
-					if value, present := storedValues[unit.Handle]; present {
-						localeValues = append(localeValues, &intrav1.EmailLayoutLocaleValue{Handle: unit.Handle, Value: value})
-					}
-				}
-			}
-			targetRevision, loadErr = deriveEmailLayoutTargetRevision(authority.DocumentRevision.String(), entry)
-			if loadErr != nil {
-				return loadErr
-			}
+		document = LayoutDocument{
+			SourceLocale: authority.SourceLocale, Locale: roomLocale, DocumentRevision: authority.DocumentRevision.String(),
 		}
-		contentHTML, contentText := derefString(state.ContentHTML), derefString(state.ContentText)
-		if roomLocale != authority.SourceLocale {
-			contentHTML, contentText = "", ""
+		if roomLocale == authority.SourceLocale {
+			document.ContentHTML, document.ContentText = derefString(source.ContentHTML), derefString(source.ContentText)
+			return nil
 		}
-		response = connect.NewResponse(&intrav1.LoadEmailLayoutDocumentResponse{
-			ContentHtml: contentHTML, ContentText: contentText,
-			SourceLocale: authority.SourceLocale, Locale: roomLocale,
-			DocumentRevision: authority.DocumentRevision.String(), TargetRevision: targetRevision,
-			Units: units, LocaleValues: localeValues,
+		return loadLayoutTargetRoom(ctx, store, query.LayoutID, derefString(source.ContentHTML), &document)
+	})
+	return document, err
+}
+
+// loadLayoutTargetRoom reads the source units of a target room and the
+// values its locale row stores.
+func loadLayoutTargetRoom(ctx context.Context, store Store, layoutID, sourceHTML string, document *LayoutDocument) error {
+	entry, err := store.LayoutTranslationEntry(ctx, layoutID, document.Locale)
+	if err != nil {
+		return err
+	}
+	sourceUnits, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
+	if err != nil {
+		return domainerr.Precondition("Email Layout source unit markers require backfill before collaboration editing").WithCause(failurecause.ServerFault(err))
+	}
+	document.Units = make([]LayoutContentUnit, 0, len(sourceUnits))
+	for _, unit := range sourceUnits {
+		document.Units = append(document.Units, LayoutContentUnit{
+			Handle: unit.Handle, Kind: unit.Kind, Element: unit.Element,
+			Attribute: unit.Attribute, Order: uint32(unit.Order), SourceValue: unit.SourceValue,
 		})
-		return nil
-	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
-		return nil, errs.Internal(err)
 	}
-	return response, nil
+	if entry != nil && entry.ContentHTML != nil {
+		storedValues, err := emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
+		if err != nil {
+			return domainerr.Precondition("Email Layout target unit markers require backfill before collaboration editing").WithCause(failurecause.ServerFault(err))
+		}
+		document.LocaleValues = make([]LayoutUnitValue, 0, len(storedValues))
+		for _, unit := range sourceUnits {
+			if value, present := storedValues[unit.Handle]; present {
+				document.LocaleValues = append(document.LocaleValues, LayoutUnitValue{Handle: unit.Handle, Value: value})
+			}
+		}
+	}
+	document.TargetRevision, err = deriveEmailLayoutTargetRevision(document.DocumentRevision, entry)
+	return err
 }

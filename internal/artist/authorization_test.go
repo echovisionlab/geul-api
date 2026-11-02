@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -35,7 +35,7 @@ func TestRequireArtistPermissionChecksExactActionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	require.NoError(t, requireArtistPermission(ctx, checker, artistID, policyv1.Artist.Delete))
+	require.NoError(t, artistEntity.RequirePermission(ctx, checker, artistID, policyv1.Artist.Delete))
 	require.Len(t, checker.calls, 1)
 	require.Equal(t, "artist", checker.calls[0].Resource().Type())
 	require.Equal(t, artistID, checker.calls[0].Resource().ID())
@@ -51,10 +51,10 @@ func TestRequireArtistGlobalActionsUseDomainCatalog(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		actionName string
-		require    func(context.Context, artistPermissionChecker) error
+		require    func(context.Context, entityparticipant.PermissionChecker) error
 	}{
-		{name: "create", actionName: "artist.create", require: requireArtistCreate},
-		{name: "list", actionName: "artist.list", require: requireArtistList},
+		{name: "create", actionName: "artist.create", require: artistEntity.RequireCreate},
+		{name: "list", actionName: "artist.list", require: artistEntity.RequireList},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			admin, err := policyv1.Platform.IsAdmin()
@@ -94,15 +94,9 @@ func TestArtistAllowedActionsChecksEachGeneratedPermissionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	actions, err := artistAllowedActions(ctx, checker, artistID, managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String())
+	actions, err := artistAllowedActions(ctx, checker, artistID, StatusDraft)
 	require.NoError(t, err)
-	require.Equal(t, []managev1.ArtistAction{
-		managev1.ArtistAction_ARTIST_ACTION_EDIT,
-		managev1.ArtistAction_ARTIST_ACTION_MANAGE_SHARE_LINKS,
-		managev1.ArtistAction_ARTIST_ACTION_DELETE,
-		managev1.ArtistAction_ARTIST_ACTION_MANAGE_PARTICIPANTS,
-		managev1.ArtistAction_ARTIST_ACTION_PUBLISH,
-	}, actions)
+	require.Equal(t, []Action{ActionEdit, ActionManageShareLinks, ActionDelete, ActionManageParticipants, ActionPublish}, actions)
 	expectedPermissions := make([]string, 0, len(allowedActions)+1)
 	for _, action := range allowedActions {
 		can, err := action(artistID)

@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -20,9 +22,9 @@ import (
 
 func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorityIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 
 	t.Run("stored target drift is rejected before File state", func(t *testing.T) {
 		session := seedFinalizingMultipartAuthoritySession(t, stack.DB)
@@ -32,11 +34,10 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("upload_id = ?", session.UploadID).
 			Update("upload_type", managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()).Error)
 
-		err = (&FileService{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
-			verifiedMultipartAuthorityFile(session.FileID),
-			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+			verifiedMultipartAuthorityFile(session.FileID), UploadEditorImage, EntityUnspecified,
+
 			"",
 			authority,
 		)
@@ -52,11 +53,10 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("id = ?", manager.MemberID).
 			Update("account_identity_id", nil).Error)
 
-		err = (&FileService{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
-			verifiedMultipartAuthorityFile(session.FileID),
-			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+			verifiedMultipartAuthorityFile(session.FileID), UploadEditorImage, EntityUnspecified,
+
 			"",
 			authority,
 		)
@@ -68,11 +68,11 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 func seedFinalizingMultipartAuthoritySession(
 	t *testing.T,
 	db *gorm.DB,
-) model.UploadSession {
+) domain.UploadSession {
 	t.Helper()
 	now := time.Now().UTC()
 	attemptID := uuid.NewString()
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		UploadID:       uuid.NewString(),
 		FileID:         uuid.NewString(),
 		UploadType:     managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
@@ -82,24 +82,25 @@ func seedFinalizingMultipartAuthoritySession(
 		RequestedMime:  "image/jpeg",
 		TotalParts:     1,
 		ChunkSize:      1024,
-		Status:         model.UploadSessionStatusFinalizing,
+		Status:         domain.UploadSessionStatusFinalizing,
 		LastActivityAt: now,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	require.NoError(t, db.Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").Create(&session).Error)
+	row := filemediapostgres.UploadSessionRow(session)
+	require.NoError(t, db.Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").Create(&row).Error)
 	return session
 }
 
-func verifiedMultipartAuthorityFile(fileID string) structured.Fields {
-	return structured.Fields{
-		"id":                fileID,
-		"file_name":         "authority.jpg",
-		"mime_type":         "image/jpeg",
-		"file_size":         int64(1024),
-		"extension":         "jpg",
-		"sha256":            make([]byte, 32),
-		"ingest_attempt_id": uuid.NewString(),
+func verifiedMultipartAuthorityFile(fileID string) fileIngestRecord {
+	return fileIngestRecord{
+		id:              fileID,
+		fileName:        "authority.jpg",
+		mimeType:        "image/jpeg",
+		fileSize:        1024,
+		extension:       "jpg",
+		sha256:          make([]byte, 32),
+		ingestAttemptID: uuid.NewString(),
 	}
 }
 

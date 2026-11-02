@@ -41,105 +41,126 @@ func applyDocumentOperation(document *Document, operation Operation) error {
 		placeBlockAfter(document.Nodes, op.Block, op.Parent, op.After)
 		return nil
 	case OperationDeleteBlock:
-		deleted := map[BlockID]bool{operation.DeleteBlock.Block: true}
-		for changed := true; changed; {
-			changed = false
-			for _, node := range document.Nodes {
-				if deleted[node.Parent] && !deleted[node.ID] {
-					deleted[node.ID] = true
-					changed = true
-				}
-			}
-		}
-		kept := document.Nodes[:0]
-		for _, node := range document.Nodes {
-			if !deleted[node.ID] {
-				kept = append(kept, node)
-			}
-		}
-		document.Nodes = kept
-		renumberBlockOrders(document.Nodes)
+		deleteBlockSubtree(document, operation.DeleteBlock.Block)
 		return nil
 	case OperationMoveBlock:
 		op := operation.MoveBlock
 		placeBlockAfter(document.Nodes, op.Block, op.Parent, op.After)
 		return nil
 	case OperationReplaceBlockKind:
-		node := mutableNode(document, operation.ReplaceBlockKind.Block)
-		if node == nil {
-			return errors.New("block does not exist")
-		}
-		node.Kind = operation.ReplaceBlockKind.Kind
-		node.Shared, node.Localized, node.Files, node.Relations = nil, nil, nil, nil
-		return nil
+		return replaceBlockKind(document, *operation.ReplaceBlockKind)
 	case OperationInsertRelationItem:
-		op := operation.InsertRelationItem
-		relation, err := mutableRelation(document, op.Block, op.Relation, true)
-		if err != nil {
-			return err
-		}
-		relation.Items = append(relation.Items, RelationItem{ID: op.Item, Kind: op.Kind})
-		placeRelationItemAfter(relation, op.Item, op.After)
-		return nil
+		return insertRelationItem(document, *operation.InsertRelationItem)
 	case OperationDeleteRelationItem:
-		op := operation.DeleteRelationItem
-		relation, err := mutableRelation(document, op.Block, op.Relation, false)
-		if err != nil {
-			return err
-		}
-		kept := relation.Items[:0]
-		for _, item := range relation.Items {
-			if item.ID != op.Item {
-				kept = append(kept, item)
-			}
-		}
-		relation.Items = kept
-		renumberRelationOrders(relation)
-		return nil
+		return deleteRelationItem(document, *operation.DeleteRelationItem)
 	case OperationMoveRelationItem:
-		op := operation.MoveRelationItem
-		source, err := mutableRelation(document, op.Block, op.Relation, false)
-		if err != nil {
-			return err
-		}
-		var moved RelationItem
-		found := false
-		kept := source.Items[:0]
-		for _, item := range source.Items {
-			if item.ID == op.Item {
-				moved, found = item, true
-				continue
-			}
-			kept = append(kept, item)
-		}
-		if !found {
-			return errors.New("relation item does not exist")
-		}
-		source.Items = kept
-		renumberRelationOrders(source)
-		target, err := mutableRelation(document, op.TargetBlock, op.Target, true)
-		if err != nil {
-			return err
-		}
-		target.Items = append(target.Items, moved)
-		placeRelationItemAfter(target, moved.ID, op.After)
-		return nil
+		return moveRelationItem(document, *operation.MoveRelationItem)
 	case OperationCreateTranslation:
 		document.LocaleExists = true
 		return nil
 	case OperationDeleteTranslation:
-		document.LocaleExists = false
-		for index := range document.Nodes {
-			document.Nodes[index].Localized = nil
-			for relationIndex := range document.Nodes[index].Relations {
-				for itemIndex := range document.Nodes[index].Relations[relationIndex].Items {
-					document.Nodes[index].Relations[relationIndex].Items[itemIndex].Localized = nil
-				}
-			}
-		}
+		deleteTranslation(document)
 		return nil
 	default:
 		return fmt.Errorf("unsupported operation kind %q", operation.Kind)
+	}
+}
+
+func deleteBlockSubtree(document *Document, block BlockID) {
+	deleted := map[BlockID]bool{block: true}
+	for changed := true; changed; {
+		changed = false
+		for _, node := range document.Nodes {
+			if deleted[node.Parent] && !deleted[node.ID] {
+				deleted[node.ID] = true
+				changed = true
+			}
+		}
+	}
+	kept := document.Nodes[:0]
+	for _, node := range document.Nodes {
+		if !deleted[node.ID] {
+			kept = append(kept, node)
+		}
+	}
+	document.Nodes = kept
+	renumberBlockOrders(document.Nodes)
+}
+
+func replaceBlockKind(document *Document, op ReplaceBlockKind) error {
+	node := mutableNode(document, op.Block)
+	if node == nil {
+		return errors.New("block does not exist")
+	}
+	node.Kind = op.Kind
+	node.Shared, node.Localized, node.Files, node.Relations = nil, nil, nil, nil
+	return nil
+}
+
+func insertRelationItem(document *Document, op InsertRelationItem) error {
+	relation, err := mutableRelation(document, op.Block, op.Relation, true)
+	if err != nil {
+		return err
+	}
+	relation.Items = append(relation.Items, RelationItem{ID: op.Item, Kind: op.Kind})
+	placeRelationItemAfter(relation, op.Item, op.After)
+	return nil
+}
+
+func deleteRelationItem(document *Document, op DeleteRelationItem) error {
+	relation, err := mutableRelation(document, op.Block, op.Relation, false)
+	if err != nil {
+		return err
+	}
+	kept := relation.Items[:0]
+	for _, item := range relation.Items {
+		if item.ID != op.Item {
+			kept = append(kept, item)
+		}
+	}
+	relation.Items = kept
+	renumberRelationOrders(relation)
+	return nil
+}
+
+func moveRelationItem(document *Document, op MoveRelationItem) error {
+	source, err := mutableRelation(document, op.Block, op.Relation, false)
+	if err != nil {
+		return err
+	}
+	var moved RelationItem
+	found := false
+	kept := source.Items[:0]
+	for _, item := range source.Items {
+		if item.ID == op.Item {
+			moved, found = item, true
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if !found {
+		return errors.New("relation item does not exist")
+	}
+	source.Items = kept
+	renumberRelationOrders(source)
+	target, err := mutableRelation(document, op.TargetBlock, op.Target, true)
+	if err != nil {
+		return err
+	}
+	target.Items = append(target.Items, moved)
+	placeRelationItemAfter(target, moved.ID, op.After)
+	return nil
+}
+
+func deleteTranslation(document *Document) {
+	document.LocaleExists = false
+	for index := range document.Nodes {
+		document.Nodes[index].Localized = nil
+		for relationIndex := range document.Nodes[index].Relations {
+			for itemIndex := range document.Nodes[index].Relations[relationIndex].Items {
+				document.Nodes[index].Relations[relationIndex].Items[itemIndex].Localized = nil
+			}
+		}
 	}
 }
 
@@ -150,47 +171,43 @@ func mutateDocumentField(document *Document, target FieldTarget, mutate valueMut
 	if node == nil {
 		return errors.New("block does not exist")
 	}
-	var shared, localized *[]FieldValue
+	shared, localized := &node.Shared, &node.Localized
+	var itemKind RelationItemKind
 	if target.relationItem() {
 		item := mutableRelationItem(node, target.Relation, target.Item)
 		if item == nil {
 			return errors.New("relation item does not exist")
 		}
-		shared, localized = &item.Shared, &item.Localized
-	} else {
-		shared, localized = &node.Shared, &node.Localized
+		shared, localized, itemKind = &item.Shared, &item.Localized, item.Kind
 	}
-	values, err := fieldValueOwner(document.Catalog, node.Kind, target, shared, localized)
-	if err != nil {
-		return err
-	}
-	return mutateFieldValues(values, target.Field, target.Path, mutate, set)
-}
-
-func fieldValueOwner(catalog Catalog, blockKind BlockKind, target FieldTarget, shared, localized *[]FieldValue) (*[]FieldValue, error) {
-	ownership := FieldOwnership("")
-	if target.relationItem() {
-		for _, rule := range catalog.RelationFields {
-			if rule.BlockKind == blockKind && rule.Relation == target.Relation && rule.Field == target.Field {
-				ownership = rule.Ownership
-				break
-			}
-		}
-	} else {
-		for _, rule := range catalog.Fields {
-			if rule.BlockKind == blockKind && rule.Field == target.Field {
-				ownership = rule.Ownership
-				break
-			}
-		}
-	}
-	if ownership == "" {
-		return nil, errors.New("field is not in the catalog")
+	ownership, ok := fieldOwnership(document.Catalog, node.Kind, itemKind, target)
+	if !ok {
+		return errors.New("field is not in the catalog")
 	}
 	if ownership == FieldOwnershipLocale {
-		return localized, nil
+		return mutateFieldValues(localized, target.Field, target.Path, mutate, set)
 	}
-	return shared, nil
+	return mutateFieldValues(shared, target.Field, target.Path, mutate, set)
+}
+
+// fieldOwnership finds the ownership of a block field, or of a relation item
+// field for the item's kind, since item kinds of one relation may declare the
+// same field differently.
+func fieldOwnership(catalog Catalog, blockKind BlockKind, itemKind RelationItemKind, target FieldTarget) (FieldOwnership, bool) {
+	if target.relationItem() {
+		for _, rule := range catalog.RelationFields {
+			if rule.BlockKind == blockKind && rule.Relation == target.Relation && rule.ItemKind == itemKind && rule.Field == target.Field {
+				return rule.Ownership, true
+			}
+		}
+		return "", false
+	}
+	for _, rule := range catalog.Fields {
+		if rule.BlockKind == blockKind && rule.Field == target.Field {
+			return rule.Ownership, true
+		}
+	}
+	return "", false
 }
 
 func mutateFieldValues(values *[]FieldValue, field FieldID, path []FieldPathSegment, mutate valueMutation, set bool) error {
@@ -219,38 +236,14 @@ func mutateFieldValues(values *[]FieldValue, field FieldID, path []FieldPathSegm
 }
 
 func mutateValuePath(value *Value, path []FieldPathSegment, mutate valueMutation, set bool) error {
-	segment := path[0]
-	if segment.Field != "" {
-		if value.Kind != ValueKindObject {
-			return errors.New("field path traverses a non-object value")
-		}
-		for index := range value.Object {
-			if value.Object[index].ID != segment.Field {
-				continue
-			}
-			if len(path) == 1 {
-				if !set {
-					value.Object = append(value.Object[:index], value.Object[index+1:]...)
-					return nil
-				}
-				return mutate(&value.Object[index].Value)
-			}
-			return mutateValuePath(&value.Object[index].Value, path[1:], mutate, set)
-		}
-		if set && len(path) == 1 {
-			created := Value{}
-			if err := mutate(&created); err != nil {
-				return err
-			}
-			value.Object = append(value.Object, ObjectField{ID: segment.Field, Value: created})
-		}
-		return nil
+	if path[0].Field != "" {
+		return mutateObjectPath(value, path, mutate, set)
 	}
 	if value.Kind != ValueKindList {
 		return errors.New("item path traverses a non-list value")
 	}
 	for index := range value.List {
-		if value.List[index].ID != segment.Item {
+		if value.List[index].ID != path[0].Item {
 			continue
 		}
 		if len(path) == 1 {
@@ -261,6 +254,36 @@ func mutateValuePath(value *Value, path []FieldPathSegment, mutate valueMutation
 			return mutate(&value.List[index].Value)
 		}
 		return mutateValuePath(&value.List[index].Value, path[1:], mutate, set)
+	}
+	return nil
+}
+
+// mutateObjectPath applies a path whose first segment names an object field.
+// Unlike list items, a missing last field is created when setting.
+func mutateObjectPath(value *Value, path []FieldPathSegment, mutate valueMutation, set bool) error {
+	field := path[0].Field
+	if value.Kind != ValueKindObject {
+		return errors.New("field path traverses a non-object value")
+	}
+	for index := range value.Object {
+		if value.Object[index].ID != field {
+			continue
+		}
+		if len(path) == 1 {
+			if !set {
+				value.Object = append(value.Object[:index], value.Object[index+1:]...)
+				return nil
+			}
+			return mutate(&value.Object[index].Value)
+		}
+		return mutateValuePath(&value.Object[index].Value, path[1:], mutate, set)
+	}
+	if set && len(path) == 1 {
+		created := Value{}
+		if err := mutate(&created); err != nil {
+			return err
+		}
+		value.Object = append(value.Object, ObjectField{ID: field, Value: created})
 	}
 	return nil
 }

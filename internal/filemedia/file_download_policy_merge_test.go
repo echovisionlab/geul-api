@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
-	_, err := (&FileService{}).UpdateFileDownloadPolicy(context.Background(), connect.NewRequest(
+	_, err := NewConnectHandler((withTestMutations(&Service{}))).UpdateFileDownloadPolicy(context.Background(), connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType:     managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
 			EntityId:       uuid.NewString(),
@@ -20,8 +22,8 @@ func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
 			Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
 		},
 	))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("UpdateFileDownloadPolicy() error code = %v, want InvalidArgument; err = %v", connect.CodeOf(err), err)
+	if errs.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("UpdateFileDownloadPolicy() error code = %v, want InvalidArgument; err = %v", errs.CodeOf(err), err)
 	}
 }
 

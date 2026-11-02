@@ -3,17 +3,23 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
+	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -57,7 +63,7 @@ func (*Requests) Resolve(
 	if current == nil {
 		return nil, errs.NotFound(kind, RouteID(kind))
 	}
-	backgroundFileID, err := BackgroundFileID(ctx, db, kind)
+	backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, db, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +86,7 @@ func (*Requests) Resolve(
 func (*Requests) All(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 	requests := make([]og.Request, 0)
 	for _, kind := range []string{"privacy", "terms"} {
-		backgroundFileID, err := BackgroundFileID(ctx, db, kind)
+		backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, db, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -122,14 +128,14 @@ func CurrentForRoute(ctx context.Context, db *gorm.DB, kind string) (*Current, e
 	if result.Error == nil {
 		return &row, nil
 	}
-	if result.Error != gorm.ErrRecordNotFound {
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, result.Error
 	}
 
 	result = db.WithContext(ctx).Table(table).
 		Select("id, title").Where("status = ?", scheduled).
 		Order("effective_from ASC, version DESC").Take(&row)
-	if result.Error == gorm.ErrRecordNotFound {
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if result.Error != nil {
@@ -152,31 +158,13 @@ func Title(
 		Select("title").
 		Where("entity_id = ? AND locale = ?", documentID, locale).
 		Take(&translated)
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return "", result.Error
 	}
 	if translated.Title != nil {
 		return *translated.Title, nil
 	}
 	return strings.TrimSpace(fallback), nil
-}
-
-// BackgroundFileID reads the Site Settings slot that supplies a legal route's
-// optional source image.
-func BackgroundFileID(ctx context.Context, db *gorm.DB, kind string) (*string, error) {
-	column := backgroundColumn(kind)
-	if column == "" {
-		return nil, fmt.Errorf("unsupported legal OG entity type %q", kind)
-	}
-
-	var result struct {
-		FileID *string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).Table("site_settings").
-		Select(column + " AS file_id").Where("site_settings.id = 1").Scan(&result).Error; err != nil {
-		return nil, err
-	}
-	return optionalString(result.FileID), nil
 }
 
 // LoadRequests builds locale-scoped Open Graph target snapshots from one canonical
@@ -264,7 +252,7 @@ func CurrentRequests(
 func RequestSaved(
 	ctx context.Context,
 	tx *gorm.DB,
-	planner *og.Planner,
+	planner *ogpostgres.Planner,
 	kind string,
 	documentID string,
 	requestedLocale string,
@@ -293,7 +281,7 @@ func RequestSaved(
 	if err != nil || current == nil || current.ID != documentID {
 		return nil, err
 	}
-	backgroundFileID, err := BackgroundFileID(ctx, tx, kind)
+	backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, tx, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +312,7 @@ func RequestSaved(
 			if reloaded == nil || reloaded.ID != documentID {
 				return nil, fmt.Errorf("canonical %s OG content changed while taking its snapshot", kind)
 			}
-			reloadedBackgroundFileID, backgroundErr := BackgroundFileID(reloadCtx, reloadTx, kind)
+			reloadedBackgroundFileID, backgroundErr := sitesettingsadapter.LegalOGBackgroundFileID(reloadCtx, reloadTx, kind)
 			if backgroundErr != nil {
 				return nil, backgroundErr
 			}
@@ -345,7 +333,7 @@ func RequestSaved(
 // ReleaseAssets removes static legal OG bindings after the legal owner has
 // deleted a policy version. The durable OG projection owns pointer clearing.
 func ReleaseAssets(ctx context.Context, db *gorm.DB, cdnDomain, kind, documentID string) error {
-	return mediaasset.NewLifecycle(db, cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).
 		ReleasePublicAssetBindings(ctx, strings.TrimSpace(kind), documentID, "og")
 }
 
@@ -381,7 +369,7 @@ func (p *Projection) ReleasePending(
 	if err := validateTarget(target); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, target.EntityType, target.EntityID, []string{bindingKey(target.Locale)},
 	)
 }
@@ -426,34 +414,20 @@ func (p *Projection) Complete(
 	if matched != 1 {
 		return og.ErrTranslationTargetMissing
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: target.EntityType, OwnerID: target.EntityID,
 		BindingKey: bindingKey(target.Locale),
 	})
 }
 
 func historySpec(kind string) (table, active, scheduled string, err error) {
-	switch strings.TrimSpace(kind) {
-	case "privacy":
-		return "privacy_history", managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(),
-			managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), nil
-	case "terms":
-		return "terms_history", managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(),
-			managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(), nil
-	default:
+	kind = strings.TrimSpace(kind)
+	activeStatus, known := legaldomain.PolicyStatus(legaldomain.PolicyKind(kind), "active")
+	scheduledStatus, _ := legaldomain.PolicyStatus(legaldomain.PolicyKind(kind), "scheduled")
+	if !known {
 		return "", "", "", fmt.Errorf("unsupported legal OG entity type %q", kind)
 	}
-}
-
-func backgroundColumn(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "privacy":
-		return "privacy_og_background_file_id"
-	case "terms":
-		return "terms_og_background_file_id"
-	default:
-		return ""
-	}
+	return kind + "_history", string(activeStatus), string(scheduledStatus), nil
 }
 
 func enabledLocales(ctx context.Context, db *gorm.DB) ([]string, error) {
@@ -509,4 +483,4 @@ func bindingKey(locale *string) string {
 	return "og"
 }
 
-var _ og.Projection = (*Projection)(nil)
+var _ ogpostgres.Projection = (*Projection)(nil)

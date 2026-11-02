@@ -7,47 +7,41 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-// ValidateForEntity verifies a bounded ShareLink and its optional Argon2id
-// password proof. Invalid, expired, deleted, mismatched, and wrong password
-// proofs are intentionally indistinguishable to callers.
-func ValidateForEntity(
-	ctx context.Context,
-	db *gorm.DB,
-	token string,
-	password string,
-	entityType managev1.ShareLinkEntityType,
-	entityID string,
-) (*model.ShareLink, error) {
-	var link model.ShareLink
-	if err := db.WithContext(ctx).
-		Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, entityType.String(), entityID, time.Now()).
-		Take(&link).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "failed to load share link", "domain", "sharelink", "operation", "validate_for_entity", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password))
+// VerifyLink verifies a bounded link and its optional Argon2id password
+// proof for one target. Invalid, expired, deleted, mismatched and wrong
+// password proofs all answer ErrLinkNotFound, so callers cannot tell them
+// apart.
+func VerifyLink(ctx context.Context, links Store, token, password string, entityType EntityType, entityID string) (Link, error) {
+	link, err := links.LiveLink(ctx, token, entityType, entityID, time.Now())
+	if err != nil {
+		if errors.Is(err, ErrLinkNotFound) {
+			return Link{}, err
 		}
-		return nil, err
+		// Some callers answer every failure as not found; the mark keeps a
+		// server fault at Error in the failure record.
+		return Link{}, validationFault(fmt.Errorf("load share link: %w", err), entityType, entityID, token, password)
 	}
 	if link.PasswordHash == nil {
-		return &link, nil
+		return link, nil
 	}
 	if password == "" {
-		return nil, gorm.ErrRecordNotFound
+		return Link{}, ErrLinkNotFound
 	}
 	match, err := crypto.NewPasswordHasher(nil).Verify(password, *link.PasswordHash)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to verify share link password", "domain", "sharelink", "operation", "validate_for_entity", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password, *link.PasswordHash))
-		return nil, fmt.Errorf("verify share link password: %w", err)
+		return Link{}, validationFault(fmt.Errorf("verify share link password: %w", err), entityType, entityID, token, password, *link.PasswordHash)
 	}
 	if !match {
-		return nil, gorm.ErrRecordNotFound
+		return Link{}, ErrLinkNotFound
 	}
-	return &link, nil
+	return link, nil
+}
+
+func validationFault(err error, entityType EntityType, entityID string, private ...string) error {
+	return failurecause.ServerFault(failurecause.WithAttrs(failurecause.WithPrivate(err, private...),
+		slog.String("entity_type", string(entityType)), slog.String("entity_id", entityID)))
 }

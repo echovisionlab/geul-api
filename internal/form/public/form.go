@@ -3,164 +3,156 @@ package public
 
 import (
 	"context"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"log/slog"
+	"errors"
+	"slices"
+	"strings"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-// FormService implements the public FormService
-type FormService struct {
-	openv1connect.UnimplementedFormServiceHandler
-	db          *gorm.DB
-	password    *crypto.PasswordHasher
-	spiceDB     *auth.SpiceDBClient
-	assets      formdomain.PublicAssets
-	auditWriter domainaudit.Appender
+// Deps are the collaborators of the public Form use cases. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	Units    mutation.UnitOfWork[Store] // formpublicpostgres.NewUnits
+	SpiceDB  mutation.Authorizer
+	Fence    identitystate.Fence
+	Audit    domainaudit.Appender
+	Password *crypto.PasswordHasher
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Password": d.Password == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("public form dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the public Form use cases: access checks, password checks,
+// submissions and shared dashboards.
+type Service struct {
+	units     mutation.UnitOfWork[Store]
+	password  *crypto.PasswordHasher
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
+}
+
+// NewService validates deps and returns the public Form use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{units: deps.Units, password: deps.Password, spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
 type formShareTokenState struct {
 	valid bool
 }
 
-// NewFormService creates a new public FormService
-func NewFormService(
-	db *gorm.DB,
-	password *crypto.PasswordHasher,
-	spiceDB *auth.SpiceDBClient,
-	deps formdomain.Dependencies,
-) *FormService {
-	dependencycheck.New("PublicFormService").RequireNotNil(db, "db").RequireNotNil(password, "password").
-		RequireNotNil(spiceDB, "spiceDB").RequireNotNil(deps.PublicAssets, "public assets").
-		Validate()
-	return &FormService{
-		db: db, password: password, spiceDB: spiceDB, assets: deps.PublicAssets,
-	}
+// CheckFormAccessQuery asks whether a visitor may open a Form, or with
+// Dashboard its shared dashboard. Embed is an embedded Form rather than its
+// own URL.
+type CheckFormAccessQuery struct {
+	Slug           string
+	Dashboard      bool
+	Embed          bool
+	ShareToken     *string
+	SharePassword  *string
+	Password       *string
+	AcceptLanguage string
 }
 
-// NewAuditedFormService wires the public submission boundary to the same
-// durable Domain Audit transaction as the submission row.
-func NewAuditedFormService(
-	db *gorm.DB,
-	password *crypto.PasswordHasher,
-	spiceDB *auth.SpiceDBClient,
-	auditWriter domainaudit.Appender,
-	deps formdomain.Dependencies,
-) *FormService {
-	if auditWriter == nil {
-		panic("public form domain audit writer is required")
-	}
-	service := NewFormService(db, password, spiceDB, deps)
-	service.auditWriter = auditWriter
-	return service
+// Access is whether a visitor may open a Form and why. Form is the Form
+// when it is accessible, its metadata when the denial may show it, and nil
+// otherwise.
+type Access struct {
+	Accessible bool
+	Reason     AccessReason
+	Form       *View
 }
 
-// CheckAccess evaluates the unified form access policy and returns structured reasons.
-func (s *FormService) CheckAccess(
-	ctx context.Context,
-	req *connect.Request[openv1.CheckFormAccessRequest],
-) (rpcResponse *connect.Response[openv1.CheckFormAccessResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "CheckAccess", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
-	target := normalizeFormAccessTarget(req.Msg.Target)
-	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
+// CheckFormAccess evaluates the unified form access policy and returns
+// structured reasons.
+func (s *Service) CheckFormAccess(ctx context.Context, query CheckFormAccessQuery) (Access, error) {
+	found, err := s.findFormBySlugOrID(ctx, query.Slug)
 	if err != nil {
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			return connect.NewResponse(&openv1.CheckFormAccessResponse{
-				Accessible: false,
-				Reason:     openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_FOUND,
-			}), nil
+		if mutation.IsNotFound(err) {
+			return Access{Reason: ReasonFormNotFound}, nil
 		}
-		return nil, err
+		return Access{}, err
 	}
 
-	var shareTokenState formShareTokenState
-	switch target {
-	case openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD:
-		shareTokenState = s.validateShareToken(
-			ctx,
-			form,
-			req.Msg.ShareToken,
-			req.Msg.SharePassword,
-			managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
-		)
-		if !shareTokenState.valid {
-			return connect.NewResponse(&openv1.CheckFormAccessResponse{
-				Accessible: false,
-				Reason:     openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_FOUND,
-			}), nil
-		}
-	default:
-		shareTokenState = s.validateShareToken(
-			ctx,
-			form,
-			req.Msg.ShareToken,
-			req.Msg.SharePassword,
-			managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM,
-		)
+	shareType := ShareLinkForm
+	accessContext := ContextURL
+	if query.Dashboard {
+		shareType = ShareLinkFormDashboard
+	} else if query.Embed {
+		accessContext = ContextEmbed
+	}
+	shareTokenState := s.validateShareToken(ctx, &found, query.ShareToken, query.SharePassword, shareType)
+	if query.Dashboard && !shareTokenState.valid {
+		return Access{Reason: ReasonFormNotFound}, nil
 	}
 
-	context := normalizeFormAccessContext(req.Msg.Context)
-	if target == openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD {
-		context = openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL
-	}
-
-	reason, err := s.evaluateFormAccess(ctx, form, formAccessOptions{
-		context:                  context,
+	reason, err := s.evaluateFormAccess(ctx, s.reads(), &found, formAccessOptions{
+		context:                  accessContext,
 		hasValidPreviewToken:     shareTokenState.valid,
 		bypassAuth:               shareTokenState.valid,
 		bypassRoles:              shareTokenState.valid,
 		enforcePassword:          !shareTokenState.valid,
-		password:                 req.Msg.Password,
-		checkSubmissionLimit:     target == openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM,
-		checkDuplicateSubmission: target == openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM,
+		password:                 query.Password,
+		checkSubmissionLimit:     !query.Dashboard,
+		checkDuplicateSubmission: !query.Dashboard,
 	})
 	if err != nil {
-		return nil, err
+		return Access{}, err
 	}
 
-	resp := &openv1.CheckFormAccessResponse{
-		Accessible: reason == openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED,
-		Reason:     reason,
-	}
-	if resp.Accessible {
-		protoForm, err := s.buildProtoForm(ctx, form, req.Header().Get("Accept-Language"))
+	access := Access{Accessible: reason == ReasonAllowed, Reason: reason}
+	if access.Accessible {
+		view, err := s.buildFormView(ctx, &found, query.AcceptLanguage, false)
 		if err != nil {
-			return nil, err
+			return Access{}, err
 		}
-		resp.Form = protoForm
-	} else if target == openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM &&
-		reason != openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_FOUND &&
-		reason != openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED &&
-		reason != openv1.FormAccessReason_FORM_ACCESS_REASON_NOT_PUBLIC {
+		access.Form = &view
+	} else if !query.Dashboard && formAccessDenialShowsMetadata(reason) {
 		// Expose minimal metadata for denied-but-publicly-addressable forms
 		// (e.g. password/auth/role-gated), but hide private/draft existence.
-		metadata, err := s.buildProtoFormMetadata(ctx, form, req.Header().Get("Accept-Language"))
+		view, err := s.buildFormView(ctx, &found, query.AcceptLanguage, true)
 		if err != nil {
-			return nil, err
+			return Access{}, err
 		}
-		resp.Form = metadata
+		access.Form = &view
 	}
-
-	return connect.NewResponse(resp), nil
+	return access, nil
 }
 
-// validateShareToken validates that the share token allows access to the form
-// for one of the given share link entity types.
+func formAccessDenialShowsMetadata(reason AccessReason) bool {
+	switch reason {
+	case ReasonFormNotFound, ReasonFormNotPublished, ReasonNotPublic:
+		return false
+	default:
+		return true
+	}
+}
+
+// read runs read in one read snapshot of the public Store.
+func (s *Service) read(ctx context.Context, read func(Store) error) error {
+	return s.units.Read(ctx, read)
+}

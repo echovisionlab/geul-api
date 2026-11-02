@@ -3,6 +3,10 @@ package translationadapter
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"gorm.io/gorm"
 
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
@@ -10,24 +14,25 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // CampaignInterchange adapts the shared Rich Text XLIFF codec to Campaign's
 // draft lifecycle, Content Document CAS, projection and Audit seams.
 type CampaignInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewCampaignInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *CampaignInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Campaign translation interchange Audit dependencies are required")
 	}
-	return &CampaignInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &CampaignInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*CampaignInterchange) LoadTranslationInterchangeTarget(
@@ -73,11 +78,10 @@ func (a *CampaignInterchange) ApplyTranslationInterchange(
 	}
 	result, err := campaigndomain.ApplyTranslationInterchange(
 		ctx,
-		db,
-		store,
+		campaignpostgres.Bind(db, campaignpostgres.Ports{ContentBlocks: store}, a.audit),
 		command.EntityID,
 		command.SourceLocale,
-		campaigndomain.TranslationInterchangeMutation{
+		emailcontent.InterchangeMutation{
 			TargetLocale: command.TargetLocale, ExpectedDocumentRevision: command.Source.ContentDocumentRevision,
 			ExpectedTargetRevision: command.ExpectedRevision,
 			ExpectedPresence:       current.state.Exists, Subject: candidate.Title,
@@ -90,7 +94,7 @@ func (a *CampaignInterchange) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditCampaignUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditCampaignUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err
@@ -117,7 +121,7 @@ func loadCampaignInterchangeTarget(
 		return emailRichTextInterchangeTarget{}, err
 	}
 	target, err := campaigndomain.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale,
+		ctx, campaignpostgres.Bind(db, campaignpostgres.Ports{ContentBlocks: store}, nil), entityID, locale,
 	)
 	if err != nil {
 		return emailRichTextInterchangeTarget{}, err
@@ -127,4 +131,4 @@ func loadCampaignInterchangeTarget(
 	)
 }
 
-var _ application.TranslationInterchangeDomains = (*CampaignInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*CampaignInterchange)(nil)

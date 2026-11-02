@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
@@ -14,12 +14,12 @@ import (
 
 func TestApplyTemplateTranslationCandidateRejectsAnotherDomain(t *testing.T) {
 	err := ApplyTemplateTranslationCandidate(
-		context.Background(), nil, &contentblock.Store{}, nil,
-		&model.TranslationJob{EntityType: "campaign"},
+		context.Background(), Joined{},
+		emailcontent.TranslationJob{EntityType: "campaign"},
 		&translation.Candidate{ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{}},
-		translation.EntryWrite{}, nil,
+		translation.EntryWrite{},
 	)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestEmailTemplateTranslationPlanAndCandidateOwnSubjectAndBlockValues(t *testing.T) {
@@ -41,7 +41,7 @@ func TestEmailTemplateTranslationPlanAndCandidateOwnSubjectAndBlockValues(t *tes
 			},
 		},
 	}
-	plan, err := translation.BuildRichTextExtractionPlan(&model.TranslationJob{
+	plan, err := translation.BuildRichTextExtractionPlan(&translation.JobIdentity{
 		EntityType: emailTemplateContentEntity, EntityID: "template-a",
 		SourceLocale: "en", TargetLocale: "ko",
 	}, source, translation.RichTextDocumentFields{Title: true})

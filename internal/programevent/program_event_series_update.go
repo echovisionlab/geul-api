@@ -2,246 +2,267 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// programEventSeriesUpdate is a validated series update and the slug as
+// requested, which a duplicate names.
 type programEventSeriesUpdate struct {
-	fields        structured.Fields
-	slug          *string
-	posterFileID  *string
-	posterChanged bool
+	SeriesChange
+	requestedSlug string
 }
 
-func programEventSeriesUpdateCan(request *managev1.UpdateProgramEventSeriesRequest) (policyv1.Can, error) {
-	if request == nil {
-		return policyv1.Can{}, errs.InvalidArgument("request", "must be provided")
+// UpdateProgramEventSeriesCommand changes a series; nil fields are left
+// alone and an empty PosterFileID removes the poster. Status changes the
+// lifecycle and requires Publish; an empty Status is rejected.
+type UpdateProgramEventSeriesCommand struct {
+	ID           string
+	Title        *string
+	Slug         *string
+	Summary      *string
+	Description  *string
+	PosterFileID *string
+	Status       *Status
+}
+
+// UpdateProgramEventSeries changes the locked series and returns it.
+func (s *Service) UpdateProgramEventSeries(ctx context.Context, command UpdateProgramEventSeriesCommand) (Series, error) {
+	can, err := programEventSeriesUpdateCan(command)
+	if err != nil {
+		return Series{}, err
 	}
-	if request.Status != nil && request.GetStatus() != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
-		can, err := policyv1.ProgramEventSeries.Publish(request.Id)
+	series, err := s.loadProgramEventSeriesForUpdate(ctx, command.ID)
+	if err != nil {
+		return Series{}, err
+	}
+	update, err := s.prepareProgramEventSeriesUpdate(ctx, command)
+	if err != nil {
+		return Series{}, err
+	}
+	var current Series
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[[]mutation.Audit, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			current, err = lockProgramEventSeriesForUpdate(ctx, store, series.ID)
+			return err
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, store Store) ([]mutation.Audit, error) {
+			return applyProgramEventSeriesUpdate(ctx, store, current, update)
+		},
+		Audit: func(records []mutation.Audit) mutation.Audit {
+			return mutation.Audits(records...)
+		},
+	}); err != nil {
+		return Series{}, err
+	}
+	return s.loadProgramEventSeries(ctx, series.ID)
+}
+
+func programEventSeriesUpdateCan(command UpdateProgramEventSeriesCommand) (policyv1.Can, error) {
+	if command.Status != nil {
+		can, err := policyv1.ProgramEventSeries.Publish(command.ID)
 		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "programevent", "operation", "programEventSeriesUpdateCan", failurecause.Attr(err))
-			return policyv1.Can{}, errs.InvalidArgument("id", "must be a canonical resource UUID")
+			return policyv1.Can{}, domainerr.InvalidField("id", "must be a canonical resource UUID")
 		}
 		return can, nil
 	}
-	can, err := policyv1.ProgramEventSeries.Edit(request.Id)
+	can, err := policyv1.ProgramEventSeries.Edit(command.ID)
 	if err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "programevent", "operation", "programEventSeriesUpdateCan", failurecause.Attr(err))
-		return policyv1.Can{}, errs.InvalidArgument("id", "must be a canonical resource UUID")
+		return policyv1.Can{}, domainerr.InvalidField("id", "must be a canonical resource UUID")
 	}
 	return can, nil
 }
 
-func (s *ProgramEventSeriesService) loadProgramEventSeriesForUpdate(
-	ctx context.Context,
-	seriesID string,
-) (model.ProgramEventSeries, error) {
-	var series model.ProgramEventSeries
-	if err := s.db.WithContext(ctx).First(&series, "id = ?", seriesID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return series, errs.NotFound("program event series", seriesID)
-		}
-		return series, errs.Internal(err)
+func (s *Service) loadProgramEventSeriesForUpdate(ctx context.Context, seriesID string) (Series, error) {
+	var series Series
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		series, err = store.Series(ctx, seriesID, NoLock)
+		return err
+	})
+	if errors.Is(err, ErrSeriesNotFound) {
+		return series, domainerr.ResourceNotFound("program event series", seriesID)
 	}
-	return series, nil
+	return series, err
 }
 
-func (s *ProgramEventSeriesService) prepareProgramEventSeriesUpdate(
+func (s *Service) prepareProgramEventSeriesUpdate(
 	ctx context.Context,
-	request *managev1.UpdateProgramEventSeriesRequest,
-	now time.Time,
+	command UpdateProgramEventSeriesCommand,
 ) (programEventSeriesUpdate, error) {
-	update := programEventSeriesUpdate{fields: structured.Fields{}}
-	if request.Title != nil {
-		title := strings.TrimSpace(request.GetTitle())
+	update := programEventSeriesUpdate{SeriesChange: SeriesChange{Summary: command.Summary, Description: command.Description}}
+	if command.Title != nil {
+		title := strings.TrimSpace(*command.Title)
 		if title == "" {
-			return update, errs.Required("title")
+			return update, domainerr.Required("title")
 		}
-		update.fields["title"] = title
+		update.Title = &title
 	}
-	if request.Summary != nil {
-		update.fields["summary"] = request.Summary
+	if command.PosterFileID != nil {
+		update.PosterChanged = true
+		update.PosterFileID = nullableString(command.PosterFileID)
 	}
-	if request.Description != nil {
-		update.fields["description"] = request.Description
+	if command.Status != nil {
+		if *command.Status != StatusDraft && *command.Status != StatusPublished {
+			return update, domainerr.InvalidField("status", "must be draft or published")
+		}
+		update.Status = command.Status
 	}
-	if request.PosterFileId != nil {
-		update.posterChanged = true
-		update.posterFileID = nullableString(request.PosterFileId)
-		update.fields["poster_file_id"] = update.posterFileID
-	}
-	if request.Status != nil && request.GetStatus() != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
-		status, err := programEventSeriesStatusStorageValue(request.GetStatus())
+	if command.Slug != nil {
+		slug, err := validateProgramEventSlug(*command.Slug)
 		if err != nil {
 			return update, err
 		}
-		update.fields["status"] = status
-	}
-	if request.Slug != nil {
-		slug, err := validateProgramEventSlug(request.GetSlug())
-		if err != nil {
+		if err := s.checkRoute(ctx, SeriesRoute, slug); err != nil {
 			return update, err
 		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event series", "event-series", slug); err != nil {
-			return update, err
-		}
-		update.slug = &slug
-		update.fields["slug"] = slug
+		update.Slug, update.requestedSlug = &slug, *command.Slug
 	}
 	return update, nil
 }
 
-func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
+// applyProgramEventSeriesUpdate writes update to the locked series and
+// returns the records of what changed: the poster, then the metadata
+// fields, then the lifecycle.
+func applyProgramEventSeriesUpdate(
 	ctx context.Context,
-	series *model.ProgramEventSeries,
-	request *managev1.UpdateProgramEventSeriesRequest,
+	store Store,
+	current Series,
 	update programEventSeriesUpdate,
-	can policyv1.Can,
-) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if update.slug != nil {
-			if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event series", "event-series", *update.slug); err != nil {
-				return err
-			}
+) ([]mutation.Audit, error) {
+	if update.Slug != nil {
+		if err := store.LockRoute(ctx, SeriesRoute, *update.Slug); err != nil {
+			return nil, err
 		}
-		current, err := lockProgramEventSeriesForUpdate(tx, series.ID)
-		if err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		changedFields := programEventSeriesMetadataChangedFields(current, update.fields)
-		statusChanged := programEventSeriesStatusChanged(current, update.fields)
-		posterChanged := update.posterChanged && !sameNullableString(current.PosterFileID, update.posterFileID)
-		if posterChanged && update.posterFileID != nil {
-			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*update.posterFileID}); err != nil {
-				return err
-			}
-		}
-		if len(changedFields) == 0 && !statusChanged && !posterChanged {
-			return nil
-		}
-		previousStatus := current.Status
-		previousPosterFileID := current.PosterFileID
-		update.fields["updated_at"] = time.Now().UTC()
-		if err := tx.Model(&current).Updates(update.fields).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) && update.slug != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "applyProgramEventSeriesUpdate", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event series", request.GetSlug())
-			}
-			return errs.Internal(err)
-		}
-		if posterChanged {
-			if err := s.syncProgramEventSeriesPoster(ctx, tx, series.ID, update); err != nil {
-				return err
-			}
-			if update.posterFileID != nil {
-				if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, current.ID, *update.posterFileID, sharedtelemetry.AuditCollectionOperationAdded)
-				}); err != nil {
-					return err
-				}
-			} else if previousPosterFileID != nil {
-				if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, current.ID, *previousPosterFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-				}); err != nil {
-					return err
-				}
-			}
-		}
-		if len(changedFields) > 0 {
-			if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventSeriesMetadataAuditRecord(metadata, current.ID, changedFields)
-			}); err != nil {
-				return err
-			}
-		}
-		if statusChanged {
-			return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, current.ID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(update.fields["status"].(string)))
-			})
-		}
-		return nil
-	})
-}
-
-func lockProgramEventSeriesForUpdate(tx *gorm.DB, seriesID string) (model.ProgramEventSeries, error) {
-	var series model.ProgramEventSeries
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&series, "id = ?", seriesID).Error
-	if err == gorm.ErrRecordNotFound {
-		return series, errs.NotFound("program event series", seriesID)
 	}
+	changedFields := programEventSeriesMetadataChangedFields(current, update)
+	statusChanged := update.Status != nil && *update.Status != current.Status
+	posterChanged, err := lockChangedProgramEventSeriesPoster(ctx, store, current, update)
 	if err != nil {
-		return series, errs.Internal(err)
+		return nil, err
 	}
-	return series, nil
+	if len(changedFields) == 0 && !statusChanged && !posterChanged {
+		return nil, nil
+	}
+	previousStatus, previousPosterFileID := current.Status, current.PosterFileID
+	if err := store.UpdateSeries(ctx, current.ID, update.SeriesChange, time.Now().UTC()); err != nil {
+		if errors.Is(err, ErrSlugTaken) && update.Slug != nil {
+			return nil, domainerr.Duplicate("program event series", "slug", update.requestedSlug).WithCause(err)
+		}
+		return nil, err
+	}
+	var records []mutation.Audit
+	if posterChanged {
+		record, err := applyProgramEventSeriesPosterChange(ctx, store, current.ID, previousPosterFileID, update)
+		if err != nil {
+			return nil, err
+		}
+		if record != nil {
+			records = append(records, *record)
+		}
+	}
+	if len(changedFields) > 0 {
+		records = append(records, seriesAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewProgramEventSeriesMetadataAuditRecord(metadata, current.ID, changedFields)
+		}))
+	}
+	if statusChanged {
+		records = append(records, seriesAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, current.ID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(*update.Status))
+		}))
+	}
+	return records, nil
 }
 
-func programEventSeriesMetadataChangedFields(series model.ProgramEventSeries, fields structured.Fields) []string {
+func seriesAudit(build func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error)) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesUpdated, build)
+}
+
+// lockChangedProgramEventSeriesPoster reports whether update changes the
+// series poster and locks a new poster file for attachment.
+func lockChangedProgramEventSeriesPoster(
+	ctx context.Context,
+	store Store,
+	current Series,
+	update programEventSeriesUpdate,
+) (bool, error) {
+	if !update.PosterChanged || sameNullableString(current.PosterFileID, update.PosterFileID) {
+		return false, nil
+	}
+	if update.PosterFileID == nil {
+		return true, nil
+	}
+	return true, store.LockAttachableFiles(ctx, []string{*update.PosterFileID})
+}
+
+// applyProgramEventSeriesPosterChange binds the poster a series update set,
+// or releases the removed one, and returns the record of the change.
+func applyProgramEventSeriesPosterChange(
+	ctx context.Context,
+	store Store,
+	seriesID string,
+	previousPosterFileID *string,
+	update programEventSeriesUpdate,
+) (*mutation.Audit, error) {
+	if err := syncProgramEventSeriesPoster(ctx, store, seriesID, update); err != nil {
+		return nil, err
+	}
+	fileID, operation := update.PosterFileID, sharedtelemetry.AuditCollectionOperationAdded
+	if update.PosterFileID == nil {
+		fileID, operation = previousPosterFileID, sharedtelemetry.AuditCollectionOperationRemoved
+	}
+	if fileID == nil {
+		return nil, nil
+	}
+	record := seriesAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, seriesID, *fileID, operation)
+	})
+	return &record, nil
+}
+
+func lockProgramEventSeriesForUpdate(ctx context.Context, store Store, seriesID string) (Series, error) {
+	series, err := store.Series(ctx, seriesID, UpdateLock)
+	if errors.Is(err, ErrSeriesNotFound) {
+		return series, domainerr.ResourceNotFound("program event series", seriesID)
+	}
+	return series, err
+}
+
+func programEventSeriesMetadataChangedFields(series Series, update programEventSeriesUpdate) []string {
 	changed := make([]string, 0, 4)
-	if value, ok := fields["slug"].(string); ok && value != series.Slug {
+	if update.Slug != nil && *update.Slug != series.Slug {
 		changed = append(changed, "slug")
 	}
-	if value, ok := fields["title"].(string); ok && value != series.Title {
+	if update.Title != nil && *update.Title != series.Title {
 		changed = append(changed, "title")
 	}
-	if value, ok := fields["summary"].(*string); ok && !sameNullableString(series.Summary, value) {
+	if update.Summary != nil && !sameNullableString(series.Summary, update.Summary) {
 		changed = append(changed, "summary")
 	}
-	if value, ok := fields["description"].(*string); ok && !sameNullableString(series.Description, value) {
+	if update.Description != nil && !sameNullableString(series.Description, update.Description) {
 		changed = append(changed, "description")
 	}
 	return changed
 }
 
-func programEventSeriesStatusChanged(series model.ProgramEventSeries, fields structured.Fields) bool {
-	value, ok := fields["status"].(string)
-	return ok && value != series.Status
-}
-
-func sameNullableString(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func programEventSeriesAuditState(status string) sharedtelemetry.AuditState {
-	if status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() {
-		return sharedtelemetry.AuditStatePublished
-	}
-	return sharedtelemetry.AuditStateDraft
-}
-
-func (s *ProgramEventSeriesService) syncProgramEventSeriesPoster(
+func syncProgramEventSeriesPoster(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	seriesID string,
 	update programEventSeriesUpdate,
 ) error {
-	if !update.posterChanged {
+	if !update.PosterChanged {
 		return nil
 	}
-	if update.posterFileID == nil {
-		return s.runtime.ReleasePublicAssetBindings(ctx, tx, "program_event_series", seriesID, "poster")
+	if update.PosterFileID == nil {
+		return store.ReleaseSeriesPoster(ctx, seriesID)
 	}
-	_, err := s.runtime.BindReadyAssetForSourceFile(ctx, tx, *update.posterFileID, "program_event_series", seriesID, "poster", "poster")
-	return err
+	return store.BindSeriesPoster(ctx, seriesID, *update.PosterFileID)
 }

@@ -10,11 +10,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"gorm.io/gorm"
 
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
@@ -22,24 +31,28 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	"github.com/echovisionlab/geul-api/internal/ai"
+	aipostgres "github.com/echovisionlab/geul-api/internal/ai/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/favicon"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/transcode"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/worker"
+	workerpostgres "github.com/echovisionlab/geul-api/internal/worker/postgres"
 )
 
 type applicationDependencies struct {
@@ -56,7 +69,7 @@ type applicationDependencies struct {
 	s3Client                *s3.Client
 	s3PresignClient         *s3.PresignClient
 	workerPublisher         *mq.Publisher
-	transcodeTracker        *transcode.Tracker
+	transcodeTracker        *transcodepostgres.Tracker
 	adapterLoader           *email.AdapterLoader
 	metadataAIJobs          *ai.MetadataJobManager
 	contentBlockStore       *contentblock.Store
@@ -126,33 +139,54 @@ func initializeApplicationDependencies(
 	}
 	deps.s3PresignClient = s3.NewPresignClient(publicS3Client)
 	deps.workerPublisher = deps.hooksPublisher
-	deps.transcodeTracker = transcode.NewTracker(deps.db, deps.workerPublisher)
-	deps.adapterLoader = email.NewAdapterLoader(deps.db, nil)
-	deps.metadataAIJobs, err = ai.NewMetadataJobManager(
-		deps.db, deps.spicedbClient, cfg.GoogleAIAPIKey, deps.servicePublisher,
-	)
+	deps.transcodeTracker = transcodepostgres.NewTracker(deps.db, deps.workerPublisher)
+	deps.adapterLoader = email.NewAdapterLoader(emaildeliverypostgres.NewDeliveryReadStore(deps.db), nil)
+	metadataAIUnits, err := aipostgres.NewUnits(deps.db, deps.servicePublisher)
+	if err != nil {
+		return nil, fmt.Errorf("initialize metadata AI store: %w", err)
+	}
+	metadataAIProvider, err := ai.NewGeminiProvider(cfg.GoogleAIAPIKey)
+	if err != nil {
+		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
+	}
+	deps.metadataAIJobs, err = ai.NewMetadataJobManager(ai.JobManagerDeps{
+		Units: metadataAIUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: deps.telemetryWriter, Provider: metadataAIProvider,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
 	}
 	deps.contentBlockStore, err = contentblock.NewGeneratedStore(
-		filemedia.NewContentBlockFileReuseAuthorizer(deps.spicedbClient),
+		filemediareuse.New(deps.spicedbClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Content Block store: %w", err)
 	}
-	deps.og = newOGDependencies(deps.db, cfg.CDNURL)
-	translationRegistry := translationadapter.NewDomainRegistry(
+	deps.og, err = newOGDependencies(deps.db, cfg.CDNURL)
+	if err != nil {
+		return nil, fmt.Errorf("initialize OG dependencies: %w", err)
+	}
+	translationRegistry, err := translationadapter.NewDomainRegistry(
 		emailauthoringadapter.NewCampaignDeliveryReferences(),
 		deps.telemetryWriter,
 	)
-	deps.translationJobs, err = translationapplication.NewTranslationJobManager(
-		deps.db,
-		deps.workerPublisher,
-		deps.og.planner,
-		deps.og.refresher,
-		translationapplication.WithTranslationJobContentBlockStore(deps.contentBlockStore),
-		translationapplication.WithTranslationJobDomainRegistry(translationRegistry),
-	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation domain registry: %w", err)
+	}
+	translationJobUnits, err := translationpostgres.NewJobUnits(deps.db, translationStorePorts(
+		translationRegistry, deps.contentBlockStore, deps.og, deps.spicedbClient, deps.workerPublisher, cfg.CDNURL,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation job store: %w", err)
+	}
+	translationLifecycle, err := translationadapter.NewLifecyclePublisher(deps.workerPublisher)
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation lifecycle publisher: %w", err)
+	}
+	deps.translationJobs, err = translationapplication.NewTranslationJobManager(translationapplication.JobManagerDeps{
+		Units: translationJobUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: deps.telemetryWriter, Plans: translationRegistry, Lifecycle: translationLifecycle,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize translation job manager: %w", err)
 	}
@@ -166,8 +200,8 @@ func initializeApplicationDependencies(
 		filemediaruntime.NewAuthorizationDeletion(deps.spicedbClient, nil),
 	)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(deps.s3Client, cfg.S3Bucket)
-	ogCleanup := og.NewCleanup(deps.db)
-	mediaCleanup := mediaasset.NewCleanup(deps.db, cleanupStorage)
+	ogCleanup := og.NewCleanup(deps.og.units)
+	mediaCleanup := mediaasset.NewCleanup(mediaassetpostgres.NewCleanupUnits(deps.db), cleanupStorage, mediaassetadapter.NewActiveTranscodes(deps.db))
 	publicAssetCache := mediaassetadapter.NewPublicAssetCache(
 		cfg.CDNURL,
 		cfg.CloudflareAPIURL,
@@ -177,32 +211,39 @@ func initializeApplicationDependencies(
 		http.DefaultClient,
 	)
 	publicAssetCleanup := mediaasset.NewPublicAssetCleanup(
-		deps.db,
+		mediaassetpostgres.NewCleanupUnits(deps.db),
 		cleanupStorage,
 		publicAssetCache,
-		ogCleanup,
+		ogpostgres.NewAssetProtector(deps.db, ogprojection.AssetReferences()...),
 	)
-	faviconCleanup := favicon.NewCleanup(deps.db)
-	deps.workerHandlers = worker.NewHandlers(
-		deps.db,
-		cfg,
-		deps.workerPublisher,
-		deps.adapterLoader,
-		deps.s3Client,
-		deps.kratosClient,
-		fileMediaRuntime,
-		mediaCleanup,
-		publicAssetCleanup,
-		ogCleanup,
-		faviconCleanup,
-		deps.metadataAIJobs,
-		deps.translationJobs,
-		deps.telemetryWriter,
-		deps.spicedbClient,
-		deps.og.planner,
-		accountadapter.MemberDeletion{},
-		worker.WithCampaignEmailRenderer(campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore)),
-	)
+	faviconCleanup := favicon.NewCleanup(faviconpostgres.NewUnits(deps.db, ""))
+	workerDeps, err := workerpostgres.New(workerpostgres.Config{
+		DB:              deps.db,
+		Config:          cfg,
+		Publisher:       deps.workerPublisher,
+		AdapterLoader:   deps.adapterLoader,
+		S3Client:        deps.s3Client,
+		KratosClient:    deps.kratosClient,
+		SpiceDB:         deps.spicedbClient,
+		Audit:           deps.telemetryWriter,
+		OGPlanner:       deps.og.planner,
+		MemberDeletion:  accountadapter.MemberDeletion{},
+		FileMedia:       fileMediaRuntime,
+		MediaCleanup:    mediaCleanup,
+		PublicAssets:    publicAssetCleanup,
+		OGCleanup:       ogCleanup,
+		FaviconCleanup:  faviconCleanup,
+		MetadataAI:      deps.metadataAIJobs,
+		TranslationJobs: deps.translationJobs,
+		CampaignEmail:   campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize worker: %w", err)
+	}
+	deps.workerHandlers, err = worker.NewHandlers(workerDeps)
+	if err != nil {
+		return nil, fmt.Errorf("initialize worker: %w", err)
+	}
 	logApplicationDependenciesReady(cfg)
 	return deps, nil
 }
@@ -222,7 +263,7 @@ func newAuthCodeIssuanceLimiter(
 	db *gorm.DB,
 ) *authentication.AuthCodeIssuanceLimiter {
 	return authentication.NewAuthCodeIssuanceLimiter(
-		db,
+		authenticationpostgres.NewUnits(db),
 		[]byte(cfg.TokenSigningSecret),
 		authentication.AuthCodeIssuanceLimits{
 			Cooldown:        time.Duration(cfg.AuthCodeResendCooldownSeconds) * time.Second,
@@ -274,7 +315,7 @@ func registerAuthenticationRoutes(
 	}
 	authenticationAccess, err := authentication.NewAuthenticationAccessRecorder(
 		cfg.KratosPublicURL,
-		deps.db,
+		authenticationpostgres.NewSessions(deps.db),
 		deps.telemetryWriter,
 	)
 	if err != nil {
@@ -288,7 +329,7 @@ func registerAuthenticationRoutes(
 		proxy,
 		deps.kratosClient,
 		authentication.RegistrationReuseCheckerFunc(func(ctx context.Context, email string) (bool, error) {
-			return member.PublicEmailCodeRegistrationBlocked(ctx, deps.db, email)
+			return memberpostgres.PublicEmailCodeRegistrationBlocked(ctx, deps.db, email)
 		}),
 	)
 	if err != nil {

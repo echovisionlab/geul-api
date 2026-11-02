@@ -1,4 +1,4 @@
-package mediaasset
+package mediaasset_test
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaasset/mediaassettest"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type cleanupObjectStoreStub struct {
@@ -20,8 +20,10 @@ type cleanupObjectStoreStub struct {
 	attempts  atomic.Int32
 }
 
-func (*cleanupObjectStoreStub) ListObjects(context.Context) ([]StoredObject, error) { return nil, nil }
-func (*cleanupObjectStoreStub) DeletePrefix(context.Context, string) error          { return nil }
+func (*cleanupObjectStoreStub) ListObjects(context.Context) ([]mediaasset.StoredObject, error) {
+	return nil, nil
+}
+func (*cleanupObjectStoreStub) DeletePrefix(context.Context, string) error { return nil }
 func (s *cleanupObjectStoreStub) DeleteObject(context.Context, string) error {
 	s.attempts.Add(1)
 	return s.deleteErr
@@ -29,45 +31,35 @@ func (s *cleanupObjectStoreStub) DeleteObject(context.Context, string) error {
 
 type publicAssetCacheStub struct{}
 
-func (publicAssetCacheStub) Prefix(model.PublicAsset) (string, error) {
+func (publicAssetCacheStub) Prefix(mediaasset.Asset) (string, error) {
 	return "cdn.example/asset", nil
 }
 func (publicAssetCacheStub) PurgePrefixes(context.Context, []string) error { return nil }
 
 type publicAssetProtectorStub struct{}
 
-func (publicAssetProtectorStub) IsPublicAssetProtected(context.Context, *gorm.DB, model.PublicAsset) (bool, error) {
+func (publicAssetProtectorStub) IsPublicAssetProtected(context.Context, mediaasset.Asset) (bool, error) {
 	return false, nil
 }
 
 func TestDeletePendingRetriesPersistedAssetAfterObjectFailure(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE public_asset (
-		id text PRIMARY KEY, source_file_id text, kind text NOT NULL,
-		object_key text NOT NULL UNIQUE, extension text NOT NULL, mime_type text NOT NULL,
-		file_size integer, sha256 blob, disposition text NOT NULL, download_filename text,
-		status text NOT NULL, ready_at datetime, delete_requested_at datetime, deleted_at datetime,
-		failed_at datetime, failure_reason text, created_at datetime NOT NULL, updated_at datetime NOT NULL
-	); CREATE TABLE public_asset_binding (
-		asset_id text NOT NULL, owner_type text NOT NULL, owner_id text NOT NULL,
-		binding_key text NOT NULL, PRIMARY KEY (owner_type, owner_id, binding_key)
-	)`).Error)
+	assetStore, _ := mediaassettest.New()
+	units := mutationtest.New[mediaasset.CleanupStore](assetStore)
 	now := time.Now().UTC()
-	asset := model.PublicAsset{
+	asset := mediaasset.Asset{
 		ID: uuid.NewString(), Kind: "favicon", ObjectKey: "asset/favicon.png", Extension: "png",
-		MimeType: "image/png", Disposition: "inline", Status: model.PublicAssetStatusDeletePending,
+		MimeType: "image/png", Disposition: "inline", Status: mediaasset.AssetDeletePending,
 		DeleteRequestedAt: &now, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}
-	require.NoError(t, db.Create(&asset).Error)
+	assetStore.PutAsset(asset)
 	store := &cleanupObjectStoreStub{deleteErr: errors.New("object store unavailable")}
-	cleanup := NewPublicAssetCleanup(db, store, publicAssetCacheStub{}, publicAssetProtectorStub{})
+	cleanup := mediaasset.NewPublicAssetCleanup(units, store, publicAssetCacheStub{}, publicAssetProtectorStub{})
 
 	require.Error(t, cleanup.DeletePending(t.Context(), now))
 	require.Error(t, cleanup.DeletePending(t.Context(), now.Add(time.Minute)))
 
-	var persisted model.PublicAsset
-	require.NoError(t, db.First(&persisted, "id = ?", asset.ID).Error)
-	require.Equal(t, model.PublicAssetStatusDeletePending, persisted.Status)
+	persisted, err := assetStore.Asset(t.Context(), asset.ID)
+	require.NoError(t, err)
+	require.Equal(t, mediaasset.AssetDeletePending, persisted.Status)
 	require.Equal(t, int32(2), store.attempts.Load())
 }

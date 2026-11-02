@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/stretchr/testify/require"
 )
 
@@ -198,4 +199,12 @@ func faviconTestICO(t *testing.T, sizes ...int) []byte {
 		offset += len(frame)
 	}
 	return data
+}
+
+func TestInvalidGeneratedPNGKeepsDecodeCauseOutOfItsText(t *testing.T) {
+	spec := Spec{DerivativeType: PNG32, PixelSize: 32}
+	err := validateGeneratedFaviconPNG(append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 16)...), spec)
+	require.Error(t, err)
+	require.Equal(t, "favicon derivative FILE_DERIVATIVE_TYPE_FAVICON_PNG_32 must be 32x32 PNG", err.Error())
+	require.Contains(t, failurecause.Message(err), "must be 32x32 PNG: png: ")
 }

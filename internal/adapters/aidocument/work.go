@@ -6,14 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -32,7 +30,7 @@ type workPort struct {
 }
 
 type workDocumentAPI interface {
-	Load(context.Context, string, string) (workdomain.AIDocumentState, error)
+	LoadAIDocument(context.Context, string, string) (workdomain.AIDocumentState, error)
 	ExecuteAIDocumentMutation(
 		context.Context,
 		string,
@@ -42,10 +40,9 @@ type workDocumentAPI interface {
 	) (workdomain.AIDocumentMutationResult, error)
 }
 
-func NewWorkRegistration(internal *workdomain.InternalWorkService) (DomainRegistration, error) {
-	application, err := workdomain.NewAIDocumentService(internal)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewWorkRegistration(application *workdomain.Service) (DomainRegistration, error) {
+	if application == nil {
+		return DomainRegistration{}, errors.New("work AI document service dependencies are required")
 	}
 	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK)
 	if err != nil {
@@ -73,7 +70,7 @@ func (p *workPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validateWorkIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.application.Load(ctx, string(identity.Reference), string(locale))
+	state, err := p.application.LoadAIDocument(ctx, string(identity.Reference), string(locale))
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -106,84 +103,38 @@ func (p *workPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Work")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state workdomain.AIDocumentState) (workdomain.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[workdomain.AIDocumentState, workdomain.AIDocumentMutation, workdomain.AIDocumentMutationResult]{
+		Domain:       "Work",
+		ValidateOnly: mode == workdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(workdomain.AIDocumentState) (workdomain.AIDocumentMutation, error)) (workdomain.AIDocumentMutationResult, error) {
+			return p.application.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state workdomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state workdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (workdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := canonicalWorkContributor(state.ViewerMemberID)
 			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
+				return workdomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, contributor, current, run.command.Operations)
+			mutation, issues, err := p.compile(state, contributor, current, command.Operations)
 			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
+				return workdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == workdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *workdomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == workdomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult workdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Content.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code:                    code,
-				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   workCoreTargetRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := workDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == workdomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == workdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
-		TargetRevision:   workCoreTargetRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Content.Changed,
-	}
-	if domainResult.Content.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: workOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+		DomainIssue: func(err error, _ []core.Operation) *core.OperationIssue { return workDomainIssue(err) },
+	})
 }
 
 func (p *workPort) project(identity core.DocumentIdentity, locale core.Locale, state workdomain.AIDocumentState) (core.Document, error) {
@@ -202,25 +153,9 @@ func (p *workPort) project(identity core.DocumentIdentity, locale core.Locale, s
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
 		SourceLocale: core.Locale(state.SourceLocale), Locale: locale,
-		LocaleExists: state.LocaleExists, TargetRevision: workCoreTargetRevision(state.TargetRevision),
+		LocaleExists: state.LocaleExists, TargetRevision: core.OptionalRevision(state.TargetRevision),
 		Catalog: p.catalog, Nodes: nodes,
 	}, nil
-}
-
-func workCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func workDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func canonicalWorkContributor(memberID string) (uuid.UUID, error) {
@@ -244,7 +179,7 @@ func (p *workPort) compile(
 	mutation := workdomain.AIDocumentMutation{
 		WorkID: string(loaded.Identity.Reference), Locale: string(loaded.Locale),
 		ExpectedRevision: expected, ObservedSourceLocale: string(loaded.SourceLocale),
-		ExpectedTargetRevision: workDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ObservedLocaleExists:   loaded.LocaleExists,
 		ContributorMemberID:    contributor.String(),
 		Batch: contentblock.Batch{
@@ -275,7 +210,7 @@ func (p *workPort) compile(
 		if loaded.Role() == core.LocaleRoleNonSource && operation.Kind == core.OperationUnsetField {
 			issues = append(issues, core.OperationIssue{
 				Operation: index, Code: core.IssueInvalidOperation,
-				Handle:  strings.Join(workOperationHandles(operation), ":"),
+				Handle:  strings.Join(operationIssuePath(operation), ":"),
 				Message: "Work target locale values use explicit empty and cannot be unset",
 			})
 			continue
@@ -335,10 +270,10 @@ func compileWorkMetadataOperation(
 		return false, nil
 	}
 	if operation.Kind == core.OperationUnsetField {
-		return true, &core.OperationIssue{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(workOperationHandles(operation), ":"), Message: "Work locale values use explicit empty and cannot be unset"}
+		return true, &core.OperationIssue{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(operationIssuePath(operation), ":"), Message: "Work locale values use explicit empty and cannot be unset"}
 	}
 	if value == nil || value.Kind != core.ValueKindText {
-		return true, &core.OperationIssue{Operation: index, Code: core.IssueValueKindMismatch, Handle: strings.Join(workOperationHandles(operation), ":"), Message: "Work metadata value must be text"}
+		return true, &core.OperationIssue{Operation: index, Code: core.IssueValueKindMismatch, Handle: strings.Join(operationIssuePath(operation), ":"), Message: "Work metadata value must be text"}
 	}
 	text := value.Text
 	switch target.Field {
@@ -347,7 +282,7 @@ func compileWorkMetadataOperation(
 	case workSummaryField:
 		patch.SetSummary, patch.Summary = true, &text
 	default:
-		return true, &core.OperationIssue{Operation: index, Code: core.IssueUnknownField, Handle: strings.Join(workOperationHandles(operation), ":"), Message: "unsupported Work metadata field"}
+		return true, &core.OperationIssue{Operation: index, Code: core.IssueUnknownField, Handle: strings.Join(operationIssuePath(operation), ":"), Message: "unsupported Work metadata field"}
 	}
 	return true, nil
 }
@@ -377,47 +312,14 @@ func validateWorkIdentity(identity core.DocumentIdentity) error {
 	return nil
 }
 
-func workDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
-	code := core.IssueInvalidOperation
-	index := -1
-	if errors.Is(err, contentblock.ErrFileReference) {
-		code = core.IssueInvalidFileReference
-		for candidate, operation := range operations {
-			if operation.Kind == core.OperationAttachFile || operation.Kind == core.OperationDetachFile {
-				index = candidate
-				break
-			}
-		}
-	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
+// workDomainIssue turns an invalid Block mutation into an operation issue. A
+// File reference rejection never reaches here: the Work domain answers it as
+// FailedPrecondition without contentblock.ErrFileReference in the chain.
+func workDomainIssue(err error) *core.OperationIssue {
+	if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
-	slog.Warn("Work document operation rejected", failurecause.Attr(err), "operation_index", index)
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
-}
-
-func workOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationAttachFile:
-		return []string{string(operation.AttachFile.Target.Block), string(operation.AttachFile.Target.Field), string(operation.AttachFile.File)}
-	case core.OperationDetachFile:
-		return []string{string(operation.DetachFile.Target.Block), string(operation.DetachFile.Target.Field)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
+	return &core.OperationIssue{Operation: -1, Code: core.IssueInvalidOperation, Message: err.Error()}
 }
 
 var _ core.DomainPort = (*workPort)(nil)

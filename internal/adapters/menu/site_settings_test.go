@@ -1,8 +1,11 @@
 package menuadapter
 
 import (
-	"context"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
@@ -26,10 +29,15 @@ func TestSiteSettingsReferencesClearsOnlyMatchingMenuSlots(t *testing.T) {
 		id, menu_header_id, menu_secondary_id, menu_footer_id, menu_avatar_dropdown_id
 	) VALUES (1, 'menu-1', 'menu-2', 'menu-1', NULL)`).Error)
 
-	adapter := NewSiteSettingsReferences(nil)
+	audit := &audittest.Recorder{}
+	adapter := NewSiteSettingsReferences(audit)
+	request, err := sharedtelemetry.NewPublicRequestContext("192.0.2.40")
+	require.NoError(t, err)
+	ctx := sharedtelemetry.WithActor(sharedtelemetry.WithRequestContext(t.Context(), request), sharedtelemetry.MemberActor{MemberID: uuid.NewString()})
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return adapter.ClearMenuReferences(context.Background(), tx, "menu-1")
+		return adapter.ClearMenuReferences(ctx, tx, "menu-1")
 	}))
+	require.Len(t, audit.Records(), 1)
 
 	var slots struct {
 		Header    *string `gorm:"column:menu_header_id"`

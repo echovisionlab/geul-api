@@ -14,22 +14,28 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 const integrationInternalServiceHeaderName = "X-Internal-Service"
@@ -47,7 +53,7 @@ func main() {
 		}
 	}()
 
-	stack, err := testutil.StartBackendIntegrationStackWithOptions(ctx, testutil.BackendIntegrationStackOptions{
+	stack, err := runtimetest.StartBackendIntegrationStackWithOptions(ctx, runtimetest.BackendIntegrationStackOptions{
 		HookBaseURL: hookBaseURL,
 		Logf: func(format string, args ...structured.Value) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
@@ -70,30 +76,47 @@ func main() {
 	}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
-	accountEmailChangeLifecycle := account.NewAuditedAccountEmailChangeLifecycle(
-		stack.Postgres.DB,
+	accountUnits, err := accountpostgres.NewUnits(stack.Postgres.DB, accountpostgres.Ports{
+		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
+		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: publisher,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration account units: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
+	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
+		accountUnits,
 		stack.KratosClient,
-		publisher,
-		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
+		accountpostgres.EmailCommands{Publisher: publisher},
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
+	accountEmailProjection := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{
+		WelcomeEmails: publisher, WelcomeRecipients: accountEmailProjection,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration member units: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	registrationMembers := member.NewMemberProvisioner(
-		stack.Postgres.DB,
+		memberUnits,
 		stack.KratosClient,
 		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
+		accountEmailProjection,
 		directRoles,
 	)
+	loginRoles, err := authentication.NewService(authentication.Deps{
+		Units: authenticationpostgres.NewUnits(stack.Postgres.DB), SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: directRoles, Sessions: authenticationpostgres.NewSessions(stack.Postgres.DB),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration login roles: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	loginHooks := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(
-			stack.Postgres.DB,
-			stack.SpiceDBClient,
-			telemetryWriter,
-			directRoles,
-		),
+		loginRoles,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(stack.Postgres.DB),
@@ -103,21 +126,20 @@ func main() {
 		accountEmailChangeLifecycle,
 	)
 	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
 		telemetryWriter,
-		publisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: publisher},
 	)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
 	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
-		emaildelivery.NewEmailCourierService(
+		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(
 			publisher,
 			stack.KratosClient,
 			emaildeliveryadapter.NewAuthIssuanceAuthority([]byte(stack.TokenSigningSecret), nil, nil),
 			15*time.Minute,
-		),
+		)),
 	)
 	courierHandler := protectBackendIntegrationCourier(
 		stack.TokenSigningSecret,
@@ -151,7 +173,7 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	mux := http.NewServeMux()
 	protectHook := func(h http.Handler) http.Handler {
 		return auth.RequireInternalServiceSecret(
-			testutil.IntegrationTokenSigningSecret,
+			runtimetest.IntegrationTokenSigningSecret,
 			integrationInternalServiceHeaderName,
 			h,
 		)
@@ -163,7 +185,7 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	errCh := make(chan error, 1)
 	go func() {
 		if err := server.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			slog.Error("Backend integration hook server failed", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Backend integration hook server failed", "failure_cause", failurecause.Message(err))
 			errCh <- err
 		}
 	}()
@@ -171,14 +193,14 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	select {
 	case err := <-errCh:
 		if closeErr := listener.Close(); closeErr != nil {
-			slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+			slog.ErrorContext(ctx, "Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
 		}
 		return nil, "", err
 	default:
 		_, port, err := net.SplitHostPort(listener.Addr().String())
 		if err != nil {
 			if closeErr := listener.Close(); closeErr != nil {
-				slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+				slog.ErrorContext(ctx, "Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
 			}
 			return nil, "", err
 		}

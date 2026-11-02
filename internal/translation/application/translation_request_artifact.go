@@ -5,29 +5,16 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 func loadTranslationRequestArtifact(
 	ctx context.Context,
-	db *gorm.DB,
+	store JobStore,
 	jobID string,
 ) (translation.RequestArtifact, error) {
-	if db == nil {
-		return translation.RequestArtifact{}, fmt.Errorf("translation database is required")
-	}
-	var row struct {
-		XLIFF    []byte `gorm:"column:request_xliff"`
-		Manifest []byte `gorm:"column:request_manifest"`
-		Digest   string `gorm:"column:request_artifact_digest"`
-	}
-	err := db.WithContext(ctx).Raw(
-		`SELECT request_xliff, request_manifest, request_artifact_digest FROM translation_job WHERE id = ?`,
-		jobID,
-	).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	row, err := store.RequestArtifact(ctx, jobID)
+	if errors.Is(err, ErrJobNotFound) {
 		return translation.RequestArtifact{}, fmt.Errorf("translation job %q is missing", jobID)
 	}
 	if err != nil {
@@ -45,12 +32,12 @@ func loadTranslationRequestArtifact(
 
 func buildPersistedTranslationRequest(
 	ctx context.Context,
-	db *gorm.DB,
-	domains DomainRegistry,
-	job *model.TranslationJob,
+	store JobStore,
+	plans DomainPlans,
+	job *Job,
 	source *translation.SourceDocument,
 ) (translation.RequestArtifact, error) {
-	plan, err := buildTranslationExtractionPlan(domains, job, source)
+	plan, err := buildTranslationExtractionPlan(plans, job, source)
 	if err != nil {
 		return translation.RequestArtifact{}, err
 	}
@@ -58,9 +45,19 @@ func buildPersistedTranslationRequest(
 	if err != nil {
 		return translation.RequestArtifact{}, err
 	}
-	request, err = loadTranslationGenerationResources(ctx, db, job, request)
+	request, err = loadTranslationGenerationResources(ctx, store, job, request)
 	if err != nil {
 		return translation.RequestArtifact{}, err
 	}
 	return translation.BuildRequestArtifact(request, plan)
+}
+
+func (m *TranslationJobManager) loadRequestArtifact(ctx context.Context, jobID string) (translation.RequestArtifact, error) {
+	var artifact translation.RequestArtifact
+	err := m.units.Read(ctx, func(store JobStore) error {
+		var err error
+		artifact, err = loadTranslationRequestArtifact(ctx, store, jobID)
+		return err
+	})
+	return artifact, err
 }

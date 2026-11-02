@@ -182,7 +182,7 @@ func projectDescriptorValue(
 		items := make([]core.ListItem, 0, list.Len())
 		var files []core.FileBinding
 		for index := 0; index < list.Len(); index++ {
-			itemValue, itemFiles, _, err := projectListItem(list.Get(index), field, *descriptor.Item, root, path)
+			itemValue, itemFiles, err := projectListItem(list.Get(index), field, *descriptor.Item, root, path)
 			if err != nil {
 				return core.Value{}, nil, false, err
 			}
@@ -240,21 +240,19 @@ func insertPathSegment(path []core.FieldPathSegment, index int, segment core.Fie
 	return result
 }
 
-func projectListItem(value protoreflect.Value, listField protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, root core.FieldID, path []core.FieldPathSegment) (core.Value, []core.FileBinding, bool, error) {
+func projectListItem(value protoreflect.Value, listField protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, root core.FieldID, path []core.FieldPathSegment) (core.Value, []core.FileBinding, error) {
 	if descriptor.Type == "object" {
-		projected, files, err := projectObject(value.Message(), descriptor.Fields, root, path)
-		return projected, files, true, err
+		return projectObject(value.Message(), descriptor.Fields, root, path)
 	}
 	if descriptorIsFile(descriptor) {
 		attachment, ok := value.Message().Interface().(*contentv1.FileAttachment)
 		if !ok || attachment.GetActiveFileId() == "" {
-			return core.Value{}, nil, false, nil
+			return core.Value{}, nil, nil
 		}
-		return core.Value{}, []core.FileBinding{{Field: root, Path: append([]core.FieldPathSegment(nil), path...), File: core.FileReference(attachment.GetActiveFileId())}}, false, nil
+		return core.Value{}, []core.FileBinding{{Field: root, Path: append([]core.FieldPathSegment(nil), path...), File: core.FileReference(attachment.GetActiveFileId())}}, nil
 	}
-	// Repeated scalars cannot report presence independently.
 	projected, err := projectScalarValue(value, listField, descriptor)
-	return projected, nil, err == nil, err
+	return projected, nil, err
 }
 
 func projectObject(message protoreflect.Message, fields []contentv1.ContentFieldDescriptor, root core.FieldID, path []core.FieldPathSegment) (core.Value, []core.FileBinding, error) {
@@ -533,7 +531,7 @@ func preserveDescriptorFiles(previous, current protoreflect.Message, field proto
 			return nil
 		}
 		for index := 0; index < before.Len(); index++ {
-			value, _, _, err := projectListItem(before.Get(index), field, *descriptor.Item, "", nil)
+			value, _, err := projectListItem(before.Get(index), field, *descriptor.Item, "", nil)
 			if err != nil {
 				return err
 			}

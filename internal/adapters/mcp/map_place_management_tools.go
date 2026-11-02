@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -20,24 +20,62 @@ const (
 	ToolMapPlaceDelete         = "map_place_delete"
 )
 
-var mapPlaceManagementTools = []mcpserver.Tool{
-	oauthTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	oauthTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	oauthTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true),
+var mapPlaceManagementTools = toolRegistry[MapPlaceManagementTools]{
+	defineTool(oauthTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false), func(tools *MapPlaceManagementTools, ctx context.Context, name string, call toolCall[mapPlaceGetArguments]) (mcpserver.ToolResult, error) {
+		var input mapPlaceGetArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("map_place_id", input.ID); err != nil {
+			return executionError(err)
+		}
+		if name == ToolMapPlaceDelete {
+			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
+				return expectedToolError(err)
+			}
+			return contentResult(map[string]any{"success": true})
+		}
+		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
+	}),
+	defineTool(oauthTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false), (*MapPlaceManagementTools).getPlaces),
+	defineTool(oauthTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false), (*MapPlaceManagementTools).listPlaces),
+	defineTool(oauthTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false), (*MapPlaceManagementTools).mutateSettings),
+	defineTool(oauthTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false), (*MapPlaceManagementTools).mutateSettings),
+	defineTool(oauthTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true), func(tools *MapPlaceManagementTools, ctx context.Context, name string, call toolCall[mapPlaceDeleteArguments]) (mcpserver.ToolResult, error) {
+		var input mapPlaceDeleteArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("map_place_id", input.ID); err != nil {
+			return executionError(err)
+		}
+		if name == ToolMapPlaceDelete {
+			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
+				return expectedToolError(err)
+			}
+			return contentResult(map[string]any{"success": true})
+		}
+		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
+	}),
 }
 
 // MapPlaceManagementApplication keeps authorization, image bindings, references,
 // and mutation audit in the native Map Place service.
 type MapPlaceManagementApplication interface {
-	GetMapPlace(context.Context, *connect.Request[managev1.GetMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	GetMapPlacesByIds(context.Context, *connect.Request[managev1.GetMapPlacesByIdsRequest]) (*connect.Response[managev1.GetMapPlacesByIdsResponse], error)
-	ListMapPlacesAdmin(context.Context, *connect.Request[managev1.ListMapPlacesAdminRequest]) (*connect.Response[managev1.ListMapPlacesAdminResponse], error)
-	CreateMapPlace(context.Context, *connect.Request[managev1.CreateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	UpdateMapPlace(context.Context, *connect.Request[managev1.UpdateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	DeleteMapPlace(context.Context, *connect.Request[managev1.DeleteMapPlaceRequest]) (*connect.Response[managev1.DeleteResponse], error)
+	GetMapPlace(context.Context, referencecatalog.GetMapPlaceQuery) (referencecatalog.MapPlaceView, error)
+	GetMapPlacesByIDs(context.Context, referencecatalog.GetMapPlacesByIDsQuery) ([]referencecatalog.MapPlaceView, error)
+	ListMapPlacesAdmin(context.Context, referencecatalog.ListMapPlacesAdminQuery) (referencecatalog.Page[referencecatalog.MapPlaceView], error)
+	CreateMapPlace(context.Context, referencecatalog.CreateMapPlaceCommand) (referencecatalog.MapPlaceView, error)
+	UpdateMapPlace(context.Context, referencecatalog.UpdateMapPlaceCommand) (referencecatalog.MapPlaceView, error)
+	DeleteMapPlace(context.Context, referencecatalog.DeleteMapPlaceCommand) error
 }
 
 type MapPlaceManagementTools struct{ application MapPlaceManagementApplication }
@@ -48,92 +86,65 @@ func NewMapPlaceManagementTools(application MapPlaceManagementApplication) (*Map
 	}
 	return &MapPlaceManagementTools{application: application}, nil
 }
-func (*MapPlaceManagementTools) ToolNames() []string {
-	return toolDefinitionNames(mapPlaceManagementTools)
-}
+func (*MapPlaceManagementTools) ToolNames() []string { return mapPlaceManagementTools.names() }
 func (*MapPlaceManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(mapPlaceManagementTools), nil
+	return mapPlaceManagementTools.list(), nil
 }
 
 func (tools *MapPlaceManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMapPlaceGet, ToolMapPlaceDelete:
-		var input struct {
-			ID string `json:"map_place_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if err := validateUUID("map_place_id", input.ID); err != nil {
-			return executionError(err)
-		}
-		if name == ToolMapPlaceDelete {
-			response, err := tools.application.DeleteMapPlace(ctx, connect.NewRequest(&managev1.DeleteMapPlaceRequest{Id: input.ID}))
-			if err != nil {
-				return expectedToolError(err)
-			}
-			return contentResult(map[string]any{"success": response.Msg.GetSuccess()})
-		}
-		response, err := tools.application.GetMapPlace(ctx, connect.NewRequest(&managev1.GetMapPlaceRequest{Id: input.ID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"place": projectMapPlaceSettings(response.Msg)})
-	case ToolMapPlaceGetMany:
-		var input struct {
-			IDs []string `json:"map_place_ids"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if len(input.IDs) < 1 || len(input.IDs) > 100 {
-			return executionError(errors.New("map_place_ids must contain between 1 and 100 UUIDs"))
-		}
-		for _, id := range input.IDs {
-			if err := validateUUID("map_place_ids", id); err != nil {
-				return executionError(err)
-			}
-		}
-		response, err := tools.application.GetMapPlacesByIds(ctx, connect.NewRequest(&managev1.GetMapPlacesByIdsRequest{Ids: input.IDs}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"items": projectMapPlaceSettingsMany(response.Msg.Places)})
-	case ToolMapPlaceList:
-		if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
-			return executionError(err)
-		}
-		var input struct {
-			Query  string `json:"query"`
-			Limit  *int32 `json:"limit"`
-			Offset int32  `json:"offset"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		pagination, err := (programEventReferenceListArguments{Limit: input.Limit, Offset: input.Offset}).pagination()
-		if err != nil {
-			return executionError(err)
-		}
-		response, err := tools.application.ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{Pagination: pagination, Filters: discoverySearchFilters(input.Query)}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		// The native Map Place list supplies total, limit, and offset but does not
-		// populate HasMore. Derive continuation from that authoritative total.
-		page := response.Msg.GetPagination()
-		nextOffset := int64(page.GetOffset()) + int64(page.GetLimit())
-		hasMore := nextOffset < int64(page.GetTotal())
-		output := map[string]any{"items": projectMapPlaceSettingsMany(response.Msg.Places), "total": page.GetTotal(), "limit": page.GetLimit(), "offset": page.GetOffset(), "has_more": hasMore}
-		if hasMore {
-			output["next_offset"] = nextOffset
-		}
-		return contentResult(output)
-	case ToolMapPlaceCreate, ToolMapPlaceSettingsUpdate:
-		return tools.mutateSettings(ctx, name, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	return mapPlaceManagementTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *MapPlaceManagementTools) getPlaces(ctx context.Context, _ string, call toolCall[mapPlaceGetManyArguments]) (mcpserver.ToolResult, error) {
+	var input mapPlaceGetManyArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
 	}
+	if len(input.IDs) < 1 || len(input.IDs) > 100 {
+		return executionError(errors.New("map_place_ids must contain between 1 and 100 UUIDs"))
+	}
+	for _, id := range input.IDs {
+		if err := validateUUID("map_place_ids", id); err != nil {
+			return executionError(err)
+		}
+	}
+	places, err := tools.application.GetMapPlacesByIDs(ctx, referencecatalog.GetMapPlacesByIDsQuery{IDs: input.IDs})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	return contentResult(map[string]any{"items": projectMapPlaceSettingsMany(places)})
+}
+
+func (tools *MapPlaceManagementTools) listPlaces(ctx context.Context, _ string, call toolCall[mapPlaceListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
+		return executionError(err)
+	}
+	var input mapPlaceListArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	pagination, err := (programEventReferenceListArguments{Limit: input.Limit, Offset: input.Offset}).pagination()
+	if err != nil {
+		return executionError(err)
+	}
+	listed, err := tools.application.ListMapPlacesAdmin(ctx, referencecatalog.ListMapPlacesAdminQuery{
+		Filters: discoverySearchFilters(input.Query), Limit: pagination.GetLimit(), Offset: pagination.GetOffset(),
+	})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	// The native Map Place list supplies total, limit, and offset but does not
+	// populate HasMore. Derive continuation from that authoritative total.
+	page := listed.Pagination
+	nextOffset := int64(page.Offset) + int64(page.Limit)
+	hasMore := nextOffset < int64(page.Total)
+	output := map[string]any{"items": projectMapPlaceSettingsMany(listed.Items), "total": page.Total, "limit": page.Limit, "offset": page.Offset, "has_more": hasMore}
+	if hasMore {
+		output["next_offset"] = nextOffset
+	}
+	return contentResult(output)
 }
 
 type mapPlaceSettingsArguments struct {
@@ -148,41 +159,13 @@ type mapPlaceSettingsArguments struct {
 	GooglePlaceID     *string                     `json:"google_place_id"`
 }
 
-func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if err := rejectNullArguments(arguments, "map_place_id", "name", "address", "lat", "lng", "address_components", "image_file_id", "clear_image", "google_place_id"); err != nil {
+func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name string, call toolCall[mapPlaceSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+	input, err := decodeMapPlaceSettings(arguments)
+	if err != nil {
 		return executionError(err)
 	}
-	if raw, ok := arguments["address_components"]; ok {
-		var components mcpserver.ToolArguments
-		if err := json.Unmarshal(raw, &components); err != nil {
-			return executionError(err)
-		}
-		if err := rejectNullArguments(components, "street", "city", "region", "country", "postal_code"); err != nil {
-			return executionError(err)
-		}
-	}
-	var input mapPlaceSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	for _, value := range []*string{input.Name, input.Address} {
-		if value != nil && strings.TrimSpace(*value) == "" {
-			return executionError(errors.New("name and address must be nonempty when supplied"))
-		}
-	}
-	if input.Lat != nil && (*input.Lat < -90 || *input.Lat > 90) {
-		return executionError(errors.New("lat must be between -90 and 90"))
-	}
-	if input.Lng != nil && (*input.Lng < -180 || *input.Lng > 180) {
-		return executionError(errors.New("lng must be between -180 and 180"))
-	}
-	if input.ImageFileID != nil {
-		if err := validateUUID("image_file_id", *input.ImageFileID); err != nil {
-			return executionError(err)
-		}
-	}
-	var response *connect.Response[managev1.MapPlace]
-	var err error
+	var place referencecatalog.MapPlaceView
 	if name == ToolMapPlaceCreate {
 		if _, ok := arguments["map_place_id"]; ok {
 			return executionError(errors.New("map_place_id is not accepted during create"))
@@ -193,20 +176,66 @@ func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name s
 		if input.Name == nil || input.Address == nil || input.Lat == nil || input.Lng == nil {
 			return executionError(errors.New("name, address, lat, and lng are required"))
 		}
-		response, err = tools.application.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{Name: *input.Name, Address: *input.Address, Lat: *input.Lat, Lng: *input.Lng, AddressComponents: input.AddressComponents, ImageFileId: input.ImageFileID, GooglePlaceId: input.GooglePlaceID}))
+		place, err = tools.application.CreateMapPlace(ctx, referencecatalog.CreateMapPlaceCommand{
+			Name: *input.Name, Address: *input.Address, Lat: *input.Lat, Lng: *input.Lng,
+			AddressComponents: referencecatalog.AddressComponentsOf(input.AddressComponents), ImageFileID: input.ImageFileID, GooglePlaceID: input.GooglePlaceID,
+		})
 	} else {
 		if err := validateUUID("map_place_id", input.ID); err != nil {
 			return executionError(err)
 		}
-		response, err = tools.application.UpdateMapPlace(ctx, connect.NewRequest(&managev1.UpdateMapPlaceRequest{Id: input.ID, Name: input.Name, Address: input.Address, Lat: input.Lat, Lng: input.Lng, AddressComponents: input.AddressComponents, ImageFileId: input.ImageFileID, ClearImage: input.ClearImage, GooglePlaceId: input.GooglePlaceID}))
+		place, err = tools.application.UpdateMapPlace(ctx, referencecatalog.UpdateMapPlaceCommand{
+			ID: input.ID, Name: input.Name, Address: input.Address, Lat: input.Lat, Lng: input.Lng,
+			AddressComponents: referencecatalog.AddressComponentsOf(input.AddressComponents), ImageFileID: input.ImageFileID,
+			ClearImage: input.ClearImage, GooglePlaceID: input.GooglePlaceID,
+		})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"place": projectMapPlaceSettings(response.Msg)})
+	return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
 }
 
-func projectMapPlaceSettings(place *managev1.MapPlace) map[string]any {
+// decodeMapPlaceSettings reads and checks the supplied place settings.
+func decodeMapPlaceSettings(arguments mcpserver.ToolArguments) (mapPlaceSettingsArguments, error) {
+	var input mapPlaceSettingsArguments
+	if err := rejectNullArguments(arguments, "map_place_id", "name", "address", "lat", "lng", "address_components", "image_file_id", "clear_image", "google_place_id"); err != nil {
+		return input, err
+	}
+	if raw, ok := arguments["address_components"]; ok {
+		var components mcpserver.ToolArguments
+		if err := json.Unmarshal(raw, &components); err != nil {
+			return input, err
+		}
+		if err := rejectNullArguments(components, "street", "city", "region", "country", "postal_code"); err != nil {
+			return input, err
+		}
+	}
+	if err := decodeArguments(arguments, &input); err != nil {
+		return input, err
+	}
+	for _, value := range []*string{input.Name, input.Address} {
+		if value != nil && strings.TrimSpace(*value) == "" {
+			return input, errors.New("name and address must be nonempty when supplied")
+		}
+	}
+	if input.Lat != nil && (*input.Lat < -90 || *input.Lat > 90) {
+		return input, errors.New("lat must be between -90 and 90")
+	}
+	if input.Lng != nil && (*input.Lng < -180 || *input.Lng > 180) {
+		return input, errors.New("lng must be between -180 and 180")
+	}
+	if input.ImageFileID != nil {
+		if err := validateUUID("image_file_id", *input.ImageFileID); err != nil {
+			return input, err
+		}
+	}
+	return input, nil
+}
+
+// projectMapPlaceSettings projects the manage API's rendering of a place.
+func projectMapPlaceSettings(view referencecatalog.MapPlaceView) map[string]any {
+	place := referencecatalog.MapPlaceMessage(view)
 	output := map[string]any{"id": place.GetId(), "name": place.GetName(), "address": place.GetAddress(), "lat": place.GetLat(), "lng": place.GetLng()}
 	if place.AddressComponents != nil {
 		output["address_components"] = place.AddressComponents
@@ -222,10 +251,28 @@ func projectMapPlaceSettings(place *managev1.MapPlace) map[string]any {
 	}
 	return output
 }
-func projectMapPlaceSettingsMany(places []*managev1.MapPlace) []map[string]any {
+func projectMapPlaceSettingsMany(places []referencecatalog.MapPlaceView) []map[string]any {
 	items := make([]map[string]any, 0, len(places))
 	for _, place := range places {
 		items = append(items, projectMapPlaceSettings(place))
 	}
 	return items
+}
+
+type mapPlaceGetManyArguments = struct {
+	IDs []string `json:"map_place_ids"`
+}
+
+type mapPlaceListArguments = struct {
+	Query  string `json:"query"`
+	Limit  *int32 `json:"limit"`
+	Offset int32  `json:"offset"`
+}
+
+type mapPlaceGetArguments = struct {
+	ID string `json:"map_place_id"`
+}
+
+type mapPlaceDeleteArguments = struct {
+	ID string `json:"map_place_id"`
 }

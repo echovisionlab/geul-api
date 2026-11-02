@@ -15,25 +15,24 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel/propagation"
-	"gorm.io/gorm"
 )
 
 func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *http.Request) *auth.UserInfo {
 	sessionID, err := recorder.sessionIDFromWhoAmI(request.Context(), request.Cookies())
 	if err != nil || sessionID == "" {
 		if err != nil {
-			slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_incoming_session", failurecause.Attr(err))
+			slog.ErrorContext(request.Context(), "Incoming session lookup failed; recording OIDC callback without a signed-in member", "operation", "resolve_incoming_session", failurecause.Attr(err))
 		}
 		return nil
 	}
-	principal, err := recorder.resolvePrincipal(request.Context(), sessionID)
+	principal, err := recorder.sessions.Principal(request.Context(), sessionID)
 	if err != nil || principal == nil || principal.Banned {
 		if err != nil {
 			level := slog.LevelError
 			if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 				level = slog.LevelWarn
 			}
-			slog.Log(request.Context(), level, "Operation failed", "reason", "resolve_incoming_principal", failurecause.Attr(err))
+			slog.Log(request.Context(), level, "Incoming principal lookup failed; recording OIDC callback without a signed-in member", "operation", "resolve_incoming_principal", failurecause.Attr(err))
 		}
 		return nil
 	}
@@ -104,21 +103,6 @@ func (recorder *AuthenticationAccessRecorder) sessionIDFromWhoAmI(
 		return "", nil
 	}
 	return strings.TrimSpace(session.ID), nil
-}
-
-func firstIssuedIdentitySession(ctx context.Context, db *gorm.DB, sessionID string) (bool, error) {
-	var first bool
-	result := db.WithContext(ctx).Raw(`
-		SELECT NOT EXISTS (
-			SELECT 1
-			FROM kratos.sessions AS other
-			JOIN kratos.sessions AS current ON current.id = ?::uuid
-			WHERE other.identity_id = current.identity_id
-			  AND other.id <> current.id
-			  AND other.created_at <= current.created_at
-		) AS first
-	`, sessionID).Scan(&first)
-	return first, result.Error
 }
 
 func kratosErrorID(body []byte) string {

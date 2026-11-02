@@ -4,12 +4,13 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -19,10 +20,10 @@ import (
 // Runtime adapts shared OG and media lifecycles to Page-owned ports.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Page runtime OG refresher is required")
 	}
@@ -52,14 +53,14 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 	ownerType string,
 	ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, entityType, ownerID); err != nil {
 		return err
 	}
 	return r.ReleasePublicAssetBindings(ctx, tx, ownerType, ownerID, "og")
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -69,7 +70,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -80,7 +81,7 @@ func (r *Runtime) ReleaseExactPublicAssetBindings(
 	ownerID string,
 	bindingKeys []string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleaseExactPublicAssetBindings(ctx, ownerType, ownerID, bindingKeys)
 }
 
@@ -88,8 +89,8 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	tx *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	refs := make(map[string]*commonv1.AssetRef, len(assetIDs))
+) (map[string]*mediaasset.Reference, error) {
+	refs := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return refs, nil
 	}
@@ -99,12 +100,12 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -118,5 +119,5 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.NewAttachmentStore(tx), document)
 }

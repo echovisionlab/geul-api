@@ -21,14 +21,8 @@ type releasePort struct {
 }
 
 type releaseDocumentAPI interface {
-	LoadAIDocumentState(context.Context, string, string) (releasedomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		releasedomain.AIDocumentExecutionMode,
-		releasedomain.AIDocumentMutationCompiler,
-	) (releasedomain.AIDocumentMutationResult, error)
+	LoadAIDocumentState(context.Context, releasedomain.AIDocumentStateQuery) (releasedomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, releasedomain.ExecuteAIDocumentMutationCommand) (releasedomain.AIDocumentMutationResult, error)
 }
 
 const (
@@ -39,7 +33,7 @@ const (
 	releaseCreditNoteField core.FieldID   = "note"
 )
 
-func NewReleaseRegistration(service *releasedomain.InternalReleaseService) (DomainRegistration, error) {
+func NewReleaseRegistration(service *releasedomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("release AI document service is required")
 	}
@@ -67,7 +61,7 @@ func (p *releasePort) Load(ctx context.Context, identity core.DocumentIdentity, 
 	if err := validateReleaseDocumentIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.service.LoadAIDocumentState(ctx, string(identity.Reference), string(locale))
+	state, err := p.service.LoadAIDocumentState(ctx, releasedomain.AIDocumentStateQuery{ReleaseID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -100,72 +94,39 @@ func (p *releasePort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Release")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[releasedomain.AIDocumentState, releasedomain.AIDocumentMutation, releasedomain.AIDocumentMutationResult]{
+		Domain:       "Release",
+		ValidateOnly: mode == releasedomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error)) (releasedomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, releasedomain.ExecuteAIDocumentMutationCommand{
+				ReleaseID: string(identity.Reference),
+				Locale:    string(request.Locale),
+				Mode:      mode,
+				Compiler:  compiler,
+			})
+		},
+		Project: func(state releasedomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state releasedomain.AIDocumentState, current core.Document, command core.ValidatedApply) (releasedomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := releaseContributorID(state.ViewerMemberID)
 			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
+				return releasedomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
+				return releasedomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == releasedomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *releasedomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == releasedomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: releaseTargetRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == releasedomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+		Result: func(domainResult releasedomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed}
+			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed,
-	}
-	output.TargetRevision = releaseTargetRevision(domainResult.TargetRevision)
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, run.command.Locale, "release"),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+	})
 }
 
 func (p *releasePort) document(identity core.DocumentIdentity, locale core.Locale, state releasedomain.AIDocumentState) (core.Document, error) {
@@ -192,7 +153,7 @@ func (p *releasePort) document(identity core.DocumentIdentity, locale core.Local
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: releaseTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
@@ -202,7 +163,7 @@ func (p *releasePort) compile(state releasedomain.AIDocumentState, document core
 	mutation := releasedomain.AIDocumentMutation{
 		ReleaseID: state.ReleaseID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   releaseDomainTargetRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale,
 		ExpectedPresence:         state.LocaleExists, ContributorMemberID: contributor,
 	}
@@ -218,7 +179,7 @@ func (p *releasePort) compile(state releasedomain.AIDocumentState, document core
 	contentIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil && (document.Role() == core.LocaleRoleNonSource || operation.UnsetField.Target.Field == richTextContentField || operation.UnsetField.Target.Block == releaseMetadataBlockID || strings.HasPrefix(string(operation.UnsetField.Target.Block), "credit-")) {
-			return releasedomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "release"), "/"), Message: "Release locale values use explicit empty instead of unset"}}, nil
+			return releasedomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "release"), Message: "Release locale values use explicit empty instead of unset"}}, nil
 		}
 		handled, issue := compileReleaseCreditNote(&mutation, operation, index)
 		if handled {
@@ -338,22 +299,6 @@ func releaseContributorID(value string) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("release contributor Member must be a canonical UUID")
 	}
 	return contributor, nil
-}
-
-func releaseTargetRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func releaseDomainTargetRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 var _ core.DomainPort = (*releasePort)(nil)

@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -27,9 +28,9 @@ func TestCompiledEmailLayoutAIDocumentMutationBindsLockedState(t *testing.T) {
 
 	stale := mutation
 	stale.ExpectedDocumentRevision = "eld1_stale"
-	var conflict *EmailLayoutAIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, validateCompiledEmailLayoutAIDocumentMutation(state, stale), &conflict)
-	require.Equal(t, EmailLayoutAIDocumentDocumentRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictDocumentRevision, conflict.Kind)
 	require.Equal(t, state.DocumentRevision, conflict.CurrentDocumentRevision)
 	require.Equal(t, state.TargetRevision, conflict.CurrentTargetRevision)
 
@@ -37,7 +38,7 @@ func TestCompiledEmailLayoutAIDocumentMutationBindsLockedState(t *testing.T) {
 	staleTargetRevision := "tr1_stale"
 	staleTarget.ExpectedTargetRevision = &staleTargetRevision
 	require.ErrorAs(t, validateCompiledEmailLayoutAIDocumentMutation(state, staleTarget), &conflict)
-	require.Equal(t, EmailLayoutAIDocumentTargetRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictTargetRevision, conflict.Kind)
 	require.Equal(t, state.DocumentRevision, conflict.CurrentDocumentRevision)
 	require.Equal(t, state.TargetRevision, conflict.CurrentTargetRevision)
 

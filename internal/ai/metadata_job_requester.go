@@ -2,79 +2,72 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (m *MetadataJobManager) StartJob(
-	ctx context.Context,
-	user *auth.UserInfo,
-	req *managev1.StartMetadataGenerationRequest,
-) (*managev1.MetadataGenerationJob, error) {
+// StartMetadataGenerationCommand queues metadata suggestions for Target.
+// Context carries the metadata-json task; Prompt is used when it is empty.
+type StartMetadataGenerationCommand struct {
+	Target  *Target
+	Context string
+	Prompt  string
+}
+
+// StartMetadataGeneration records a queued job and its durable generation
+// command in one transaction.
+func (s *Service) StartMetadataGeneration(ctx context.Context, command StartMetadataGenerationCommand) (_ Job, retErr error) {
+	// Failures can quote the requested context and prompt, which the boundary
+	// does not treat as private fields.
+	defer failurecause.AnnotatePrivate(&retErr, command.Context, command.Prompt)
+	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return Job{}, domainerr.AuthenticationRequired()
 	}
-	if req == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-
-	allowed, err := canUseAI(ctx, m.spiceDB, user, req.Target)
+	job, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Job, Store]{
+		Access: mutation.Checked(func(ctx context.Context, _ Store) error {
+			allowed, err := canUseAI(ctx, s.spiceDB, user, command.Target)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return domainerr.Denied("permission denied")
+			}
+			return nil
+		}),
+		Change: func(ctx context.Context, store Store) (Job, error) {
+			job, err := newMetadataJob(user, command)
+			if err != nil {
+				return Job{}, err
+			}
+			stored, err := store.InsertJob(ctx, job)
+			if err != nil {
+				return Job{}, fmt.Errorf("failed to create metadata AI job: %w", err)
+			}
+			return stored, nil
+		},
+		// Metadata jobs are operational queue rows, not audited content.
+		Audit: func(Job) mutation.Audit { return mutation.Unchanged() },
+		Outbox: func(ctx context.Context, store Store, job Job) error {
+			return store.EnqueueGenerate(ctx, job.ID)
+		},
+	})
 	if err != nil {
-		return nil, err
-	}
-	if !allowed {
-		return nil, errs.PermissionDenied(errs.MsgPermissionDenied)
-	}
-
-	userPrompt := metadataAIUserPrompt(req.Context, req.Prompt)
-	if err := validateMetadataAIUserPrompt(userPrompt); err != nil {
-		return nil, err
-	}
-
-	payload, err := parseMetadataContextPayload(userPrompt)
-	if err != nil {
-		return nil, errs.InvalidArgument("context", "metadata-json requires a valid structured JSON payload")
-	}
-
-	job := &metadataJobRecord{
-		ID:                uuid.NewString(),
-		RequesterMemberID: user.MemberID.String(),
-		TargetType:        req.Target.Type.String(),
-		TargetID:          strings.TrimSpace(req.Target.Id),
-		RequestedKeys:     append([]string(nil), payload.Task.RequestedKeys...),
-		Context:           req.Context,
-		Prompt:            req.Prompt,
-		Status:            metadataAIJobStatusQueued,
-	}
-	if err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(job).Error; err != nil {
-			return fmt.Errorf("failed to create metadata AI job: %w", err)
+		if mutation.IsClassified(err) {
+			return Job{}, err
 		}
-		return publishDurableProtoInTransaction(
-			ctx,
-			m.asyncPublisher,
-			tx,
-			eventpkg.QueueAiMetadataGenerate,
-			job.ID,
-			&managev1.MetadataGenerationQueueEvent{JobId: job.ID},
-		)
-	}); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to queue metadata AI job: %w", err))
+		return Job{}, fmt.Errorf("failed to queue metadata AI job: %w", err)
 	}
-
-	jobMessage := m.toProtoJob(job, true)
 
 	slog.Info("Metadata AI job queued",
 		"job_id", job.ID,
@@ -83,183 +76,137 @@ func (m *MetadataJobManager) StartJob(
 		"target_id", job.TargetID,
 		"requested_keys", job.RequestedKeys,
 	)
-
-	return jobMessage, nil
+	return job, nil
 }
 
-func (m *MetadataJobManager) GetJobForRequester(
-	ctx context.Context,
-	user *auth.UserInfo,
-	jobID string,
-) (*managev1.MetadataGenerationJob, error) {
-	job, err := m.loadJobForRequester(ctx, user, jobID)
-	if err != nil {
-		return nil, err
+func newMetadataJob(user *auth.UserInfo, command StartMetadataGenerationCommand) (Job, error) {
+	// Only an administrator is allowed without a target; the job still
+	// needs one to record.
+	if command.Target == nil {
+		return Job{}, domainerr.Required("target")
 	}
-	return m.toProtoJob(job, true), nil
+	userPrompt := metadataAIUserPrompt(command.Context, command.Prompt)
+	if err := validateMetadataAIUserPrompt(userPrompt); err != nil {
+		return Job{}, err
+	}
+	payload, err := parseMetadataContextPayload(userPrompt)
+	if err != nil {
+		return Job{}, domainerr.InvalidField("context", "metadata-json requires a valid structured JSON payload")
+	}
+	return Job{
+		ID:                uuid.NewString(),
+		RequesterMemberID: user.MemberID.String(),
+		TargetType:        command.Target.Type,
+		TargetID:          strings.TrimSpace(command.Target.ID),
+		RequestedKeys:     append([]string(nil), payload.Task.RequestedKeys...),
+		Context:           command.Context,
+		Prompt:            command.Prompt,
+		Status:            JobQueued,
+	}, nil
 }
 
-func (m *MetadataJobManager) ResolveJobForRequester(
-	ctx context.Context,
-	user *auth.UserInfo,
-	jobID string,
-	resolution managev1.MetadataGenerationJobResolution,
-) (*managev1.MetadataGenerationJob, error) {
-	job, err := m.loadJobForRequester(ctx, user, jobID)
-	if err != nil {
-		return nil, err
-	}
-	if job.Status != metadataAIJobStatusReady {
-		return nil, errs.InvalidArgument("job_id", "metadata AI job is not ready to apply or dismiss")
-	}
+// GetMetadataGenerationJobQuery reads one of the requester's jobs.
+type GetMetadataGenerationJobQuery struct {
+	JobID string
+}
 
+// GetMetadataGenerationJob reads a job the principal requested.
+func (s *Service) GetMetadataGenerationJob(ctx context.Context, query GetMetadataGenerationJobQuery) (Job, error) {
+	var job Job
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		job, err = loadJobForRequester(ctx, store, auth.GetUser(ctx), query.JobID)
+		return err
+	})
+	return job, err
+}
+
+// ResolveMetadataGenerationJobCommand applies or dismisses a ready job.
+type ResolveMetadataGenerationJobCommand struct {
+	JobID      string
+	Resolution Resolution
+}
+
+// ResolveMetadataGenerationJob moves a ready job the principal requested to
+// applied or dismissed.
+func (s *Service) ResolveMetadataGenerationJob(ctx context.Context, command ResolveMetadataGenerationJobCommand) (Job, error) {
+	user := auth.GetUser(ctx)
+	var job Job
+	resolved, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Job, Store]{
+		// The job's requester is the only principal that may resolve it.
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			var err error
+			job, err = loadJobForRequester(ctx, store, user, command.JobID)
+			return err
+		}),
+		Change: func(ctx context.Context, store Store) (Job, error) {
+			return resolveMetadataJob(ctx, store, job, command.Resolution)
+		},
+		// Metadata jobs are operational queue rows, not audited content.
+		Audit: func(Job) mutation.Audit { return mutation.Unchanged() },
+	})
+	if err != nil {
+		return Job{}, err
+	}
+	slog.Info("Metadata AI job resolved",
+		"job_id", resolved.ID,
+		"requester_member_id", user.MemberID.String(),
+		"status", string(resolved.Status),
+	)
+	return resolved, nil
+}
+
+func resolveMetadataJob(
+	ctx context.Context,
+	store Store,
+	job Job,
+	resolution Resolution,
+) (Job, error) {
+	if job.Status != JobReady {
+		return Job{}, domainerr.InvalidField("job_id", "metadata AI job is not ready to apply or dismiss")
+	}
 	now := dbtime.Now()
-	nextStatus := metadataAIJobStatusDismissed
-	if resolution == managev1.MetadataGenerationJobResolution_METADATA_GENERATION_JOB_RESOLUTION_APPLIED {
-		nextStatus = metadataAIJobStatusApplied
-	} else if resolution != managev1.MetadataGenerationJobResolution_METADATA_GENERATION_JOB_RESOLUTION_DISMISSED {
-		return nil, errs.InvalidArgument("resolution", "unsupported metadata AI resolution")
+	nextStatus := JobDismissed
+	if resolution == ResolutionApplied {
+		nextStatus = JobApplied
+	} else if resolution != ResolutionDismissed {
+		return Job{}, domainerr.InvalidField("resolution", "unsupported metadata AI resolution")
 	}
-
-	updates := structured.Fields{
-		"status":      nextStatus,
-		"resolved_at": now,
-		"updated_at":  now,
+	resolved, err := store.ResolveJob(ctx, job.ID, nextStatus, now)
+	if err != nil {
+		return Job{}, fmt.Errorf("failed to resolve metadata AI job: %w", err)
 	}
-	result := m.db.WithContext(ctx).
-		Model(&metadataJobRecord{}).
-		Where("id = ? AND status = ?", job.ID, metadataAIJobStatusReady).
-		Updates(updates)
-	if result.Error != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to resolve metadata AI job: %w", result.Error))
+	if !resolved {
+		return Job{}, domainerr.Precondition("metadata AI job is no longer ready to apply or dismiss")
 	}
-	if result.RowsAffected == 0 {
-		return nil, errs.FailedPrecondition("metadata AI job is no longer ready to apply or dismiss")
-	}
-
 	job.Status = nextStatus
 	job.ResolvedAt = &now
 	job.UpdatedAt = now
-
-	slog.Info("Metadata AI job resolved",
-		"job_id", job.ID,
-		"requester_member_id", user.MemberID.String(),
-		"status", nextStatus,
-	)
-
-	return m.toProtoJob(job, true), nil
+	return job, nil
 }
 
-func (m *MetadataJobManager) loadJobForRequester(
+func loadJobForRequester(
 	ctx context.Context,
+	store Store,
 	user *auth.UserInfo,
 	jobID string,
-) (*metadataJobRecord, error) {
+) (Job, error) {
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return Job{}, domainerr.AuthenticationRequired()
 	}
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
-		return nil, errs.Required("job_id")
+		return Job{}, domainerr.Required("job_id")
 	}
-
-	var job metadataJobRecord
-	if err := m.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("metadata_ai_job", jobID)
+	job, err := store.Job(ctx, jobID)
+	if err != nil {
+		if errors.Is(err, ErrJobNotFound) {
+			return Job{}, domainerr.ResourceNotFound("metadata_ai_job", jobID)
 		}
-		return nil, errs.Internal(fmt.Errorf("failed to load metadata AI job: %w", err))
+		return Job{}, fmt.Errorf("failed to load metadata AI job: %w", err)
 	}
 	if job.RequesterMemberID != user.MemberID.String() {
-		return nil, errs.PermissionDenied(errs.MsgPermissionDenied)
+		return Job{}, domainerr.Denied("permission denied")
 	}
-	return &job, nil
-}
-
-func (m *MetadataJobManager) toProtoJob(
-	job *metadataJobRecord,
-	includeSuggestion bool,
-) *managev1.MetadataGenerationJob {
-	if job == nil {
-		return nil
-	}
-
-	message := &managev1.MetadataGenerationJob{
-		Id:                job.ID,
-		Target:            &managev1.AIResourceTarget{Type: resolveAIResourceType(job.TargetType), Id: job.TargetID},
-		RequesterMemberId: job.RequesterMemberID,
-		Status:            resolveMetadataAIJobStatus(job.Status),
-		RequestedKeys:     append([]string(nil), job.RequestedKeys...),
-		CreatedAt:         timestamppb.New(job.CreatedAt),
-		UpdatedAt:         timestamppb.New(job.UpdatedAt),
-	}
-	if includeSuggestion && len(job.Suggestion) > 0 {
-		message.Suggestion = buildMetadataSuggestionMessage(job.Suggestion)
-	}
-	if job.Error != nil && strings.TrimSpace(*job.Error) != "" {
-		message.Error = job.Error
-	}
-	if job.Provider != nil && strings.TrimSpace(*job.Provider) != "" {
-		message.Provider = job.Provider
-	}
-	if job.Model != nil && strings.TrimSpace(*job.Model) != "" {
-		message.Model = job.Model
-	}
-	if job.DurationMS != nil {
-		message.DurationMs = job.DurationMS
-	}
-	if job.StartedAt != nil {
-		message.StartedAt = timestamppb.New(*job.StartedAt)
-	}
-	if job.CompletedAt != nil {
-		message.CompletedAt = timestamppb.New(*job.CompletedAt)
-	}
-	if job.ResolvedAt != nil {
-		message.ResolvedAt = timestamppb.New(*job.ResolvedAt)
-	}
-	return message
-}
-
-func resolveMetadataAIJobStatus(status string) managev1.MetadataGenerationJobStatus {
-	switch status {
-	case metadataAIJobStatusQueued:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_QUEUED
-	case metadataAIJobStatusRunning:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_RUNNING
-	case metadataAIJobStatusReady:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_READY
-	case metadataAIJobStatusFailed:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_FAILED
-	case metadataAIJobStatusApplied:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_APPLIED
-	case metadataAIJobStatusDismissed:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_DISMISSED
-	default:
-		return managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_UNSPECIFIED
-	}
-}
-
-func resolveAIResourceType(value string) managev1.AIResourceType {
-	switch value {
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_POST.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_POST
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_WORK.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_WORK
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_FORM.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_FORM
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE.String():
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE
-	default:
-		return managev1.AIResourceType_AI_RESOURCE_TYPE_UNSPECIFIED
-	}
+	return job, nil
 }

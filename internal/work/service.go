@@ -2,111 +2,42 @@ package work
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/google/uuid"
 )
-
-// workSortConfig defines allowed sort fields for works
-var workSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"created_at":   "created_at",
-		"updated_at":   "updated_at",
-		"published_at": "published_at",
-		"title":        WorkSourceTitleSQL("work"),
-		"status":       "status",
-		"slug":         "slug",
-		"type":         "type",
-		"featured":     "featured",
-	},
-	DefaultSort: "created_at DESC",
-}
-
-var myCreditedWorkSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"title":      WorkSourceTitleSQL("w"),
-		"type":       "w.type",
-		"status":     "w.status",
-		"created_at": "w.created_at",
-		"updated_at": "w.updated_at",
-	},
-	DefaultSort: "w.created_at DESC, wc.id DESC",
-}
-
-var myCreditedWorkFilterConfig = &queryutil.FilterConfig{
-	Fields: map[string]queryutil.FieldDef{
-		"search": {
-			Type:          queryutil.TypeText,
-			AllowedOps:    queryutil.SearchOps,
-			SearchColumns: []string{WorkSourceTitleSQL("w")},
-		},
-		"title": {
-			Column:     WorkSourceTitleSQL("w"),
-			Type:       queryutil.TypeText,
-			AllowedOps: queryutil.TextOps,
-		},
-		"type": {
-			Column:     "w.type",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				managev1.WorkType_WORK_TYPE_MUSIC_PROJECT.String(),
-				managev1.WorkType_WORK_TYPE_PORTFOLIO.String(),
-				managev1.WorkType_WORK_TYPE_ARTICLE.String(),
-				managev1.WorkType_WORK_TYPE_CONTRIBUTION.String(),
-			},
-		},
-		"status": {
-			Column:     "w.status",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
-				managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-				managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-			},
-		},
-	},
-}
-
-// ArtistSourceTitleSQL is the read projection used by Work credit views.
-func ArtistSourceTitleSQL(tableAlias string) string {
-	alias := strings.TrimSpace(tableAlias)
-	if alias == "" {
-		alias = "artist"
-	}
-	return "COALESCE((SELECT at.title FROM artist_translation AS at WHERE at.entity_id = " + alias + ".id AND at.locale = " + alias + ".source_locale LIMIT 1), '')"
-}
 
 func validateWorkDatePoint(yearField, monthField string, year, month int32) error {
 	if year < 1 || year > 9999 {
-		return errs.InvalidArgument(yearField, "must be between 1 and 9999")
+		return domainerr.InvalidField(yearField, "must be between 1 and 9999")
 	}
 	if month < 1 || month > 12 {
-		return errs.InvalidArgument(monthField, "must be between 1 and 12")
+		return domainerr.InvalidField(monthField, "must be between 1 and 12")
 	}
 	return nil
 }
@@ -118,22 +49,22 @@ func validateWorkRange(year, month int32, untilYear, untilMonth *int32, isPresen
 
 	if isPresent {
 		if untilYear != nil || untilMonth != nil {
-			return errs.InvalidArgument("until", "must be empty when is_present is true")
+			return domainerr.InvalidField("until", "must be empty when is_present is true")
 		}
 		return nil
 	}
 
 	if untilYear == nil {
-		return errs.Required("until_year")
+		return domainerr.Required("until_year")
 	}
 	if untilMonth == nil {
-		return errs.Required("until_month")
+		return domainerr.Required("until_month")
 	}
 	if err := validateWorkDatePoint("until_year", "until_month", *untilYear, *untilMonth); err != nil {
 		return err
 	}
 	if *untilYear < year || (*untilYear == year && *untilMonth < month) {
-		return errs.InvalidArgument("until", "must not be earlier than from")
+		return domainerr.InvalidField("until", "must not be earlier than from")
 	}
 
 	return nil
@@ -156,423 +87,396 @@ func sanitizeWorkMetadata(metadata structured.Fields) structured.Fields {
 	return sanitized
 }
 
-// WorkService implements the WorkService Connect handler
-type WorkService struct {
-	managev1connect.UnimplementedWorkServiceHandler
-	db             *gorm.DB
-	runtime        Runtime
-	spiceDB        *auth.SpiceDBClient
-	kratosClient   auth.IdentityManager
-	asyncPublisher AsyncPublisher
-	auditWriter    domainaudit.Appender
-	contentBlocks  *contentblock.Store
-	mediaHydrator  AuthorizedContentBlockMediaHydrator
-	members        MemberSummaryLoader
+// Authorizer is the SpiceDB port of the Work use cases: the fresh checks
+// and relationship writes of the mutation pipeline. *auth.SpiceDBClient
+// implements it.
+type Authorizer = mutation.Authorizer
+
+// MemberSummaryLoader supplies the Member summaries of credits.
+type MemberSummaryLoader interface {
+	LoadMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
-type WorkServiceOption func(*WorkService)
-
-func WithWorkContentBlockStore(store *contentblock.Store) WorkServiceOption {
-	return func(s *WorkService) {
-		s.contentBlocks = store
-	}
+// Deps are the collaborators of the Work use cases; all are required.
+type Deps struct {
+	Units   mutation.UnitOfWork[Store] // workpostgres.NewUnits
+	SpiceDB Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
+	Members MemberSummaryLoader
 }
 
-func WithWorkContentBlockMediaHydrator(hydrator AuthorizedContentBlockMediaHydrator) WorkServiceOption {
-	return func(s *WorkService) {
-		s.mediaHydrator = hydrator
-	}
-}
-
-func WithWorkMemberSummaryLoader(loader MemberSummaryLoader) WorkServiceOption {
-	return func(s *WorkService) { s.members = loader }
-}
-
-// NewWorkService creates a new WorkService
-func NewWorkService(db *gorm.DB, runtime Runtime, spiceDB *auth.SpiceDBClient, kratosClient auth.IdentityManager, asyncPublisher AsyncPublisher, options ...WorkServiceOption) *WorkService {
-	if db == nil {
-		panic("db is required")
-	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
-	}
-	if kratosClient == nil {
-		panic("kratosClient is required")
-	}
-	if asyncPublisher == nil {
-		panic("asyncPublisher is required")
-	}
-	if runtime == nil {
-		panic("Work runtime is required")
-	}
-	service := &WorkService{
-		db:             db,
-		runtime:        runtime,
-		spiceDB:        spiceDB,
-		kratosClient:   kratosClient,
-		asyncPublisher: asyncPublisher,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Members": d.Members == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
 		}
 	}
-	return service
-}
-
-func NewAuditedWorkService(
-	db *gorm.DB,
-	runtime Runtime,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	asyncPublisher AsyncPublisher,
-	auditWriter domainaudit.Appender,
-	options ...WorkServiceOption,
-) *WorkService {
-	if auditWriter == nil {
-		panic("work audit writer is required")
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("work dependencies are required: " + strings.Join(missing, ", "))
 	}
-	service := NewWorkService(db, runtime, spiceDB, kratosClient, asyncPublisher, options...)
-	service.auditWriter = auditWriter
-	return service
+	return nil
 }
 
-// =============================================================================
-// Read Methods (the management surface is Site Admin-only)
-// =============================================================================
+// Service holds the Work use cases: Site Admin management, credits,
+// versions, the collaboration boundary and AI documents. Adapters translate
+// their requests into its commands and queries.
+type Service struct {
+	units     mutation.UnitOfWork[Store]
+	spiceDB   Authorizer
+	fence     identitystate.Fence
+	members   MemberSummaryLoader
+	mutations *mutation.StoreRunner[Store]
+}
+
+// NewService validates deps and returns the Work use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		units: deps.Units, spiceDB: deps.SpiceDB, fence: deps.Fence, members: deps.Members, mutations: mutations,
+	}, nil
+}
+
+// read runs read in one read snapshot of the Work store.
+func (s *Service) read(ctx context.Context, read func(Store) error) error {
+	return s.units.Read(ctx, read)
+}
+
+// Page selects a page of a list. A zero Limit reads the list's default.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
+
+// Pagination is where a page sits among every match.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
+func paginationOf(pg queryutil.Pagination, total int64) Pagination {
+	return Pagination{Total: int32(total), Limit: pg.Limit, Offset: pg.Offset, HasMore: pg.HasMore(total)}
+}
+
+// GetWorkQuery reads a Work for the Site Admin management surface.
+type GetWorkQuery struct{ ID string }
+
+// ListWorksAdminQuery lists every Work with its credit and client counts.
+// The filters has_slug and has_featured_image test presence.
+type ListWorksAdminQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// CreateWorkCommand creates a draft Work. SourceLocale, when empty, is the
+// creator's preferred locale or one AcceptLanguage names; a nil Metadata
+// stores none.
+type CreateWorkCommand struct {
+	Title          string
+	Slug           *string
+	Type           string
+	Summary        *string
+	Metadata       structured.Fields
+	Featured       *bool
+	Year           int32
+	Month          int32
+	UntilYear      *int32
+	UntilMonth     *int32
+	IsPresent      *bool
+	SourceLocale   string
+	Document       *contentv1.RichTextDocument
+	AcceptLanguage string
+}
+
+type DeleteWorkCommand struct{ ID string }
+type PublishWorkCommand struct{ ID string }
+type UnpublishWorkCommand struct{ ID string }
+type SetWorkFeaturedImageCommand struct{ WorkID, FileID string }
+type DeleteWorkFeaturedImageCommand struct{ WorkID string }
+
+// AdminWork is a Work of the admin list with its credit and client counts.
+type AdminWork struct {
+	View        View
+	CreditCount int32
+	ClientCount int32
+}
+
+// AdminWorkPage is one page of the admin list.
+type AdminWorkPage struct {
+	Works      []AdminWork
+	Pagination Pagination
+}
 
 // GetWork retrieves a Work for the Site Admin management surface.
-func (s *WorkService) GetWork(
-	ctx context.Context,
-	req *connect.Request[managev1.GetWorkRequest],
-) (_ *connect.Response[managev1.Work], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "GetWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var work model.Work
-	if err := s.db.WithContext(ctx).
-		Where("id = ?", req.Msg.Id).
-		First(&work).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+func (s *Service) GetWork(ctx context.Context, query GetWorkQuery) (View, error) {
+	stored, err := s.findWork(ctx, query.ID)
+	if err != nil {
+		return View{}, err
 	}
-	if err := s.requireWorkViewOrNotFound(ctx, work); err != nil {
-		return nil, err
+	if err := s.requireWorkViewOrNotFound(ctx, stored); err != nil {
+		return View{}, err
 	}
-	if sourceState, err := loadWorkSourceLocaleDocumentState(ctx, s.db, work.ID); err != nil {
-		return nil, err
-	} else {
-		overlayWorkSourceLocaleDocument(&work, sourceState)
+	work, err := s.viewWithSourceDocument(ctx, stored)
+	if err != nil {
+		return View{}, err
 	}
 	if err := s.hydrateWorkContentProjection(ctx, &work); err != nil {
-		return nil, err
+		return View{}, err
 	}
-
-	imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID)
-	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, work.OgAssetID)
-	if err != nil {
-		return nil, err
+	work.FeaturedImage = s.getWorkFeaturedImageAsset(ctx, work.ID)
+	if work.OgAsset, err = s.readyManageOgAssetRef(ctx, work.OgAssetID); err != nil {
+		return View{}, err
 	}
-	protoWork := s.toProtoWork(&work, imageAsset, ogAsset)
-	protoWork.Clients, err = s.getWorkClients(ctx, work.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoWork), nil
-}
-
-// GetWorkCredits returns Work attribution for the Site Admin management surface.
-func (s *WorkService) ListWorksAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListWorksAdminRequest],
-) (_ *connect.Response[managev1.ListWorksAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListWorksAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Check admin role
-	if err := requireWorkList(ctx, s.spiceDB); err != nil {
-		return nil, err
-	}
-	var works []model.Work
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Work{})
-
-	// Handle special presence filters (has_slug, has_featured_image) before ApplyFilters
-	// These are not in FilterConfig, so we process them separately
-	var standardFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		switch f.GetField() {
-		case "has_slug":
-			if f.GetValue() == "true" {
-				query = query.Where("slug IS NOT NULL AND slug != ''")
-			} else if f.GetValue() == "false" {
-				query = query.Where("slug IS NULL OR slug = ''")
-			}
-		case "has_featured_image":
-			if f.GetValue() == "true" {
-				query = query.Where("featured_image_file_id IS NOT NULL")
-			} else if f.GetValue() == "false" {
-				query = query.Where("featured_image_file_id IS NULL")
-			}
-		default:
-			standardFilters = append(standardFilters, f)
-		}
-	}
-
-	// Apply standard filters using FilterConfig
-	var err error
-	query, err = WorkAdminFilterConfig.ApplyFilters(query, standardFilters)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	pg := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-
-	// Apply sorting
-	query, err = workSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-	query = query.Order("work.id ASC")
-
-	if err := query.Limit(int(pg.Limit)).Offset(int(pg.Offset)).Find(&works).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	sourceStates, err := loadWorkSourceLocaleDocumentStates(ctx, s.db, collectManageWorkIDs(works))
-	if err != nil {
-		return nil, err
-	}
-	for i := range works {
-		overlayWorkSourceLocaleDocument(&works[i], sourceStates[works[i].ID])
-	}
-	if err := s.hydrateWorkContentProjections(ctx, works); err != nil {
-		return nil, err
-	}
-	readyOgAssets, err := s.loadReadyWorkOgAssets(ctx, works)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get stats for each work
-	workIDs := make([]string, len(works))
-	for i, w := range works {
-		workIDs[i] = w.ID
-	}
-
-	// Get credit counts
-	creditCounts := make(map[string]int32)
-	if len(workIDs) > 0 {
-		var creditStats []struct {
-			WorkID string
-			Count  int32
-		}
-		if err := s.db.WithContext(ctx).
-			Table("work_credit").
-			Select("work_id, COUNT(*) as count").
-			Where("work_id IN ?", workIDs).
-			Group("work_id").
-			Scan(&creditStats).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to get credit counts", failurecause.Attr(err))
-		}
-		for _, stat := range creditStats {
-			creditCounts[stat.WorkID] = stat.Count
-		}
-	}
-
-	// Get client counts
-	clientCounts := make(map[string]int32)
-	if len(workIDs) > 0 {
-		var clientStats []struct {
-			WorkID string
-			Count  int32
-		}
-		if err := s.db.WithContext(ctx).
-			Table("work_client").
-			Select("work_id, COUNT(*) as count").
-			Where("work_id IN ?", workIDs).
-			Group("work_id").
-			Scan(&clientStats).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to get client counts", failurecause.Attr(err))
-		}
-		for _, stat := range clientStats {
-			clientCounts[stat.WorkID] = stat.Count
-		}
-	}
-
-	// Convert to proto with stats
-	protoWorks := make([]*managev1.WorkWithStats, len(works))
-	for i, work := range works {
-		imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID)
-		protoWorks[i] = &managev1.WorkWithStats{
-			Work:        s.toProtoWork(&work, imageAsset, manageOgAssetFromReadyMap(readyOgAssets, work.OgAssetID)),
-			CreditCount: creditCounts[work.ID],
-			ClientCount: clientCounts[work.ID],
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListWorksAdminResponse{
-		Works:      protoWorks,
-		Pagination: pg.BuildResponse(total),
-	}), nil
-}
-
-// CreateWork creates a new work (admin only)
-func (s *WorkService) CreateWork(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateWorkRequest],
-) (_ *connect.Response[managev1.Work], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Work content Block store is not configured")
-	}
-	title := strings.TrimSpace(req.Msg.Title)
-	work, err := s.newWorkFromCreateRequest(ctx, req.Msg, title)
-	if err != nil {
-		return nil, err
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		return s.createWorkWithDB(
-			ctx, tx, &work, title, req.Msg.Summary, req.Msg.Document,
-			req.Msg.SourceLocale, req.Header().Get("Accept-Language"),
-			write,
-		)
-	})
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		if strings.Contains(err.Error(), "duplicate key") {
-			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("work", "slug")
-		}
-		return nil, errs.Internal(err)
-	}
-	loadedWork, err := s.loadCreatedWork(ctx, work.ID)
-	if err != nil {
-		return nil, err
-	}
-	return s.workResponseWithReadyOg(ctx, &loadedWork, nil)
-}
-
-func (s *WorkService) newWorkFromCreateRequest(
-	ctx context.Context,
-	request *managev1.CreateWorkRequest,
-	title string,
-) (model.Work, error) {
-	if title == "" {
-		return model.Work{}, errs.Required("title")
-	}
-	if request.Type == managev1.WorkType_WORK_TYPE_UNSPECIFIED {
-		return model.Work{}, errs.Required("type")
-	}
-	if request.Year == 0 {
-		return model.Work{}, errs.Required("year")
-	}
-	if request.Month == 0 {
-		return model.Work{}, errs.Required("month")
-	}
-	isPresent := request.IsPresent != nil && *request.IsPresent
-	untilYear, untilMonth := request.UntilYear, request.UntilMonth
-	if isPresent {
-		untilYear, untilMonth = nil, nil
-	}
-	if err := validateWorkRange(request.Year, request.Month, untilYear, untilMonth, isPresent); err != nil {
-		return model.Work{}, err
-	}
-	slug, present := normalizeOptionalNullableString(request.Slug)
-	if err := s.validateNewWorkSlug(ctx, slug); err != nil {
-		return model.Work{}, err
-	}
-	work := model.Work{
-		Type: request.Type.String(), Year: request.Year, Month: request.Month,
-		UntilYear: untilYear, UntilMonth: untilMonth, IsPresent: isPresent,
-		Status: managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
-	}
-	if present {
-		work.Slug = slug
-	}
-	if request.Metadata != nil {
-		work.Metadata = sanitizeWorkMetadata(request.Metadata.AsMap())
-	}
-	if request.Featured != nil {
-		work.Featured = *request.Featured
+	if work.Clients, err = s.getWorkClients(ctx, work.ID); err != nil {
+		return View{}, err
 	}
 	return work, nil
 }
 
-func (s *WorkService) validateNewWorkSlug(ctx context.Context, slug *string) error {
+// findWork reads the Work row; a missing one answers not found.
+func (s *Service) findWork(ctx context.Context, workID string) (Work, error) {
+	var work Work
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		work, err = store.FindWork(ctx, workID)
+		return err
+	})
+	if errors.Is(err, ErrWorkNotFound) {
+		return Work{}, domainerr.ResourceNotFound("work", workID)
+	}
+	return work, err
+}
+
+// ListWorksAdmin returns a page of every Work with its credit and client
+// counts (Site Admin-only).
+func (s *Service) ListWorksAdmin(ctx context.Context, query ListWorksAdminQuery) (AdminWorkPage, error) {
+	if err := requireWorkList(ctx, s.spiceDB); err != nil {
+		return AdminWorkPage{}, err
+	}
+	pg := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.DefaultPaginationConfig)
+	var stored []Work
+	var total int64
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		stored, total, err = store.ListWorks(ctx, AdminListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: pg.Limit, Offset: pg.Offset})
+		return err
+	}); err != nil {
+		return AdminWorkPage{}, err
+	}
+	workIDs := collectWorkIDs(stored)
+	sourceDocuments, err := s.loadSourceDocuments(ctx, workIDs)
+	if err != nil {
+		return AdminWorkPage{}, err
+	}
+	views := make([]View, len(stored))
+	for i := range stored {
+		if source, ok := sourceDocuments[stored[i].ID]; ok {
+			views[i] = viewOf(stored[i], &source)
+		} else {
+			views[i] = viewOf(stored[i], nil)
+		}
+	}
+	for i := range views {
+		if err := s.hydrateWorkContentProjection(ctx, &views[i]); err != nil {
+			return AdminWorkPage{}, err
+		}
+	}
+	readyOgAssets, err := s.loadReadyWorkOgAssets(ctx, views)
+	if err != nil {
+		return AdminWorkPage{}, err
+	}
+	creditCounts := s.countWorkRows(ctx, Store.CountCredits, workIDs, "count_work_credits",
+		"Work credit count lookup failed; listing works without credit counts")
+	clientCounts := s.countWorkRows(ctx, Store.CountClients, workIDs, "count_work_clients",
+		"Work client count lookup failed; listing works without client counts")
+	works := make([]AdminWork, len(views))
+	for i := range views {
+		views[i].FeaturedImage = s.getWorkFeaturedImageAsset(ctx, views[i].ID)
+		views[i].OgAsset = manageOgAssetFromReadyMap(readyOgAssets, views[i].OgAssetID)
+		works[i] = AdminWork{View: views[i], CreditCount: creditCounts[views[i].ID], ClientCount: clientCounts[views[i].ID]}
+	}
+	return AdminWorkPage{Works: works, Pagination: paginationOf(pg, total)}, nil
+}
+
+// countWorkRows counts rows per Work. A failed count is logged and listed
+// as zero.
+func (s *Service) countWorkRows(
+	ctx context.Context,
+	count func(Store, context.Context, []string) (map[string]int32, error),
+	workIDs []string,
+	operation, message string,
+) map[string]int32 {
+	counts := make(map[string]int32)
+	if len(workIDs) == 0 {
+		return counts
+	}
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		counts, err = count(store, ctx, workIDs)
+		return err
+	}); err != nil {
+		slog.ErrorContext(ctx, message, "domain", "work", "operation", operation, failurecause.Attr(err))
+		return map[string]int32{}
+	}
+	return counts
+}
+
+// CreateWork creates a draft Work (Site Admin-only).
+func (s *Service) CreateWork(ctx context.Context, command CreateWorkCommand) (View, error) {
+	title := strings.TrimSpace(command.Title)
+	work, err := s.newWorkFromCreateCommand(ctx, command, title)
+	if err != nil {
+		return View{}, err
+	}
+	created, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Work, Store]{
+		Access: mutation.FreshAdminCan(policyv1.Work.Create()),
+		Change: func(ctx context.Context, store Store) (Work, error) {
+			err := s.createWork(ctx, store, &work, title, command)
+			return work, err
+		},
+		Audit: func(work Work) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditWorkCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkCreatedAuditRecord(metadata, work.ID)
+			})
+		},
+		Outbox: func(ctx context.Context, store Store, work Work) error {
+			_, err := requestWorkOG(ctx, store, work.ID, "", "work_created")
+			return err
+		},
+		Relationships: workPolicyRelationships(true),
+	})
+	if err != nil {
+		if errors.Is(err, ErrSlugTaken) && !mutation.IsClassified(err) {
+			return View{}, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
+		}
+		return View{}, err
+	}
+	loaded, err := s.loadCreatedWork(ctx, created.ID)
+	if err != nil {
+		return View{}, err
+	}
+	return s.workResponseWithReadyOg(ctx, loaded, nil)
+}
+
+// workPolicyRelationships returns the Work's policy relationship batch:
+// touched when the Work is created, deleted when it is deleted, each with
+// its exact inverse.
+func workPolicyRelationships(created bool) func(Work) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	return func(work Work) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		touch, err := policyv1.Work.TouchPolicy(work.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		remove, err := policyv1.Work.DeletePolicy(work.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if created {
+			return []policyv1.RelationshipMutation{touch}, []policyv1.RelationshipMutation{remove}, nil
+		}
+		return []policyv1.RelationshipMutation{remove}, []policyv1.RelationshipMutation{touch}, nil
+	}
+}
+
+func (s *Service) newWorkFromCreateCommand(
+	ctx context.Context,
+	command CreateWorkCommand,
+	title string,
+) (Work, error) {
+	if title == "" {
+		return Work{}, domainerr.Required("title")
+	}
+	if command.Type == "" {
+		return Work{}, domainerr.Required("type")
+	}
+	if command.Year == 0 {
+		return Work{}, domainerr.Required("year")
+	}
+	if command.Month == 0 {
+		return Work{}, domainerr.Required("month")
+	}
+	isPresent := command.IsPresent != nil && *command.IsPresent
+	untilYear, untilMonth := command.UntilYear, command.UntilMonth
+	if isPresent {
+		untilYear, untilMonth = nil, nil
+	}
+	if err := validateWorkRange(command.Year, command.Month, untilYear, untilMonth, isPresent); err != nil {
+		return Work{}, err
+	}
+	slug, present := normalizeOptionalNullableString(command.Slug)
+	if err := s.validateWorkSlug(ctx, slug); err != nil {
+		return Work{}, err
+	}
+	work := Work{
+		Type: command.Type, Year: command.Year, Month: command.Month,
+		UntilYear: untilYear, UntilMonth: untilMonth, IsPresent: isPresent,
+		Status: StatusDraft,
+	}
+	if present {
+		work.Slug = slug
+	}
+	if command.Metadata != nil {
+		work.Metadata = sanitizeWorkMetadata(command.Metadata)
+	}
+	if command.Featured != nil {
+		work.Featured = *command.Featured
+	}
+	return work, nil
+}
+
+// validateWorkSlug validates a requested slug and requires, before the
+// mutation, that no route uses it.
+func (s *Service) validateWorkSlug(ctx context.Context, slug *string) error {
 	if slug == nil {
 		return nil
 	}
-	if err := validateSlugWithoutSlash(*slug); err != nil {
+	if err := pathslug.Validate(*slug); err != nil {
 		return err
 	}
-	return routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "work", "works", *slug)
+	return s.read(ctx, func(store Store) error { return store.CheckResourceRoute(ctx, *slug) })
 }
 
-func (s *WorkService) createWorkWithDB(
+func (s *Service) createWork(
 	ctx context.Context,
-	tx *gorm.DB,
-	work *model.Work,
+	store Store,
+	work *Work,
 	title string,
-	summary *string,
-	document *contentv1.RichTextDocument,
-	requestedLocale string,
-	acceptLanguage string,
-	write authzmutation.WriteRelationships,
+	command CreateWorkCommand,
 ) error {
-	if err := requireLockedWorkCreate(ctx, tx, s.spiceDB); err != nil {
-		return err
-	}
 	if work.Slug != nil && *work.Slug != "" {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "work", "works", *work.Slug); err != nil {
+		if err := store.LockResourceRoute(ctx, *work.Slug); err != nil {
 			return err
 		}
 	}
 	now := time.Now().UTC()
-	sourceLocale, err := resolveCreateSourceLocale(ctx, tx, s.kratosClient, requestedLocale, acceptLanguage)
+	sourceLocale, err := resolveCreateSourceLocale(ctx, store, command.SourceLocale, command.AcceptLanguage)
 	if err != nil {
 		return err
 	}
 	work.SourceLocale = sourceLocale
-	if document != nil {
+	if document := command.Document; document != nil {
 		if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK {
-			return errs.InvalidArgument("document.profile", "must be Work")
+			return domainerr.InvalidField("document.profile", "must be Work")
 		}
 		if document.GetSourceLocale() != sourceLocale {
-			return errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
+			return domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
 		}
 	}
-	createdDocument, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	createdDocument, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile:      workContentDocumentProfile,
 		SourceLocale: sourceLocale,
 	})
@@ -581,534 +485,339 @@ func (s *WorkService) createWorkWithDB(
 	}
 	documentID := createdDocument.Document.ID.String()
 	work.ContentDocumentID = &documentID
-	if err := tx.Clauses(clause.Returning{Columns: []clause.Column{
-		{Name: "id"}, {Name: "created_at"}, {Name: "updated_at"},
-	}}).Create(work).Error; err != nil {
+	if err := store.InsertWork(ctx, work); err != nil {
 		return err
 	}
-	if document != nil {
-		replace, replaceErr := contentblock.ReplaceFromRichTextProto(
-			createdDocument.Document.ID,
-			createdDocument.Document.Revision,
-			document,
-		)
-		if replaceErr != nil {
-			return normalizeWorkContentBlockError(replaceErr)
+	if command.Document != nil {
+		replace, err := contentblock.ReplaceFromRichTextProto(createdDocument.Document.ID, createdDocument.Document.Revision, command.Document)
+		if err != nil {
+			return normalizeWorkContentBlockError(err)
 		}
-		if _, replaceErr = s.contentBlocks.ReplaceSnapshot(
-			ctx,
-			tx,
-			replace,
-			workContentCreationFence(work.ID, sourceLocale),
-		); replaceErr != nil {
-			return normalizeWorkContentBlockError(replaceErr)
+		if _, err := store.ReplaceContentSnapshot(ctx, replace, workContentCreationFence(work.ID, sourceLocale)); err != nil {
+			return normalizeWorkContentBlockError(err)
 		}
 	}
-	if err := createInitialWorkSourceLocaleMetadata(
-		ctx, tx, work.ID, sourceLocale, title, summary, now,
-	); err != nil {
-		return err
-	}
-	_, err = s.runtime.RequestCurrentWithDB(
-		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, work.ID, "", false, "work_created",
-	)
-	if err != nil {
-		return err
-	}
-	touchPolicy, err := policyv1.Work.TouchPolicy(work.ID)
-	if err != nil {
-		return err
-	}
-	deletePolicy, err := policyv1.Work.DeletePolicy(work.ID)
-	if err != nil {
-		return err
-	}
-	if err := write(
-		[]policyv1.RelationshipMutation{touchPolicy},
-		[]policyv1.RelationshipMutation{deletePolicy},
-	); err != nil {
-		return err
-	}
-	if s.auditWriter != nil {
-		if err := domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditWorkCreated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewWorkCreatedAuditRecord(metadata, work.ID)
-			},
-		); err != nil {
-			return err
-		}
-	}
-	return nil
+	return createInitialWorkSourceLocaleMetadata(ctx, store, work.ID, sourceLocale, title, command.Summary, now)
 }
 
-func (s *WorkService) loadCreatedWork(ctx context.Context, workID string) (model.Work, error) {
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", workID).Error; err != nil {
-		return model.Work{}, errs.Internal(err)
+func (s *Service) loadCreatedWork(ctx context.Context, workID string) (View, error) {
+	var stored Work
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		stored, err = store.FindWork(ctx, workID)
+		return err
+	}); err != nil {
+		return View{}, err
 	}
-	sourceState, err := loadWorkSourceLocaleDocumentState(ctx, s.db, work.ID)
-	if err != nil {
-		return model.Work{}, err
-	}
-	overlayWorkSourceLocaleDocument(&work, sourceState)
-	return work, nil
+	return s.viewWithSourceDocument(ctx, stored)
 }
 
 // DeleteWork deletes a Work after it has left the Archived lifecycle state
 // (Site Admin-only).
-func (s *WorkService) DeleteWork(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteWorkRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Work content Block store is not configured")
-	}
-	// First get the work to check featured image
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	documentID, err := loadWorkContentDocumentID(ctx, s.db, work.ID)
+func (s *Service) DeleteWork(ctx context.Context, command DeleteWorkCommand) error {
+	work, err := s.findWork(ctx, command.ID)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	var documentID uuid.UUID
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		documentID, err = loadWorkContentDocumentID(ctx, store, work.ID, Unlocked)
+		return err
+	}); err != nil {
+		return err
+	}
+	var locked Root
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[Work, Store]{
+		Access: lockedWork(work.ID, policyv1.Work.Delete, &locked),
+		Change: func(ctx context.Context, store Store) (Work, error) {
+			if locked.Status == StatusArchived {
+				return work, domainerr.Precondition("archived works must be published before deletion")
+			}
+			return work, deleteWork(ctx, store, work, documentID)
+		},
+		Audit: func(work Work) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditWorkDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkDeletedAuditRecord(metadata, work.ID)
+			})
+		},
+		Relationships: workPolicyRelationships(false),
+	})
+	return err
+}
 
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		lockedWork, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, work.ID, policyv1.Work.Delete, workAuthorizationMutation)
-		if err != nil {
-			return err
-		}
-		if lockedWork.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
-			return errs.FailedPrecondition("archived works must be published before deletion")
-		}
-		if err := s.contentBlocks.DeleteDocument(
-			ctx,
-			tx,
-			documentID,
-			lockedWorkContentFence(),
-		); err != nil {
-			return err
-		}
-		if err := tx.
-			Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK.String(), req.Msg.Id).
-			Delete(&model.ShareLink{}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := s.runtime.CancelAndReleaseEntityWithDB(
-			ctx, tx,
-			managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-			"work", work.ID,
-		); err != nil {
-			return err
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "work", work.ID, "featured_image"); err != nil {
-			return err
-		}
-		if err := tx.Delete(&work).Error; err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.Work.DeletePolicy(work.ID)
-		if err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.Work.TouchPolicy(work.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{deletePolicy},
-			[]policyv1.RelationshipMutation{touchPolicy},
-		); err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditWorkDeleted,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewWorkDeletedAuditRecord(metadata, work.ID)
-				},
-			); err != nil {
+func deleteWork(ctx context.Context, store Store, work Work, documentID uuid.UUID) error {
+	if err := store.DeleteContentDocument(ctx, documentID, lockedWorkContentFence()); err != nil {
+		return err
+	}
+	if err := store.DeleteShareLinks(ctx, work.ID); err != nil {
+		return err
+	}
+	if err := store.CancelOG(ctx, work.ID); err != nil {
+		return err
+	}
+	if err := store.ReleaseFeaturedImage(ctx, work.ID); err != nil {
+		return err
+	}
+	return store.DeleteWork(ctx, work.ID)
+}
+
+// LifecycleChange is the outcome of a publish or unpublish.
+type LifecycleChange struct {
+	ID          string
+	Changed     bool
+	Status      Status
+	PublishedAt *time.Time
+	UpdatedAt   time.Time
+}
+
+// workLifecycleChange is a lifecycle change with what its audit and signal
+// record.
+type workLifecycleChange struct {
+	LifecycleChange
+	previous  sharedtelemetry.AuditState
+	next      sharedtelemetry.AuditState
+	published bool
+}
+
+func (change workLifecycleChange) audit() mutation.Audit {
+	if !change.Changed {
+		return mutation.Unchanged()
+	}
+	return workUpdatedAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewWorkLifecycleAuditRecord(metadata, change.ID, change.previous, change.next)
+	})
+}
+
+func publishLifecycleSignal(ctx context.Context, store Store, change workLifecycleChange) error {
+	if !change.Changed {
+		return nil
+	}
+	fields := []string{"state.status"}
+	if change.published {
+		fields = append(fields, "state.published_at")
+	}
+	return store.PublishContentUpdate(ctx, ContentUpdate{WorkID: change.ID, Kind: StateUpdate, Fields: fields})
+}
+
+func lifecycleOf(work Work) LifecycleChange {
+	return LifecycleChange{ID: work.ID, Status: work.Status, PublishedAt: work.PublishedAt, UpdatedAt: work.UpdatedAt}
+}
+
+// PublishWork publishes a draft Work or restores an archived one (Site
+// Admin-only).
+func (s *Service) PublishWork(ctx context.Context, command PublishWorkCommand) (LifecycleChange, error) {
+	if err := s.requireStoredWork(ctx, command.ID); err != nil {
+		return LifecycleChange{}, err
+	}
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[workLifecycleChange, Store]{
+		Access: lockedWork(command.ID, policyv1.Work.Publish, nil),
+		Change: func(ctx context.Context, store Store) (workLifecycleChange, error) {
+			change := workLifecycleChange{next: sharedtelemetry.AuditStatePublished}
+			work, err := store.FindWork(ctx, command.ID)
+			if err != nil {
+				return change, err
+			}
+			change.LifecycleChange = lifecycleOf(work)
+			if work.Status == StatusPublished {
+				return change, nil
+			}
+			now := dbtime.Now()
+			var publishedAt *time.Time
+			change.previous = sharedtelemetry.AuditStateDraft
+			if work.Status == StatusArchived {
+				change.previous = sharedtelemetry.AuditStateArchived
+			} else {
+				publishedAt = &now
+				change.published = true
+			}
+			if err := store.SetStatus(ctx, command.ID, StatusPublished, publishedAt, now); err != nil {
+				return change, err
+			}
+			change.Status = StatusPublished
+			change.UpdatedAt = now
+			if change.published {
+				change.PublishedAt = &now
+			}
+			change.Changed = true
+			return change, nil
+		},
+		Audit:  workLifecycleChange.audit,
+		Outbox: publishLifecycleSignal,
+	})
+	if err != nil {
+		return LifecycleChange{}, err
+	}
+	return change.LifecycleChange, nil
+}
+
+// UnpublishWork moves a published Work back to draft (Site Admin-only).
+func (s *Service) UnpublishWork(ctx context.Context, command UnpublishWorkCommand) (LifecycleChange, error) {
+	if err := s.requireStoredWork(ctx, command.ID); err != nil {
+		return LifecycleChange{}, err
+	}
+	var locked Root
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[workLifecycleChange, Store]{
+		Access: lockedWork(command.ID, policyv1.Work.Publish, &locked),
+		Change: func(ctx context.Context, store Store) (workLifecycleChange, error) {
+			change := workLifecycleChange{previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft}
+			if locked.Status == StatusArchived {
+				return change, domainerr.Precondition("archived works must be published before they can be unpublished")
+			}
+			work, err := store.FindWork(ctx, command.ID)
+			if err != nil {
+				return change, err
+			}
+			change.LifecycleChange = lifecycleOf(work)
+			if work.Status == StatusDraft {
+				return change, nil
+			}
+			now := dbtime.Now()
+			if err := store.SetStatus(ctx, command.ID, StatusDraft, nil, now); err != nil {
+				return change, err
+			}
+			change.Status = StatusDraft
+			change.UpdatedAt = now
+			change.Changed = true
+			return change, nil
+		},
+		Audit:  workLifecycleChange.audit,
+		Outbox: publishLifecycleSignal,
+	})
+	if err != nil {
+		return LifecycleChange{}, err
+	}
+	return change.LifecycleChange, nil
+}
+
+// requireStoredWork answers a missing Work before the mutation locks it.
+func (s *Service) requireStoredWork(ctx context.Context, workID string) error {
+	return s.read(ctx, func(store Store) error { return requireWorkExists(ctx, store, workID) })
+}
+
+func requireWorkExists(ctx context.Context, store Store, workID string) error {
+	exists, err := store.WorkExists(ctx, workID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domainerr.ResourceNotFound("work", workID)
+	}
+	return nil
+}
+
+// FeaturedImageChange is the outcome of setting a featured image.
+type FeaturedImageChange struct {
+	ImageAsset        *mediaasset.Reference
+	OgGenerationRunID *string
+}
+
+// workFeaturedImageChange is the outcome of a featured image mutation.
+type workFeaturedImageChange struct {
+	fileID     string
+	operation  sharedtelemetry.AuditCollectionOperation
+	imageAsset *mediaasset.Reference
+	changed    bool
+}
+
+func (s *Service) featuredImageSpec(
+	workID string,
+	ogReason string,
+	ogRunID **string,
+	change func(context.Context, Store) (workFeaturedImageChange, error),
+) mutation.StoreSpec[workFeaturedImageChange, Store] {
+	return mutation.StoreSpec[workFeaturedImageChange, Store]{
+		Access: lockedWork(workID, policyv1.Work.Edit, nil),
+		Change: change,
+		Audit: func(change workFeaturedImageChange) mutation.Audit {
+			if !change.changed {
+				return mutation.Unchanged()
+			}
+			return workUpdatedAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkFeaturedImageAuditRecord(metadata, workID, change.fileID, change.operation)
+			})
+		},
+		Outbox: func(ctx context.Context, store Store, change workFeaturedImageChange) error {
+			if !change.changed {
+				return nil
+			}
+			var err error
+			if *ogRunID, err = requestWorkOG(ctx, store, workID, "", ogReason); err != nil {
 				return err
 			}
-		}
-		return nil
-	})
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
+			return store.PublishContentUpdate(ctx, ContentUpdate{WorkID: workID, Kind: MediaUpdate})
+		},
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
 }
 
-// =============================================================================
-// Publish/Unpublish (admin only)
-// =============================================================================
-
-// PublishWork publishes a work (Site Admin-only).
-func (s *WorkService) PublishWork(
-	ctx context.Context,
-	req *connect.Request[managev1.PublishWorkRequest],
-) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "PublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+// SetWorkFeaturedImage sets the Work featured image (Site Admin-only).
+func (s *Service) SetWorkFeaturedImage(ctx context.Context, command SetWorkFeaturedImageCommand) (FeaturedImageChange, error) {
+	if err := s.requireStoredWork(ctx, command.WorkID); err != nil {
+		return FeaturedImageChange{}, err
 	}
-	changedFields := []string{"state.status"}
-	lifecycleChanged := false
-	publishedAtChanged := false
-	var mutationNow time.Time
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, work.ID, policyv1.Work.Publish, workAuthorizationMutation); err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&work, "id = ?", work.ID).Error; err != nil {
-			return err
-		}
-		if work.Status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() {
-			return nil
-		}
-		now := dbtime.Now()
-		mutationNow = now
-		updates := structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(), "updated_at": now}
-		previous := sharedtelemetry.AuditStateDraft
-		if work.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
-			previous = sharedtelemetry.AuditStateArchived
-		} else {
-			updates["published_at"] = now
-			changedFields = append(changedFields, "state.published_at")
-			publishedAtChanged = true
-		}
-		if err := tx.Model(&work).Updates(updates).Error; err != nil {
-			return err
-		}
-		lifecycleChanged = true
-		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkLifecycleAuditRecord(metadata, work.ID, previous, sharedtelemetry.AuditStatePublished)
-		}); err != nil {
-			return err
-		}
-		return publishWorkContentUpdated(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				work.ID,
-				changedFields,
-			),
-		)
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if lifecycleChanged {
-		work.Status = managev1.WorkStatus_WORK_STATUS_PUBLISHED.String()
-		work.UpdatedAt = mutationNow
-		if publishedAtChanged {
-			work.PublishedAt = &mutationNow
-		}
-	}
-	return connect.NewResponse(&managev1.WorkLifecycleMutationResponse{
-		Id: work.ID, Changed: lifecycleChanged,
-		Status:      managev1.WorkStatus(managev1.WorkStatus_value[work.Status]),
-		PublishedAt: timestampProtoPtr(work.PublishedAt), UpdatedAt: timestamppb.New(work.UpdatedAt),
-	}), nil
-}
-
-// UnpublishWork unpublishes a work (Site Admin-only).
-func (s *WorkService) UnpublishWork(
-	ctx context.Context,
-	req *connect.Request[managev1.UnpublishWorkRequest],
-) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UnpublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	lifecycleChanged := false
-	var mutationNow time.Time
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		lockedWork, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, work.ID, policyv1.Work.Publish, workAuthorizationMutation)
-		if err != nil {
-			return err
-		}
-		if lockedWork.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
-			return errs.FailedPrecondition("archived works must be published before they can be unpublished")
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&work, "id = ?", work.ID).Error; err != nil {
-			return err
-		}
-		if work.Status == managev1.WorkStatus_WORK_STATUS_DRAFT.String() {
-			return nil
-		}
-		mutationNow = dbtime.Now()
-		if err := tx.Model(&work).Updates(structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_DRAFT.String(), "updated_at": mutationNow}).Error; err != nil {
-			return err
-		}
-		lifecycleChanged = true
-		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkLifecycleAuditRecord(metadata, work.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft)
-		}); err != nil {
-			return err
-		}
-		return publishWorkContentUpdated(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				work.ID,
-				[]string{"state.status"},
-			),
-		)
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if lifecycleChanged {
-		work.Status = managev1.WorkStatus_WORK_STATUS_DRAFT.String()
-		work.UpdatedAt = mutationNow
-	}
-	return connect.NewResponse(&managev1.WorkLifecycleMutationResponse{
-		Id: work.ID, Changed: lifecycleChanged,
-		Status:      managev1.WorkStatus(managev1.WorkStatus_value[work.Status]),
-		PublishedAt: timestampProtoPtr(work.PublishedAt), UpdatedAt: timestamppb.New(work.UpdatedAt),
-	}), nil
-}
-
-// =============================================================================
-// Featured Image Management (Site Admin-only)
-// =============================================================================
-
-// SetWorkFeaturedImage sets the work featured image
-func (s *WorkService) SetWorkFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetWorkFeaturedImageRequest],
-) (_ *connect.Response[managev1.SetWorkFeaturedImageResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "SetWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	// Verify work exists.
-	var work model.Work
-	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
-		}
-		return nil, errs.Internal(err)
-	}
-	var imageAsset *commonv1.AssetRef
 	var ogRunID *string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current model.Work
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "featured_image_file_id", "status").
-			First(&current, "id = ?", req.Msg.WorkId).Error; err != nil {
-			return err
-		}
-		if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, req.Msg.WorkId, policyv1.Work.Edit, workAuthorizationMutation); err != nil {
-			return err
-		}
-		if current.FeaturedImageFileID != nil && *current.FeaturedImageFileID == req.Msg.FileId {
-			return nil
-		}
-		if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
-		}
-		var file model.File
-		if err := tx.First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&model.Work{}).Where("id = ?", req.Msg.WorkId).Updates(structured.Fields{
-			"featured_image_file_id": req.Msg.FileId,
-			"updated_at":             time.Now(),
-		}).Error; err != nil {
-			return err
-		}
-		imageRef, err := s.runtime.BindReadyAssetForSourceFile(
-			ctx, tx, file.ID, "work", req.Msg.WorkId, "featured_image", "image",
-		)
-		if err != nil {
-			return err
-		}
-		imageAsset = imageRef
-		runID, err := s.runtime.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-			req.Msg.WorkId, "", false, "work_featured_image_updated",
-		)
-		if err != nil {
-			return err
-		}
-		if runID != "" {
-			ogRunID = &runID
-		}
-		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkFeaturedImageAuditRecord(metadata, req.Msg.WorkId, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
-		}); err != nil {
-			return err
-		}
-		return publishWorkContentUpdated(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				work.ID,
-				"media.featured_image",
-			),
-		)
-	})
+	change, err := mutation.Run(ctx, s.mutations, s.featuredImageSpec(command.WorkID, "work_featured_image_updated", &ogRunID,
+		func(ctx context.Context, store Store) (workFeaturedImageChange, error) {
+			change := workFeaturedImageChange{fileID: command.FileID, operation: sharedtelemetry.AuditCollectionOperationAdded}
+			current, err := store.FeaturedImageFileID(ctx, command.WorkID)
+			if err != nil {
+				return change, err
+			}
+			if current != nil && *current == command.FileID {
+				return change, nil
+			}
+			if err := store.LockAttachableFile(ctx, command.FileID); err != nil {
+				return change, err
+			}
+			fileID, err := store.FileID(ctx, command.FileID)
+			if err != nil {
+				return change, err
+			}
+			if err := store.SetFeaturedImage(ctx, command.WorkID, &command.FileID, time.Now()); err != nil {
+				return change, err
+			}
+			change.imageAsset, err = store.BindFeaturedImage(ctx, command.WorkID, fileID)
+			change.changed = err == nil
+			return change, err
+		},
+	))
+	if errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrWorkNotFound) {
+		return FeaturedImageChange{}, domainerr.ResourceNotFound("file", command.FileID)
+	}
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("file", req.Msg.FileId)
-		}
+		return FeaturedImageChange{}, err
+	}
+	return FeaturedImageChange{ImageAsset: change.imageAsset, OgGenerationRunID: ogRunID}, nil
+}
+
+// DeleteWorkFeaturedImage removes the Work featured image (Site Admin-only)
+// and returns the OG generation it started, if any.
+func (s *Service) DeleteWorkFeaturedImage(ctx context.Context, command DeleteWorkFeaturedImageCommand) (*string, error) {
+	var ogRunID *string
+	_, err := mutation.Run(ctx, s.mutations, s.featuredImageSpec(command.WorkID, "work_featured_image_removed", &ogRunID,
+		func(ctx context.Context, store Store) (workFeaturedImageChange, error) {
+			change := workFeaturedImageChange{operation: sharedtelemetry.AuditCollectionOperationRemoved}
+			current, err := store.FeaturedImageFileID(ctx, command.WorkID)
+			if err != nil {
+				return change, err
+			}
+			if current == nil {
+				return change, nil
+			}
+			change.fileID = *current
+			if err := store.SetFeaturedImage(ctx, command.WorkID, nil, time.Now()); err != nil {
+				return change, err
+			}
+			err = store.ReleaseFeaturedImage(ctx, command.WorkID)
+			change.changed = err == nil
+			return change, err
+		},
+	))
+	if errors.Is(err, ErrWorkNotFound) {
+		return nil, domainerr.ResourceNotFound("work", command.WorkID)
+	}
+	if err != nil {
 		return nil, err
 	}
-
-	return connect.NewResponse(&managev1.SetWorkFeaturedImageResponse{
-		ImageAsset: imageAsset, OgGenerationRunId: ogRunID,
-	}), nil
+	return ogRunID, nil
 }
-
-// DeleteWorkFeaturedImage deletes the work featured image
-func (s *WorkService) DeleteWorkFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteWorkFeaturedImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
-	var ogRunID *string
-
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current struct {
-			FeaturedImageFileID *string `gorm:"column:featured_image_file_id"`
-			Status              string  `gorm:"column:status"`
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Table("work").
-			Select("featured_image_file_id", "status").
-			Where("id = ?", req.Msg.WorkId).
-			First(&current).Error; err != nil {
-			return err
-		}
-		if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, req.Msg.WorkId, policyv1.Work.Edit, workAuthorizationMutation); err != nil {
-			return err
-		}
-		if current.FeaturedImageFileID == nil {
-			return nil
-		}
-		result := tx.Model(&model.Work{}).
-			Where("id = ?", req.Msg.WorkId).
-			Updates(structured.Fields{
-				"featured_image_file_id": nil,
-				"updated_at":             time.Now(),
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "work", req.Msg.WorkId, "featured_image"); err != nil {
-			return err
-		}
-		runID, requestErr := s.runtime.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-			req.Msg.WorkId, "", false, "work_featured_image_removed",
-		)
-		if requestErr != nil {
-			return requestErr
-		}
-		if runID != "" {
-			ogRunID = &runID
-		}
-		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkFeaturedImageAuditRecord(metadata, req.Msg.WorkId, *current.FeaturedImageFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-		}); err != nil {
-			return err
-		}
-		return publishWorkContentUpdated(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				req.Msg.WorkId,
-				"media.featured_image",
-			),
-		)
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
-		}
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{
-		Success: true, OgGenerationRunId: ogRunID,
-	}), nil
-}
-
-// =============================================================================
-// Credits Management (Site Admin-only; credit is attribution, not authority)
-// =============================================================================
-
-// CreateWorkCreditGroup creates a credit group for a work

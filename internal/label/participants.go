@@ -4,116 +4,86 @@ import (
 	"context"
 	"log/slog"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 )
 
-func (s *LabelService) ListLabelParticipants(
-	ctx context.Context,
-	req *connect.Request[managev1.ListLabelParticipantsRequest],
-) (_ *connect.Response[managev1.ListLabelParticipantsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabelParticipants", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+// Participant roles of a Label.
+const (
+	ParticipantRoleOwner   = entityparticipant.RoleOwner
+	ParticipantRoleManager = entityparticipant.RoleManager
+)
 
-	if err := requireLabelPermission(ctx, s.spiceDB, req.Msg.LabelId, policyv1.Label.ManageParticipants); err != nil {
-		return nil, err
-	}
-	views, err := loadEntityParticipantViews(ctx, s.db, s.spiceDB, s.members, labelParticipantSpec(), req.Msg.LabelId)
-	if err != nil {
-		return nil, err
-	}
-	participants := mapEntityParticipantViews(views, labelParticipantFromView)
-	return connect.NewResponse(&managev1.ListLabelParticipantsResponse{Participants: participants}), nil
+// ListLabelParticipantsQuery lists a Label's Owners and Managers.
+type ListLabelParticipantsQuery struct {
+	LabelID string
 }
 
-func (s *LabelService) SetLabelParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.SetLabelParticipantRequest],
-) (_ *connect.Response[managev1.LabelParticipant], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelParticipant", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+// ListLabelParticipants returns the Label's Owners, then Managers, to a
+// caller who may manage its participants.
+func (s *Service) ListLabelParticipants(ctx context.Context, query ListLabelParticipantsQuery) (_ []entityparticipant.View, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", query.LabelID))
 
-	role, err := labelParticipantRole(req.Msg.Role)
-	if err != nil {
+	if err := labelEntity.RequirePermission(ctx, s.spiceDB, query.LabelID, policyv1.Label.ManageParticipants); err != nil {
 		return nil, err
 	}
-	view, err := setEntityParticipantViewWithAudit(ctx, s.db, s.spiceDB, s.members, labelParticipantSpec(), req.Msg.LabelId, req.Msg.MemberId, role, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
-		return s.appendLabelParticipantAudit(ctx, tx, req.Msg.LabelId, req.Msg.MemberId, labelAuditRelationship(previous), labelAuditRelationship(next))
-	})
-	if err != nil {
+	var participants []entityparticipant.Participant
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		participants, err = store.ListParticipants(ctx, query.LabelID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.LabelParticipant{
-		Member: view.Member, Role: req.Msg.Role, CreatedAt: timestamppb.New(view.CreatedAt), HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}), nil
+	return labelEntity.Views(ctx, s.spiceDB, s.members, query.LabelID, participants)
 }
 
-func (s *LabelService) RemoveLabelParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.RemoveLabelParticipantRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.RemoveLabelParticipant", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+// SetLabelParticipantCommand gives a Member Role (ParticipantRoleOwner or
+// ParticipantRoleManager) on a Label.
+type SetLabelParticipantCommand struct {
+	LabelID  string
+	MemberID string
+	Role     string
+}
 
-	return removeEntityParticipantResponseWithAudit(ctx, s.db, s.spiceDB, labelParticipantSpec(), req.Msg.LabelId, req.Msg.MemberId, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
-		return s.appendLabelParticipantAudit(ctx, tx, req.Msg.LabelId, req.Msg.MemberId, labelAuditRelationship(previous), labelAuditRelationship(next))
+// SetLabelParticipant gives the Member the role, moving an existing
+// participant between Owner and Manager.
+func (s *Service) SetLabelParticipant(ctx context.Context, command SetLabelParticipantCommand) (_ entityparticipant.View, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
+
+	if command.Role != ParticipantRoleOwner && command.Role != ParticipantRoleManager {
+		return entityparticipant.View{}, domainerr.InvalidField("role", "must be Owner or Manager")
+	}
+	return s.participants.SetParticipant(ctx, s.members, entityparticipant.ParticipantChange{
+		EntityID: command.LabelID, MemberID: command.MemberID, Role: command.Role,
+		Audit: labelParticipantAudit(command.LabelID, command.MemberID),
 	})
 }
 
-func labelAuditRelationship(role string) sharedtelemetry.AuditRelationship {
-	if role == participantRoleOwner {
-		return sharedtelemetry.AuditRelationshipOwner
-	}
-	if role == participantRoleManager {
-		return sharedtelemetry.AuditRelationshipManager
-	}
-	return sharedtelemetry.AuditRelationshipNone
+// RemoveLabelParticipantCommand removes a Member from a Label.
+type RemoveLabelParticipantCommand struct {
+	LabelID  string
+	MemberID string
 }
 
-func labelParticipantFromView(view entityParticipantView) *managev1.LabelParticipant {
-	role := managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER
-	if view.Role == participantRoleOwner {
-		role = managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER
-	}
-	return &managev1.LabelParticipant{
-		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
-		HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}
+// RemoveLabelParticipant removes the Member; the Label keeps one Owner.
+func (s *Service) RemoveLabelParticipant(ctx context.Context, command RemoveLabelParticipantCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
+
+	return s.participants.RemoveParticipant(ctx, entityparticipant.ParticipantChange{
+		EntityID: command.LabelID, MemberID: command.MemberID,
+		Audit: labelParticipantAudit(command.LabelID, command.MemberID),
+	})
 }
 
-func labelParticipantRole(role managev1.LabelParticipantRole) (string, error) {
-	switch role {
-	case managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER:
-		return participantRoleOwner, nil
-	case managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER:
-		return participantRoleManager, nil
-	default:
-		return "", errs.InvalidArgument("role", "must be Owner or Manager")
+func labelParticipantAudit(labelID, memberID string) entityparticipant.ParticipantAudit {
+	return func(previous, next sharedtelemetry.AuditRelationship) mutation.Audit {
+		return mutation.RequestAudit(sharedtelemetry.AuditLabelUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewLabelParticipantAuditRecord(m, labelID, memberID, previous, next)
+		})
 	}
 }
-
-// =============================================================================
-// Utility
-// =============================================================================

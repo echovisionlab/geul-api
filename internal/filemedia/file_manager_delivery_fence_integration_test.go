@@ -10,10 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
+	mutationpkg "github.com/echovisionlab/geul-api/internal/mutation"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -41,7 +50,7 @@ func TestFileManagerGetDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) 
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -50,7 +59,7 @@ func TestFileManagerGetDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) 
 
 	got := <-done
 	require.Nil(t, got.response)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(got.err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(got.err))
 }
 
 func TestFileManagerListRetriesWithoutFileDeletedBeforeSigningIntegration(t *testing.T) {
@@ -73,7 +82,7 @@ func TestFileManagerListRetriesWithoutFileDeletedBeforeSigningIntegration(t *tes
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folderID}))
+		response, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folderID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -104,7 +113,7 @@ func TestFileManagerGetSigningCompletesBeforeDeletionCommitIntegration(t *testin
 	}
 	requestDone := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 		requestDone <- result{response: response, err: err}
 	}()
 	<-signed
@@ -144,7 +153,7 @@ func TestFileManagerListSigningCompletesBeforeDeletionCommitIntegration(t *testi
 	}
 	requestDone := make(chan result, 1)
 	go func() {
-		response, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folderID}))
+		response, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folderID}))
 		requestDone <- result{response: response, err: err}
 	}()
 	<-signed
@@ -180,7 +189,7 @@ func TestFileManagerGetDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 		done <- err
 	}()
 	<-beforeFence
@@ -193,7 +202,7 @@ func TestFileManagerGetDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestFileManagerSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
@@ -211,7 +220,7 @@ func TestFileManagerSigningCompletesBeforePrincipalRevocationCommitIntegration(t
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -252,27 +261,30 @@ func TestFileManagerSigningCompletesBeforeRenameAndDeletePrincipalFenceIntegrati
 			}
 			getDone := make(chan getResult, 1)
 			go func() {
-				response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+				response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 				getDone <- getResult{response: response, err: err}
 			}()
 			<-signed
 			backendPID := make(chan int, 1)
 			attempted := make(chan struct{})
-			service.testBeforeFileMutationPrincipal = func(tx *gorm.DB, fileIDs []string) {
-				require.Equal(t, []string{fileID}, fileIDs)
+			fence := fileMutationPIDFence{Fence: identitystate.PostgresFence{}, before: func(tx *gorm.DB) {
 				var pid int
 				require.NoError(t, tx.Raw("SELECT pg_backend_pid()").Scan(&pid).Error)
 				backendPID <- pid
 				close(attempted)
-			}
+			}}
+			var runnerErr error
+			service.storeMutations, runnerErr = mutationpkg.NewStoreRunner(service.units, service.spiceDB, fence, service.auditWriter)
+			require.NoError(t, runnerErr)
+
 			mutationDone := make(chan error, 1)
 			go func() {
 				switch mutation {
 				case "rename":
-					_, err := service.RenameFile(ctx, connect.NewRequest(&managev1.RenameFileRequest{FileId: fileID, FileName: "renamed"}))
+					_, err := NewConnectHandler(service).RenameFile(ctx, connect.NewRequest(&managev1.RenameFileRequest{FileId: fileID, FileName: "renamed"}))
 					mutationDone <- err
 				case "delete":
-					_, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+					_, err := NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 					mutationDone <- err
 				}
 			}()
@@ -300,7 +312,7 @@ func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegrat
 	}
 	mutationDone := make(chan error, 1)
 	go func() {
-		_, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+		_, err := NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 		mutationDone <- err
 	}()
 	<-principalHeld
@@ -311,27 +323,29 @@ func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegrat
 	}
 	signerDone := make(chan error, 1)
 	go func() {
-		_, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 		signerDone <- err
 	}()
 	<-beforeSignerFence
 	close(releaseMutation)
 	require.NoError(t, <-mutationDone)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-signerDone))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-signerDone))
 }
 
 func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
-	service := &FileService{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "file-manager-unattached-secret", downloadTTL: time.Hour,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaDomain:     "https://media.example.test",
+		mediaSecret:     "file-manager-unattached-secret",
+		downloadTTL:     time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}
-	folder, err := service.CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Unattached"}))
+	}, db, nativeFilePorts{}))
+	folder, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Unattached"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.GetId(), user.MemberID.String(), "standalone", "pdf", "application/pdf")
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
@@ -339,7 +353,7 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Author())
 	require.NoError(t, err)
 
-	response, err := service.GetFile(adminCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+	response, err := NewConnectHandler(service).GetFile(adminCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.Zero(t, response.Msg.GetFile().GetUsageCount())
 	require.Empty(t, response.Msg.GetDomainUsageSummary())
@@ -347,7 +361,7 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	require.NotEmpty(t, response.Msg.GetFile().GetDelivery().GetDownload().GetUrl())
 	require.Equal(t, "standalone.pdf", response.Msg.GetFile().GetDelivery().GetDownload().GetFileName())
 
-	listed, err := service.ListFileManagerItems(adminCtx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folder.Msg.Folder.Id}))
+	listed, err := NewConnectHandler(service).ListFileManagerItems(adminCtx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folder.Msg.Folder.Id}))
 	require.NoError(t, err)
 	require.Len(t, listed.Msg.GetItems(), 1)
 	require.Equal(t, fileID, listed.Msg.GetItems()[0].GetFile().GetId())
@@ -393,7 +407,7 @@ func TestFileManagerGetDropsOptimizedOutputDeliveryDeletedBeforeSigningIntegrati
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -434,7 +448,7 @@ func TestFileManagerGetDropsOptimizedOutputWhenCandidateChangesBeforeSigningInte
 			}
 			done := make(chan result, 1)
 			go func() {
-				response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
+				response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
 				done <- result{response: response, err: err}
 			}()
 			<-beforeFence
@@ -480,7 +494,7 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeCandidateMutationIntegr
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -511,8 +525,8 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeMeshCompletionIntegrati
 	require.NoError(t, db.Select("id", "file_size", "sha256").Where("id = ?", outputFileID).Take(&output).Error)
 	optimizedSize := output.FileSize
 	completion := meshOptimizationCompletion{
-		event:        &managev1.MeshOptimizationCompleteEvent{},
-		output:       &managev1.MeshOptimizationOutput{OptimizedSizeBytes: &optimizedSize},
+		event:        &domain.MeshCompleteEvent{},
+		output:       &domain.MeshOutput{OptimizedSizeBytes: &optimizedSize},
 		outputFileID: outputFileID, fileSize: output.FileSize, sha256: append([]byte(nil), output.SHA256...),
 		completedAt: time.Now().UTC(), expiresAt: time.Now().UTC().Add(meshOptimizationCandidateTTL),
 	}
@@ -528,7 +542,7 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeMeshCompletionIntegrati
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
+		response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -559,7 +573,7 @@ func TestManageGetMediaDeliveryDoesNotIssueAfterDeletionCommitIntegration(t *tes
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -568,7 +582,7 @@ func TestManageGetMediaDeliveryDoesNotIssueAfterDeletionCommitIntegration(t *tes
 
 	got := <-done
 	require.Nil(t, got.response)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(got.err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(got.err))
 }
 
 func TestManageBulkMediaDeliveriesExcludesFileDeletedBeforeSigningIntegration(t *testing.T) {
@@ -593,7 +607,7 @@ func TestManageBulkMediaDeliveriesExcludesFileDeletedBeforeSigningIntegration(t 
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
+		response, err := NewConnectHandler(service).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
 			FileIds: []string{fileID, secondFileID},
 		}))
 		done <- result{response: response, err: err}
@@ -626,7 +640,7 @@ func TestManageGetMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(t
 	}
 	requestDone := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		requestDone <- result{response: response, err: err}
 	}()
 	<-signed
@@ -654,7 +668,7 @@ func TestManageGetMediaDeliveryRetriesOnceAfterFileMetadataChangeIntegration(t *
 			require.NoError(t, db.Table("file").Where("id = ?", fileID).Update("duration_seconds", 7).Error)
 		})
 	}
-	response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+	response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.EqualValues(t, 7, response.Msg.GetDelivery().GetDurationSeconds())
 	require.NotEmpty(t, response.Msg.GetDelivery().GetInline().GetUrl())
@@ -669,8 +683,8 @@ func TestManageGetMediaDeliveryMetadataRetryIsBoundedIntegration(t *testing.T) {
 		changeCount++
 		require.NoError(t, db.Table("file").Where("id = ?", fileID).Update("duration_seconds", changeCount).Error)
 	}
-	_, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 2, changeCount)
 }
 
@@ -696,7 +710,7 @@ func TestManageBulkMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(
 	}
 	requestDone := make(chan result, 1)
 	go func() {
-		response, err := service.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
+		response, err := NewConnectHandler(service).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
 			FileIds: []string{secondFileID, fileID},
 		}))
 		requestDone <- result{response: response, err: err}
@@ -722,7 +736,7 @@ func TestManagePostCollaboratorGetsInlineWithoutOriginalDownloadIntegration(t *t
 	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 
-	response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+	response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.NotEmpty(t, response.Msg.GetDelivery().GetInline().GetUrl())
 	require.Nil(t, response.Msg.GetDelivery().GetDownload())
@@ -743,13 +757,13 @@ func TestManagePostCollaboratorDoesNotIssueAfterDetachCommitIntegration(t *testi
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- err
 	}()
 	<-beforeFence
 	require.NoError(t, db.Exec("DELETE FROM content_block_attachment WHERE block_id = ?", blockID).Error)
 	close(releaseFence)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *testing.T) {
@@ -766,7 +780,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegra
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- err
 	}()
 	<-beforeFence
@@ -779,7 +793,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegra
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
@@ -797,7 +811,7 @@ func TestManagePostCollaboratorSigningCompletesBeforePrincipalRevocationCommitIn
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -833,7 +847,7 @@ func TestManageStrongDeliveryDoesNotIssueAfterPrincipalRevocationCommitIntegrati
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- err
 	}()
 	<-beforeFence
@@ -846,7 +860,7 @@ func TestManageStrongDeliveryDoesNotIssueAfterPrincipalRevocationCommitIntegrati
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeDetachCommitIntegration(t *testing.T) {
@@ -865,7 +879,7 @@ func TestManagePostCollaboratorSigningCompletesBeforeDetachCommitIntegration(t *
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -891,13 +905,13 @@ func TestManagePostCollaboratorDoesNotIssueAfterFileDeletionCommitIntegration(t 
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- err
 	}()
 	<-beforeFence
 	require.NoError(t, db.Exec("UPDATE file SET delete_requested_at = CURRENT_TIMESTAMP WHERE id = ?", fileID).Error)
 	close(releaseFence)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeFileDeletionCommitIntegration(t *testing.T) {
@@ -915,7 +929,7 @@ func TestManagePostCollaboratorSigningCompletesBeforeFileDeletionCommitIntegrati
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-signed
@@ -944,7 +958,7 @@ func TestManageBulkUsesPerFileDeliveryCapabilitiesIntegration(t *testing.T) {
 		uploaderFileID, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO.String(),
 	).Error)
 
-	response, err := service.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
+	response, err := NewConnectHandler(service).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{
 		FileIds: []string{uploaderFileID, usageFileID},
 	}))
 	require.NoError(t, err)
@@ -956,7 +970,7 @@ func TestManageBulkUsesPerFileDeliveryCapabilitiesIntegration(t *testing.T) {
 func TestManageBulkExcludesDetachedUsageButKeepsCurrentUsageIntegration(t *testing.T) {
 	t.Parallel()
 	db, ctx, service, _, firstFileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
-	_, secondFileID, secondBlockID := seedManagePostCollaboratorUsage(t, db, service.spiceDB, auth.GetUser(ctx))
+	_, secondFileID, secondBlockID := seedManagePostCollaboratorUsage(t, db, service.spiceDB.(*auth.SpiceDBClient), auth.GetUser(ctx))
 	expected := []string{firstFileID, secondFileID}
 	sort.Strings(expected)
 	beforeFence := make(chan struct{})
@@ -972,7 +986,7 @@ func TestManageBulkExcludesDetachedUsageButKeepsCurrentUsageIntegration(t *testi
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: expected}))
+		response, err := NewConnectHandler(service).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: expected}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -990,7 +1004,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 	t.Parallel()
 	db, ctx, service, _, fileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
 	user := auth.GetUser(ctx)
-	postID, _, secondBlockID := seedManagePostCollaboratorUsageForFile(t, db, service.spiceDB, user, fileID)
+	postID, _, secondBlockID := seedManagePostCollaboratorUsageForFile(t, db, service.spiceDB.(*auth.SpiceDBClient), user, fileID)
 	require.NotEmpty(t, postID)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -1004,7 +1018,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -1020,7 +1034,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *testing.T) {
 	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
-	grantIntegrationGlobalRole(t, service.spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
+	orytest.GrantIntegrationGlobalRole(t, service.spiceDB.(*auth.SpiceDBClient), auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
 	service.testBeforeManageDeliveryFence = func([]string) {
@@ -1033,7 +1047,7 @@ func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *test
 	}
 	done := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		done <- result{response: response, err: err}
 	}()
 	<-beforeFence
@@ -1064,7 +1078,7 @@ func TestManagePageAndWorkContentWitnessRejectsCommittedDocumentChangeIntegratio
 			require.NoError(t, db.Exec("INSERT INTO content_document (id, profile) VALUES (?::uuid, ?)", replacementDocumentID, resourceType).Error)
 			require.NoError(t, db.Table(resourceType).Where("id = ?", resourceID).Update("content_document_id", replacementDocumentID).Error)
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-				current, lockErr := lockManageDeliveryUsageOwners(ctx, tx, []manageFileDeliveryUsageWitness{witness})
+				current, lockErr := lockManageDeliveryUsageOwners(ctx, filemediapostgres.NewStore(tx, filemediapostgres.Ports{}), []manageFileDeliveryUsageWitness{witness})
 				require.NoError(t, lockErr)
 				require.False(t, current[witness.resourceType+"\x00"+witness.resourceID])
 				return nil
@@ -1102,7 +1116,7 @@ func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testi
 		<-releaseSigned
 	}
 	type result struct {
-		response *managev1.GetMediaDeliveryResponse
+		response *MediaDeliveryResult
 		current  bool
 		err      error
 	}
@@ -1121,8 +1135,8 @@ func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testi
 	got := <-done
 	require.NoError(t, got.err)
 	require.True(t, got.current)
-	require.NotEmpty(t, got.response.GetDelivery().GetInline().GetUrl())
-	require.Nil(t, got.response.GetDelivery().GetDownload())
+	require.NotEmpty(t, got.response.Delivery.Inline.URL)
+	require.Nil(t, got.response.Delivery.Download)
 	require.NoError(t, <-changed)
 }
 
@@ -1157,7 +1171,7 @@ func TestManageStrongSigningDoesNotDeadlockAvatarPromotionIntegration(t *testing
 	}
 	signed := make(chan result, 1)
 	go func() {
-		response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
+		response, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
 		signed <- result{response: response, err: err}
 	}()
 	<-principalLockAttempted
@@ -1175,18 +1189,20 @@ func TestManageStrongSigningDoesNotDeadlockAvatarPromotionIntegration(t *testing
 
 func newFileManagerDeliveryFenceFixture(
 	t *testing.T,
-) (*gorm.DB, context.Context, *FileService, string, string) {
+) (*gorm.DB, context.Context, *Service, string, string) {
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
-	service := &FileService{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "file-manager-fence-secret", downloadTTL: time.Hour,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaDomain:     "https://media.example.test",
+		mediaSecret:     "file-manager-fence-secret",
+		downloadTTL:     time.Hour,
 		asyncPublisher:  noopAsyncPublisher{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}
-	folder, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Fence"}))
+	}, db, nativeFilePorts{}))
+	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Fence"}))
 	require.NoError(t, err)
 	fileID := seedManagedFileManagerFenceFile(t, db, folder.Msg.Folder.GetId(), auth.GetUser(ctx).MemberID.String(), "race")
 	return db, ctx, service, folder.Msg.Folder.GetId(), fileID
@@ -1194,22 +1210,17 @@ func newFileManagerDeliveryFenceFixture(
 
 func newManagePostCollaboratorFenceFixture(
 	t *testing.T,
-) (*gorm.DB, context.Context, *FileService, string, string, string) {
+) (*gorm.DB, context.Context, *Service, string, string, string) {
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Manage delivery collaborator")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Manage delivery collaborator")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
+	ctx := auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-	service := &FileService{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour,
-		postAccess: newIntegrationPostAccess(db, spiceDB),
-	}
+	service := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test", mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB)}))
 	postID, fileID, blockID := seedManagePostCollaboratorUsage(t, db, spiceDB, auth.GetUser(ctx))
 	return db, ctx, service, postID, fileID, blockID
 }
@@ -1392,7 +1403,8 @@ func startMeshCompletion(
 			return connection.Transaction(func(tx *gorm.DB) error {
 				close(attempted)
 				attemptedClosed = true
-				_, _, err := applyMeshOptimizationCompletionWithDB(context.Background(), tx, &candidate, completion)
+				plain := domain.MeshCandidate(candidate)
+				_, _, err := applyMeshOptimizationCompletion(context.Background(), testFileStore(&Service{}, tx), &plain, completion)
 				return err
 			})
 		})
@@ -1549,4 +1561,14 @@ func requireFileManagerDeletionPending(t *testing.T, db *gorm.DB, fileID string)
 	var count int64
 	require.NoError(t, db.Table("file").Where("id = ? AND delete_requested_at IS NOT NULL", fileID).Count(&count).Error)
 	require.EqualValues(t, 1, count)
+}
+
+type fileMutationPIDFence struct {
+	identitystate.Fence
+	before func(*gorm.DB)
+}
+
+func (f fileMutationPIDFence) LockActivePrincipal(ctx context.Context, tx *gorm.DB, user *auth.UserInfo) (bool, error) {
+	f.before(tx)
+	return f.Fence.LockActivePrincipal(ctx, tx, user)
 }

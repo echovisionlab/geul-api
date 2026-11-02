@@ -62,10 +62,12 @@ func findMessageField(message protoreflect.Message, jsonName string) protoreflec
 	return nil
 }
 
-func initializeOneofMessage(message protoreflect.Message, oneofName protoreflect.Name, jsonName string) error {
-	oneof := message.Descriptor().Oneofs().ByName(oneofName)
+// initializeOneofMessage selects the jsonName case of the message's "value"
+// oneof, which every rich-text section and block message declares.
+func initializeOneofMessage(message protoreflect.Message, jsonName string) error {
+	oneof := message.Descriptor().Oneofs().ByName("value")
 	if oneof == nil {
-		return fmt.Errorf("oneof %q is missing", oneofName)
+		return errors.New(`oneof "value" is missing`)
 	}
 	fields := oneof.Fields()
 	for index := 0; index < fields.Len(); index++ {

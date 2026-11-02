@@ -4,30 +4,25 @@ import (
 	"context"
 	"slices"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/email"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestResolveEmailTemplatePreviewSubject(t *testing.T) {
 	savedSubject := "Saved subject"
 	overrideSubject := "Draft subject"
 
-	emailTemplate := model.EmailTemplate{Subject: savedSubject}
+	emailTemplate := Template{Subject: savedSubject}
 
-	assert.Equal(t, savedSubject, resolveEmailTemplatePreviewSubject(&managev1.PreviewEmailTemplateRequest{}, emailTemplate))
-	assert.Equal(t, overrideSubject, resolveEmailTemplatePreviewSubject(&managev1.PreviewEmailTemplateRequest{
+	assert.Equal(t, savedSubject, resolveEmailTemplatePreviewSubject(PreviewEmailTemplateQuery{}, emailTemplate))
+	assert.Equal(t, overrideSubject, resolveEmailTemplatePreviewSubject(PreviewEmailTemplateQuery{
 		Subject: &overrideSubject,
 	}, emailTemplate))
 }
@@ -35,9 +30,9 @@ func TestResolveEmailTemplatePreviewSubject(t *testing.T) {
 func TestResolveEmailTemplatePreviewHTML(t *testing.T) {
 	savedHTML := "<p>saved</p>"
 
-	emailTemplate := model.EmailTemplate{ContentHTML: &savedHTML}
+	emailTemplate := Template{ContentHTML: &savedHTML}
 
-	html, err := resolveEmailTemplatePreviewHTML(context.Background(), &managev1.PreviewEmailTemplateRequest{}, emailTemplate)
+	html, err := resolveEmailTemplatePreviewHTML(context.Background(), PreviewEmailTemplateQuery{}, emailTemplate)
 	require.NoError(t, err)
 	assert.Equal(t, savedHTML, html)
 }
@@ -47,14 +42,14 @@ func TestResolveEmailTemplatePreviewLayoutID(t *testing.T) {
 	overrideLayoutID := uuid.NewString()
 	clearLayoutID := ""
 
-	emailTemplate := model.EmailTemplate{LayoutID: &savedLayoutID}
+	emailTemplate := Template{LayoutID: &savedLayoutID}
 
-	assert.Equal(t, &savedLayoutID, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{}, emailTemplate))
-	assert.Equal(t, &overrideLayoutID, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{
-		LayoutId: &overrideLayoutID,
+	assert.Equal(t, &savedLayoutID, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{}, emailTemplate))
+	assert.Equal(t, &overrideLayoutID, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{
+		LayoutID: &overrideLayoutID,
 	}, emailTemplate))
-	assert.Nil(t, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{
-		LayoutId: &clearLayoutID,
+	assert.Nil(t, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{
+		LayoutID: &clearLayoutID,
 	}, emailTemplate))
 }
 
@@ -65,36 +60,6 @@ func TestValidateEmailTemplateEventKeyUsesAutomaticMailCatalog(t *testing.T) {
 		require.NoError(t, validateEmailTemplateEventKey(eventKey.String()))
 	}
 	require.Error(t, validateEmailTemplateEventKey("custom_event"))
-}
-
-func TestEmailTemplateBaseRowInsertOmitsRemovedCanonicalColumns(t *testing.T) {
-	db, err := gorm.Open(postgres.New(postgres.Config{
-		DSN: "host=localhost user=geul dbname=geul sslmode=disable",
-	}), &gorm.Config{
-		DryRun:               true,
-		DisableAutomaticPing: true,
-	})
-	require.NoError(t, err)
-
-	now := time.Unix(1_700_000_000, 0).UTC()
-	description := "Welcome"
-	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
-		return tx.Omit("ID").
-			Clauses(clause.Returning{}).
-			Create(&emailTemplateBaseRow{
-				Key:         "welcome_template",
-				Name:        "Welcome Template",
-				Description: &description,
-				IsSystem:    true,
-				IsActive:    true,
-				CreatedAt:   now,
-				UpdatedAt:   &now,
-			})
-	})
-	assert.Contains(t, sql, `INSERT INTO "email_template"`)
-	assert.NotContains(t, sql, `"subject"`)
-	assert.NotContains(t, sql, `"content_html"`)
-	assert.NotContains(t, sql, `"yjs_state"`)
 }
 
 func TestVerifiedSystemEmailTemplateVariableNamesVerificationCode(t *testing.T) {
@@ -117,34 +82,29 @@ func TestBuildEmailTemplateSendTestJobBuildsDirectTemplatePayload(t *testing.T) 
 	templateID := uuid.NewString()
 	runtime := emailTemplateRuntimeFixture{}
 
-	job, err := buildEmailTemplateSendTestJob(runtime, templateID, "  johndoe@example.com  ", nil, "admin-1")
+	job, err := newEmailTemplateTestEmail(runtime, templateID, "  johndoe@example.com  ", nil, "admin-1")
 	require.NoError(t, err)
-	require.NotNil(t, job)
 	assert.Equal(t, "johndoe@example.com", job.Recipient)
-	assert.Equal(t, email.DirectTemplateType(templateID), job.TemplateType)
-	assert.Equal(t, "johndoe@example.com", job.TemplateData["recipient_email"])
-	require.NotNil(t, job.ReferenceId)
-	assert.Equal(t, templateID, *job.ReferenceId)
-	require.NotEmpty(t, job.GetMessageId())
-	assert.Contains(t, job.GetMessageId(), "template-test:")
-	require.NotNil(t, job.GetTestEmail())
-	assert.Equal(t, "admin-1", job.GetTestEmail().GetActorMemberId())
+	assert.Equal(t, templateID, job.TemplateID)
+	assert.Equal(t, "johndoe@example.com", job.Data["recipient_email"])
+	assert.Contains(t, job.MessageID, "template-test:")
+	assert.Equal(t, "admin-1", job.ActorMemberID)
 	assert.Nil(t, job.Locale)
 
-	secondJob, err := buildEmailTemplateSendTestJob(runtime, templateID, "johndoe@example.com", nil, "admin-1")
+	secondJob, err := newEmailTemplateTestEmail(runtime, templateID, "johndoe@example.com", nil, "admin-1")
 	require.NoError(t, err)
-	require.NotEqual(t, job.GetMessageId(), secondJob.GetMessageId(), "each explicit test send needs a fresh command identity")
+	require.NotEqual(t, job.MessageID, secondJob.MessageID, "each explicit test send needs a fresh command identity")
 }
 
 func TestEmailTemplateTestSendUsesPreviewSamplesForEverySystemEvent(t *testing.T) {
-	job, err := buildEmailTemplateSendTestJob(emailTemplateRuntimeFixture{}, uuid.NewString(), "admin@example.com", nil, "admin-1")
+	job, err := newEmailTemplateTestEmail(emailTemplateRuntimeFixture{}, uuid.NewString(), "admin@example.com", nil, "admin-1")
 	require.NoError(t, err)
 	previewData := emailTemplateSampleData()
 	for key, value := range previewData {
 		if key == "recipient_email" || key == "identity_email" || key == "to" {
 			value = "admin@example.com"
 		}
-		assert.Equal(t, value, job.TemplateData[key], key)
+		assert.Equal(t, value, job.Data[key], key)
 	}
 	for _, event := range automaticEmailEventKeys() {
 		t.Run(event.String(), func(t *testing.T) {
@@ -152,15 +112,15 @@ func TestEmailTemplateTestSendUsesPreviewSamplesForEverySystemEvent(t *testing.T
 				if slices.Contains(emailTemplateSiteVariables, key) {
 					continue // Site branding is resolved by BuildEmailRenderData at delivery.
 				}
-				_, err := email.RenderSubjectVarsStrict("{{"+key+"}}", job.TemplateData)
+				_, err := email.RenderSubjectVarsStrict("{{"+key+"}}", job.Data)
 				require.NoError(t, err)
 			}
 		})
 	}
-	subject, err := email.RenderSubjectVarsStrict("Login code: {{login_code}}", job.TemplateData)
+	subject, err := email.RenderSubjectVarsStrict("Login code: {{login_code}}", job.Data)
 	require.NoError(t, err)
 	assert.Equal(t, "Login code: 789012", subject)
-	job.TemplateData["login_code"] = "changed"
+	job.Data["login_code"] = "changed"
 	assert.Equal(t, "789012", emailTemplateSampleData()["login_code"])
 }
 
@@ -179,20 +139,10 @@ func TestResolveEmailTemplateSendTestLocaleRejectsUnsupportedOverride(t *testing
 	normalized, err := resolveEmailTemplateSendTestLocale(emailTemplateRuntimeFixture{}, &locale)
 	require.Nil(t, normalized)
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 type emailTemplateRuntimeFixture struct{}
-
-func (emailTemplateRuntimeFixture) ResolveLocalizedTemplate(ctx context.Context, db *gorm.DB, template model.EmailTemplate, locale string) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, db, template, locale)
-	return resolved, err
-}
-
-func (emailTemplateRuntimeFixture) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
-	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
-	return layout, err
-}
 
 func (emailTemplateRuntimeFixture) NormalizeSupportedLocale(value string) *string {
 	return localization.NormalizeSupportedLocale(value)

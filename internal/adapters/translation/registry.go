@@ -2,22 +2,23 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -29,18 +30,20 @@ type DomainRegistry struct {
 	ports map[core.Kind]domainPortFunctions
 }
 
+// NewDomainRegistry routes every catalog domain to its owning adapter; the
+// owners append their locale-content records to audit.
 func NewDomainRegistry(
-	emailReferences emailauthoring.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
-) *DomainRegistry {
-	if emailReferences == nil || auditWriter == nil {
-		panic("translation domain registry dependencies are required")
+	emailReferences emailauthoringpostgres.DeliveryReferences,
+	audit domainaudit.Appender,
+) (*DomainRegistry, error) {
+	if emailReferences == nil || audit == nil {
+		return nil, errors.New("translation domain registry dependencies are required: EmailReferences, Audit")
 	}
-	ports, err := buildDomainPorts(defaultDomainRegistrations(emailReferences, auditWriter))
+	ports, err := buildDomainPorts(defaultDomainRegistrations(emailReferences, audit))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return &DomainRegistry{ports: ports}
+	return &DomainRegistry{ports: ports}, nil
 }
 
 func (r *DomainRegistry) LoadSourceDocument(
@@ -57,15 +60,28 @@ func (r *DomainRegistry) LoadSourceDocument(
 	return port.loadSourceDocument(ctx, db, store, entityID)
 }
 
-func (r *DomainRegistry) BuildExtractionPlan(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-	if job == nil {
-		return nil, fmt.Errorf("translation job is required")
-	}
+func (r *DomainRegistry) BuildExtractionPlan(job application.Job, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 	port, err := r.domainPort(job.EntityType)
 	if err != nil {
 		return nil, err
 	}
-	return port.buildExtractionPlan(job, source)
+	return port.buildExtractionPlan(modelJob(job), source)
+}
+
+// modelJob is the job as the owning domains' translation adapters take it.
+func modelJob(job application.Job) *model.TranslationJob {
+	return &model.TranslationJob{
+		ID: job.ID, EntityType: job.EntityType, EntityID: job.EntityID,
+		TargetLocale: job.TargetLocale, SourceLocale: job.SourceLocale,
+		RequestArtifactDigest: job.RequestArtifactDigest, OperationID: job.OperationID,
+		Status: string(job.Status), RequestedByMemberID: job.RequestedByMemberID,
+		Provider: job.Provider, Model: job.Model,
+		ProviderDocumentID: job.ProviderDocumentID, ProviderDocumentKey: job.ProviderDocumentKey,
+		ProviderDocumentSubmittedAt: job.ProviderDocumentSubmittedAt,
+		RequestXLIFF:                job.RequestXLIFF, RequestManifest: job.RequestManifest,
+		FailureReason: job.FailureReason, RequestedAt: job.RequestedAt, StartedAt: job.StartedAt,
+		CompletedAt: job.CompletedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
+	}
 }
 
 func (r *DomainRegistry) BuildCandidate(
@@ -87,10 +103,11 @@ func (r *DomainRegistry) ApplyCandidate(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	job *model.TranslationJob,
+	appliedJob application.Job,
 	candidate *core.Candidate,
 	input core.EntryWrite,
 ) (application.AppliedTranslationTarget, error) {
+	job := modelJob(appliedJob)
 	before, err := loadProviderLocaleFence(ctx, tx, job)
 	if err != nil {
 		return application.AppliedTranslationTarget{}, err
@@ -133,15 +150,14 @@ func loadProviderLocaleFence(
 		)
 	}
 	var row struct {
-		SourceLocale     string     `gorm:"column:source_locale"`
-		DocumentRevision string     `gorm:"column:document_revision"`
-		LocaleUpdatedAt  *time.Time `gorm:"column:locale_updated_at"`
+		SourceLocale    string     `gorm:"column:source_locale"`
+		DocumentID      uuid.UUID  `gorm:"column:content_document_id"`
+		LocaleUpdatedAt *time.Time `gorm:"column:locale_updated_at"`
 	}
 	result := tx.WithContext(ctx).Raw(
-		"SELECT root.source_locale AS source_locale, "+
-			"CAST(document.revision AS text) AS document_revision, locale_entry.updated_at AS locale_updated_at "+
+		"SELECT root.source_locale AS source_locale, root.content_document_id, "+
+			"locale_entry.updated_at AS locale_updated_at "+
 			"FROM "+definition.RootTable+" AS root "+
-			"JOIN content_document AS document ON document.id = root.content_document_id "+
 			"LEFT JOIN "+definition.EntryTable+" AS locale_entry "+
 			"ON locale_entry.entity_id = root.id AND locale_entry.locale = ? "+
 			"WHERE root.id = ?",
@@ -151,8 +167,16 @@ func loadProviderLocaleFence(
 	if result.Error != nil {
 		return providerLocaleFence{}, errs.Internal(result.Error)
 	}
-	if result.RowsAffected != 1 {
+	// A root without its Content Document is as absent as a missing root.
+	if result.RowsAffected != 1 || row.DocumentID == uuid.Nil {
 		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
+	}
+	revision, err := contentblock.CurrentRevision(ctx, tx, row.DocumentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
+	}
+	if err != nil {
+		return providerLocaleFence{}, errs.Internal(err)
 	}
 	sourceLocale := strings.TrimSpace(row.SourceLocale)
 	if sourceLocale == "" || sourceLocale != row.SourceLocale {
@@ -160,15 +184,9 @@ func loadProviderLocaleFence(
 			"Translation source locale is not canonical",
 		)
 	}
-	documentRevision := strings.TrimSpace(row.DocumentRevision)
-	parsedRevision, err := uuid.Parse(documentRevision)
-	if err != nil || parsedRevision == uuid.Nil || parsedRevision.String() != documentRevision {
-		if err != nil {
-			slog.ErrorContext(ctx, "Stored translation document revision is invalid", failurecause.Attr(err), "entity_type", job.EntityType, "entity_id", job.EntityID, "locale", job.TargetLocale)
-		}
-		return providerLocaleFence{}, errs.FailedPrecondition(
-			"Content Document revision is not a canonical UUID",
-		)
+	documentRevision := revision.String()
+	if revision == uuid.Nil {
+		return providerLocaleFence{}, errs.FailedPrecondition("Content Document revision is not a canonical UUID")
 	}
 	fence := providerLocaleFence{
 		sourceLocale: sourceLocale, documentRevision: documentRevision,
@@ -254,8 +272,8 @@ func providerLocaleUpdatedAtEqual(left *time.Time, right *time.Time) bool {
 func (r *DomainRegistry) RequestLocaleOG(
 	ctx context.Context,
 	tx *gorm.DB,
-	planner *og.Planner,
-	refresher *og.Refresher,
+	planner *ogpostgres.Planner,
+	refresher *ogpostgres.Refresher,
 	entityType string,
 	entityID string,
 	locale string,
@@ -283,9 +301,9 @@ func (*DomainRegistry) LockRoot(ctx context.Context, tx *gorm.DB, entityType str
 	}
 	var row struct{ ID string }
 	result := tx.WithContext(ctx).Table(definition.RootTable).
-		Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", entityID).Take(&row)
-	if result.Error == gorm.ErrRecordNotFound {
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.NotFound(entityType, entityID)
 	}
 	if result.Error != nil {
@@ -390,19 +408,21 @@ func (r *DomainRegistry) PrepareSourceLocale(
 	return port.prepareSourceLocale(ctx, db, entityID, currentSourceLocale, requestedLocale, now)
 }
 
-func (r *DomainRegistry) AppendSourceLocaleAudit(
+// SourceLocaleAudit returns the owning domain's record of a source-locale
+// switch from previousLocale to newLocale.
+func (r *DomainRegistry) SourceLocaleAudit(
 	ctx context.Context,
 	tx *gorm.DB,
 	entityType string,
 	entityID string,
 	previousLocale string,
 	newLocale string,
-) error {
+) (application.SourceLocaleAudit, error) {
 	port, err := r.domainPort(entityType)
 	if err != nil {
-		return errs.InvalidArgument("target.entity_type", err.Error())
+		return application.SourceLocaleAudit{}, errs.InvalidArgument("target.entity_type", err.Error())
 	}
-	return port.appendSourceLocaleAudit(ctx, tx, entityID, previousLocale, newLocale)
+	return port.sourceLocaleAudit(ctx, tx, entityID, previousLocale, newLocale)
 }
 
 func (r *DomainRegistry) RequireSourceLocaleEdit(
@@ -428,9 +448,8 @@ func (r *DomainRegistry) RequireSourceLocaleEdit(
 }
 
 func maskTranslationAuthorizationDenial(err error, entityType string, entityID string) error {
-	if connect.CodeOf(err) == connect.CodePermissionDenied {
-		slog.Warn("Translation access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
-		return errs.NotFound(entityType, entityID)
+	if errs.CodeOf(err) == connect.CodePermissionDenied {
+		return errs.WithCause(errs.NotFound(entityType, entityID), err)
 	}
 	return err
 }
@@ -479,14 +498,8 @@ func (*DomainRegistry) RequireDocumentContributors(
 			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 	}
-	var locked []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", contributors).
-		Find(&locked).Error; err != nil {
+	locked, err := memberadapter.ContributorMembers{}.LockMembers(ctx, tx, contributors)
+	if err != nil {
 		return errs.Internal(err)
 	}
 	if len(locked) != len(contributors) {
@@ -508,4 +521,7 @@ func (r *DomainRegistry) RequireTranslationSourceMutable(
 	return port.requireSourceMutable(ctx, tx, entityID)
 }
 
-var _ application.DomainRegistry = (*DomainRegistry)(nil)
+var (
+	_ translationpostgres.Registry = (*DomainRegistry)(nil)
+	_ application.DomainPlans      = (*DomainRegistry)(nil)
+)

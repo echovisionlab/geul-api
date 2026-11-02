@@ -21,6 +21,8 @@ func TestIsForeignKeyViolationUsesStableDriverErrors(t *testing.T) {
 		{name: "wrapped gorm translated foreign key violation", err: fmt.Errorf("delete tag: %w", gorm.ErrForeignKeyViolated), want: true},
 		{name: "postgres foreign key violation", err: &pgconn.PgError{Code: "23503"}, want: true},
 		{name: "wrapped postgres foreign key violation", err: fmt.Errorf("delete tag: %w", &pgconn.PgError{Code: "23503"}), want: true},
+		{name: "postgres restricted foreign key delete", err: &pgconn.PgError{Code: "23001"}, want: true},
+		{name: "wrapped postgres restricted foreign key delete", err: fmt.Errorf("delete type: %w", &pgconn.PgError{Code: "23001"}), want: true},
 		{name: "postgres unique violation", err: &pgconn.PgError{Code: "23505"}, want: false},
 		{name: "sqlite foreign key constraint", err: sqliteContractError{code: 787, message: "constraint failed"}, want: true},
 		{name: "sqlite restricted foreign key delete", err: sqliteContractError{code: 1811, message: "constraint failed: FOREIGN KEY constraint failed (1811)"}, want: true},

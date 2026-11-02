@@ -9,23 +9,20 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 // IncompleteUploadRetention is the maximum idle lifetime of an unfinished
 // multipart upload session before the FileMedia cleanup consumer may abort it.
 const IncompleteUploadRetention = 7 * 24 * time.Hour
 
-func (s *FileService) cleanupSupersededUploadSessions(
+func (s *Service) cleanupSupersededUploadSessions(
 	ctx context.Context,
-	sessions []model.UploadSession,
+	sessions []domain.UploadSession,
 	reason string,
 ) error {
 	if len(sessions) == 0 {
@@ -45,9 +42,9 @@ func (s *FileService) cleanupSupersededUploadSessions(
 	return nil
 }
 
-func (s *FileService) abortUploadSession(
+func (s *Service) abortUploadSession(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	reason string,
 ) error {
 	if strings.TrimSpace(session.UploadID) == "" {
@@ -75,14 +72,16 @@ func (s *FileService) abortUploadSession(
 		if IsMissingMultipartUploadAbortError(abortErr) {
 			slog.Info("Upload session was already absent in object storage", "uploadId", session.UploadID, "fileId", session.FileID)
 		} else {
-			slog.ErrorContext(ctx, "Failed to abort upload session", "uploadId", session.UploadID, "fileId", session.FileID, failurecause.Attr(abortErr))
-			return fmt.Errorf("failed to abort upload session %s: %w", session.UploadID, abortErr)
+			return failurecause.WithAttrs(
+				fmt.Errorf("failed to abort upload session %s: %w", session.UploadID, abortErr),
+				slog.String("file_id", session.FileID),
+			)
 		}
 	}
 	progressEmitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		"",
@@ -106,7 +105,7 @@ func (s *FileService) abortUploadSession(
 
 // CleanupTrackUploadSessions removes only abortable Track audio sessions. A
 // finalizing session is completion authority and blocks Track deletion.
-func (s *FileService) CleanupTrackUploadSessions(
+func (s *Service) CleanupTrackUploadSessions(
 	ctx context.Context,
 	trackID string,
 	reason string,
@@ -123,46 +122,34 @@ func (s *FileService) CleanupTrackUploadSessions(
 	return s.cleanupSupersededUploadSessions(ctx, sessions, reason)
 }
 
-func (s *FileService) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]model.UploadSession, error) {
-	var sessions []model.UploadSession
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		trackAttachment, dependencyErr := requireTrackAttachment(s.trackAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
-		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
+func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]domain.UploadSession, error) {
+	var sessions []domain.UploadSession
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		if err := store.RequireUploadTrack(ctx, trackID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
-			Find(&sessions).Error; err != nil {
+		rows, err := store.TrackUploadSessions(ctx, trackID)
+		if err != nil {
 			return err
 		}
+		sessions = make([]domain.UploadSession, len(rows))
+		copy(sessions, rows)
 		if containsFinalizingUploadSession(sessions) {
 			return mediaasset.ErrUploadSessionNotAbortable
 		}
 		if len(sessions) == 0 {
 			return nil
 		}
-		uploadIDs := make([]string, 0, len(sessions))
-		for _, session := range sessions {
-			uploadIDs = append(uploadIDs, session.UploadID)
+		ids := make([]string, len(sessions))
+		for i, row := range sessions {
+			ids[i] = row.UploadID
 		}
-		now := time.Now()
-		result := tx.Model(&model.UploadSession{}).
-			Where("upload_id IN ? AND status IN ?", uploadIDs, []model.UploadSessionStatus{
-				model.UploadSessionStatusInitiated,
-				model.UploadSessionStatusUploading,
-				model.UploadSessionStatusFailed,
-				model.UploadSessionStatusAborted,
-			}).
-			Updates(structured.Fields{
-				"status": model.UploadSessionStatusAborted, "last_activity_at": now, "updated_at": now,
-			})
-		if result.Error != nil {
-			return result.Error
+		count, err := store.AbortUploadSessions(ctx, ids, time.Now())
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected != int64(len(sessions)) {
+		if count != int64(len(sessions)) {
 			return mediaasset.ErrUploadSessionNotAbortable
 		}
 		return nil
@@ -170,49 +157,13 @@ func (s *FileService) claimTrackUploadSessionsForCleanup(ctx context.Context, tr
 	return sessions, err
 }
 
-// RequireNoTrackUploadSessionsWithDB enforces the File-owned upload-session
-// invariant inside the Release caller's Track-deletion transaction.
-func (s *FileService) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	var count int64
-	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
-		Count(&count).Error; err != nil {
+func (s *Service) RequireNoTrackUploadSessions(ctx context.Context, joined Joined, trackID string) error {
+	exists, err := joined.Store.HasTrackUploadSessions(ctx, trackID)
+	if err != nil {
 		return err
 	}
-	if count != 0 {
+	if exists {
 		return ErrTrackUploadSessionsChanged
 	}
 	return nil
-}
-
-func (s *FileService) publishTranscodeCancelIfSupported(
-	ctx context.Context,
-	fileID string,
-	entityType managev1.TranscodeEntityType,
-	entityID string,
-	reason managev1.TranscodeCancelReason,
-) {
-	event := &managev1.TranscodeCancelEvent{
-		FileId:      fileID,
-		EntityType:  entityType,
-		EntityId:    entityID,
-		Reason:      reason,
-		TimestampMs: time.Now().UnixMilli(),
-	}
-	type transcodeCancelPublisher interface {
-		PublishTranscodeCancel(context.Context, *managev1.TranscodeCancelEvent) error
-	}
-	if publisher, ok := s.publisher.(transcodeCancelPublisher); ok {
-		if err := publisher.PublishTranscodeCancel(ctx, event); err != nil {
-			slog.ErrorContext(ctx, "Failed to publish editor file transcode cancel event", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
-		}
-	}
-	type transcodeJobCanceller interface {
-		MarkCancelled(context.Context, string, managev1.TranscodeCancelReason) error
-	}
-	if canceller, ok := s.publisher.(transcodeJobCanceller); ok {
-		if err := canceller.MarkCancelled(ctx, fileID, reason); err != nil {
-			slog.ErrorContext(ctx, "Failed to mark editor file transcode job cancelled", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
-		}
-	}
 }

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -30,6 +31,20 @@ func (snapshot RelationshipSnapshot) Relation() string        { return snapshot.
 func (snapshot RelationshipSnapshot) SubjectType() string     { return snapshot.subjectType }
 func (snapshot RelationshipSnapshot) SubjectID() string       { return snapshot.subjectID }
 func (snapshot RelationshipSnapshot) SubjectRelation() string { return snapshot.subjectRelation }
+
+// SnapshotOf is the snapshot SpiceDB returns for the relationship a
+// generated mutation names, for a test double that stands in for
+// SnapshotResourceRelationshipDescriptors.
+func SnapshotOf(mutation policyv1.RelationshipMutation) RelationshipSnapshot {
+	return RelationshipSnapshot{
+		resourceType:    mutation.Resource().Type(),
+		resourceID:      mutation.Resource().ID(),
+		relation:        mutation.Relation(),
+		subjectType:     mutation.SubjectType(),
+		subjectID:       mutation.SubjectID(),
+		subjectRelation: mutation.SubjectRelation(),
+	}
+}
 
 // Matches reports whether the observed tuple has the exact key fixed by one
 // generated typed mutation. The mutation operation is intentionally ignored:
@@ -228,7 +243,7 @@ func (c *SpiceDBClient) verifyResourceRelationshipsDeletedAtLeastAsFresh(ctx con
 			return fmt.Errorf("verify deleted resource relationships: %w", readErr)
 		}
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			continue
 		}
 		if recvErr != nil {
@@ -253,7 +268,7 @@ func (c *SpiceDBClient) collectSnapshotRelationships(ctx context.Context, filter
 	}
 	for {
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			return nil
 		}
 		if recvErr != nil {

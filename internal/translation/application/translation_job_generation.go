@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -40,7 +39,7 @@ func pinTranslationProviderDocumentError(err error) error {
 
 func (m *TranslationJobManager) generateValidatedTranslation(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	request translation.ProviderRequest,
 	generators []translation.Generator,
 	allowExpiredDocumentReplacement ...bool,
@@ -50,7 +49,7 @@ func (m *TranslationJobManager) generateValidatedTranslation(
 	}
 
 	generator := generators[0]
-	if m != nil && m.db != nil && job != nil && strings.TrimSpace(job.ID) != "" {
+	if m != nil && m.units != nil && job != nil && strings.TrimSpace(job.ID) != "" {
 		if err := m.updateRunningJobProvider(ctx, job.ID, generator); err != nil {
 			return nil, generator, err
 		}
@@ -62,7 +61,7 @@ func (m *TranslationJobManager) generateValidatedTranslation(
 
 func (m *TranslationJobManager) generateValidatedTranslationWithGenerator(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	request translation.ProviderRequest,
 	generator translation.Generator,
 	allowExpiredDocumentReplacement ...bool,
@@ -84,7 +83,7 @@ func (m *TranslationJobManager) generateValidatedTranslationWithGenerator(
 
 func (m *TranslationJobManager) generateValidatedResumableDocument(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	request translation.ProviderRequest,
 	generator translation.ResumableDocumentGenerator,
 	allowExpiredDocumentReplacement bool,
@@ -99,7 +98,7 @@ func (m *TranslationJobManager) generateValidatedResumableDocument(
 	providerPinned := false
 	defer func() {
 		if closeErr := session.Close(ctx); closeErr != nil {
-			translation.LogProviderEvent(ctx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+			translation.LogProviderEvent(ctx, slog.LevelError, "Translation provider session close failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
 			if retErr != nil {
 				return
 			}
@@ -217,7 +216,7 @@ func (m *TranslationJobManager) generateValidatedResumableDocument(
 
 func (m *TranslationJobManager) replaceExpiredTranslationProviderDocument(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	upload func() error,
 ) error {
 	if err := m.clearExpiredTranslationProviderDocumentHandle(ctx, job); err != nil {
@@ -226,16 +225,16 @@ func (m *TranslationJobManager) replaceExpiredTranslationProviderDocument(
 	return upload()
 }
 
-func queuedTranslationJobHasProviderDocument(job *model.TranslationJob) bool {
-	return job != nil && job.Status == translationJobStatusQueued &&
-		validateTranslationJobRequester(job) == nil &&
+func queuedTranslationJobHasProviderDocument(job *Job) bool {
+	return job != nil && job.Status == JobQueued &&
+		ValidateJobRequester(job) == nil &&
 		job.Provider != nil && job.Model != nil &&
 		job.ProviderDocumentID != nil && job.ProviderDocumentKey != nil &&
 		job.ProviderDocumentSubmittedAt != nil && !job.ProviderDocumentSubmittedAt.IsZero()
 }
 
 func translationProviderDocumentHandle(
-	job *model.TranslationJob,
+	job *Job,
 	generator translation.Generator,
 ) (translation.ProviderDocumentHandle, bool, error) {
 	if job == nil {
@@ -253,8 +252,10 @@ func translationProviderDocumentHandle(
 	}
 	handle, err := translation.NewProviderDocumentHandle(*job.ProviderDocumentID, *job.ProviderDocumentKey)
 	if err != nil {
-		slog.Error("Translation provider document handle invalid", "domain", "translation", "event", "translation.provider.handle_failed", "job_id", job.ID, "operation_id", job.OperationID, failurecause.Attr(err, *job.ProviderDocumentKey))
-		return translation.ProviderDocumentHandle{}, false, errTranslationProviderDocumentHandleMismatch
+		return translation.ProviderDocumentHandle{}, false, failurecause.WithPrivate(
+			fmt.Errorf("%w: %w", errTranslationProviderDocumentHandleMismatch, err),
+			*job.ProviderDocumentKey,
+		)
 	}
 	return handle, true, nil
 }
@@ -288,7 +289,7 @@ func (m *TranslationJobManager) generateValidatedTranslationRequest(
 			}
 			defer func() {
 				if closeErr := session.Close(callCtx); closeErr != nil {
-					translation.LogProviderEvent(callCtx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+					translation.LogProviderEvent(callCtx, slog.LevelError, "Translation provider session close failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
 					if retErr != nil {
 						return
 					}
@@ -320,7 +321,7 @@ func (m *TranslationJobManager) generateValidatedTranslationRequest(
 // so translation.provider.* failure logs name the job, entity, and locale.
 func withTranslationProviderLogContext(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	generator translation.Generator,
 ) context.Context {
 	if job == nil {

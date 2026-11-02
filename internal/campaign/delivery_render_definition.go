@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -124,7 +123,7 @@ func decodeCampaignDeliverySnapshotJSON(raw []byte) (CampaignDeliverySnapshot, e
 	return snapshot, nil
 }
 
-func decodeCampaignDeliverySnapshot(raw model.JSONFields) (CampaignDeliverySnapshot, error) {
+func decodeCampaignDeliverySnapshot(raw map[string]any) (CampaignDeliverySnapshot, error) {
 	encoded, err := json.Marshal(raw)
 	if err != nil {
 		return CampaignDeliverySnapshot{}, fmt.Errorf("render snapshot is not valid JSON: %w", err)
@@ -135,7 +134,7 @@ func decodeCampaignDeliverySnapshot(raw model.JSONFields) (CampaignDeliverySnaps
 func decodeCampaignDeliveryTemplateData(
 	runKind string,
 	eventKey string,
-	raw model.JSONFields,
+	raw map[string]any,
 ) (campaignDeliveryTemplateData, error) {
 	encoded, err := json.Marshal(raw)
 	if err != nil {
@@ -237,7 +236,7 @@ func validateCampaignDeliveryTemplateData(
 
 // ValidateEmailDeliveryRenderDefinition rejects mutable, unknown, or
 // structurally incomplete data before a worker renders a sealed run.
-func ValidateEmailDeliveryRenderDefinition(run model.CampaignDeliveryRun) error {
+func ValidateEmailDeliveryRenderDefinition(run DeliveryRun) error {
 	if !run.DefinitionSealed {
 		return fmt.Errorf("email delivery run definition is not sealed")
 	}
@@ -263,7 +262,7 @@ func ValidateEmailDeliveryRenderDefinition(run model.CampaignDeliveryRun) error 
 	return validateCampaignDeliveryTemplateData(run.RunKind, eventKey, data)
 }
 
-func CampaignDeliveryRunTemplateData(run model.CampaignDeliveryRun) (map[string]string, error) {
+func CampaignDeliveryRunTemplateData(run DeliveryRun) (map[string]string, error) {
 	data, err := decodeCampaignDeliveryTemplateData(
 		run.RunKind,
 		strings.TrimSpace(ptrStringValue(run.TemplateEventKey)),
@@ -291,7 +290,7 @@ func CampaignDeliveryRunTemplateData(run model.CampaignDeliveryRun) (map[string]
 	return result, nil
 }
 
-func EmailDeliveryRunTemplateType(run model.CampaignDeliveryRun) string {
+func EmailDeliveryRunTemplateType(run DeliveryRun) string {
 	if eventKey := strings.TrimSpace(ptrStringValue(run.TemplateEventKey)); eventKey != "" {
 		return eventKey
 	}
@@ -303,7 +302,7 @@ func EmailDeliveryRunTemplateType(run model.CampaignDeliveryRun) string {
 	return ""
 }
 
-func EmailDeliveryRunReferenceID(run model.CampaignDeliveryRun) string {
+func EmailDeliveryRunReferenceID(run DeliveryRun) string {
 	switch strings.TrimSpace(run.RunKind) {
 	case EmailDeliveryRunKindCampaign:
 		return strings.TrimSpace(ptrStringValue(run.CampaignID))

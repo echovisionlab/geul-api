@@ -1,106 +1,74 @@
 package audience
 
 import (
-	"context"
-	"reflect"
+	"errors"
+	"slices"
+	"strings"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-const (
-	deliveryRunScheduled = "scheduled"
-	deliveryRunSending   = "sending"
-	deliveryRunCancelled = "cancelled"
-)
-
-var (
-	manageCampaignScheduled = managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String()
-	manageCampaignSending   = managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String()
-	manageCampaignDraft     = managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String()
-)
-
-// RecipientCounter supplies the authoritative recipient estimate for an
-// audience segment.
-type RecipientCounter interface {
-	Count(context.Context, *model.AudienceSegment) (int64, error)
+// Deps are the collaborators of the Audience use cases. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	// Units opens the transactions and read snapshots of the Store
+	// (audience/postgres.NewUnits).
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	// Fence is the identity fence (identitystate.PostgresFence).
+	Fence identitystate.Fence
+	Audit domainaudit.Appender
+	// RecipientCounter estimates the recipients of a segment.
+	RecipientCounter RecipientCounter
 }
 
-// MemberReferences validates durable member references before they are
-// persisted in an audience segment.
-type MemberReferences interface {
-	EligibleIDs(context.Context, *gorm.DB, []string) ([]string, error)
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil,
+		"Audit": d.Audit == nil, "RecipientCounter": d.RecipientCounter == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("audience dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-// AudienceService implements the Audience Connect handler.
-type AudienceService struct {
-	managev1connect.UnimplementedAudienceServiceHandler
-	db               *gorm.DB
-	spiceDB          *auth.SpiceDBClient
+// Service holds the Audience use cases. The Connect adapter translates its
+// requests into their commands and queries.
+type Service struct {
+	units            mutation.UnitOfWork[Store]
+	spiceDB          mutation.Authorizer
 	recipientCounter RecipientCounter
-	memberReferences MemberReferences
-	auditWriter      domainaudit.Appender
+	mutations        *mutation.StoreRunner[Store]
 }
 
-// NewAudienceService constructs an audience service with its required
-// consumer-owned persistence seams.
-func NewAudienceService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	recipientCounter RecipientCounter,
-	memberReferences MemberReferences,
-) *AudienceService {
-	if db == nil {
-		panic("db is required")
+// NewService validates deps and returns the Audience use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
+	if err != nil {
+		return nil, err
 	}
-	if dependencyIsNil(recipientCounter) {
-		panic("recipient counter is required")
-	}
-	if dependencyIsNil(memberReferences) {
-		panic("member references are required")
-	}
-	return &AudienceService{
-		db:               db,
-		spiceDB:          spiceDB,
-		recipientCounter: recipientCounter,
-		memberReferences: memberReferences,
-	}
+	return &Service{
+		units:            deps.Units,
+		spiceDB:          deps.SpiceDB,
+		recipientCounter: deps.RecipientCounter,
+		mutations:        mutations,
+	}, nil
 }
 
-func dependencyIsNil(value any) bool {
-	if value == nil {
-		return true
-	}
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
-}
-
-// NewAuditedAudienceService constructs an audience service that appends
-// authoritative domain audit records in the surrounding database transaction.
-func NewAuditedAudienceService(
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-	recipientCounter RecipientCounter,
-	memberReferences MemberReferences,
-) *AudienceService {
-	if auditWriter == nil {
-		panic("audience audit writer is required")
-	}
-	service := NewAudienceService(db, spiceDB, recipientCounter, memberReferences)
-	service.auditWriter = auditWriter
-	return service
+// freshAdmin is the in-transaction authority of every segment mutation.
+func freshAdmin(can policyv1.Can) mutation.Access {
+	return mutation.FreshAdminCan(can, nil)
 }
