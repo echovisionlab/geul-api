@@ -42,7 +42,7 @@ type LayoutLocaleSnapshot struct {
 // layout. Missing source rows are omitted.
 func LoadCanonicalLayoutProjections(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutIDs []string,
 ) (map[string]CanonicalLayoutProjection, error) {
 	if len(layoutIDs) == 0 {
@@ -72,7 +72,7 @@ func LoadCanonicalLayoutProjections(
 // deterministic order used to seal delivery snapshots.
 func LoadLayoutLocaleSnapshots(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 ) ([]LayoutLocaleSnapshot, error) {
 	rows, err := store.LayoutLocales(ctx, layoutID)
@@ -115,7 +115,7 @@ func LoadLayoutLocaleSnapshots(
 // LoadLayoutTranslationEntry loads one locale row, returning nil when absent.
 func LoadLayoutTranslationEntry(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 ) (*LayoutTranslationEntry, error) {
@@ -145,7 +145,7 @@ func LoadLayoutTranslationEntry(
 // LoadLayoutTranslationDocument returns one required locale document.
 func LoadLayoutTranslationDocument(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 ) (*LayoutTranslationDocument, error) {
@@ -167,7 +167,7 @@ func LoadLayoutTranslationDocument(
 // authority. The caller owns fallback policy when no persisted authority exists.
 func ResolveLayoutTranslationSourceLocale(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 ) (string, bool, error) {
 	locale, found, err := store.LayoutSourceLocale(ctx, layoutID)
@@ -183,7 +183,7 @@ func ResolveLayoutTranslationSourceLocale(
 // LoadCanonicalLayoutTranslationDocument loads the required source-locale row.
 func LoadCanonicalLayoutTranslationDocument(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	sourceLocale string,
 ) (*LayoutTranslationDocument, error) {
@@ -210,7 +210,7 @@ func LoadCanonicalLayoutTranslationDocument(
 // LoadLayoutTranslationSourceDocument returns the provider-visible source.
 func LoadLayoutTranslationSourceDocument(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	sourceLocale string,
 ) (*translation.SourceDocument, error) {
@@ -226,7 +226,7 @@ func LoadLayoutTranslationSourceDocument(
 
 func loadLayoutSourceLocaleFlag(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 ) (string, bool, error) {
 	locale, found, err := store.LayoutSourceLocale(ctx, layoutID)

@@ -44,7 +44,7 @@ type RenderedEmail struct {
 // and layout overrides when the requested locale rows exist.
 func RenderTemplateForLocale(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	eventKey string,
 	requestedLocale string,
 	data map[string]string,
@@ -80,7 +80,7 @@ func RenderTemplateForLocale(
 
 func renderTemplateByID(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	templateID string,
 	requestedLocale string,
 	data map[string]string,
@@ -105,7 +105,7 @@ func renderTemplateByID(
 
 func renderStoredTemplate(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	tmpl Template,
 	requestedLocale string,
 	data map[string]string,
@@ -362,7 +362,7 @@ func stringFromStructuredValue(value structured.Value) string {
 
 func WrapWithLayoutForLocaleStrict(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	requestedLocale string,
 	content string,
