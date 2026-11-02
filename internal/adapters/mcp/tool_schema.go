@@ -40,18 +40,7 @@ func generateInputNode(raw json.RawMessage, inputs []reflect.Type, path string) 
 				generated, err = generateInputNode(property.value, elements, path+"[]")
 			}
 		case "allOf", "anyOf", "oneOf":
-			var alternatives []json.RawMessage
-			if err = json.Unmarshal(property.value, &alternatives); err == nil {
-				for index, alternative := range alternatives {
-					alternatives[index], err = generateInputNode(alternative, inputs, path)
-					if err != nil {
-						break
-					}
-				}
-				if err == nil {
-					generated, err = json.Marshal(alternatives)
-				}
-			}
+			generated, err = generateInputAlternatives(property.value, inputs, path)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", path, property.name, err)
@@ -61,6 +50,21 @@ func generateInputNode(raw json.RawMessage, inputs []reflect.Type, path string) 
 		}
 	}
 	return writeInputSchemaObject(properties), nil
+}
+
+func generateInputAlternatives(raw json.RawMessage, inputs []reflect.Type, path string) (json.RawMessage, error) {
+	var alternatives []json.RawMessage
+	if err := json.Unmarshal(raw, &alternatives); err != nil {
+		return nil, err
+	}
+	for index, alternative := range alternatives {
+		generated, err := generateInputNode(alternative, inputs, path)
+		alternatives[index] = generated
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(alternatives)
 }
 
 func generateInputProperties(raw json.RawMessage, inputs []reflect.Type, path string) (json.RawMessage, error) {

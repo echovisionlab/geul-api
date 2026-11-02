@@ -137,72 +137,76 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			entity := f.create(t)
-			f.applyBody(t, entity, postVersionRestoreBody)
-			versionID := f.checkpoint(t, entity)
-			checkpointRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
-			checkpointSettings := f.settingsFingerprint(t, entity)
-			tc.drift(t, f, entity)
-
-			beforeRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
-			beforeMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
-			beforeUpdatedAt := f.updatedAt(t, entity)
-			beforeEvents := len(contenttest.ContentUpdatedEvents(t, f.db, entity.id))
-			beforeAudit := len(contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id))
-
-			restored, err := f.restore(f.ctx, entity.id, versionID)
-			require.NoError(t, err)
-
-			afterRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
-			afterMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
-			events := contenttest.ContentUpdatedEvents(t, f.db, entity.id)[beforeEvents:]
-			audit := contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id)[beforeAudit:]
-
-			require.Equal(t, postVersionRestoreTitle, restored.title)
-			require.Nil(t, restored.summary)
-			require.Equal(t, "en", restored.sourceLocale)
-			require.Equal(t, "en", f.sourceLocale(t, entity))
-			require.Equal(t, afterRows.Revision, restored.revision)
-			require.Equal(t, checkpointRows.Blocks, afterRows.Blocks)
-			require.Equal(t, postVersionRestoreLocales(checkpointRows, "en", true), postVersionRestoreLocales(afterRows, "en", true))
-			require.Equal(t, postVersionRestoreLocales(beforeRows, "en", false), postVersionRestoreLocales(afterRows, "en", false),
-				"target locale overlays stay unchanged")
-			require.Equal(t, checkpointSettings, f.settingsFingerprint(t, entity), "versions never restore settings")
-			require.Equal(t, tc.want.ogGenerations, contenttest.CountOgGenerationsForReason(t, f.db, entity.id, postVersionRestoreOGEvent))
-
-			if tc.want.unchanged {
-				require.Equal(t, beforeRows, afterRows)
-				require.Equal(t, beforeMetadata, afterMetadata)
-				require.Equal(t, beforeUpdatedAt, f.updatedAt(t, entity))
-				require.Empty(t, events)
-				require.Empty(t, audit)
-				return
-			}
-			require.NotEqual(t, beforeRows.Revision, afterRows.Revision)
-			require.True(t, f.updatedAt(t, entity).After(beforeUpdatedAt))
-			source := requirePostVersionRestoreLocaleRow(t, afterMetadata, "en")
-			require.Equal(t, postVersionRestoreTitle, *source.Title)
-			require.Nil(t, source.Summary)
-			for _, row := range beforeMetadata {
-				if row.Locale != "en" {
-					require.Equal(t, row, requirePostVersionRestoreLocaleRow(t, afterMetadata, row.Locale), "target locale rows stay unchanged")
-				}
-			}
-			require.Equal(t, []contenttest.DomainAuditRow{{
-				Action:        string(sharedtelemetry.AuditPostUpdated),
-				ActorKind:     string(sharedtelemetry.ActorKindMember),
-				ActorMemberID: &f.memberID,
-				ChangedFields: []string{"version_restore"},
-				VersionID:     &versionID,
-			}}, audit)
-			require.Len(t, events, 1)
-			requirePostVersionRestoreEvent(t, events[0], entity.id, f.memberID, afterRows.Revision, tc.want)
-
-			err = f.applyBodyAt(t, entity, beforeRows.Revision, "Stale writer body")
-			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "a writer holding the pre-restore revision conflicts")
+			f.runCharacterization(t, tc)
 		})
 	}
+}
+
+func (f *postVersionRestoreFixture) runCharacterization(t *testing.T, tc postVersionRestoreCase) {
+	t.Parallel()
+	entity := f.create(t)
+	f.applyBody(t, entity, postVersionRestoreBody)
+	versionID := f.checkpoint(t, entity)
+	checkpointRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+	checkpointSettings := f.settingsFingerprint(t, entity)
+	tc.drift(t, f, entity)
+
+	beforeRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+	beforeMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
+	beforeUpdatedAt := f.updatedAt(t, entity)
+	beforeEvents := len(contenttest.ContentUpdatedEvents(t, f.db, entity.id))
+	beforeAudit := len(contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id))
+
+	restored, err := f.restore(f.ctx, entity.id, versionID)
+	require.NoError(t, err)
+
+	afterRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+	afterMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
+	events := contenttest.ContentUpdatedEvents(t, f.db, entity.id)[beforeEvents:]
+	audit := contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id)[beforeAudit:]
+
+	require.Equal(t, postVersionRestoreTitle, restored.title)
+	require.Nil(t, restored.summary)
+	require.Equal(t, "en", restored.sourceLocale)
+	require.Equal(t, "en", f.sourceLocale(t, entity))
+	require.Equal(t, afterRows.Revision, restored.revision)
+	require.Equal(t, checkpointRows.Blocks, afterRows.Blocks)
+	require.Equal(t, postVersionRestoreLocales(checkpointRows, "en", true), postVersionRestoreLocales(afterRows, "en", true))
+	require.Equal(t, postVersionRestoreLocales(beforeRows, "en", false), postVersionRestoreLocales(afterRows, "en", false),
+		"target locale overlays stay unchanged")
+	require.Equal(t, checkpointSettings, f.settingsFingerprint(t, entity), "versions never restore settings")
+	require.Equal(t, tc.want.ogGenerations, contenttest.CountOgGenerationsForReason(t, f.db, entity.id, postVersionRestoreOGEvent))
+
+	if tc.want.unchanged {
+		require.Equal(t, beforeRows, afterRows)
+		require.Equal(t, beforeMetadata, afterMetadata)
+		require.Equal(t, beforeUpdatedAt, f.updatedAt(t, entity))
+		require.Empty(t, events)
+		require.Empty(t, audit)
+		return
+	}
+	require.NotEqual(t, beforeRows.Revision, afterRows.Revision)
+	require.True(t, f.updatedAt(t, entity).After(beforeUpdatedAt))
+	source := requirePostVersionRestoreLocaleRow(t, afterMetadata, "en")
+	require.Equal(t, postVersionRestoreTitle, *source.Title)
+	require.Nil(t, source.Summary)
+	for _, row := range beforeMetadata {
+		if row.Locale != "en" {
+			require.Equal(t, row, requirePostVersionRestoreLocaleRow(t, afterMetadata, row.Locale), "target locale rows stay unchanged")
+		}
+	}
+	require.Equal(t, []contenttest.DomainAuditRow{{
+		Action:        string(sharedtelemetry.AuditPostUpdated),
+		ActorKind:     string(sharedtelemetry.ActorKindMember),
+		ActorMemberID: &f.memberID,
+		ChangedFields: []string{"version_restore"},
+		VersionID:     &versionID,
+	}}, audit)
+	require.Len(t, events, 1)
+	requirePostVersionRestoreEvent(t, events[0], entity.id, f.memberID, afterRows.Revision, tc.want)
+
+	err = f.applyBodyAt(t, entity, beforeRows.Revision, "Stale writer body")
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "a writer holding the pre-restore revision conflicts")
 }
 
 func TestPostVersionRestoreRejectionsIntegration(t *testing.T) {

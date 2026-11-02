@@ -208,23 +208,9 @@ func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState
 		mutation.DeleteTranslation = true
 		return mutation, nil, nil
 	}
-	contentOperations := make([]core.Operation, 0, len(operations))
-	contentIndexes := make([]int, 0, len(operations))
-	for index, operation := range operations {
-		if handled, issue := compilePageDocumentLayoutOperation(&mutation.Metadata, state.Page.DocumentLayout, loaded.Role(), operation, index); handled {
-			if issue != nil {
-				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
-			}
-			continue
-		}
-		if handled, issue := compilePageMetadataOperation(&mutation.Metadata, operation, index); handled {
-			if issue != nil {
-				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
-			}
-			continue
-		}
-		contentOperations = append(contentOperations, operation)
-		contentIndexes = append(contentIndexes, index)
+	contentOperations, contentIndexes, issues := compilePageMetadataOperations(&mutation.Metadata, state.Page.DocumentLayout, loaded.Role(), operations)
+	if len(issues) != 0 {
+		return pagedomain.AIDocumentMutation{}, issues, nil
 	}
 	batch, issues, err := p.codec.Compile(ctx, state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
 	for index := range issues {
@@ -241,6 +227,28 @@ func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState
 		mutation.Metadata.EnsureLocale = true
 	}
 	return mutation, nil, nil
+}
+
+func compilePageMetadataOperations(patch *pagedomain.AIDocumentMetadataPatch, layout pagedomain.DocumentLayout, role core.LocaleRole, operations []core.Operation) ([]core.Operation, []int, []core.OperationIssue) {
+	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
+	for index, operation := range operations {
+		if handled, issue := compilePageDocumentLayoutOperation(patch, layout, role, operation, index); handled {
+			if issue != nil {
+				return nil, nil, []core.OperationIssue{*issue}
+			}
+			continue
+		}
+		if handled, issue := compilePageMetadataOperation(patch, operation, index); handled {
+			if issue != nil {
+				return nil, nil, []core.OperationIssue{*issue}
+			}
+			continue
+		}
+		contentOperations = append(contentOperations, operation)
+		contentIndexes = append(contentIndexes, index)
+	}
+	return contentOperations, contentIndexes, nil
 }
 
 func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current pagedomain.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {

@@ -1,6 +1,7 @@
 package filemediatest
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"slices"
@@ -55,127 +56,139 @@ func (s *LibraryStore) Catalog(_ context.Context, q domain.CatalogQuery) ([]doma
 		return nil, s.Fail
 	}
 	var rows []domain.CatalogRow
-	scope := func(id string) bool {
-		if q.Parent == "" {
-			return true
-		}
-		seen := map[string]bool{}
-		for id != "" && !seen[id] {
-			if id == q.Parent {
-				return true
-			}
-			seen[id] = true
-			folder, ok := s.Folders[id]
-			if !ok || folder.ParentID == nil {
-				break
-			}
-			id = *folder.ParentID
-		}
-		return false
-	}
 	if q.IncludeFolders {
 		for _, folder := range s.Folders {
-			if q.Query == "" {
-				if !catalogParent(folder.ParentID, q.Parent) {
-					continue
-				}
-			} else if !strings.Contains(strings.ToLower(folder.Name), strings.ToLower(q.Query)) || folder.ID == q.Parent || !scope(folder.ID) {
+			if !s.catalogFolderMatches(folder, q) {
 				continue
 			}
 			rows = append(rows, domain.CatalogRow{ItemType: "folder", ID: folder.ID, ParentID: folder.ParentID, Name: folder.Name, MemberID: folder.CreatedByMemberID, CreatedAt: folder.CreatedAt, UpdatedAt: folder.UpdatedAt})
 		}
 	}
 	for _, value := range s.Files {
-		if value.PendingDeletion || value.MeshOutput {
+		if !s.catalogFileMatches(value, q) {
 			continue
 		}
-		row := value.Row
-		if q.Query == "" {
-			if !catalogParent(row.ParentID, q.Parent) {
-				continue
-			}
-		} else {
-			extension := ""
-			if row.Extension != nil {
-				extension = *row.Extension
-			}
-			if !strings.Contains(strings.ToLower(row.Name+"."+extension), strings.ToLower(q.Query)) {
-				continue
-			}
-			parent := ""
-			if row.ParentID != nil {
-				parent = *row.ParentID
-			}
-			if !scope(parent) {
-				continue
-			}
-		}
-		if q.MimePrefix != "" && (row.MimeType == nil || !strings.HasPrefix(strings.ToLower(*row.MimeType), strings.ToLower(q.MimePrefix))) {
-			continue
-		}
-		if q.Uploader != "" && (row.MemberID == nil || *row.MemberID != q.Uploader) {
-			continue
-		}
-		rows = append(rows, row)
+		rows = append(rows, value.Row)
 	}
 	slices.SortFunc(rows, func(a, b domain.CatalogRow) int {
-		if a.ItemType != b.ItemType {
-			if a.ItemType == "folder" {
-				return -1
-			}
-			return 1
-		}
-		c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-		switch q.SortField {
-		case domain.CatalogSortCreated:
-			c = a.CreatedAt.Compare(b.CreatedAt)
-		case domain.CatalogSortUpdated:
-			c = a.UpdatedAt.Compare(b.UpdatedAt)
-		case domain.CatalogSortSize:
-			var x, y int64
-			if a.FileSize != nil {
-				x = *a.FileSize
-			}
-			if b.FileSize != nil {
-				y = *b.FileSize
-			}
-			if x < y {
-				c = -1
-			} else if x > y {
-				c = 1
-			} else {
-				c = 0
-			}
-		}
-		if q.Descending {
-			c = -c
-		}
-		if c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
+		return compareCatalogRows(a, b, q)
 	})
+	return s.catalogPage(rows, q), nil
+}
+
+func (s *LibraryStore) catalogScope(id, parent string) bool {
+	if parent == "" {
+		return true
+	}
+	seen := map[string]bool{}
+	for id != "" && !seen[id] {
+		if id == parent {
+			return true
+		}
+		seen[id] = true
+		folder, ok := s.Folders[id]
+		if !ok || folder.ParentID == nil {
+			break
+		}
+		id = *folder.ParentID
+	}
+	return false
+}
+
+func (s *LibraryStore) catalogFolderMatches(folder domain.FileFolder, q domain.CatalogQuery) bool {
+	if q.Query == "" {
+		return catalogParent(folder.ParentID, q.Parent)
+	}
+	return strings.Contains(strings.ToLower(folder.Name), strings.ToLower(q.Query)) && folder.ID != q.Parent && s.catalogScope(folder.ID, q.Parent)
+}
+
+func (s *LibraryStore) catalogFileMatches(value CatalogFileRecord, q domain.CatalogQuery) bool {
+	if value.PendingDeletion || value.MeshOutput || !s.catalogFileLocationMatches(value.Row, q) {
+		return false
+	}
+	row := value.Row
+	if q.MimePrefix != "" && (row.MimeType == nil || !strings.HasPrefix(strings.ToLower(*row.MimeType), strings.ToLower(q.MimePrefix))) {
+		return false
+	}
+	return q.Uploader == "" || row.MemberID != nil && *row.MemberID == q.Uploader
+}
+
+func (s *LibraryStore) catalogFileLocationMatches(row domain.CatalogRow, q domain.CatalogQuery) bool {
+	if q.Query == "" {
+		return catalogParent(row.ParentID, q.Parent)
+	}
+	extension := ""
+	if row.Extension != nil {
+		extension = *row.Extension
+	}
+	if !strings.Contains(strings.ToLower(row.Name+"."+extension), strings.ToLower(q.Query)) {
+		return false
+	}
+	parent := ""
+	if row.ParentID != nil {
+		parent = *row.ParentID
+	}
+	return s.catalogScope(parent, q.Parent)
+}
+
+func compareCatalogRows(a, b domain.CatalogRow, q domain.CatalogQuery) int {
+	if a.ItemType != b.ItemType {
+		if a.ItemType == "folder" {
+			return -1
+		}
+		return 1
+	}
+	c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	switch q.SortField {
+	case domain.CatalogSortCreated:
+		c = a.CreatedAt.Compare(b.CreatedAt)
+	case domain.CatalogSortUpdated:
+		c = a.UpdatedAt.Compare(b.UpdatedAt)
+	case domain.CatalogSortSize:
+		c = cmp.Compare(catalogFileSize(a), catalogFileSize(b))
+	}
+	if q.Descending {
+		c = -c
+	}
+	if c != 0 {
+		return c
+	}
+	return strings.Compare(a.ID, b.ID)
+}
+
+func catalogFileSize(row domain.CatalogRow) int64 {
+	if row.FileSize == nil {
+		return 0
+	}
+	return *row.FileSize
+}
+
+func (s *LibraryStore) catalogPage(rows []domain.CatalogRow, q domain.CatalogQuery) []domain.CatalogRow {
 	total := len(rows)
 	if q.Offset >= total || q.PageSize <= 0 {
-		return nil, nil
+		return nil
 	}
 	end := min(total, q.Offset+q.PageSize)
 	rows = slices.Clone(rows[q.Offset:end])
 	for i := range rows {
 		rows[i].Total = int64(total)
-		rows[i].FolderPath = []byte("[]")
-		if q.Query != "" {
-			folder := rows[i].ID
-			if rows[i].ItemType != "folder" {
-				folder = ""
-				if rows[i].ParentID != nil {
-					folder = *rows[i].ParentID
-				}
-			}
-			rows[i].FolderPath = s.catalogPath(folder)
+		rows[i].FolderPath = s.catalogRowPath(rows[i], q.Query)
+	}
+	return rows
+}
+
+func (s *LibraryStore) catalogRowPath(row domain.CatalogRow, query string) []byte {
+	if query == "" {
+		return []byte("[]")
+	}
+	folder := row.ID
+	if row.ItemType != "folder" {
+		folder = ""
+		if row.ParentID != nil {
+			folder = *row.ParentID
 		}
 	}
-	return rows, nil
+	return s.catalogPath(folder)
 }
 func catalogParent(parent *string, id string) bool {
 	return parent == nil && id == "" || parent != nil && *parent == id

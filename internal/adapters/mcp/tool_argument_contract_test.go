@@ -342,65 +342,9 @@ func TestToolInputSchemasMatchDecodedArguments(t *testing.T) {
 	strictPaths, rawPaths := 0, 0
 	acceptedSeen := map[string]bool{}
 	for _, tool := range tools {
-		objects := schemaObjects(t, tool)
-		if prober.accepts(tool.Name, nil, contractProbeField) {
-			t.Errorf("%s: arguments are not decoded strictly; an unknown field was accepted", tool.Name)
-			continue
-		}
-		hasRoot := false
-		for _, object := range objects {
-			if len(object.path) == 0 {
-				hasRoot = true
-			}
-			advertised := map[string]bool{}
-			for name := range object.properties {
-				advertised[name] = true
-			}
-			for _, name := range object.required {
-				if !advertised[name] {
-					t.Errorf("%s %s: required property %q is not declared in properties", tool.Name, object.path, name)
-				}
-			}
-			if len(object.path) > 0 && prober.accepts(tool.Name, object.path, contractProbeField) {
-				// The value at this path is decoded as raw JSON, a map or
-				// a custom unmarshaler; its own decoder owns the contract.
-				rawPaths++
-				t.Logf("%s %s: decoded as raw JSON, a map or a custom unmarshaler; not probed", tool.Name, object.path)
-				continue
-			}
-			strictPaths++
-			if !object.closed {
-				t.Errorf("%s %s: decoded strictly but the schema does not set additionalProperties to false", tool.Name, object.path)
-			}
-			names := make([]string, 0, len(advertised))
-			for name := range advertised {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			for _, name := range names {
-				if !prober.accepts(tool.Name, object.path, name) {
-					t.Errorf("%s %s: schema property %q is rejected by the decoded argument struct", tool.Name, object.path, name)
-				}
-			}
-			for _, name := range candidates {
-				if advertised[name] || !prober.accepts(tool.Name, object.path, name) {
-					continue
-				}
-				key := tool.Name + " " + object.path.with(schemaStep{key: name}).String()
-				acceptedSeen[key] = true
-				if _, allowed := acceptedUnadvertisedFields[key]; !allowed {
-					t.Errorf("%s %s: argument struct accepts %q, which the schema does not advertise", tool.Name, object.path, name)
-				}
-			}
-		}
-		if !hasRoot {
-			// A tool without properties must still reject every argument.
-			for _, name := range candidates {
-				if prober.accepts(tool.Name, nil, name) {
-					t.Errorf("%s: schema has no properties but the argument struct accepts %q", tool.Name, name)
-				}
-			}
-		}
+		strict, raw := checkToolDecodedArguments(t, prober, tool, candidates, acceptedSeen)
+		strictPaths += strict
+		rawPaths += raw
 	}
 	t.Logf("probed %d tools: %d strict object paths, %d raw object paths, %d candidate field names", len(tools), strictPaths, rawPaths, len(candidates))
 	for key := range acceptedUnadvertisedFields {
@@ -408,4 +352,73 @@ func TestToolInputSchemasMatchDecodedArguments(t *testing.T) {
 			t.Errorf("acceptedUnadvertisedFields lists %s, which no longer occurs", key)
 		}
 	}
+}
+
+func checkToolDecodedArguments(t *testing.T, prober argumentProber, tool mcpserver.Tool, candidates []string, acceptedSeen map[string]bool) (int, int) {
+	objects := schemaObjects(t, tool)
+	if prober.accepts(tool.Name, nil, contractProbeField) {
+		t.Errorf("%s: arguments are not decoded strictly; an unknown field was accepted", tool.Name)
+		return 0, 0
+	}
+	strictPaths, rawPaths := 0, 0
+	hasRoot := false
+	for _, object := range objects {
+		if len(object.path) == 0 {
+			hasRoot = true
+		}
+		strict, raw := checkDecodedSchemaObject(t, prober, tool.Name, object, candidates, acceptedSeen)
+		strictPaths += strict
+		rawPaths += raw
+	}
+	if !hasRoot {
+		// A tool without properties must still reject every argument.
+		for _, name := range candidates {
+			if prober.accepts(tool.Name, nil, name) {
+				t.Errorf("%s: schema has no properties but the argument struct accepts %q", tool.Name, name)
+			}
+		}
+	}
+	return strictPaths, rawPaths
+}
+
+func checkDecodedSchemaObject(t *testing.T, prober argumentProber, toolName string, object *schemaObject, candidates []string, acceptedSeen map[string]bool) (int, int) {
+	advertised := map[string]bool{}
+	for name := range object.properties {
+		advertised[name] = true
+	}
+	for _, name := range object.required {
+		if !advertised[name] {
+			t.Errorf("%s %s: required property %q is not declared in properties", toolName, object.path, name)
+		}
+	}
+	if len(object.path) > 0 && prober.accepts(toolName, object.path, contractProbeField) {
+		// The value at this path is decoded as raw JSON, a map or
+		// a custom unmarshaler; its own decoder owns the contract.
+		t.Logf("%s %s: decoded as raw JSON, a map or a custom unmarshaler; not probed", toolName, object.path)
+		return 0, 1
+	}
+	if !object.closed {
+		t.Errorf("%s %s: decoded strictly but the schema does not set additionalProperties to false", toolName, object.path)
+	}
+	names := make([]string, 0, len(advertised))
+	for name := range advertised {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !prober.accepts(toolName, object.path, name) {
+			t.Errorf("%s %s: schema property %q is rejected by the decoded argument struct", toolName, object.path, name)
+		}
+	}
+	for _, name := range candidates {
+		if advertised[name] || !prober.accepts(toolName, object.path, name) {
+			continue
+		}
+		key := toolName + " " + object.path.with(schemaStep{key: name}).String()
+		acceptedSeen[key] = true
+		if _, allowed := acceptedUnadvertisedFields[key]; !allowed {
+			t.Errorf("%s %s: argument struct accepts %q, which the schema does not advertise", toolName, object.path, name)
+		}
+	}
+	return 1, 0
 }

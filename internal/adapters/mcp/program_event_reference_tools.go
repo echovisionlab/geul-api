@@ -119,17 +119,7 @@ func (tools *ProgramEventReferenceTools) listReferences(ctx context.Context, nam
 		responsePagination = programevent.PaginationMessage(list.Pagination)
 		for _, view := range list.Types {
 			item := programevent.TypeMessage(view)
-			locales := make([]map[string]any, 0, len(item.Locales))
-			for _, locale := range item.Locales {
-				if locale != nil {
-					localized := map[string]any{"locale": locale.Locale, "name": locale.Name}
-					if locale.Description != nil {
-						localized["description"] = *locale.Description
-					}
-					locales = append(locales, localized)
-				}
-			}
-			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales})
+			items = append(items, programEventTypeReferenceItem(item))
 		}
 	case ToolProgramEventSeriesList:
 		list, err := tools.series.ListProgramEventSeriesAdmin(ctx, programevent.ListProgramEventSeriesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
@@ -161,6 +151,20 @@ func (tools *ProgramEventReferenceTools) listReferences(ctx context.Context, nam
 		output["next_offset"] = int64(pagination.Offset) + int64(pagination.Limit)
 	}
 	return contentResult(output)
+}
+
+func programEventTypeReferenceItem(item *managev1.ProgramEventType) map[string]any {
+	locales := make([]map[string]any, 0, len(item.Locales))
+	for _, locale := range item.Locales {
+		if locale != nil {
+			localized := map[string]any{"locale": locale.Locale, "name": locale.Name}
+			if locale.Description != nil {
+				localized["description"] = *locale.Description
+			}
+			locales = append(locales, localized)
+		}
+	}
+	return map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales}
 }
 
 func programEventReferenceTool[Input any](definition mcpserver.Tool, normalize func(Input) programEventReferenceSearchArguments) registeredTool[ProgramEventReferenceTools] {

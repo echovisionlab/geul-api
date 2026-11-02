@@ -209,21 +209,9 @@ func planWorkCreditMove(ctx context.Context, store Store, command MoveWorkCredit
 	if err != nil {
 		return nil, nil, err
 	}
-	var targetGroupID *string
-	if command.Kind == CreditItemGroup {
-		if !hasWorkCreditGroup(groups, command.ItemID) {
-			return nil, nil, domainerr.ResourceNotFound("credit_group", command.ItemID)
-		}
-	} else {
-		if !hasWorkCredit(credits, command.ItemID) {
-			return nil, nil, domainerr.ResourceNotFound("credit", command.ItemID)
-		}
-		if requested := strings.TrimSpace(*command.TargetGroupID); requested != "" {
-			if !hasWorkCreditGroup(groups, requested) {
-				return nil, nil, domainerr.ResourceNotFound("credit_group", requested)
-			}
-			targetGroupID = &requested
-		}
+	targetGroupID, err := workCreditMoveTargetGroup(groups, credits, command)
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := validateWorkCreditMoveAnchors(
 		ctx, store, currentOrder, command.Kind, command.ItemID, targetGroupID, command.After, command.Before,
@@ -241,6 +229,26 @@ func planWorkCreditMove(ctx context.Context, store Store, command MoveWorkCredit
 		return currentOrder, nil, nil
 	}
 	return currentOrder, nextOrder, nil
+}
+
+func workCreditMoveTargetGroup(groups []CreditGroup, credits []Credit, command MoveWorkCreditItemCommand) (*string, error) {
+	if command.Kind == CreditItemGroup {
+		if !hasWorkCreditGroup(groups, command.ItemID) {
+			return nil, domainerr.ResourceNotFound("credit_group", command.ItemID)
+		}
+		return nil, nil
+	}
+	if !hasWorkCredit(credits, command.ItemID) {
+		return nil, domainerr.ResourceNotFound("credit", command.ItemID)
+	}
+	requested := strings.TrimSpace(*command.TargetGroupID)
+	if requested == "" {
+		return nil, nil
+	}
+	if !hasWorkCreditGroup(groups, requested) {
+		return nil, domainerr.ResourceNotFound("credit_group", requested)
+	}
+	return &requested, nil
 }
 
 func workCreditAnchorIsSelf(anchor *OrderItem, kind CreditItemKind, itemID string) bool {

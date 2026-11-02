@@ -62,54 +62,29 @@ type legalParityDeliveryRun struct {
 	TemplateDataKeys []string
 }
 
+type legalParityKind struct {
+	name           string
+	status         func(string) string
+	shareLinkType  string
+	updateEvent    string
+	effectiveEvent string
+	effectiveURL   string
+	ops            func(legalIntegration) legalParityOps
+
+	// Differences between the services.
+	defaultTitle       string // "Terms of Service" vs "Privacy Policy"
+	notFoundResource   string // Get/Schedule/Cancel/Delete: "terms" vs "privacy policy"
+	scheduleNonDraft   string // shared errs constant vs a privacy-specific literal
+	cancelNonScheduled string // shared errs constant vs a privacy-specific literal
+}
+
 // TestLegalPolicyTermsPrivacyParityIntegration pins what the Terms and
 // Privacy services do for the same operations so the two can be merged into
 // one implementation. Each table field that differs between the rows is a
 // current divergence the merge must keep or deliberately change.
 func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []struct {
-		name           string
-		status         func(string) string
-		shareLinkType  string
-		updateEvent    string
-		effectiveEvent string
-		effectiveURL   string
-		ops            func(legalIntegration) legalParityOps
-
-		// Differences between the services.
-		defaultTitle       string // "Terms of Service" vs "Privacy Policy"
-		notFoundResource   string // Get/Schedule/Cancel/Delete: "terms" vs "privacy policy"
-		scheduleNonDraft   string // shared errs constant vs a privacy-specific literal
-		cancelNonScheduled string // shared errs constant vs a privacy-specific literal
-	}{
-		{
-			name:               "terms",
-			status:             func(state string) string { return "TERMS_STATUS_" + state },
-			shareLinkType:      managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String(),
-			updateEvent:        email.EventTermsUpdate.String(),
-			effectiveEvent:     email.EventTermsEffective.String(),
-			effectiveURL:       "terms_url",
-			ops:                termsParityOps,
-			defaultTitle:       "Terms of Service",
-			notFoundResource:   "terms",
-			scheduleNonDraft:   "can only schedule draft terms",
-			cancelNonScheduled: "can only cancel scheduled terms",
-		},
-		{
-			name:               "privacy",
-			status:             func(state string) string { return "PRIVACY_STATUS_" + state },
-			shareLinkType:      managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(),
-			updateEvent:        email.EventPrivacyUpdate.String(),
-			effectiveEvent:     email.EventPrivacyEffective.String(),
-			effectiveURL:       "privacy_url",
-			ops:                privacyParityOps,
-			defaultTitle:       "Privacy Policy",
-			notFoundResource:   "privacy policy",
-			scheduleNonDraft:   "can only schedule draft privacy policies",
-			cancelNonScheduled: "can only cancel scheduled privacy policies",
-		},
-	} {
+	for _, kind := range legalParityKinds() {
 		t.Run(kind.name, func(t *testing.T) {
 			// The schema seeds the active notice template of every legal event.
 			db := newLegalLocalKratosIntegrationDB(t)
@@ -197,57 +172,98 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 			require.Len(t, runs, 2, "delivery history outlives the deleted policy")
 			require.Equal(t, legaldomain.CampaignDeliveryRunStatusCancelled, runs[1].Status)
 
-			audits := legalParityAuditRows(t, db, created.ID)
-			require.Equal(t, []string{
-				"legal_policy.created", "legal_policy.updated", "legal_policy.updated",
-				"legal_policy.updated", "legal_policy.deleted",
-			}, legalParityAuditActions(audits), "a source title edit appends no Domain Audit")
-			for _, row := range audits {
-				require.Equal(t, "member", row.ActorKind)
-				require.Equal(t, memberID, row.ActorMemberID)
-				require.Equal(t, "legal_policy", row.TargetType)
-				require.Equal(t, kind.name, legalParityAuditAttributes(t, row)["policy_type"])
-			}
-			require.Equal(t, map[string]any{
-				"policy_type": kind.name, "version_number": float64(created.Version),
-			}, legalParityAuditAttributes(t, audits[0]))
-			require.Equal(t, map[string]any{
-				"policy_type": kind.name, "version_number": float64(created.Version),
-				"changed_fields": []any{"effective_at", "status"},
-				"previous_state": "draft", "new_state": "scheduled",
-				"effective_at": effectiveFrom.Format(time.RFC3339Nano),
-			}, legalParityAuditAttributes(t, audits[1]))
-			require.Equal(t, map[string]any{
-				"policy_type": kind.name, "version_number": float64(created.Version),
-				"changed_fields": []any{"effective_at", "status"},
-				"previous_state": "scheduled", "new_state": "draft",
-				"effective_at": effectiveFrom.Format(time.RFC3339Nano),
-			}, legalParityAuditAttributes(t, audits[2]))
-			activation := legalParityAuditAttributes(t, audits[3])
-			require.NotEmpty(t, activation["effective_at"])
-			delete(activation, "effective_at")
-			require.Equal(t, map[string]any{
-				"policy_type": kind.name, "version_number": float64(created.Version),
-				"changed_fields": []any{"effective_at", "status"},
-				"previous_state": "draft", "new_state": "active",
-			}, activation)
-			require.Equal(t, map[string]any{
-				"policy_type": kind.name, "version_number": float64(created.Version),
-			}, legalParityAuditAttributes(t, audits[4]))
+			requireLegalParityAudits(t, db, kind, memberID, created, effectiveFrom)
 
-			missingID := uuid.NewString()
-			_, err = ops.get(ctx, missingID)
-			requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
-			_, err = ops.schedule(ctx, missingID, revision, effectiveFrom)
-			requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
-			_, err = ops.cancel(ctx, missingID)
-			requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
-			_, err = ops.activate(ctx, missingID, revision)
-			requireLegalParityError(t, err, connect.CodeNotFound, kind.name+" not found: "+missingID)
-			err = ops.delete(ctx, missingID, revision)
-			requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
+			requireMissingLegalParityPolicy(t, ctx, kind, ops, revision, effectiveFrom)
 		})
 	}
+}
+
+func legalParityKinds() []legalParityKind {
+	return []legalParityKind{
+		{
+			name:               "terms",
+			status:             func(state string) string { return "TERMS_STATUS_" + state },
+			shareLinkType:      managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String(),
+			updateEvent:        email.EventTermsUpdate.String(),
+			effectiveEvent:     email.EventTermsEffective.String(),
+			effectiveURL:       "terms_url",
+			ops:                termsParityOps,
+			defaultTitle:       "Terms of Service",
+			notFoundResource:   "terms",
+			scheduleNonDraft:   "can only schedule draft terms",
+			cancelNonScheduled: "can only cancel scheduled terms",
+		},
+		{
+			name:               "privacy",
+			status:             func(state string) string { return "PRIVACY_STATUS_" + state },
+			shareLinkType:      managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(),
+			updateEvent:        email.EventPrivacyUpdate.String(),
+			effectiveEvent:     email.EventPrivacyEffective.String(),
+			effectiveURL:       "privacy_url",
+			ops:                privacyParityOps,
+			defaultTitle:       "Privacy Policy",
+			notFoundResource:   "privacy policy",
+			scheduleNonDraft:   "can only schedule draft privacy policies",
+			cancelNonScheduled: "can only cancel scheduled privacy policies",
+		},
+	}
+}
+
+func requireLegalParityAudits(t *testing.T, db *gorm.DB, kind legalParityKind, memberID string, created legalParityPolicy, effectiveFrom time.Time) {
+	t.Helper()
+	audits := legalParityAuditRows(t, db, created.ID)
+	require.Equal(t, []string{
+		"legal_policy.created", "legal_policy.updated", "legal_policy.updated",
+		"legal_policy.updated", "legal_policy.deleted",
+	}, legalParityAuditActions(audits), "a source title edit appends no Domain Audit")
+	for _, row := range audits {
+		require.Equal(t, "member", row.ActorKind)
+		require.Equal(t, memberID, row.ActorMemberID)
+		require.Equal(t, "legal_policy", row.TargetType)
+		require.Equal(t, kind.name, legalParityAuditAttributes(t, row)["policy_type"])
+	}
+	require.Equal(t, map[string]any{
+		"policy_type": kind.name, "version_number": float64(created.Version),
+	}, legalParityAuditAttributes(t, audits[0]))
+	require.Equal(t, map[string]any{
+		"policy_type": kind.name, "version_number": float64(created.Version),
+		"changed_fields": []any{"effective_at", "status"},
+		"previous_state": "draft", "new_state": "scheduled",
+		"effective_at": effectiveFrom.Format(time.RFC3339Nano),
+	}, legalParityAuditAttributes(t, audits[1]))
+	require.Equal(t, map[string]any{
+		"policy_type": kind.name, "version_number": float64(created.Version),
+		"changed_fields": []any{"effective_at", "status"},
+		"previous_state": "scheduled", "new_state": "draft",
+		"effective_at": effectiveFrom.Format(time.RFC3339Nano),
+	}, legalParityAuditAttributes(t, audits[2]))
+	activation := legalParityAuditAttributes(t, audits[3])
+	require.NotEmpty(t, activation["effective_at"])
+	delete(activation, "effective_at")
+	require.Equal(t, map[string]any{
+		"policy_type": kind.name, "version_number": float64(created.Version),
+		"changed_fields": []any{"effective_at", "status"},
+		"previous_state": "draft", "new_state": "active",
+	}, activation)
+	require.Equal(t, map[string]any{
+		"policy_type": kind.name, "version_number": float64(created.Version),
+	}, legalParityAuditAttributes(t, audits[4]))
+}
+
+func requireMissingLegalParityPolicy(t *testing.T, ctx context.Context, kind legalParityKind, ops legalParityOps, revision string, effectiveFrom time.Time) {
+	t.Helper()
+	missingID := uuid.NewString()
+	_, err := ops.get(ctx, missingID)
+	requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
+	_, err = ops.schedule(ctx, missingID, revision, effectiveFrom)
+	requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
+	_, err = ops.cancel(ctx, missingID)
+	requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
+	_, err = ops.activate(ctx, missingID, revision)
+	requireLegalParityError(t, err, connect.CodeNotFound, kind.name+" not found: "+missingID)
+	err = ops.delete(ctx, missingID, revision)
+	requireLegalParityError(t, err, connect.CodeNotFound, kind.notFoundResource+" not found: "+missingID)
 }
 
 func termsParityOps(integration legalIntegration) legalParityOps {

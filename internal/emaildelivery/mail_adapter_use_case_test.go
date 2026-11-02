@@ -218,6 +218,16 @@ func TestUpdateMailAdapterUnchangedSenderSkipsVerification(t *testing.T) {
 	f.requireUnchanged(t, adapter)
 }
 
+type mailAdapterRejectionCase struct {
+	name      string
+	outsider  bool
+	rejecting bool
+	update    func(id string) *managev1.UpdateMailAdapterRequest
+	sender    func(id string) emaildelivery.MailAdapterSenderUpdate
+	code      connect.Code
+	message   string
+}
+
 func TestUpdateMailAdapterRejectionsChangeNothing(t *testing.T) {
 	missingID := uuid.NewString()
 	emptyName, longName := "   ", strings.Repeat("n", 256)
@@ -226,15 +236,7 @@ func TestUpdateMailAdapterRejectionsChangeNothing(t *testing.T) {
 	sesType := managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES
 	badSender := "not-an-address"
 	rejected := errors.New("550 5.7.1 sender rejected")
-	for _, tc := range []struct {
-		name      string
-		outsider  bool
-		rejecting bool
-		update    func(id string) *managev1.UpdateMailAdapterRequest
-		sender    func(id string) emaildelivery.MailAdapterSenderUpdate
-		code      connect.Code
-		message   string
-	}{
+	for _, tc := range []mailAdapterRejectionCase{
 		{
 			name: "missing adapter",
 			update: func(string) *managev1.UpdateMailAdapterRequest {
@@ -327,28 +329,33 @@ func TestUpdateMailAdapterRejectionsChangeNothing(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t)
-			if tc.rejecting {
-				f.providers.sendErr = rejected
-			}
-			adapter := f.seedSMTP("")
-			caller := f.admin
-			if tc.outsider {
-				caller = f.outsider
-			}
-			var err error
-			if tc.sender != nil {
-				_, err = f.delivery.UpdateMailAdapterSender(caller.ctx, tc.sender(adapter.ID))
-			} else {
-				_, err = f.update(t, caller, tc.update(adapter.ID))
-			}
-			requireAnswer(t, tc.code, tc.message, err)
-			f.requireUnchanged(t, adapter)
-			require.Empty(t, f.providers.recipients())
-			f.providers.requireAllClosed(t)
-			require.Equal(t, mutation.StepRollback, f.units.Steps()[len(f.units.Steps())-1])
+			runMailAdapterRejectionCase(t, tc, rejected)
 		})
 	}
+}
+
+func runMailAdapterRejectionCase(t *testing.T, tc mailAdapterRejectionCase, rejected error) {
+	t.Helper()
+	f := newFixture(t)
+	if tc.rejecting {
+		f.providers.sendErr = rejected
+	}
+	adapter := f.seedSMTP("")
+	caller := f.admin
+	if tc.outsider {
+		caller = f.outsider
+	}
+	var err error
+	if tc.sender != nil {
+		_, err = f.delivery.UpdateMailAdapterSender(caller.ctx, tc.sender(adapter.ID))
+	} else {
+		_, err = f.update(t, caller, tc.update(adapter.ID))
+	}
+	requireAnswer(t, tc.code, tc.message, err)
+	f.requireUnchanged(t, adapter)
+	require.Empty(t, f.providers.recipients())
+	f.providers.requireAllClosed(t)
+	require.Equal(t, mutation.StepRollback, f.units.Steps()[len(f.units.Steps())-1])
 }
 
 func TestDeleteMailAdapterAuthorizesBeforeLoading(t *testing.T) {

@@ -58,14 +58,49 @@ const (
 	missingTarget
 )
 
+type validationOperationCase struct {
+	name       string
+	locale     validationLocale
+	operations []Operation
+	want       []OperationIssue
+}
+
 func TestValidateOperationIssueTable(t *testing.T) {
 	sourceOnly := "only the current source locale may alter the shared block graph, shared fields, or file relations"
-	tests := []struct {
-		name       string
-		locale     validationLocale
-		operations []Operation
-		want       []OperationIssue
-	}{
+	tests := fieldTargetIssueCases()
+	tests = append(tests, fieldMutationIssueCases()...)
+	tests = append(tests, blockMutationIssueCases(sourceOnly)...)
+	tests = append(tests, relationItemIssueCases(sourceOnly)...)
+	tests = append(tests, fileMutationIssueCases(sourceOnly)...)
+	tests = append(tests, translationLifecycleIssueCases()...)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var request ApplyRequest
+			var document Document
+			switch tc.locale {
+			case sourceLocale:
+				document = validationTableDocument("ko", true)
+				request = applyRequest("ko", "rev-7", tc.operations...)
+			case existingTarget:
+				document = validationTableDocument("en", true)
+				request = applyRequest("en", "rev-7", tc.operations...)
+			case missingTarget:
+				document = validationTableDocument("en", false)
+				request = missingTargetRequest("en", "rev-7", tc.operations...)
+			}
+			result := ValidateOperations(document, request)
+			if result.Conflict != nil {
+				t.Fatalf("conflict = %+v", result.Conflict)
+			}
+			if !reflect.DeepEqual(result.Issues, tc.want) {
+				t.Fatalf("issues = %#v\nwant     %#v", result.Issues, tc.want)
+			}
+		})
+	}
+}
+
+func fieldTargetIssueCases() []validationOperationCase {
+	return []validationOperationCase{
 		// Field target resolution, shared by set, unset, attach and detach.
 		{"set invalid field ID", sourceLocale, []Operation{SetFieldOperation("root", "1", Text("x"))},
 			[]OperationIssue{tableIssue(0, IssueInvalidOperation, "field:root/1", `field ID "1" contains a positional index`)}},
@@ -103,7 +138,11 @@ func TestValidateOperationIssueTable(t *testing.T) {
 			SetNestedFieldOperation("root", "settings", []FieldPathSegment{ObjectPath("slots"), ListPath("secondary")}, Text("x")),
 			SetNestedFieldOperation("root", "settings", []FieldPathSegment{ObjectPath("tags"), ListPath("x")}, Text("x")),
 		}, nil},
+	}
+}
 
+func fieldMutationIssueCases() []validationOperationCase {
+	return []validationOperationCase{
 		// Set field.
 		{"set file field", sourceLocale, []Operation{SetFieldOperation("root", "hero", Text("x"))},
 			[]OperationIssue{tableIssue(0, IssueUnknownField, "field:root/hero", "file fields require a typed file operation")}},
@@ -134,7 +173,11 @@ func TestValidateOperationIssueTable(t *testing.T) {
 		{"unset file field", sourceLocale, []Operation{UnsetFieldOperation("root", "hero")},
 			[]OperationIssue{tableIssue(0, IssueTargetFieldForbidden, "field:root/hero", "file fields require a typed file operation")}},
 		{"unset field", sourceLocale, []Operation{UnsetFieldOperation("root", "title")}, nil},
+	}
+}
 
+func blockMutationIssueCases(sourceOnly string) []validationOperationCase {
+	return []validationOperationCase{
 		// Insert block.
 		{"target insert block", existingTarget, []Operation{InsertBlockOperation("new", "paragraph", "root", "")},
 			[]OperationIssue{tableIssue(0, IssueSourceAuthorityRequired, "block:new", sourceOnly)}},
@@ -181,7 +224,11 @@ func TestValidateOperationIssueTable(t *testing.T) {
 		{"replace with unknown kind", sourceLocale, []Operation{ReplaceBlockKindOperation("paragraph-a", "table")},
 			[]OperationIssue{tableIssue(0, IssueUnknownBlockKind, "block:paragraph-a", "block kind is not in the domain catalog")}},
 		{"replace block kind", sourceLocale, []Operation{ReplaceBlockKindOperation("paragraph-a", "heading")}, nil},
+	}
+}
 
+func relationItemIssueCases(sourceOnly string) []validationOperationCase {
+	return []validationOperationCase{
 		// Insert relation item.
 		{"target insert relation item", existingTarget, []Operation{InsertRelationItemOperation("root", "credits", "credit-new", "credit", "")},
 			[]OperationIssue{tableIssue(0, IssueSourceAuthorityRequired, "relation-item:root/credits/credit-new", sourceOnly)}},
@@ -238,7 +285,11 @@ func TestValidateOperationIssueTable(t *testing.T) {
 		{"move relation item after itself", sourceLocale, []Operation{MoveRelationItemOperation("root", "credits", "credit-primary", "root", "credits", "credit-primary")},
 			[]OperationIssue{tableIssue(0, IssueInvalidRelationItemMove, "relation-item:root/credits/credit-primary", "relation item cannot be placed after itself")}},
 		{"move relation item", sourceLocale, []Operation{MoveRelationItemOperation("root", "credits", "credit-primary", "root", "credits", "credit-secondary")}, nil},
+	}
+}
 
+func fileMutationIssueCases(sourceOnly string) []validationOperationCase {
+	return []validationOperationCase{
 		// Attach file.
 		{"target attach file", existingTarget, []Operation{AttachFileOperation("root", "hero", "file-new")},
 			[]OperationIssue{tableIssue(0, IssueSourceAuthorityRequired, "field:root/hero", sourceOnly)}},
@@ -265,7 +316,11 @@ func TestValidateOperationIssueTable(t *testing.T) {
 			DetachFileOperation("root", "hero"),
 			detachTargetOperation(relationFieldTarget("root", "credits", "credit-primary", "avatar")),
 		}, nil},
+	}
+}
 
+func translationLifecycleIssueCases() []validationOperationCase {
+	return []validationOperationCase{
 		// Translation lifecycle.
 		{"source create translation", sourceLocale, []Operation{CreateTranslationOperation()},
 			[]OperationIssue{tableIssue(0, IssueTranslationIsSource, "translation", "the current source locale cannot be created as a translation")}},
@@ -281,30 +336,6 @@ func TestValidateOperationIssueTable(t *testing.T) {
 		{"delete missing translation", missingTarget, []Operation{DeleteTranslationOperation()},
 			[]OperationIssue{tableIssue(0, IssueTranslationMissing, "translation", "translation locale does not exist")}},
 		{"delete translation", existingTarget, []Operation{DeleteTranslationOperation()}, nil},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var request ApplyRequest
-			var document Document
-			switch tc.locale {
-			case sourceLocale:
-				document = validationTableDocument("ko", true)
-				request = applyRequest("ko", "rev-7", tc.operations...)
-			case existingTarget:
-				document = validationTableDocument("en", true)
-				request = applyRequest("en", "rev-7", tc.operations...)
-			case missingTarget:
-				document = validationTableDocument("en", false)
-				request = missingTargetRequest("en", "rev-7", tc.operations...)
-			}
-			result := ValidateOperations(document, request)
-			if result.Conflict != nil {
-				t.Fatalf("conflict = %+v", result.Conflict)
-			}
-			if !reflect.DeepEqual(result.Issues, tc.want) {
-				t.Fatalf("issues = %#v\nwant     %#v", result.Issues, tc.want)
-			}
-		})
 	}
 }
 
