@@ -79,12 +79,14 @@ func (l legalActivation) ActivateDue(
 	templateData map[string]string,
 	now time.Time,
 ) (worker.EffectiveNotice, bool, error) {
-	joined := legalpostgres.Bind(l.tx, legalpostgres.Ports{
-		Routes: legaladapter.NewRuntime(), Notices: legaladapter.NewNoticeRuntime(),
-	}, l.ports.Audit)
-	activated, run, err := legaldomain.ActivateDuePolicy(
+	ports := legalpostgres.Ports{Routes: legaladapter.NewRuntime(), Notices: legaladapter.NewNoticeRuntime()}
+	units := mutation.Postgres(l.tx, func(tx *gorm.DB) legaldomain.Store { return legalpostgres.NewStore(tx, ports) })
+	activator, err := legaldomain.NewScheduledActivator(units, l.ports.Audit)
+	if err != nil {
+		return nil, false, err
+	}
+	activated, run, err := activator.ActivateDuePolicy(
 		ctx,
-		joined,
 		legalPolicyKind(kind),
 		documentID,
 		eventKey,

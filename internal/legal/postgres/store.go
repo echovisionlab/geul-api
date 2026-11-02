@@ -99,8 +99,8 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[legal.Store], error
 	return mutation.Postgres(db, func(tx *gorm.DB) legal.Store { return NewStore(tx, ports) }), nil
 }
 
-// Bind joins tx, a transaction another pipeline opened: a scheduled
-// activation, a notice dispatch, a translation apply or an interchange.
+// Bind joins tx, a transaction another pipeline opened, for a notice
+// dispatch, a translation apply or an interchange.
 // Only the methods whose ports are set are usable; a nil audit leaves the
 // step unaudited.
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) legal.Joined {

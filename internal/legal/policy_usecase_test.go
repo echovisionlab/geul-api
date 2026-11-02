@@ -484,21 +484,22 @@ func TestRegeneratePolicyDerivedContentRequiresTheCurrentDigest(t *testing.T) {
 func TestActivateDuePolicyActivatesOnlyADueScheduledVersion(t *testing.T) {
 	h := newHarness(t)
 	audit := h.audit
-	joined := legal.Joined{Store: h.store, Audit: audit}
+	activator, err := legal.NewScheduledActivator(h.units, audit)
+	require.NoError(t, err)
 	now := time.Now().UTC()
 	later := now.Add(time.Hour)
 	notDue, _ := h.putVersion(t, legal.Privacy, "scheduled", func(v *legal.Version) { v.EffectiveFrom = &later })
 	data := map[string]string{"privacy_url": "https://example.test/privacy"}
 
-	activated, run, err := legal.ActivateDuePolicy(t.Context(), joined, legal.Privacy, notDue.ID, email.EventPrivacyEffective.String(), data, now)
+	activated, run, err := activator.ActivateDuePolicy(t.Context(), legal.Privacy, notDue.ID, email.EventPrivacyEffective.String(), data, now)
 	require.NoError(t, err)
 	require.False(t, activated)
 	require.Nil(t, run)
-	activated, _, err = legal.ActivateDuePolicy(t.Context(), joined, legal.Privacy, uuid.NewString(), email.EventPrivacyEffective.String(), data, now)
+	activated, _, err = activator.ActivateDuePolicy(t.Context(), legal.Privacy, uuid.NewString(), email.EventPrivacyEffective.String(), data, now)
 	require.NoError(t, err)
 	require.False(t, activated, "a version that is gone is not due")
 
-	activated, run, err = legal.ActivateDuePolicy(t.Context(), joined, legal.Privacy, notDue.ID, email.EventPrivacyEffective.String(), data, later)
+	activated, run, err = activator.ActivateDuePolicy(t.Context(), legal.Privacy, notDue.ID, email.EventPrivacyEffective.String(), data, later)
 	require.NoError(t, err)
 	require.True(t, activated)
 	require.Equal(t, h.store.Runs()[0].ID, run.ID)
@@ -557,3 +558,22 @@ func TestTermsRPCKeepsTheStoreCauseForTheRequestRecord(t *testing.T) {
 }
 
 func ptr(value string) *string { return &value }
+
+func TestScheduledPolicyActivationRollsBackBeforeSealingWhenAuditFails(t *testing.T) {
+	h := newHarness(t)
+	now := time.Now().UTC()
+	dueAt := now.Add(-time.Minute)
+	active, _ := h.putVersion(t, legal.Terms, "active", nil)
+	scheduled, _ := h.putVersion(t, legal.Terms, "scheduled", func(v *legal.Version) { v.EffectiveFrom = &dueAt })
+	failed := errors.New("system audit failed")
+	h.audit.Err = failed
+	activator, err := legal.NewScheduledActivator(h.units, h.audit)
+	require.NoError(t, err)
+	activated, run, err := activator.ActivateDuePolicy(t.Context(), legal.Terms, scheduled.ID, email.EventTermsEffective.String(), nil, now)
+	require.ErrorIs(t, err, failed)
+	require.False(t, activated)
+	require.Nil(t, run)
+	require.Equal(t, status(legal.Terms, "active"), h.stored(t, legal.Terms, active.ID).Status)
+	require.Equal(t, status(legal.Terms, "scheduled"), h.stored(t, legal.Terms, scheduled.ID).Status)
+	require.Empty(t, h.store.Runs())
+}

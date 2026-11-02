@@ -98,6 +98,9 @@ func NewStoreRunner[S any](units UnitOfWork[S], spiceDB Authorizer, fence identi
 // WithUnits returns a runner on another unit of work with the same authority,
 // identity fence and audit appender. The original runner remains unchanged.
 func (r *StoreRunner[S]) WithUnits(units UnitOfWork[S]) (*StoreRunner[S], error) {
+	if r.authority.checker == nil {
+		return NewSystemStoreRunner(units, r.audit)
+	}
 	return NewStoreRunner(units, r.authority.checker, r.authority.fence, r.audit)
 }
 
@@ -145,6 +148,14 @@ func Run[R, S any](ctx context.Context, runner *StoreRunner[S], spec StoreSpec[R
 	if spec.Audit == nil {
 		return result, errors.New("mutation audit is required")
 	}
+	if runner.authority.checker == nil {
+		if !spec.Access.system {
+			return result, errors.New("system mutation requires system access")
+		}
+		if len(spec.Subjects) != 0 || spec.Relationships != nil {
+			return result, errors.New("system mutation cannot change identity authorization")
+		}
+	}
 	subjects, err := lockOrder(spec.Subjects)
 	if err != nil {
 		return result, err
@@ -179,7 +190,11 @@ func Run[R, S any](ctx context.Context, runner *StoreRunner[S], spec StoreSpec[R
 			return err
 		}
 		tx.observe(StepAudit)
-		if err := runner.appendAudit(ctx, tx.db, spec.Audit(result)); err != nil {
+		audit := spec.Audit(result)
+		if spec.Access.system && !audit.systemOnly() {
+			return errors.New("system mutation requires a system audit")
+		}
+		if err := runner.appendAudit(ctx, tx.db, audit); err != nil {
 			return err
 		}
 		if spec.Outbox != nil {
@@ -227,8 +242,9 @@ func lockOrder(subjects []string) ([]string, error) {
 
 // Access decides inside the transaction whether the caller may mutate.
 type Access struct {
-	check func(ctx context.Context, tx *gorm.DB, store any, with authority) error
-	err   error
+	system bool
+	check  func(ctx context.Context, tx *gorm.DB, store any, with authority) error
+	err    error
 }
 
 func (a Access) authorize(ctx context.Context, tx *gorm.DB, store any, with authority) error {
