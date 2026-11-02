@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -33,7 +35,7 @@ func (ManifestMenus) Localize(
 	sourceItems []model.MenuItem,
 	acceptLanguage string,
 ) ([]model.MenuItem, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(db).RuntimeSettings(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "Menu localization settings load failed; using default settings", failurecause.Attr(err), "menu_id", menuID)
 		settings = translation.DefaultRuntimeSettings()

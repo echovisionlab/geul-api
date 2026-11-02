@@ -3,6 +3,8 @@ package programeventpostgres
 import (
 	"context"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -42,7 +44,7 @@ func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, 
 }
 
 func (s *store) TranslationSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 }
 
 func (s *store) PublishContentUpdate(ctx context.Context, update programevent.ContentUpdate) error {

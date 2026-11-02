@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/release"
-	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
 func (s *store) LocaleMetadata(ctx context.Context, releaseID, locale string, forUpdate bool) (release.LocaleMetadata, bool, error) {
@@ -158,7 +159,7 @@ func (s *store) ReplaceCreditNotes(ctx context.Context, releaseID, locale string
 }
 
 func (s *store) TranslationDefaultLocale(ctx context.Context) (string, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, s.tx)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 	if err != nil {
 		return "", err
 	}

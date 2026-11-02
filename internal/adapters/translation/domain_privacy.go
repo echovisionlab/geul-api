@@ -52,7 +52,7 @@ func legalDomainRegistration(
 			if job == nil || job.EntityType != entityType {
 				return nil, fmt.Errorf("%s translation requires %s", entityType, entityType)
 			}
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Title: true})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Title: true})
 		},
 		buildCandidate: func(plan *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
 			if plan == nil || plan.EntityType != entityType {

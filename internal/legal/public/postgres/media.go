@@ -3,6 +3,8 @@ package legalpublicpostgres
 import (
 	"context"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"gorm.io/gorm"
@@ -33,7 +35,7 @@ func NewLocalizer(db *gorm.DB) Localizer {
 var _ public.Localizer = Localizer{}
 
 func (l Localizer) Resolve(ctx context.Context, kind legaldomain.PolicyKind, entityID, acceptLanguage string) (publiccontent.Selection, error) {
-	return publiccontent.Resolve(ctx, l.db, localizationSpec(kind), entityID, acceptLanguage)
+	return publiccontent.Resolve(ctx, l.db, localizationSpec(kind), entityID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(l.db))
 }
 
 func (l Localizer) FallbackToSource(ctx context.Context, kind legaldomain.PolicyKind, entityID string, selection publiccontent.Selection) (publiccontent.Selection, error) {

@@ -30,7 +30,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if job == nil || job.EntityType != string(core.KindLabel) {
 				return nil, errors.New("typed Label translation source is required")
 			}
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{})
 		},
 		buildCandidate: func(plan *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
 			if plan == nil || plan.EntityType != string(core.KindLabel) {

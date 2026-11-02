@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"gorm.io/gorm"
 
@@ -109,7 +111,7 @@ func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, 
 
 func (s *store) TranslationSettings(ctx context.Context) (translation.RuntimeSettings, error) {
 	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
-		return translation.LoadRuntimeSettings(ctx, tx)
+		return translationpostgres.NewRuntimeSettingsReader(tx).RuntimeSettings(ctx)
 	})
 }
 

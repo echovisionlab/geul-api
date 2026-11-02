@@ -3,13 +3,14 @@ package postpostgres
 import (
 	"context"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -63,7 +64,7 @@ func (s *store) MemberPreferredLocale(ctx context.Context, memberID string) (*st
 }
 
 func (s *store) DefaultTranslationLocale(ctx context.Context) (string, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, s.tx)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 	if err != nil {
 		return "", err
 	}

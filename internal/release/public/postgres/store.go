@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -211,7 +213,7 @@ var releaseLocalizationSpec = publiccontent.Spec{
 }
 
 func (s store) ResolveLocalization(ctx context.Context, releaseID, acceptLanguage string) (publiccontent.Selection, error) {
-	return publiccontent.Resolve(ctx, s.tx, releaseLocalizationSpec, releaseID, acceptLanguage)
+	return publiccontent.Resolve(ctx, s.tx, releaseLocalizationSpec, releaseID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) ContentDocument(ctx context.Context, releaseID, locale string) (release.PublicContentDocument, error) {

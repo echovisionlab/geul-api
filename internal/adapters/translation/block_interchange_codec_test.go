@@ -3,7 +3,6 @@ package translationadapter
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -173,7 +172,7 @@ func TestCopyInterchangeProtoPathMatchesImmersiveUnitIdentity(t *testing.T) {
 
 func blockInterchangePlan(t *testing.T, source *contentv1.LocalizedRichTextDocument, entityType, entityID, targetLocale string) *core.ExtractionPlan {
 	t.Helper()
-	plan, err := core.BuildRichTextExtractionPlan(&model.TranslationJob{
+	plan, err := core.BuildRichTextExtractionPlan(&core.JobIdentity{
 		EntityType: entityType, EntityID: entityID,
 		SourceLocale: source.GetLocale(), TargetLocale: targetLocale,
 	}, &core.SourceDocument{ContentBlockDocument: source}, core.RichTextDocumentFields{})

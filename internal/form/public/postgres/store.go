@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/form"
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"gorm.io/gorm"
@@ -111,7 +113,7 @@ func (s store) LocalizationRows(ctx context.Context, formID string, locales []st
 }
 
 func (s store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 }
 
 func (s store) CountSubmissions(ctx context.Context, formID string) (int64, error) {

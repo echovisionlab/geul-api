@@ -6,7 +6,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/form"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/series"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -30,7 +29,7 @@ func (testTranslationDomains) BuildExtractionPlan(
 	switch job.EntityType {
 	case "post":
 		return translation.BuildRichTextExtractionPlan(
-			&model.TranslationJob{
+			&translation.JobIdentity{
 				EntityType: job.EntityType, EntityID: job.EntityID,
 				SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
 			},

@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -29,7 +28,7 @@ func TestCampaignTranslationPlanAndCandidateOwnSubjectAndTargetOverlay(t *testin
 			},
 		},
 	}
-	job := &model.TranslationJob{
+	job := &translation.JobIdentity{
 		EntityType:   campaignContentEntity,
 		EntityID:     "campaign-a",
 		SourceLocale: "en",

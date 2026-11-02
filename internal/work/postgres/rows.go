@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -15,7 +17,6 @@ import (
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -458,7 +459,7 @@ func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, 
 }
 
 func (s *store) DefaultLocale(ctx context.Context) (string, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, s.tx)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 	if err != nil {
 		return "", err
 	}

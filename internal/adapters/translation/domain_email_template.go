@@ -25,7 +25,7 @@ func emailTemplateDomainRegistration(
 			return emailauthoring.LoadTemplateTranslationSourceDocument(ctx, emailAuthoringStore(db, store, references), templateID)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Title: true})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Title: true})
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(
