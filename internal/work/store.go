@@ -13,7 +13,6 @@ import (
 
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/versionrestore"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
@@ -318,25 +317,6 @@ type ContentDocuments interface {
 	ReplaceContentSnapshot(ctx context.Context, replace contentblock.ReplaceInput, fence ContentFence) (contentblock.Result, error)
 	AdvanceContentRevision(ctx context.Context, input contentblock.AdvanceInput, fence ContentFence, effect MetadataEffect) (contentblock.AdvanceResult, error)
 	DeleteContentDocument(ctx context.Context, documentID uuid.UUID, fence ContentFence) error
-	// RestoreVersion runs the shared version restore (versionrestore) of
-	// restore in the transaction.
-	RestoreVersion(ctx context.Context, restore VersionRestore) (versionrestore.Outcome, error)
-}
-
-// VersionRestore is one version restore, its steps in the Work's words.
-type VersionRestore struct {
-	DocumentID uuid.UUID
-	// Version is the source locale, title and summary the version stored.
-	Version versionrestore.Source
-	Fence   ContentFence
-	// LoadSource reads the current source locale and its metadata.
-	LoadSource func(ctx context.Context, store Store) (versionrestore.Source, error)
-	// SwitchSourceLocale makes Version.Locale the source locale again.
-	SwitchSourceLocale func(ctx context.Context, store Store, from string, revision uuid.UUID) error
-	// Replacement builds the snapshot replacement expected at revision.
-	Replacement func(ctx context.Context, store Store, revision uuid.UUID) (contentblock.ReplaceInput, error)
-	// UpdateMetadata writes Version.Title and Version.Summary.
-	UpdateMetadata func(ctx context.Context, store Store) error
 }
 
 // WorkMedia is the shared File, public asset and OG lifecycle of a Work.

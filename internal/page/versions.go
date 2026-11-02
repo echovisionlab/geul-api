@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -156,10 +155,6 @@ func (s *Service) RestorePageVersion(ctx context.Context, command RestorePageVer
 	return s.pageBy(ctx, ByID, version.PageID)
 }
 
-// restorePageVersion restores snapshot into the locked Page as
-// versionrestore.Restore does: it switches the source locale first when the
-// version has another, then replaces the content and, when only the title or
-// summary differs, advances the revision with them.
 func restorePageVersion(
 	ctx context.Context,
 	store Store,
@@ -168,77 +163,28 @@ func restorePageVersion(
 	snapshot VersionContentSnapshot,
 	now time.Time,
 ) (versionrestore.Outcome, error) {
-	fence := lockedPageContentFence(pageID)
-	source, current, err := loadRestoreSource(ctx, store, pageID, documentID)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	var outcome versionrestore.Outcome
-	if source.Locale != snapshot.SourceLocale {
-		if err := switchVersionRestoreSourceLocale(ctx, store, pageID, snapshot.SourceLocale, current.Document.Revision, source.Locale, now); err != nil {
-			return versionrestore.Outcome{}, err
-		}
-		outcome.SourceLocaleSwitched = true
-		if source, current, err = loadRestoreSource(ctx, store, pageID, documentID); err != nil {
-			return versionrestore.Outcome{}, err
-		}
-	}
-	outcome.TitleChanged = !optional.Equal(source.Title, snapshot.Title)
-	outcome.SummaryChanged = !optional.Equal(source.Summary, snapshot.Summary)
-
-	unavailable, err := store.UnavailableAttachments(ctx, snapshot.Document)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	input, err := contentblock.ReplaceFromLocalizedPageProtoWithUnavailableAttachments(
-		documentID, current.Document.Revision, snapshot.Document, unavailable,
-	)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	replaced, err := store.ReplaceContentSnapshot(ctx, input, fence)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	outcome.ContentChanged, outcome.DocumentRevision = replaced.Changed, replaced.DocumentRevision
-	if !outcome.TitleChanged && !outcome.SummaryChanged {
-		return outcome, nil
-	}
-	updateMetadata := func(ctx context.Context, store Store) error {
-		return updatePageVersionSourceMetadata(ctx, store, pageID, snapshot.SourceLocale, snapshot.Title, snapshot.Summary, now)
-	}
-	if replaced.Changed {
-		return outcome, updateMetadata(ctx, store)
-	}
-	advanced, err := store.AdvanceContentRevision(ctx,
-		contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: replaced.DocumentRevision},
-		fence,
-		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
-			if err := updateMetadata(ctx, store); err != nil {
-				return contentblock.MetadataEffect{}, err
-			}
-			return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
+	return versionrestore.Restore[Store]{
+		Store:      versionRestoreContent{store: store, fence: lockedPageContentFence(pageID)},
+		DocumentID: documentID,
+		Version:    versionrestore.Source{Locale: snapshot.SourceLocale, Title: snapshot.Title, Summary: snapshot.Summary},
+		LoadSource: func(ctx context.Context, store Store) (versionrestore.Source, error) {
+			source, err := loadRequiredPageSourceLocaleMetadata(ctx, store, pageID)
+			return versionrestore.Source{Locale: source.Locale, Title: source.Title, Summary: source.Summary}, err
 		},
-	)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	outcome.DocumentRevision = advanced.DocumentRevision
-	return outcome, nil
-}
-
-// loadRestoreSource reads the Page's current source-locale metadata and its
-// content in that locale.
-func loadRestoreSource(ctx context.Context, store Store, pageID string, documentID uuid.UUID) (versionrestore.Source, contentblock.Snapshot, error) {
-	source, err := loadRequiredPageSourceLocaleMetadata(ctx, store, pageID)
-	if err != nil {
-		return versionrestore.Source{}, contentblock.Snapshot{}, err
-	}
-	snapshot, err := store.LockedContentSnapshot(ctx, documentID, source.Locale)
-	if err != nil {
-		return versionrestore.Source{}, contentblock.Snapshot{}, err
-	}
-	return versionrestore.Source{Locale: source.Locale, Title: source.Title, Summary: source.Summary}, snapshot, nil
+		SwitchSourceLocale: func(ctx context.Context, store Store, from string, revision uuid.UUID) error {
+			return switchVersionRestoreSourceLocale(ctx, store, pageID, snapshot.SourceLocale, revision, from, now)
+		},
+		Replacement: func(ctx context.Context, store Store, revision uuid.UUID) (contentblock.ReplaceInput, error) {
+			unavailable, err := store.UnavailableAttachments(ctx, snapshot.Document)
+			if err != nil {
+				return contentblock.ReplaceInput{}, err
+			}
+			return contentblock.ReplaceFromLocalizedPageProtoWithUnavailableAttachments(documentID, revision, snapshot.Document, unavailable)
+		},
+		UpdateMetadata: func(ctx context.Context, store Store) error {
+			return updatePageVersionSourceMetadata(ctx, store, pageID, snapshot.SourceLocale, snapshot.Title, snapshot.Summary, now)
+		},
+	}.Apply(ctx, store)
 }
 
 // switchVersionRestoreSourceLocale changes only the Page source-locale

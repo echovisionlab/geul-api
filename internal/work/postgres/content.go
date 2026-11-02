@@ -5,7 +5,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
-	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -70,23 +69,4 @@ func (s *store) AdvanceContentRevision(ctx context.Context, input contentblock.A
 
 func (s *store) DeleteContentDocument(ctx context.Context, documentID uuid.UUID, fence work.ContentFence) error {
 	return s.ports.ContentBlocks.DeleteDocument(ctx, s.tx, documentID, s.domainFence(fence))
-}
-
-func (s *store) RestoreVersion(ctx context.Context, restore work.VersionRestore) (versionrestore.Outcome, error) {
-	return versionrestore.Restore{
-		Store: s.ports.ContentBlocks, DocumentID: restore.DocumentID, Version: restore.Version,
-		Fence: s.domainFence(restore.Fence),
-		LoadSource: func(ctx context.Context, tx *gorm.DB) (versionrestore.Source, error) {
-			return restore.LoadSource(ctx, s.with(tx))
-		},
-		SwitchSourceLocale: func(ctx context.Context, tx *gorm.DB, from string, revision uuid.UUID) error {
-			return restore.SwitchSourceLocale(ctx, s.with(tx), from, revision)
-		},
-		Replacement: func(ctx context.Context, tx *gorm.DB, revision uuid.UUID) (contentblock.ReplaceInput, error) {
-			return restore.Replacement(ctx, s.with(tx), revision)
-		},
-		UpdateMetadata: func(ctx context.Context, tx *gorm.DB) error {
-			return restore.UpdateMetadata(ctx, s.with(tx))
-		},
-	}.Apply(ctx, s.tx)
 }

@@ -125,7 +125,7 @@ func (s *Service) RestoreWorkVersion(ctx context.Context, command RestoreWorkVer
 		return View{}, domainerr.Precondition("Work Version source title is invalid")
 	}
 	now := time.Now().UTC()
-	var restore VersionRestore
+	var restore versionrestore.Restore[Store]
 	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[versionrestore.Outcome, Store]{
 		Access: mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
 			var err error
@@ -133,7 +133,7 @@ func (s *Service) RestoreWorkVersion(ctx context.Context, command RestoreWorkVer
 			return err
 		}),
 		Change: func(ctx context.Context, store Store) (versionrestore.Outcome, error) {
-			outcome, err := store.RestoreVersion(ctx, restore)
+			outcome, err := restore.Apply(ctx, store)
 			if err != nil || !outcome.Changed() {
 				return outcome, err
 			}
@@ -174,25 +174,25 @@ func lockWorkVersionRestore(
 	envelope VersionContentSnapshot,
 	document *contentv1.LocalizedRichTextDocument,
 	now time.Time,
-) (VersionRestore, error) {
+) (versionrestore.Restore[Store], error) {
 	documentID, err := loadWorkContentDocumentID(ctx, store, workID, Unlocked)
 	if err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
 	work, err := lockWorkForContentDocument(ctx, store, documentID)
 	if err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
 	if work.ID != workID {
-		return VersionRestore{}, domainerr.Precondition("Work content document changed during version restore")
+		return versionrestore.Restore[Store]{}, domainerr.Precondition("Work content document changed during version restore")
 	}
 	if _, err := requireLockedWorkPermission(ctx, store, require, workID, policyv1.Work.Edit, workAuthorizationMutation); err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
-	return VersionRestore{
+	return versionrestore.Restore[Store]{
 		DocumentID: documentID,
 		Version:    versionrestore.Source{Locale: envelope.SourceLocale, Title: envelope.Title, Summary: envelope.Summary},
-		Fence:      lockedWorkContentFence(),
+		Store:      versionRestoreContent{store: store, fence: lockedWorkContentFence()},
 		LoadSource: func(ctx context.Context, store Store) (versionrestore.Source, error) {
 			source, err := LoadRequiredSourceLocaleMetadata(ctx, store, workID)
 			if err != nil {
