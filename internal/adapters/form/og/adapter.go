@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -57,7 +56,7 @@ func (o *OG) ReadyAsset(
 	ctx context.Context,
 	db *gorm.DB,
 	localizedID, sourceID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	return ReadyAsset(ctx, db, o.cdnDomain, localizedID, sourceID)
 }
 
@@ -66,7 +65,7 @@ func ReadyAsset(
 	db *gorm.DB,
 	cdnDomain string,
 	localizedID, sourceID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	for _, candidateID := range []*string{localizedID, sourceID} {
 		if candidateID == nil || strings.TrimSpace(*candidateID) == "" {
 			continue
@@ -84,7 +83,7 @@ func ReadyAsset(
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).AssetRef(mediaassetpostgres.Asset(asset)))
+		return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).AssetRef(mediaassetpostgres.Asset(asset))
 	}
 	return nil, nil
 }

@@ -6,15 +6,17 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // avatarChange is the avatar binding after a mutation; assetID is the asset
 // the audit record names, empty when nothing changed.
 type avatarChange struct {
-	asset   *Asset
+	asset   *memberref.Asset
 	assetID string
 }
 
@@ -29,13 +31,13 @@ func (change avatarChange) audit(memberID string, operation sharedtelemetry.Audi
 
 // setAvatar binds the public asset promoted from fileID as the Member's
 // avatar. An administrator may use any avatar upload; a Member only their own.
-func (s *Service) setAvatar(ctx context.Context, memberID, fileID string, access mutation.Access, admin bool) (Summary, error) {
+func (s *Service) setAvatar(ctx context.Context, memberID, fileID string, access mutation.Access, admin bool) (memberref.Summary, error) {
 	if _, err := uuidutil.ParseCanonical(fileID, "file_id"); err != nil {
-		return Summary{}, domainerr.InvalidField("file_id", "must be a canonical UUID")
+		return memberref.Summary{}, domainerr.InvalidField("file_id", "must be a canonical UUID")
 	}
 	target, err := s.requireLinkedTarget(ctx, memberID, !admin)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[avatarChange, Store]{
 		Subjects: []string{target.IdentityID},
@@ -76,15 +78,15 @@ func (s *Service) setAvatar(ctx context.Context, memberID, fileID string, access
 		},
 	})
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.avatarMutationSummary(ctx, memberID, change.asset)
 }
 
-func (s *Service) deleteAvatar(ctx context.Context, memberID string, access mutation.Access, admin bool) (Summary, error) {
+func (s *Service) deleteAvatar(ctx context.Context, memberID string, access mutation.Access, admin bool) (memberref.Summary, error) {
 	target, err := s.requireLinkedTarget(ctx, memberID, !admin)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[avatarChange, Store]{
 		Subjects: []string{target.IdentityID},
@@ -106,22 +108,22 @@ func (s *Service) deleteAvatar(ctx context.Context, memberID string, access muta
 			return change.audit(memberID, sharedtelemetry.AuditCollectionOperationRemoved)
 		},
 	}); err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.avatarMutationSummary(ctx, memberID, nil)
 }
 
-func (s *Service) avatarMutationSummary(ctx context.Context, memberID string, asset *Asset) (Summary, error) {
+func (s *Service) avatarMutationSummary(ctx context.Context, memberID string, asset *memberref.Asset) (memberref.Summary, error) {
 	var members []Member
 	if err := s.read(ctx, func(store Store) error {
 		var err error
 		members, err = store.Members(ctx, []string{memberID})
 		return err
 	}); err != nil {
-		return Summary{}, fmt.Errorf("load member after avatar mutation: %w", err)
+		return memberref.Summary{}, fmt.Errorf("load member after avatar mutation: %w", err)
 	}
 	if len(members) != 1 {
-		return Summary{}, domainerr.ResourceNotFound("member", memberID)
+		return memberref.Summary{}, domainerr.ResourceNotFound("member", memberID)
 	}
 	return memberSummary(members[0], asset), nil
 }
@@ -133,19 +135,19 @@ type SetOwnAvatarCommand struct {
 }
 
 // SetOwnAvatar applies command and returns the Member summary.
-func (s *Service) SetOwnAvatar(ctx context.Context, command SetOwnAvatarCommand) (Summary, error) {
+func (s *Service) SetOwnAvatar(ctx context.Context, command SetOwnAvatarCommand) (memberref.Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.setAvatar(ctx, principal.MemberID.String(), command.FileID, mutation.PrincipalFence(principal), false)
 }
 
 // DeleteOwnAvatar removes the authenticated Member's avatar.
-func (s *Service) DeleteOwnAvatar(ctx context.Context) (Summary, error) {
+func (s *Service) DeleteOwnAvatar(ctx context.Context) (memberref.Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.deleteAvatar(ctx, principal.MemberID.String(), mutation.PrincipalFence(principal), false)
 }

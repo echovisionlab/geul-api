@@ -10,9 +10,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 )
@@ -25,8 +27,8 @@ type View struct {
 	Title         string
 	Summary       *string
 	OgAssetID     *string
-	OgAsset       *commonv1.AssetRef
-	FeaturedImage *commonv1.AssetRef
+	OgAsset       *mediaasset.Reference
+	FeaturedImage *mediaasset.Reference
 	Revision      string
 	Document      *contentv1.RichTextDocument
 	BlockMedia    []*contentv1.ContentBlockMediaItem
@@ -38,8 +40,8 @@ type Client struct {
 	ID        string
 	Name      string
 	Website   *string
-	LightLogo *commonv1.AssetRef
-	DarkLogo  *commonv1.AssetRef
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
 }
 
 // viewOf overlays the Work's source-locale title, summary and OG image.
@@ -127,7 +129,7 @@ func (s *Service) CheckWorkSlugAvailable(ctx context.Context, query CheckWorkSlu
 	return available, err
 }
 
-func (s *Service) getWorkFeaturedImageAsset(ctx context.Context, workID string) *commonv1.AssetRef {
+func (s *Service) getWorkFeaturedImageAsset(ctx context.Context, workID string) *mediaasset.Reference {
 	var fileID *string
 	if err := s.read(ctx, func(store Store) error {
 		var err error
@@ -152,8 +154,8 @@ func (s *Service) getWorkFeaturedImageAsset(ctx context.Context, workID string) 
 	return asset
 }
 
-func (s *Service) readyFileAsset(ctx context.Context, fileID, kind string) (*commonv1.AssetRef, error) {
-	var asset *commonv1.AssetRef
+func (s *Service) readyFileAsset(ctx context.Context, fileID, kind string) (*mediaasset.Reference, error) {
+	var asset *mediaasset.Reference
 	err := s.read(ctx, func(store Store) error {
 		var err error
 		asset, err = store.ReadyFileAsset(ctx, fileID, kind)
@@ -200,7 +202,7 @@ func (s *Service) getWorkClients(ctx context.Context, workID string) ([]Client, 
 	return clients, nil
 }
 
-func (s *Service) loadReadyWorkOgAssets(ctx context.Context, works []View) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyWorkOgAssets(ctx context.Context, works []View) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(works))
 	for i := range works {
 		candidates = append(candidates, works[i].OgAssetID)
@@ -210,7 +212,7 @@ func (s *Service) loadReadyWorkOgAssets(ctx context.Context, works []View) (map[
 
 // workResponseWithReadyOg adds the content projection and the ready OG
 // image to view.
-func (s *Service) workResponseWithReadyOg(ctx context.Context, view View, imageAsset *commonv1.AssetRef) (View, error) {
+func (s *Service) workResponseWithReadyOg(ctx context.Context, view View, imageAsset *mediaasset.Reference) (View, error) {
 	if err := s.hydrateWorkContentProjection(ctx, &view); err != nil {
 		return View{}, err
 	}

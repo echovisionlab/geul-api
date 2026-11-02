@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -26,8 +25,8 @@ func (s *store) FindFile(ctx context.Context, fileID string) error {
 	return notFound(s.tx.WithContext(ctx).First(&file, "id = ?", fileID).Error, post.ErrFileNotFound)
 }
 
-func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
-	ready := make(map[string]*commonv1.AssetRef, len(assetIDs))
+func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
+	ready := make(map[string]*mediaasset.Reference, len(assetIDs))
 	var assets []model.PublicAsset
 	if err := s.tx.WithContext(ctx).
 		Where("id IN ? AND status = ?", assetIDs, model.PublicAssetStatusReady).
@@ -39,7 +38,7 @@ func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[strin
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}

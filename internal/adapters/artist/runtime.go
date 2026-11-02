@@ -4,18 +4,21 @@ import (
 	"context"
 	"strings"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"gorm.io/gorm"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -95,11 +98,11 @@ func (r *Runtime) LoadArtistImages(
 			ArtistID: row.ArtistID, FileID: row.FileID, SortOrder: row.SortOrder,
 		}
 		if row.AssetID != nil && row.Extension != nil && row.MimeType != nil && row.FileSize != nil && row.Disposition != nil {
-			asset, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
+			asset, err := lifecycle.AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
 				ID: *row.AssetID, Kind: "image", Extension: *row.Extension,
 				MimeType: *row.MimeType, FileSize: row.FileSize, SHA256: row.SHA256,
 				Disposition: *row.Disposition,
-			})))
+			}))
 			if err != nil {
 				return nil, err
 			}
@@ -114,9 +117,9 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	db *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	assetIDs = sliceutil.UniqueTrimmed(assetIDs)
-	result := make(map[string]*commonv1.AssetRef, len(assetIDs))
+	result := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return result, nil
 	}
@@ -131,7 +134,7 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -167,14 +170,14 @@ func (r *Runtime) ReplaceArtistImageBindings(
 		if err := tx.Create(&model.ArtistFile{ArtistID: artistID, FileID: fileID, SortOrder: index}).Error; err != nil {
 			return err
 		}
-		asset, err := mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, "image"))
+		asset, err := lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, "image")
 		if err != nil {
 			return err
 		}
 		key := "image_" + fileID
 		nextKeys[key] = struct{}{}
 		if err := lifecycle.BindPublicAsset(ctx, mediaasset.Binding{
-			AssetID: asset.GetAssetId(), OwnerType: "artist", OwnerID: artistID,
+			AssetID: optional.Value(asset).AssetID, OwnerType: "artist", OwnerID: artistID,
 			BindingKey: key, SourceFileID: &fileID,
 		}); err != nil {
 			return err

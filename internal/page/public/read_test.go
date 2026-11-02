@@ -72,7 +72,7 @@ func (*media) ResolvePageFeaturedImageDelivery(_ context.Context, fileID *string
 	return &commonv1.MediaDelivery{FileId: *fileID}, nil
 }
 
-func (*media) ResolvePageOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error) {
+func (*media) ResolvePageOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error) {
 	return nil, nil
 }
 

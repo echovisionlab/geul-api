@@ -4,8 +4,10 @@ import (
 	"context"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/member"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -34,7 +36,7 @@ func profileMessage(profile *Profile) *openv1.PublicMemberProfile {
 		return nil
 	}
 	return &openv1.PublicMemberProfile{
-		Summary: member.SummaryMessage(profile.Summary), Bio: profile.Bio, Website: profile.Website,
+		Summary: memberref.Message(profile.Summary), Bio: profile.Bio, Website: profile.Website,
 		SocialLinks: profile.SocialLinks, CreatedAt: timestamppb.New(profile.CreatedAt),
 	}
 }
@@ -51,7 +53,7 @@ func (h *MemberConnectHandler) ListAuthors(ctx context.Context, req *connect.Req
 	}
 	messages := make([]*openv1.PublicAuthorSummary, len(authors))
 	for i, author := range authors {
-		messages[i] = &openv1.PublicAuthorSummary{Member: member.SummaryMessage(author.Member), PostCount: author.PostCount, Bio: author.Bio}
+		messages[i] = &openv1.PublicAuthorSummary{Member: memberref.Message(author.Member), PostCount: author.PostCount, Bio: author.Bio}
 	}
 	return connect.NewResponse(&openv1.ListAuthorsResponse{Authors: messages}), nil
 }

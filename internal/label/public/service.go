@@ -11,10 +11,14 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/label"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -93,9 +97,9 @@ type Summary struct {
 	CountryCode *string
 	Website     *string
 	PublishedAt *time.Time
-	OgImage     *commonv1.AssetRef
-	LightLogo   *commonv1.AssetRef
-	DarkLogo    *commonv1.AssetRef
+	OgImage     *mediaasset.Reference
+	LightLogo   *mediaasset.Reference
+	DarkLogo    *mediaasset.Reference
 }
 
 // LabelPage is one page of published Label summaries.
@@ -146,7 +150,7 @@ func (s *Service) labelSummaries(ctx context.Context, labels []label.Label) ([]S
 		}
 	}
 	var sourceTitles map[string]string
-	var logoRows, ogRows map[string]*commonv1.AssetRef
+	var logoRows, ogRows map[string]*mediaasset.Reference
 	err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		if sourceTitles, err = store.SourceTitles(ctx, collectLabelIDs(labels)); err != nil {
@@ -168,7 +172,7 @@ func (s *Service) labelSummaries(ctx context.Context, labels []label.Label) ([]S
 	return summaries, nil
 }
 
-func labelSummary(value label.Label, name string, logoRows, ogRows map[string]*commonv1.AssetRef) Summary {
+func labelSummary(value label.Label, name string, logoRows, ogRows map[string]*mediaasset.Reference) Summary {
 	summary := Summary{
 		ID: value.ID, Name: name, Slug: value.Slug, CountryCode: value.CountryCode, Website: value.Website,
 		PublishedAt: value.PublishedAt,
@@ -201,9 +205,9 @@ type Detail struct {
 	Name         string
 	Document     *contentv1.LocalizedRichTextDocument
 	Revision     string
-	OgImage      *commonv1.AssetRef
-	LightLogo    *commonv1.AssetRef
-	DarkLogo     *commonv1.AssetRef
+	OgImage      *mediaasset.Reference
+	LightLogo    *mediaasset.Reference
+	DarkLogo     *mediaasset.Reference
 	ReleaseCount int32
 	ArtistCount  int32
 	Parent       *Summary
@@ -217,7 +221,7 @@ type Artist struct {
 	ID    string
 	Name  string
 	Slug  *string
-	Image *commonv1.AssetRef
+	Image *mediaasset.Reference
 }
 
 // Release is a published Release of a Label with its Artists.
@@ -228,7 +232,7 @@ type Release struct {
 	Type        string
 	ReleaseDate *time.Time
 	PublishedAt *time.Time
-	Artwork     *commonv1.AssetRef
+	Artwork     *mediaasset.Reference
 	Artists     []ReleaseArtist
 }
 
@@ -408,7 +412,7 @@ func labelHasEffectiveLogo(lightFileID, darkFileID *string) bool {
 		(darkFileID != nil && strings.TrimSpace(*darkFileID) != "")
 }
 
-func optionalLabelImageAsset(ctx context.Context, store Store, fileID *string) *commonv1.AssetRef {
+func optionalLabelImageAsset(ctx context.Context, store Store, fileID *string) *mediaasset.Reference {
 	if fileID == nil {
 		return nil
 	}

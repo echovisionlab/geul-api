@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -96,12 +95,12 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 	ctx context.Context,
 	db *gorm.DB,
 	kind, routeID, locale string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	assetID, bound, err := mediaassetadapter.BoundPublicAssetID(ctx, db, kind, routeID, "og_"+strings.TrimSpace(locale))
 	if err != nil || !bound {
 		return nil, err
 	}
-	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain).ReadyAssetRef(ctx, assetID))
+	ref, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain).ReadyAssetRef(ctx, assetID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

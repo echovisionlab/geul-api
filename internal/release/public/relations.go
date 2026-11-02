@@ -4,7 +4,9 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/release"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -79,8 +81,8 @@ func loadReleaseLabels(ctx context.Context, store Store, releaseID string) ([]La
 // its Artist summary, its Member, its image and its note.
 type releaseCreditProjection struct {
 	artists        map[string]release.ArtistSummary
-	members        map[string]*commonv1.MemberSummary
-	imageAssets    map[string]*commonv1.AssetRef
+	members        map[string]*memberref.Summary
+	imageAssets    map[string]*mediaasset.Reference
 	noteByCreditID map[string]string
 }
 
@@ -170,7 +172,7 @@ func projectReleaseCredit(credit CreditRow, projection releaseCreditProjection) 
 	case artistName != nil:
 		name = *artistName
 	case credit.MemberID != nil && projection.members[*credit.MemberID] != nil:
-		name = projection.members[*credit.MemberID].GetNickname()
+		name = projection.members[*credit.MemberID].Nickname
 	case credit.CreditedName != nil:
 		name = *credit.CreditedName
 	}
@@ -191,7 +193,7 @@ func projectReleaseCredit(credit CreditRow, projection releaseCreditProjection) 
 	case credit.ImageFileID != nil:
 		projected.Image = projection.imageAssets[*credit.ImageFileID]
 	case projected.Member != nil:
-		projected.Image = projected.Member.AvatarAsset
+		projected.Image = projected.Member.Avatar.Reference()
 	}
 	return projected, true
 }
@@ -258,8 +260,8 @@ func (s *Service) loadReleaseTracks(
 type releaseTrackMediaSources struct {
 	originalFiles     map[string]MediaFile
 	playbackRefs      map[string]*commonv1.HlsMediaRef
-	waveformRefs      map[string]*commonv1.AssetRef
-	spectrogramRefs   map[string]*commonv1.AssetRef
+	waveformRefs      map[string]*mediaasset.Reference
+	spectrogramRefs   map[string]*mediaasset.Reference
 	downloadByTrackID map[string]TrackDownloadAuthorization
 }
 

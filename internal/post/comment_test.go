@@ -39,7 +39,7 @@ func TestCreateCommentStoresTheCommentAndAuditsIt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hello", created.Content)
 	require.Equal(t, commenter.memberID, *created.MemberID)
-	require.Equal(t, "Commenter", created.Author.GetNickname())
+	require.Equal(t, "Commenter", created.Author.Nickname)
 	stored, ok := h.store.Comment(created.ID)
 	require.True(t, ok)
 	require.Equal(t, value.ID, stored.PostID)
@@ -152,7 +152,7 @@ func TestUpdateCommentChangesOnlyTheAuthorsLiveComment(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "after", updated.Content)
-	require.Equal(t, "Author", updated.Author.GetNickname())
+	require.Equal(t, "Author", updated.Author.Nickname)
 	stored, _ := h.store.Comment(comment.ID)
 	require.Equal(t, "after", stored.Content)
 	requireCommentAudit(t, h.audit, author, value.ID, comment.ID, sharedtelemetry.AuditItemOperationUpdated)
@@ -228,7 +228,7 @@ func TestListCommentsPagesTopLevelCommentsWithTheirReplies(t *testing.T) {
 	require.True(t, page.HasMore)
 	require.Equal(t, first.ID, *page.NextCursor)
 	require.Len(t, page.Comments, 1)
-	require.Equal(t, "Reader", page.Comments[0].Author.GetNickname())
+	require.Equal(t, "Reader", page.Comments[0].Author.Nickname)
 	require.Len(t, page.Comments[0].Replies, 1)
 	require.Equal(t, reply.ID, page.Comments[0].Replies[0].ID)
 

@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"strings"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
-func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidateIDs ...*string) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidateIDs ...*string) (map[string]*mediaasset.Reference, error) {
 	assetIDs := normalizedManageOgAssetIDs(candidateIDs)
 	if len(assetIDs) == 0 {
-		return make(map[string]*commonv1.AssetRef), nil
+		return make(map[string]*mediaasset.Reference), nil
 	}
-	return readStore(ctx, s, func(store Store) (map[string]*commonv1.AssetRef, error) {
+	return readStore(ctx, s, func(store Store) (map[string]*mediaasset.Reference, error) {
 		return store.ReadyOgAssets(ctx, assetIDs)
 	})
 }
 
-func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidateIDs ...*string) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*mediaasset.Reference, candidateIDs ...*string) *mediaasset.Reference {
 	for _, candidateID := range candidateIDs {
 		if candidateID == nil {
 			continue
@@ -30,7 +30,7 @@ func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidateIDs
 	return nil
 }
 
-func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*string) (*commonv1.AssetRef, error) {
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*string) (*mediaasset.Reference, error) {
 	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidateIDs...)
 	if err != nil {
 		return nil, err

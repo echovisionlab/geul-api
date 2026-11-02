@@ -5,12 +5,12 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/page"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -349,10 +349,10 @@ func (s *Store) ReleaseExactFeaturedImageBinding(_ context.Context, pageID strin
 }
 
 // ReadyAssets implements page.Store.
-func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	refs := map[string]*commonv1.AssetRef{}
+	refs := map[string]*mediaasset.Reference{}
 	for _, id := range assetIDs {
 		if ref, ok := s.readyAssets[id]; ok {
 			refs[id] = ref

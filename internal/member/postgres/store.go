@@ -11,11 +11,7 @@ import (
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
-	"github.com/lib/pq"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
@@ -23,12 +19,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/lib/pq"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
@@ -242,8 +245,8 @@ func (s store) AdminMemberPage(ctx context.Context, filters []*commonv1.FilterSp
 	return membersFromRows(rows), total, nil
 }
 
-func (s store) Avatars(ctx context.Context, memberIDs []string) (map[string]*member.Asset, error) {
-	result := make(map[string]*member.Asset, len(memberIDs))
+func (s store) Avatars(ctx context.Context, memberIDs []string) (map[string]*memberref.Asset, error) {
+	result := make(map[string]*memberref.Asset, len(memberIDs))
 	if len(memberIDs) == 0 {
 		return result, nil
 	}
@@ -265,11 +268,11 @@ func (s store) Avatars(ctx context.Context, memberIDs []string) (map[string]*mem
 	}
 	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain)
 	for _, row := range rows {
-		asset, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(row.PublicAsset)))
+		asset, err := lifecycle.AssetRef(mediaassetpostgres.Asset(row.PublicAsset))
 		if err != nil {
 			return nil, err
 		}
-		result[row.MemberID] = member.AssetFromMessage(asset)
+		result[row.MemberID] = memberref.AssetFromReference(asset)
 	}
 	return result, nil
 }

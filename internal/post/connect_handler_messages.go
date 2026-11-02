@@ -1,10 +1,14 @@
 package post
 
 import (
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -24,7 +28,7 @@ func PostMessage(view View) *managev1.Post {
 		CommentsEnabled:       p.CommentsEnabled,
 		DocumentLayout:        documentLayoutMessage(p.DocumentLayout),
 		CreatedAt:             timestamppb.New(p.CreatedAt),
-		OgAsset:               view.OgAsset,
+		OgAsset:               mediaasset.ReferenceProto(view.OgAsset),
 	}
 	if p.Slug != nil {
 		message.Slug = p.Slug
@@ -88,7 +92,7 @@ func PostMessage(view View) *managev1.Post {
 			message.Series.Description = p.Series.Description
 		}
 	}
-	message.AuthorMembers = view.Authors
+	message.AuthorMembers = memberref.ReferenceMessages(view.Authors)
 	message.FeaturedImageDelivery = view.FeaturedImage
 	message.AllowedActions = postActionMessages(view.Actions)
 	return message
@@ -251,7 +255,7 @@ var participantRoles = map[ParticipantRole]managev1.PostParticipantRole{
 // ParticipantMessage renders one Post participant.
 func ParticipantMessage(participant Participant) *managev1.PostParticipant {
 	return &managev1.PostParticipant{
-		Member:                participant.Member,
+		Member:                memberref.ReferenceMessage(participant.Member),
 		Role:                  participantRoles[participant.Role],
 		CreatedAt:             timestamppb.New(participant.CreatedAt),
 		HasEffectiveAuthority: participant.HasEffectiveAuthority,
@@ -385,7 +389,7 @@ func commentNodeMessages(nodes []*CommentNode) []*managev1.CommentNode {
 		}
 		if node.MemberID != nil {
 			message.MemberId = node.MemberID
-			message.Author = node.Author
+			message.Author = memberref.ReferenceMessage(node.Author)
 		}
 		if node.ParentID != nil {
 			message.ParentId = node.ParentID
@@ -420,7 +424,7 @@ func commentWithAuthorMessage(comment AuthoredComment) *managev1.CommentWithAuth
 	}
 	if comment.MemberID != nil {
 		message.MemberId = comment.MemberID
-		message.Author = comment.Author
+		message.Author = memberref.ReferenceMessage(comment.Author)
 	}
 	if comment.ParentID != nil {
 		message.ParentId = comment.ParentID

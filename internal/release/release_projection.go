@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -39,7 +42,7 @@ type View struct {
 	Title    string
 	Revision string
 	Document *contentv1.RichTextDocument
-	Artwork  *commonv1.AssetRef
+	Artwork  *mediaasset.Reference
 }
 
 // ReleaseWithStats is a Release with its Track and credit counts.
@@ -124,7 +127,7 @@ func (s *Service) releasesWithStats(ctx context.Context, releases []Release) ([]
 		}
 	}
 	releaseIDs := collectManageReleaseIDs(views)
-	var artworkAssets map[string]*commonv1.AssetRef
+	var artworkAssets map[string]*mediaasset.Reference
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		artworkAssets, err = store.ReadyArtworks(ctx, releaseIDs)

@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -36,7 +35,7 @@ func (a *PublicAssets) ResolveReadyAssetForSourceFile(
 	ctx context.Context,
 	fileID string,
 	kinds ...string,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	refs, err := a.ResolveReadyAssetsForSourceFiles(ctx, []string{fileID}, kinds...)
 	if err != nil {
 		slog.ErrorContext(ctx, "Program Event public asset resolution failed; serving without the asset", failurecause.Attr(err), "file_id", fileID)
@@ -49,9 +48,9 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 	ctx context.Context,
 	fileIDs []string,
 	kinds ...string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	ids := sliceutil.UniqueTrimmed(fileIDs)
-	result := make(map[string]*commonv1.AssetRef, len(ids))
+	result := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
@@ -78,7 +77,7 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 		if expected := mediamime.GetExtensionFromMime(asset.MimeType); expected == "bin" || expected != asset.Extension {
 			return nil, errors.New("ready Program Event asset extension does not match MIME type")
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}

@@ -8,9 +8,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/artist/artisttest"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -98,7 +101,7 @@ func TestSetArtistImagesReplacesTheGalleryUnderItsRevision(t *testing.T) {
 	value := h.seedArtist(t, "Gallery")
 	h.store.OGRunID = "run"
 	first, second := uuid.NewString(), uuid.NewString()
-	h.store.PutReadyImage(first, &commonv1.AssetRef{AssetId: "first-asset"})
+	h.store.PutReadyImage(first, &mediaasset.Reference{AssetID: "first-asset"})
 	editor, err := h.service.GetArtistEditorData(caller.context(t), artist.GetArtistEditorDataQuery{ID: value.ID})
 	require.NoError(t, err)
 
@@ -109,7 +112,7 @@ func TestSetArtistImagesReplacesTheGalleryUnderItsRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{first, second}, h.store.ImageFiles(value.ID))
 	require.Len(t, update.Images, 2)
-	require.Equal(t, "first-asset", update.Images[0].Asset.GetAssetId())
+	require.Equal(t, "first-asset", optional.Value(update.Images[0].Asset).AssetID)
 	require.Equal(t, "run", *update.OgGenerationRunID)
 	require.Equal(t, []artisttest.OGRequest{{ArtistID: value.ID, Reason: "artist_primary_image_updated"}}, h.store.OGRequests())
 	require.Equal(t, []artist.ContentUpdate{{ArtistID: value.ID, Kind: artist.MediaUpdate}}, h.store.Updates())
@@ -158,7 +161,7 @@ func TestSetArtistParticipantWiresTheArtistSpec(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, manager.memberID, view.Member.GetId())
+	require.Equal(t, manager.memberID, view.Member.ID)
 	require.Equal(t, entityparticipant.RoleManager, h.store.Participants(value.ID)[manager.memberID])
 	actor, err := policyv1.NewAccountIdentityActor(manager.identityID)
 	require.NoError(t, err)
@@ -170,7 +173,7 @@ func TestSetArtistParticipantWiresTheArtistSpec(t *testing.T) {
 	listed, err := h.service.ListArtistParticipants(owner.context(t), artist.ListArtistParticipantsQuery{ArtistID: value.ID})
 	require.NoError(t, err)
 	require.Len(t, listed, 2)
-	require.Equal(t, owner.memberID, listed[0].Member.GetId())
+	require.Equal(t, owner.memberID, listed[0].Member.ID)
 
 	err = h.service.RemoveArtistParticipant(owner.context(t), artist.RemoveArtistParticipantCommand{ArtistID: value.ID, MemberID: owner.memberID})
 	requireCode(t, err, connect.CodeFailedPrecondition, "")

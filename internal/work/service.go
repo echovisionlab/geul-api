@@ -14,13 +14,20 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -87,7 +94,7 @@ type Authorizer = mutation.Authorizer
 
 // MemberSummaryLoader supplies the Member summaries of credits.
 type MemberSummaryLoader interface {
-	LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
 // Deps are the collaborators of the Work use cases; all are required.
@@ -701,7 +708,7 @@ func requireWorkExists(ctx context.Context, store Store, workID string) error {
 
 // FeaturedImageChange is the outcome of setting a featured image.
 type FeaturedImageChange struct {
-	ImageAsset        *commonv1.AssetRef
+	ImageAsset        *mediaasset.Reference
 	OgGenerationRunID *string
 }
 
@@ -709,7 +716,7 @@ type FeaturedImageChange struct {
 type workFeaturedImageChange struct {
 	fileID     string
 	operation  sharedtelemetry.AuditCollectionOperation
-	imageAsset *commonv1.AssetRef
+	imageAsset *mediaasset.Reference
 	changed    bool
 }
 

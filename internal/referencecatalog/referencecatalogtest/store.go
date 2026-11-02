@@ -12,12 +12,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/google/uuid"
 
-	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -52,7 +54,7 @@ type Store struct {
 	placeUse   map[string]bool
 	members    map[string]referencecatalog.MemberSummary
 	files      map[string]bool
-	assets     map[assetKey]*commonv1.AssetRef
+	assets     map[assetKey]*mediaasset.Reference
 	bindings   map[bindingKey]string
 	slugMoves  []referencecatalog.MenuTargetSlugChange
 	removals   []referencecatalog.MenuTarget
@@ -68,7 +70,7 @@ func New() (*Store, *mutationtest.UnitOfWork[referencecatalog.Store]) {
 		clients: map[string]referencecatalog.Client{}, works: map[string]int32{}, clientUse: map[string]bool{},
 		places: map[string]referencecatalog.MapPlace{}, placeUse: map[string]bool{},
 		members: map[string]referencecatalog.MemberSummary{}, files: map[string]bool{},
-		assets: map[assetKey]*commonv1.AssetRef{}, bindings: map[bindingKey]string{}, failures: map[string]error{},
+		assets: map[assetKey]*mediaasset.Reference{}, bindings: map[bindingKey]string{}, failures: map[string]error{},
 	}
 	return store, mutationtest.New[referencecatalog.Store](store)
 }
@@ -224,11 +226,11 @@ func (s *Store) SeedMemberWithID(id, nickname string) {
 
 // SeedReadyFile stores an attachable file with a ready asset of kind and
 // returns the file ID and the asset.
-func (s *Store) SeedReadyFile(kind string) (string, *commonv1.AssetRef) {
+func (s *Store) SeedReadyFile(kind string) (string, *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fileID, assetID := uuid.NewString(), uuid.NewString()
-	asset := &commonv1.AssetRef{AssetId: assetID, Url: "https://cdn.example.test/" + assetID + ".webp"}
+	asset := &mediaasset.Reference{AssetID: assetID, URL: "https://cdn.example.test/" + assetID + ".webp"}
 	s.files[fileID] = true
 	s.assets[assetKey{fileID, kind}] = asset
 	return fileID, asset
@@ -806,7 +808,7 @@ func (s *Store) LockFilesForAttachment(_ context.Context, fileIDs []string) erro
 	return nil
 }
 
-func (s *Store) readyAsset(source referencecatalog.AssetSource) (*commonv1.AssetRef, error) {
+func (s *Store) readyAsset(source referencecatalog.AssetSource) (*mediaasset.Reference, error) {
 	asset, ok := s.assets[assetKey{source.FileID, source.Kind}]
 	if !ok {
 		return nil, domainerr.ResourceNotFound("public_asset_for_source_file", source.FileID)
@@ -815,7 +817,7 @@ func (s *Store) readyAsset(source referencecatalog.AssetSource) (*commonv1.Asset
 }
 
 // BindReadyAsset implements referencecatalog.Store.
-func (s *Store) BindReadyAsset(_ context.Context, binding referencecatalog.AssetBinding) (*commonv1.AssetRef, error) {
+func (s *Store) BindReadyAsset(_ context.Context, binding referencecatalog.AssetBinding) (*mediaasset.Reference, error) {
 	if err := s.fail("BindReadyAsset"); err != nil {
 		return nil, err
 	}
@@ -843,7 +845,7 @@ func (s *Store) ReleaseAssets(_ context.Context, release referencecatalog.AssetR
 }
 
 // ReadyAsset implements referencecatalog.Store.
-func (s *Store) ReadyAsset(_ context.Context, source referencecatalog.AssetSource) (*commonv1.AssetRef, error) {
+func (s *Store) ReadyAsset(_ context.Context, source referencecatalog.AssetSource) (*mediaasset.Reference, error) {
 	if err := s.fail("ReadyAsset"); err != nil {
 		return nil, err
 	}

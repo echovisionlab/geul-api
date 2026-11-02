@@ -14,10 +14,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -38,7 +39,7 @@ type ActorChecker interface {
 // CreditMemberSummaries projects Member-owned identity details for Program
 // Event credits.
 type CreditMemberSummaries interface {
-	LoadCreditMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadCreditMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
 // Deps are the collaborators of the Program Event, series, type,

@@ -9,7 +9,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -25,7 +27,7 @@ func safeInt32(n int64) int32 {
 
 // Profile is the public profile of an onboarded Member.
 type Profile struct {
-	Summary     member.Summary
+	Summary     memberref.Summary
 	Bio         *string
 	Website     *string
 	SocialLinks map[string]string
@@ -34,7 +36,7 @@ type Profile struct {
 
 // AuthorSummary is one post author and how many posts it published.
 type AuthorSummary struct {
-	Member    member.Summary
+	Member    memberref.Summary
 	PostCount int32
 	Bio       *string
 }
@@ -72,7 +74,7 @@ func (s *Service) GetPublicMember(ctx context.Context, query GetPublicMemberQuer
 	if err != nil {
 		return nil, err
 	}
-	var avatars map[string]*member.Asset
+	var avatars map[string]*memberref.Asset
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		avatars, err = store.PublicAvatars(ctx, []string{found.ID})
@@ -133,7 +135,7 @@ func (s *Service) ListAuthors(ctx context.Context, query ListAuthorsQuery) ([]Au
 	}
 	var (
 		rows      []AuthorRow
-		summaries map[string]member.Summary
+		summaries map[string]memberref.Summary
 	)
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
@@ -192,7 +194,7 @@ func (s *Service) listSelectedAuthors(ctx context.Context, requested []string) (
 			eligibleMemberIDs = append(eligibleMemberIDs, row.MemberID)
 		}
 	}
-	var summaries map[string]member.Summary
+	var summaries map[string]memberref.Summary
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		summaries, err = LoadSummaries(ctx, store, eligibleMemberIDs)

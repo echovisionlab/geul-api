@@ -4,7 +4,11 @@ import (
 	"context"
 	"testing"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -39,14 +43,14 @@ func (f *pagePublicFilesFixture) ResolvePublicDisplayMedia(
 	return result, nil
 }
 
-func (f *pagePublicFilesFixture) ResolveReadyOGAsset(
+func (f *pagePublicFilesFixture) ResolveOGAsset(
 	_ context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	f.sourceOG = sourceAssetID
 	f.localizedOG = localizedAssetID
-	return &commonv1.AssetRef{AssetId: "asset-1"}, nil
+	return &mediaasset.Reference{AssetID: "asset-1"}, nil
 }
 
 func TestPublicMediaResolvesExactPageFeaturedFile(t *testing.T) {
@@ -72,7 +76,7 @@ func TestPublicMediaDelegatesPageOGFallbackOrder(t *testing.T) {
 
 	asset, err := adapter.ResolvePageOGAsset(t.Context(), &source, &localized)
 	require.NoError(t, err)
-	require.Equal(t, "asset-1", asset.GetAssetId())
+	require.Equal(t, "asset-1", optional.Value(asset).AssetID)
 	require.Equal(t, &source, fixture.sourceOG)
 	require.Equal(t, &localized, fixture.localizedOG)
 }

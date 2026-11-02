@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/page"
@@ -68,7 +70,7 @@ func getPageResponse(read Read) (*openv1.GetPageResponse, error) {
 		Slug:                  p.Slug,
 		Summary:               read.Summary,
 		LocalizationInfo:      publiccontent.ToProtoLocalizationInfo(read.Localization),
-		OgAsset:               read.OgAsset,
+		OgAsset:               mediaasset.ReferenceProto(read.OgAsset),
 		FeaturedImageDelivery: read.FeaturedImage,
 	}
 	if p.PublishedAt != nil {
@@ -91,4 +93,3 @@ func toProtoStatus(status page.Status) openv1.PageStatus {
 		return openv1.PageStatus_PAGE_STATUS_UNSPECIFIED
 	}
 }
-

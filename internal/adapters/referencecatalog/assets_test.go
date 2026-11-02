@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/model"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 )
 
 func TestPublicAssetsPreservesMapImageFallback(t *testing.T) {
@@ -87,6 +87,6 @@ func TestPublicAssetsPreservesMapImageFallback(t *testing.T) {
 	)
 
 	require.NotNil(t, ref)
-	require.Equal(t, assetID, ref.GetAssetId())
-	require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/image.webp", ref.GetUrl())
+	require.Equal(t, assetID, optional.Value(ref).AssetID)
+	require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/image.webp", optional.Value(ref).URL)
 }

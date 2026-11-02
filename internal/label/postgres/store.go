@@ -9,18 +9,17 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"gorm.io/gorm"
+
 	entityparticipantpostgres "github.com/echovisionlab/geul-api/internal/entityparticipant/postgres"
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Translation provides Label's initial source locale and the shared
@@ -35,11 +34,11 @@ type Translation interface {
 // the concrete shared runtime.
 type Runtime interface {
 	LockAttachableFilesForUpdate(context.Context, *gorm.DB, []string) error
-	BindReadyAssetForSourceFile(context.Context, *gorm.DB, string, string, string, string, string) (*commonv1.AssetRef, error)
+	BindReadyAssetForSourceFile(context.Context, *gorm.DB, string, string, string, string, string) (*mediaasset.Reference, error)
 	ReleasePublicAssetBindings(context.Context, *gorm.DB, string, string, string) error
 	ReleaseExactPublicAssetBindings(context.Context, *gorm.DB, string, string, []string) error
-	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error)
-	ResolveReadySourceFileRefs(context.Context, *gorm.DB, []string, ...string) (map[string]*commonv1.AssetRef, error)
+	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error)
+	ResolveReadySourceFileRefs(context.Context, *gorm.DB, []string, ...string) (map[string]*mediaasset.Reference, error)
 	RequestCurrentWithDB(context.Context, *gorm.DB, string, string) (string, error)
 	CancelAndReleaseOGWithDB(context.Context, *gorm.DB, string) error
 }

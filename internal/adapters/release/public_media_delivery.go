@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -81,7 +83,7 @@ func loadReadyPublicAssetsForSourceFiles(
 	return result, nil
 }
 
-func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*commonv1.AssetRef, error) {
+func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*mediaasset.Reference, error) {
 	if strings.TrimSpace(row.AssetID) == "" || strings.TrimSpace(row.Extension) == "" || strings.TrimSpace(row.MimeType) == "" {
 		return nil, errors.New("ready public asset metadata is incomplete")
 	}
@@ -98,14 +100,14 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*common
 	if err != nil {
 		return nil, err
 	}
-	return &commonv1.AssetRef{
-		AssetId:     row.AssetID,
-		Url:         joinPublicCDNPath(cdnDomain, assetPath),
+	return &mediaasset.Reference{
+		AssetID:     row.AssetID,
+		URL:         joinPublicCDNPath(cdnDomain, assetPath),
 		Extension:   row.Extension,
 		MimeType:    row.MimeType,
 		FileSize:    row.FileSize,
-		Sha256:      append([]byte(nil), row.SHA256...),
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+		SHA256:      append([]byte(nil), row.SHA256...),
+		Disposition: mediaasset.DispositionInline,
 	}, nil
 }
 

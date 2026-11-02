@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
@@ -21,8 +23,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -303,21 +306,21 @@ var _ public.Store = (*fakeStore)(nil)
 // assets resolves the ready assets of Files and counts each call.
 type assets struct {
 	mu         sync.Mutex
-	ready      map[string]*commonv1.AssetRef
+	ready      map[string]*mediaasset.Reference
 	batchErr   error
 	singles    int
 	batches    int
 	batchKinds [][]string
 }
 
-func (a *assets) ResolveReadyAssetForSourceFile(_ context.Context, fileID string, _ ...string) *commonv1.AssetRef {
+func (a *assets) ResolveReadyAssetForSourceFile(_ context.Context, fileID string, _ ...string) *mediaasset.Reference {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.singles++
 	return a.ready[fileID]
 }
 
-func (a *assets) ResolveReadyAssetsForSourceFiles(_ context.Context, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error) {
+func (a *assets) ResolveReadyAssetsForSourceFiles(_ context.Context, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.batches++
@@ -325,7 +328,7 @@ func (a *assets) ResolveReadyAssetsForSourceFiles(_ context.Context, fileIDs []s
 	if a.batchErr != nil {
 		return nil, a.batchErr
 	}
-	result := map[string]*commonv1.AssetRef{}
+	result := map[string]*mediaasset.Reference{}
 	for _, id := range fileIDs {
 		if asset := a.ready[id]; asset != nil {
 			result[id] = asset
@@ -344,11 +347,11 @@ func (f *files) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []
 }
 
 type members struct {
-	summaries map[string]*commonv1.MemberSummary
+	summaries map[string]*memberref.Summary
 }
 
-func (m members) LoadPublicCreditMemberSummaries(_ context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
-	result := map[string]*commonv1.MemberSummary{}
+func (m members) LoadPublicCreditMemberSummaries(_ context.Context, memberIDs []string) (map[string]*memberref.Summary, error) {
+	result := map[string]*memberref.Summary{}
 	for _, id := range memberIDs {
 		if summary := m.summaries[id]; summary != nil {
 			result[id] = summary
@@ -369,8 +372,8 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	store := newFakeStore()
 	f := &fixture{
-		store: store, assets: &assets{ready: map[string]*commonv1.AssetRef{}}, files: &files{},
-		members: members{summaries: map[string]*commonv1.MemberSummary{}},
+		store: store, assets: &assets{ready: map[string]*mediaasset.Reference{}}, files: &files{},
+		members: members{summaries: map[string]*memberref.Summary{}},
 	}
 	service, err := public.NewService(public.Deps{
 		Units: mutationtestUnits(store), Assets: f.assets, Files: f.files, CreditMembers: f.members,
@@ -460,10 +463,10 @@ func TestGetProgramEventAssemblesThePublishedEvent(t *testing.T) {
 	f.store.typeLocales[typeID] = []programevent.TypeLocale{{TypeID: typeID, Locale: "en", Name: "Concert"}, {TypeID: typeID, Locale: "ko", Name: "공연"}}
 	f.store.series[seriesID] = programevent.Series{ID: seriesID, Slug: "festival", Status: programevent.StatusPublished, Title: "Festival", PosterFileID: text("series-poster")}
 	f.store.posters[event.ID] = "event-poster"
-	f.assets.ready["event-poster"] = &commonv1.AssetRef{AssetId: "poster"}
-	f.assets.ready["series-poster"] = &commonv1.AssetRef{AssetId: "series"}
-	f.assets.ready["artist-image"] = &commonv1.AssetRef{AssetId: "artist"}
-	f.members.summaries[member] = &commonv1.MemberSummary{Id: member}
+	f.assets.ready["event-poster"] = &mediaasset.Reference{AssetID: "poster"}
+	f.assets.ready["series-poster"] = &mediaasset.Reference{AssetID: "series"}
+	f.assets.ready["artist-image"] = &mediaasset.Reference{AssetID: "artist"}
+	f.members.summaries[member] = &memberref.Summary{ID: member}
 	f.store.credits = []public.CreditRow{
 		{ID: "artist-credit", ArtistID: &artist, ArtistName: text("Artist"), ArtistImageFileID: text("artist-image")},
 		{ID: "member-credit", MemberID: &member},
@@ -480,9 +483,9 @@ func TestGetProgramEventAssemblesThePublishedEvent(t *testing.T) {
 	require.Equal(t, "Body", detail.ContentText)
 	require.Equal(t, &public.MapPlace{ID: place, Name: "Hall", GooglePlaceID: text("g")}, detail.LocationPlace)
 	require.Equal(t, "Concert", detail.Type.Name, "the displayed locale names the type")
-	require.Equal(t, "series", detail.Series.PosterAsset.GetAssetId())
-	require.Equal(t, "poster", detail.PosterAsset.GetAssetId())
-	require.Equal(t, "artist", detail.Credits[0].Artist.ImageAsset.GetAssetId())
+	require.Equal(t, "series", optional.Value(detail.Series.PosterAsset).AssetID)
+	require.Equal(t, "poster", optional.Value(detail.PosterAsset).AssetID)
+	require.Equal(t, "artist", optional.Value(detail.Credits[0].Artist.ImageAsset).AssetID)
 	require.Equal(t, f.members.summaries[member], detail.Credits[1].Member)
 	require.Equal(t, "", detail.Credits[2].Artist.Name)
 	require.Len(t, got.BlockMedia, 1)
@@ -534,13 +537,13 @@ func TestListProgramEventsQueriesDoNotGrowPerRow(t *testing.T) {
 			event := f.publishedEvent(t, func(event *programevent.Event) { event.TypeID = typeID })
 			if index%2 == 0 {
 				f.store.posters[event.ID] = "poster-" + event.ID
-				f.assets.ready["poster-"+event.ID] = &commonv1.AssetRef{AssetId: event.ID}
+				f.assets.ready["poster-"+event.ID] = &mediaasset.Reference{AssetID: event.ID}
 			}
 		}
 		list, err := f.service.ListProgramEvents(t.Context(), public.ListProgramEventsQuery{Limit: int32(size)})
 		require.NoError(t, err)
 		require.Len(t, list.Events, size)
-		require.Equal(t, list.Events[0].ID, list.Events[0].PosterAsset.GetAssetId())
+		require.Equal(t, list.Events[0].ID, optional.Value(list.Events[0].PosterAsset).AssetID)
 		require.Equal(t, "Concert", list.Events[0].Type.Name)
 		require.Equal(t, 1, f.assets.batches)
 		require.Zero(t, f.assets.singles)
@@ -555,11 +558,11 @@ func TestListProgramEventsResolvesPostersOneByOneWhenABatchFails(t *testing.T) {
 	f := newFixture(t)
 	first, second := f.publishedEvent(t), f.publishedEvent(t)
 	f.store.posters[first.ID], f.store.posters[second.ID] = "first", "second"
-	f.assets.ready["first"] = &commonv1.AssetRef{AssetId: "first"}
+	f.assets.ready["first"] = &mediaasset.Reference{AssetID: "first"}
 	f.assets.batchErr = errors.New("batch down")
 	list, err := f.service.ListProgramEvents(t.Context(), public.ListProgramEventsQuery{})
 	require.NoError(t, err)
-	require.Equal(t, "first", list.Events[0].PosterAsset.GetAssetId())
+	require.Equal(t, "first", optional.Value(list.Events[0].PosterAsset).AssetID)
 	require.Nil(t, list.Events[1].PosterAsset)
 	require.Equal(t, 2, f.assets.singles)
 
@@ -567,7 +570,7 @@ func TestListProgramEventsResolvesPostersOneByOneWhenABatchFails(t *testing.T) {
 	f.store.fail = map[string]error{"PosterFileIDs": errors.New("poster query down")}
 	list, err = f.service.ListProgramEvents(t.Context(), public.ListProgramEventsQuery{})
 	require.NoError(t, err)
-	require.Equal(t, "first", list.Events[0].PosterAsset.GetAssetId())
+	require.Equal(t, "first", optional.Value(list.Events[0].PosterAsset).AssetID)
 	require.Equal(t, 2, f.store.calls["PosterFileID"], "each event's poster is read on its own")
 }
 
@@ -609,11 +612,11 @@ func TestProgramEventSeriesReadsServePublishedSeriesWithTheirPosters(t *testing.
 	published := programevent.Series{ID: uuid.NewString(), Slug: "festival", Status: programevent.StatusPublished, Title: "Festival", PosterFileID: text("poster"), UpdatedAt: at(2)}
 	f.store.series[published.ID] = published
 	f.store.series["draft"] = programevent.Series{ID: "draft", Slug: "draft", Status: programevent.StatusDraft, Title: "Draft"}
-	f.assets.ready["poster"] = &commonv1.AssetRef{AssetId: "poster"}
+	f.assets.ready["poster"] = &mediaasset.Reference{AssetID: "poster"}
 
 	bySlug, err := f.service.GetProgramEventSeries(t.Context(), public.GetProgramEventSeriesQuery{SlugOrID: "festival"})
 	require.NoError(t, err)
-	require.Equal(t, "poster", bySlug.PosterAsset.GetAssetId())
+	require.Equal(t, "poster", optional.Value(bySlug.PosterAsset).AssetID)
 	byID, err := f.service.GetProgramEventSeries(t.Context(), public.GetProgramEventSeriesQuery{SlugOrID: published.ID})
 	require.NoError(t, err)
 	require.Equal(t, bySlug, byID)
@@ -625,6 +628,6 @@ func TestProgramEventSeriesReadsServePublishedSeriesWithTheirPosters(t *testing.
 	list, err := f.service.ListProgramEventSeries(t.Context(), public.ListProgramEventSeriesQuery{})
 	require.NoError(t, err)
 	require.Len(t, list.Series, 1)
-	require.Equal(t, "poster", list.Series[0].PosterAsset.GetAssetId())
+	require.Equal(t, "poster", optional.Value(list.Series[0].PosterAsset).AssetID)
 	require.Equal(t, [][]string{{"image", "poster", "map_image"}}, f.assets.batchKinds)
 }

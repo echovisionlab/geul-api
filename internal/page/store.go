@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -179,7 +179,7 @@ type PageMedia interface {
 	ReleaseFeaturedImageBindings(ctx context.Context, pageID string) error
 	ReleaseExactFeaturedImageBinding(ctx context.Context, pageID string) error
 	// ReadyAssets resolves ready public assets by ID.
-	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
 	// UnavailableAttachments names the attachments of a version document
 	// whose media is gone.
 	UnavailableAttachments(ctx context.Context, document *contentv1.LocalizedPageDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)

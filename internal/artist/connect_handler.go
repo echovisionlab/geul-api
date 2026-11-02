@@ -3,12 +3,19 @@ package artist
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -128,7 +135,7 @@ func (h *ConnectHandler) SetArtistImage(ctx context.Context, req *connect.Reques
 	update, err := h.artists.SetArtistImage(ctx, SetArtistImageCommand{ArtistID: req.Msg.ArtistId, FileID: req.Msg.FileId})
 	response := &managev1.SetArtistImageResponse{OgGenerationRunId: update.OgGenerationRunID}
 	if len(update.Images) > 0 {
-		response.ImageAsset = update.Images[0].Asset
+		response.ImageAsset = mediaasset.ReferenceProto(update.Images[0].Asset)
 	}
 	return respond(response, err)
 }
@@ -241,7 +248,7 @@ func artistMessage(view View) *managev1.Artist {
 		Document:     view.Document,
 		Status:       string(a.Status),
 		CreatedAt:    timestamppb.New(a.CreatedAt),
-		OgAsset:      view.OgImage,
+		OgAsset:      mediaasset.ReferenceProto(view.OgImage),
 		Revision:     view.Revision,
 	}
 	if a.Slug != nil {
@@ -270,7 +277,7 @@ func artistMessage(view View) *managev1.Artist {
 	}
 	artist.Images = artistImageMessages(view.Images)
 	if len(view.Images) > 0 {
-		artist.ImageAsset = view.Images[0].Asset
+		artist.ImageAsset = mediaasset.ReferenceProto(view.Images[0].Asset)
 	}
 	return artist
 }
@@ -300,7 +307,7 @@ func artistImageMessages(images []ArtistImageProjection) []*managev1.ArtistImage
 	for index, image := range images {
 		messages = append(messages, &managev1.ArtistImage{
 			FileId:    image.FileID,
-			Asset:     image.Asset,
+			Asset:     mediaasset.ReferenceProto(image.Asset),
 			SortOrder: int32(index),
 			Primary:   index == 0,
 		})
@@ -386,7 +393,7 @@ func artistParticipantMessage(view entityparticipant.View) *managev1.ArtistParti
 		role = managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_OWNER
 	}
 	return &managev1.ArtistParticipant{
-		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
+		Member: memberref.ReferenceMessage(view.Member), Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
 		HasEffectiveAuthority: view.HasEffectiveAuthority,
 	}
 }

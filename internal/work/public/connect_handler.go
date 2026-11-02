@@ -4,12 +4,19 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -151,7 +158,7 @@ func summaryMessage(view Summary) *openv1.WorkSummary {
 		summary.UntilMonth = work.UntilMonth
 	}
 	if view.FeaturedImage != nil {
-		summary.FeaturedImageAsset = view.FeaturedImage
+		summary.FeaturedImageAsset = mediaasset.ReferenceProto(view.FeaturedImage)
 	}
 	return summary
 }
@@ -197,8 +204,8 @@ func workMessage(ctx context.Context, detail Detail) *openv1.Work {
 		protoWork.LocationPlace = mapPlaceOf(detail.Work)
 	}
 	protoWork.UntilYear, protoWork.UntilMonth = work.UntilYear, work.UntilMonth
-	protoWork.OgAsset = detail.OgAsset
-	protoWork.FeaturedImageAsset = detail.FeaturedImage
+	protoWork.OgAsset = mediaasset.ReferenceProto(detail.OgAsset)
+	protoWork.FeaturedImageAsset = mediaasset.ReferenceProto(detail.FeaturedImage)
 	protoWork.Metadata = publicWorkMetadata(ctx, work)
 	protoWork.CreditGroups = make([]*openv1.WorkCreditGroup, 0, len(detail.CreditGroups))
 	for _, group := range detail.CreditGroups {
@@ -218,17 +225,17 @@ func workMessage(ctx context.Context, detail Detail) *openv1.Work {
 			message.CreditRole = credit.CreditRole
 		}
 		if artist := view.Artist; artist != nil {
-			message.Artist = &openv1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: artist.Image}
+			message.Artist = &openv1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: mediaasset.ReferenceProto(artist.Image)}
 		}
 		if credit.MemberID != nil {
-			message.Member = view.Member
+			message.Member = memberref.ReferenceMessage(view.Member)
 		}
 		protoWork.Credits = append(protoWork.Credits, message)
 	}
 	if detail.Clients != nil {
 		protoWork.Clients = make([]*openv1.WorkClient, 0, len(detail.Clients))
 		for _, client := range detail.Clients {
-			message := &openv1.WorkClient{Id: client.ID, Name: client.Name, LogoLightAsset: client.LightLogo, LogoDarkAsset: client.DarkLogo}
+			message := &openv1.WorkClient{Id: client.ID, Name: client.Name, LogoLightAsset: mediaasset.ReferenceProto(client.LightLogo), LogoDarkAsset: mediaasset.ReferenceProto(client.DarkLogo)}
 			if client.Website != nil {
 				message.Website = client.Website
 			}

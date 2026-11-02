@@ -21,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/post/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
@@ -185,7 +184,7 @@ func (s *store) ResolveOgConsistency(ctx context.Context, postID string, selecti
 	return s.ports.Localization.ResolveOgConsistency(ctx, s.tx, s.ports.CDNDomain, "post", postID, selection)
 }
 
-func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
+func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error) {
 	for _, candidate := range candidates {
 		if candidate == nil || strings.TrimSpace(*candidate) == "" {
 			continue
@@ -202,7 +201,7 @@ func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*commo
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(asset)))
+		return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(asset))
 	}
 	return nil, nil
 }

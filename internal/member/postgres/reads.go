@@ -5,42 +5,34 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
-	"github.com/echovisionlab/geul-api/internal/member"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	"gorm.io/gorm"
 )
 
 const memberEmailRetentionCleanupBatchSize = 500
 
-// ReadSummaries returns plain Member references without opening a transaction.
-func ReadSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]member.Summary, error) {
-	return member.LoadSummaries(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberIDs)
-}
-
-// LoadSummaries reads the summary of each Member in memberIDs that exists,
-// for the Member references other domains show. Its reads run on db
-// directly, as their callers' own reads do.
-func LoadSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
-	summaries, err := ReadSummaries(ctx, db, cdnDomain, memberIDs)
+// LoadSummaries reads plain Member references on the caller's database handle.
+func LoadSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]*memberref.Summary, error) {
+	values, err := memberdomain.LoadSummaries(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*commonv1.MemberSummary, len(summaries))
-	for id, summary := range summaries {
-		result[id] = member.SummaryMessage(summary)
+	result := make(map[string]*memberref.Summary, len(values))
+	for id, value := range values {
+		result[id] = &value
 	}
 	return result, nil
 }
 
-// LoadAuthorizationEligibleSummary reads the summary of an active, onboarded
-// Member that may hold authority.
-func LoadAuthorizationEligibleSummary(ctx context.Context, db *gorm.DB, cdnDomain, memberID string) (*commonv1.MemberSummary, error) {
-	summary, err := member.LoadAuthorizationEligibleSummary(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberID)
+// LoadAuthorizationEligibleSummary reads an active, onboarded Member that may hold authority.
+func LoadAuthorizationEligibleSummary(ctx context.Context, db *gorm.DB, cdnDomain, memberID string) (*memberref.Summary, error) {
+	summary, err := memberdomain.LoadAuthorizationEligibleSummary(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberID)
 	if err != nil {
 		return nil, err
 	}
-	return member.SummaryMessage(summary), nil
+	return &summary, nil
 }
 
 // PublicEmailCodeRegistrationBlocked additionally protects an address that is
@@ -53,7 +45,7 @@ func PublicEmailCodeRegistrationBlocked(ctx context.Context, db *gorm.DB, email 
 	if db == nil {
 		return false, fmt.Errorf("member database is required")
 	}
-	normalized, ok := member.NormalizeEmailInput(email)
+	normalized, ok := memberdomain.NormalizeEmailInput(email)
 	if !ok {
 		return false, nil
 	}

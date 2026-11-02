@@ -24,7 +24,6 @@ import (
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -204,10 +203,10 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 		snapshot.OGImageConfig = canonical
 	}
 	// OG images draw the full light logo, falling back like every display logo.
-	logos := sitelogo.Display[commonv1.AssetRef]{}
+	logos := sitelogo.Display[mediaasset.Reference]{}
 	for _, slot := range []struct {
 		fileID *string
-		target **commonv1.AssetRef
+		target **mediaasset.Reference
 	}{
 		{settings.LogoFullLightFileID, &logos.FullLight},
 		{settings.LogoFullDarkFileID, &logos.FullDark},
@@ -308,17 +307,12 @@ type assetSnapshot struct {
 	MimeType  string `json:"mime_type"`
 }
 
-func snapshotRef(asset interface {
-	GetAssetId() string
-	GetUrl() string
-	GetExtension() string
-	GetMimeType() string
-}) *assetSnapshot {
+func snapshotRef(asset *mediaasset.Reference) *assetSnapshot {
 	if asset == nil {
 		return nil
 	}
 	return &assetSnapshot{
-		AssetID: asset.GetAssetId(), URL: asset.GetUrl(), Extension: asset.GetExtension(), MimeType: asset.GetMimeType(),
+		AssetID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MimeType: asset.MimeType,
 	}
 }
 

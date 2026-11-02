@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"log/slog"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -281,7 +284,7 @@ type memberLoader struct {
 func (l memberLoader) LoadActiveSummary(
 	ctx context.Context,
 	memberID string,
-) (*commonv1.MemberSummary, bool, error) {
+) (*memberref.Summary, bool, error) {
 	var row model.Member
 	result := l.db.WithContext(ctx).
 		Select("id", "nickname").
@@ -293,7 +296,7 @@ func (l memberLoader) LoadActiveSummary(
 	if result.Error != nil {
 		return nil, false, result.Error
 	}
-	summary := &commonv1.MemberSummary{Id: row.ID, Nickname: row.Nickname}
+	summary := &memberref.Summary{ID: row.ID, Nickname: row.Nickname}
 	type avatarRow struct{ model.PublicAsset }
 	var avatar avatarRow
 	assetResult := l.db.WithContext(ctx).Raw(`
@@ -309,11 +312,13 @@ func (l memberLoader) LoadActiveSummary(
 		return nil, false, assetResult.Error
 	}
 	if assetResult.Error == nil {
-		asset, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(l.db), l.cdnDomain).AssetRef(mediaassetpostgres.Asset(avatar.PublicAsset)))
+		asset, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(l.db), l.cdnDomain).AssetRef(mediaassetpostgres.Asset(avatar.PublicAsset))
 		if err != nil {
 			return nil, false, err
 		}
-		summary.AvatarAsset = asset
+		if asset != nil {
+			summary.Avatar = &memberref.Asset{ID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MIMEType: asset.MimeType, FileSize: asset.FileSize, SHA256: append([]byte(nil), asset.SHA256...), Disposition: memberref.AssetDisposition(asset.Disposition), DownloadFilename: asset.DownloadFilename}
+		}
 	}
 	return summary, true, nil
 }

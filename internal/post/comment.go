@@ -14,9 +14,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -117,7 +119,7 @@ type DeleteCommentCommand struct{ ID string }
 // replies.
 type CommentNode struct {
 	Comment
-	Author          *commonv1.MemberSummary
+	Author          *memberref.Summary
 	Replies         []*CommentNode
 	HasMoreReplies  bool
 	TotalReplyCount int32
@@ -134,7 +136,7 @@ type CommentPage struct {
 // AuthoredComment is a comment with its author.
 type AuthoredComment struct {
 	Comment
-	Author *commonv1.MemberSummary
+	Author *memberref.Summary
 }
 
 // ListCommentsByPost returns comments for a post with Reddit-style pagination
@@ -671,7 +673,7 @@ func buildCommentTreeWithPagination(
 	topLevel []Comment,
 	allReplies []Comment,
 	replyLimit int,
-	summaries map[string]*commonv1.MemberSummary,
+	summaries map[string]*memberref.Summary,
 ) []*CommentNode {
 	// Create map for all comments
 	nodeMap := make(map[string]*CommentNode)
@@ -730,7 +732,7 @@ func buildCommentTreeWithPagination(
 	return result
 }
 
-func commentNode(comment Comment, summaries map[string]*commonv1.MemberSummary) *CommentNode {
+func commentNode(comment Comment, summaries map[string]*memberref.Summary) *CommentNode {
 	node := &CommentNode{Comment: comment, Replies: []*CommentNode{}}
 	if comment.MemberID != nil {
 		node.Author = summaries[*comment.MemberID]
@@ -741,7 +743,7 @@ func commentNode(comment Comment, summaries map[string]*commonv1.MemberSummary) 
 func (s commentReader) commentMemberSummaries(
 	ctx context.Context,
 	groups ...[]Comment,
-) (map[string]*commonv1.MemberSummary, error) {
+) (map[string]*memberref.Summary, error) {
 	seen := map[string]struct{}{}
 	memberIDs := make([]string, 0)
 	for _, comments := range groups {

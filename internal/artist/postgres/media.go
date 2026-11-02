@@ -4,7 +4,8 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/artist"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -20,7 +21,7 @@ func (s *store) ReleaseImageBindings(ctx context.Context, artistID string) error
 	return s.ports.Runtime.ReleasePublicAssetBindings(ctx, s.tx, "artist", artistID, "image")
 }
 
-func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Runtime.ResolveReadyAssetRefs(ctx, s.tx, assetIDs)
 }
 

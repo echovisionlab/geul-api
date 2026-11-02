@@ -3,7 +3,9 @@ package programevent
 import (
 	"time"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -130,7 +132,7 @@ type CreditArtist struct {
 	ID         string
 	Name       string
 	Slug       *string
-	ImageAsset *commonv1.AssetRef
+	ImageAsset *mediaasset.Reference
 }
 
 // CreditView is a credit with the projections of its credited artist or
@@ -138,7 +140,7 @@ type CreditArtist struct {
 type CreditView struct {
 	CreditRecord
 	Artist *CreditArtist
-	Member *commonv1.MemberSummary
+	Member *memberref.Summary
 }
 
 // RelationKind names the artists, labels or clients of an event.

@@ -10,17 +10,17 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"gorm.io/gorm"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -29,10 +29,10 @@ import (
 // series posters; programeventadapter.Runtime implements it.
 type Media interface {
 	LockAttachableFilesForUpdate(context.Context, *gorm.DB, []string) error
-	BindReadyAssetForSourceFile(context.Context, *gorm.DB, string, string, string, string, string) (*commonv1.AssetRef, error)
+	BindReadyAssetForSourceFile(context.Context, *gorm.DB, string, string, string, string, string) (*mediaasset.Reference, error)
 	ReleasePublicAssetBindings(context.Context, *gorm.DB, string, string, string) error
-	ReadyPublicAssetRefForSourceFile(context.Context, *gorm.DB, string, string) (*commonv1.AssetRef, error)
-	ResolveSingleReadyInlineAssetForSourceFile(context.Context, *gorm.DB, string, string) (*commonv1.AssetRef, error)
+	ReadyPublicAssetRefForSourceFile(context.Context, *gorm.DB, string, string) (*mediaasset.Reference, error)
+	ResolveSingleReadyInlineAssetForSourceFile(context.Context, *gorm.DB, string, string) (*mediaasset.Reference, error)
 }
 
 // Files adds request-scoped delivery to already-authorized Block media.

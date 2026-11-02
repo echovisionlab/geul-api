@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 )
 
@@ -21,7 +23,7 @@ type AvatarFiles struct {
 
 var _ memberdomain.UserAvatarAssetPromoter = AvatarFiles{}
 
-func (a AvatarFiles) PromoteUserAvatarAsset(ctx context.Context, fileID string) (*memberdomain.Asset, error) {
+func (a AvatarFiles) PromoteUserAvatarAsset(ctx context.Context, fileID string) (*memberref.Asset, error) {
 	asset, err := a.Files.PromoteUserAvatarAsset(ctx, fileID)
 	if err != nil {
 		return nil, err
@@ -29,5 +31,5 @@ func (a AvatarFiles) PromoteUserAvatarAsset(ctx context.Context, fileID string) 
 	if asset == nil {
 		return nil, nil
 	}
-	return &memberdomain.Asset{ID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MIMEType: asset.MimeType, FileSize: asset.FileSize, SHA256: append([]byte(nil), asset.SHA256...), Disposition: memberdomain.AssetDisposition(asset.Disposition)}, nil
+	return &memberref.Asset{ID: asset.AssetID, URL: asset.URL, Extension: asset.Extension, MIMEType: asset.MimeType, FileSize: asset.FileSize, SHA256: append([]byte(nil), asset.SHA256...), Disposition: memberref.AssetDisposition(asset.Disposition)}, nil
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"github.com/echovisionlab/geul-api/internal/mediaauth"
 
 	"connectrpc.com/connect"
@@ -322,7 +324,7 @@ func EntryMessage(entry Entry) *managev1.TranslationEntry {
 		Summary:     entry.Summary,
 		ContentHtml: entry.ContentHTML,
 		ContentText: entry.ContentText,
-		OgAsset:     entry.OgAsset,
+		OgAsset:     mediaasset.ReferenceProto(entry.OgAsset),
 	}
 	if len(entry.ContentJSON) > 0 {
 		message.ContentJson = entry.ContentJSON

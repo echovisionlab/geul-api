@@ -7,10 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -46,7 +47,7 @@ type ReleaseManagementApplication interface {
 	PublishRelease(context.Context, releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error)
 	UnpublishRelease(context.Context, releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error)
 	DeleteRelease(context.Context, releasedomain.DeleteReleaseCommand) error
-	SetReleaseArtwork(context.Context, releasedomain.SetReleaseArtworkCommand) (*commonv1.AssetRef, error)
+	SetReleaseArtwork(context.Context, releasedomain.SetReleaseArtworkCommand) (*mediaasset.Reference, error)
 	DeleteReleaseArtwork(context.Context, releasedomain.DeleteReleaseArtworkCommand) error
 	CheckReleaseSlugAvailable(context.Context, releasedomain.CheckReleaseSlugQuery) (bool, error)
 }
@@ -256,7 +257,7 @@ func (tools *ReleaseManagementTools) setArtwork(ctx context.Context, _ string, c
 	}
 	output := map[string]any{"document_type": "release", "document_id": input.DocumentID, "file_id": input.FileID, "success": true}
 	if asset != nil {
-		output["artwork_asset_id"] = asset.AssetId
+		output["artwork_asset_id"] = asset.AssetID
 	}
 	return contentResult(output)
 }

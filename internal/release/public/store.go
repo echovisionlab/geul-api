@@ -5,8 +5,10 @@ import (
 	"errors"
 	"time"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/release"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -36,7 +38,7 @@ type Store interface {
 	ArtworkFiles(ctx context.Context, releaseIDs []string) ([]ArtworkFile, error)
 	// ReadySourceAssets resolves ready public assets of kinds by source File
 	// ID.
-	ReadySourceAssets(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error)
+	ReadySourceAssets(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error)
 	// ReleaseArtists lists each Release's Artists with their first image by
 	// Release, sort order and creation.
 	ReleaseArtists(ctx context.Context, releaseIDs []string) ([]ArtistRow, error)
@@ -63,8 +65,8 @@ type Store interface {
 	TrackFiles(ctx context.Context, fileIDs []string) (map[string]MediaFile, error)
 	// TrackWaveforms, TrackSpectrograms and TrackHLS resolve the ready
 	// derivatives of the original audio Files.
-	TrackWaveforms(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error)
-	TrackSpectrograms(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error)
+	TrackWaveforms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error)
+	TrackSpectrograms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error)
 	TrackHLS(ctx context.Context, fileIDs []string) (map[string]*commonv1.HlsMediaRef, error)
 	// TrackCredits lists the Tracks' credits with their Artists' first
 	// images by Track, sort order and creation.

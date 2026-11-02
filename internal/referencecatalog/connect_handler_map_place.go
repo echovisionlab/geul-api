@@ -3,10 +3,14 @@ package referencecatalog
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
@@ -113,7 +117,7 @@ func MapPlaceMessage(view MapPlaceView) *managev1.MapPlace {
 	if p.UpdatedByMemberID != nil && *p.UpdatedByMemberID != "" {
 		proto.UpdatedByMemberId = p.UpdatedByMemberID
 	}
-	proto.ImageAsset = view.ImageAsset
+	proto.ImageAsset = mediaasset.ReferenceProto(view.ImageAsset)
 	proto.CreatedByMember = memberSummaryMessage(view.CreatedByMember)
 	proto.UpdatedByMember = memberSummaryMessage(view.UpdatedByMember)
 	return proto
@@ -123,7 +127,7 @@ func memberSummaryMessage(member *MemberSummary) *commonv1.MemberSummary {
 	if member == nil {
 		return nil
 	}
-	return &commonv1.MemberSummary{Id: member.ID, Nickname: member.Nickname, AvatarAsset: member.Avatar, Deleted: member.Deleted}
+	return &commonv1.MemberSummary{Id: member.ID, Nickname: member.Nickname, AvatarAsset: memberref.AssetMessage(member.Avatar), Deleted: member.Deleted}
 }
 
 func mapPlaceBasicMessage(p MapPlace) *managev1.MapPlaceBasic {

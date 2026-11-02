@@ -9,7 +9,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -41,8 +44,8 @@ type SearchClientsQuery struct {
 // unset or cannot be resolved is nil.
 type ClientView struct {
 	Client    Client
-	LightLogo *commonv1.AssetRef
-	DarkLogo  *commonv1.AssetRef
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
 }
 
 // ClientWorkCount is a Client with how many Works name it.
@@ -167,7 +170,7 @@ func clientView(ctx context.Context, store Store, client Client) ClientView {
 	}
 }
 
-func clientLogo(ctx context.Context, store Store, clientID string, fileID *string) *commonv1.AssetRef {
+func clientLogo(ctx context.Context, store Store, clientID string, fileID *string) *mediaasset.Reference {
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil
 	}
@@ -181,7 +184,7 @@ func clientLogo(ctx context.Context, store Store, clientID string, fileID *strin
 
 // clientLogos reads the logos a Client selects after a mutation committed,
 // in its own snapshot. A Client that cannot be read is served without logos.
-func (s *Service) clientLogos(ctx context.Context, clientID string) (light, dark *commonv1.AssetRef) {
+func (s *Service) clientLogos(ctx context.Context, clientID string) (light, dark *mediaasset.Reference) {
 	err := s.units.Read(ctx, func(store Store) error {
 		lightFileID, darkFileID, err := store.ClientLogoFiles(ctx, clientID)
 		if err != nil {

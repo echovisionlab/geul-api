@@ -4,13 +4,18 @@ import (
 	"context"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/release"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -77,6 +82,7 @@ func summaryMessages(summaries []Summary) []*openv1.ReleaseSummary {
 // is its Open Graph image as well.
 func releaseSummaryMessage(summary Summary) *openv1.ReleaseSummary {
 	r := summary.Release
+	artwork := mediaasset.ReferenceProto(summary.Artwork)
 	return &openv1.ReleaseSummary{
 		Id:           r.ID,
 		Title:        summary.Title,
@@ -84,14 +90,15 @@ func releaseSummaryMessage(summary Summary) *openv1.ReleaseSummary {
 		Slug:         r.Slug,
 		ReleaseDate:  timestampPtr(r.ReleaseDate),
 		PublishedAt:  timestampPtr(r.PublishedAt),
-		OgAsset:      summary.Artwork,
-		ArtworkAsset: summary.Artwork,
+		OgAsset:      artwork,
+		ArtworkAsset: artwork,
 		Artists:      artistMessages(summary.Artists),
 	}
 }
 
 func releaseMessage(view View) *openv1.Release {
 	r := view.Release
+	artwork := mediaasset.ReferenceProto(view.Artwork)
 	message := &openv1.Release{
 		Id:               r.ID,
 		Title:            view.Title,
@@ -110,8 +117,8 @@ func releaseMessage(view View) *openv1.Release {
 		AppleMusicUrl:    r.AppleMusicURL,
 		BandcampUrl:      r.BandcampURL,
 		YoutubeMusicUrl:  r.YoutubeMusicURL,
-		ArtworkAsset:     view.Artwork,
-		OgAsset:          view.Artwork,
+		ArtworkAsset:     artwork,
+		OgAsset:          artwork,
 		Artists:          artistMessages(view.Artists),
 		Labels:           make([]*openv1.ReleaseLabel, 0, len(view.Labels)),
 		Genres:           referenceMessages(view.Genres),
@@ -135,8 +142,8 @@ func releaseMessage(view View) *openv1.Release {
 	for _, credit := range view.Credits {
 		message.Credits = append(message.Credits, &openv1.ReleaseCredit{
 			Id: credit.ID, Name: credit.Name, Slug: credit.Slug, CreditRole: credit.CreditRole,
-			ArtistId: credit.ArtistID, MemberId: credit.MemberID, Member: credit.Member, Note: credit.Note,
-			ImageAsset: credit.Image,
+			ArtistId: credit.ArtistID, MemberId: credit.MemberID, Member: memberref.ReferenceMessage(credit.Member), Note: credit.Note,
+			ImageAsset: mediaasset.ReferenceProto(credit.Image),
 		})
 	}
 	for _, track := range view.Tracks {
@@ -157,7 +164,7 @@ func artistMessages(artists []Artist) []*openv1.ReleaseArtist {
 }
 
 func artistMessage(artist Artist) *openv1.ReleaseArtist {
-	return &openv1.ReleaseArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, Role: artist.Role, ImageAsset: artist.Image}
+	return &openv1.ReleaseArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, Role: artist.Role, ImageAsset: mediaasset.ReferenceProto(artist.Image)}
 }
 
 func referenceMessages(references []release.Reference) []*openv1.ReleaseReference {
@@ -212,8 +219,8 @@ func trackMediaDelivery(durationSeconds *int, media TrackMedia) *commonv1.MediaD
 		FileName:         media.Source.FileName,
 		Playback:         media.Playback,
 		Download:         media.Download,
-		Waveform:         media.Waveform,
-		Spectrogram:      media.Spectrogram,
+		Waveform:         mediaasset.ReferenceProto(media.Waveform),
+		Spectrogram:      mediaasset.ReferenceProto(media.Spectrogram),
 		ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
 	}
 	if durationSeconds != nil {

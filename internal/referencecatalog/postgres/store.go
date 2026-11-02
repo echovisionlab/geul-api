@@ -10,28 +10,28 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
 )
 
 // Assets provides the file-owned asset lifecycle in the catalog's
 // transaction (referencecatalogadapter.Assets).
 type Assets interface {
 	LockForAttachment(context.Context, *gorm.DB, []string) error
-	BindReady(context.Context, *gorm.DB, referencecatalog.AssetBinding) (*commonv1.AssetRef, error)
+	BindReady(context.Context, *gorm.DB, referencecatalog.AssetBinding) (*mediaasset.Reference, error)
 	Release(context.Context, *gorm.DB, referencecatalog.AssetRelease) error
-	ReadyRef(context.Context, *gorm.DB, referencecatalog.AssetSource) (*commonv1.AssetRef, error)
+	ReadyRef(context.Context, *gorm.DB, referencecatalog.AssetSource) (*mediaasset.Reference, error)
 }
 
 // Members resolves the Member summaries a Map Place shows
 // (referencecatalogadapter.MemberSummaries).
 type Members interface {
-	Resolve(context.Context, *gorm.DB, []string) (map[string]*commonv1.MemberSummary, error)
+	Resolve(context.Context, *gorm.DB, []string) (map[string]*memberref.Summary, error)
 }
 
 // MenuTargets keeps menu items consistent when a catalog target changes
@@ -128,7 +128,7 @@ func (s store) LockFilesForAttachment(ctx context.Context, fileIDs []string) err
 	return s.ports.Assets.LockForAttachment(ctx, s.tx, fileIDs)
 }
 
-func (s store) BindReadyAsset(ctx context.Context, binding referencecatalog.AssetBinding) (*commonv1.AssetRef, error) {
+func (s store) BindReadyAsset(ctx context.Context, binding referencecatalog.AssetBinding) (*mediaasset.Reference, error) {
 	return s.ports.Assets.BindReady(ctx, s.tx, binding)
 }
 
@@ -136,7 +136,7 @@ func (s store) ReleaseAssets(ctx context.Context, release referencecatalog.Asset
 	return s.ports.Assets.Release(ctx, s.tx, release)
 }
 
-func (s store) ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) (*commonv1.AssetRef, error) {
+func (s store) ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) (*mediaasset.Reference, error) {
 	return s.ports.Assets.ReadyRef(ctx, s.tx, source)
 }
 
@@ -161,7 +161,7 @@ func (s store) MemberSummaries(ctx context.Context, memberIDs []string) (map[str
 	for id, summary := range resolved {
 		if summary != nil {
 			members[id] = referencecatalog.MemberSummary{
-				ID: summary.GetId(), Nickname: summary.GetNickname(), Avatar: summary.GetAvatarAsset(), Deleted: summary.GetDeleted(),
+				ID: summary.ID, Nickname: summary.Nickname, Avatar: summary.Avatar, Deleted: summary.Deleted,
 			}
 		}
 	}

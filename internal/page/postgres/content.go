@@ -5,16 +5,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/page"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -180,7 +181,7 @@ func (s *store) ReleaseExactFeaturedImageBinding(ctx context.Context, pageID str
 	return s.ports.Runtime.ReleaseExactPublicAssetBindings(ctx, s.tx, "page", pageID, []string{"featured_image"})
 }
 
-func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Runtime.ResolveReadyAssetRefs(ctx, s.tx, assetIDs)
 }
 

@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -30,10 +29,10 @@ func (a *Assets) BindArtwork(
 	ctx context.Context,
 	tx *gorm.DB,
 	fileID, releaseID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx, fileID, "release", releaseID, "artwork", "artwork",
-	))
+	)
 }
 
 func (a *Assets) ReleaseArtwork(ctx context.Context, tx *gorm.DB, releaseID string) error {
@@ -45,17 +44,17 @@ func (a *Assets) ReadyArtwork(
 	ctx context.Context,
 	db *gorm.DB,
 	fileID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, fileID, "artwork"))
+) (*mediaasset.Reference, error) {
+	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, fileID, "artwork")
 }
 
 func (a *Assets) ReadyAssets(
 	ctx context.Context,
 	db *gorm.DB,
 	candidateIDs ...*string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	assetIDs := normalizedAssetIDs(candidateIDs)
-	ready := make(map[string]*commonv1.AssetRef, len(assetIDs))
+	ready := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return ready, nil
 	}
@@ -72,7 +71,7 @@ func (a *Assets) ReadyAssets(
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}

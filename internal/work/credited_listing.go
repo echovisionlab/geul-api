@@ -8,7 +8,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -41,7 +45,7 @@ type CreditedWork struct {
 	CreditRole   *string
 	CreditType   CreditType
 	CreditedAs   string
-	Image        *commonv1.AssetRef
+	Image        *mediaasset.Reference
 	CreatedAt    time.Time
 }
 
@@ -102,7 +106,7 @@ func (s *Service) projectCreditedWork(
 	ctx context.Context,
 	row CreditedRow,
 	memberID string,
-	memberSummary *commonv1.MemberSummary,
+	memberSummary *memberref.Summary,
 ) (CreditedWork, error) {
 	credited := CreditedWork{
 		WorkID:       row.WorkID,
@@ -120,8 +124,8 @@ func (s *Service) projectCreditedWork(
 			return CreditedWork{}, errors.New("credited member is missing")
 		}
 		credited.CreditType = CreditTypeMember
-		credited.CreditedAs = memberSummary.GetNickname()
-		credited.Image = memberSummary.AvatarAsset
+		credited.CreditedAs = memberSummary.Nickname
+		credited.Image = memberSummary.Avatar.Reference()
 		return credited, nil
 	}
 	credited.CreditType = CreditTypeArtist

@@ -9,21 +9,21 @@ import (
 	"testing"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -81,9 +81,9 @@ func (p ports) assetStatus(t *testing.T, assetID string) string {
 
 func (p ports) assetURL(t *testing.T, fileID, kind string) string {
 	t.Helper()
-	asset, err := mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(t.Context(), mediaassetpostgres.NewUnits(p.db), "https://cdn.example.com", fileID, kind))
+	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(t.Context(), mediaassetpostgres.NewUnits(p.db), "https://cdn.example.com", fileID, kind)
 	require.NoError(t, err)
-	return asset.GetUrl()
+	return optional.Value(asset).URL
 }
 
 func TestClientLogoSlotsShareAFileWithoutReleasingEachOtherIntegration(t *testing.T) {
@@ -98,12 +98,12 @@ func TestClientLogoSlotsShareAFileWithoutReleasingEachOtherIntegration(t *testin
 	for _, slot := range []referencecatalog.ClientLogoSlot{referencecatalog.ClientLogoLight, referencecatalog.ClientLogoDark} {
 		bound, err := service.SetClientLogo(p.ctx, referencecatalog.SetClientLogoCommand{ClientID: clientID, Slot: slot, FileID: fileID})
 		require.NoError(t, err)
-		require.Equal(t, p.assetURL(t, fileID, "logo"), bound.GetUrl())
+		require.Equal(t, p.assetURL(t, fileID, "logo"), optional.Value(bound).URL)
 	}
 	require.Equal(t, map[string]string{"logo_light": assetID, "logo_dark": assetID}, p.bindings(t, "client", clientID))
 	view, err := service.GetClient(p.ctx, referencecatalog.GetClientQuery{ID: clientID})
 	require.NoError(t, err)
-	require.Equal(t, view.LightLogo.GetUrl(), view.DarkLogo.GetUrl())
+	require.Equal(t, optional.Value(view.LightLogo).URL, optional.Value(view.DarkLogo).URL)
 
 	require.NoError(t, service.DeleteClientLogo(p.ctx, referencecatalog.DeleteClientLogoCommand{ClientID: clientID, Slot: referencecatalog.ClientLogoDark}))
 	require.Equal(t, map[string]string{"logo_light": assetID}, p.bindings(t, "client", clientID), "the dark slot releases only its own binding")
@@ -128,13 +128,13 @@ func TestMapPlaceImageBindingFollowsTheSelectedFileIntegration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	placeID := created.Place.ID
-	require.Equal(t, p.assetURL(t, firstFileID, "map_image"), created.ImageAsset.GetUrl())
+	require.Equal(t, p.assetURL(t, firstFileID, "map_image"), optional.Value(created.ImageAsset).URL)
 	require.Equal(t, "Catalog editor", created.CreatedByMember.Nickname)
 	require.Equal(t, map[string]string{"image": firstAssetID}, p.bindings(t, "map_place", placeID))
 
 	updated, err := service.UpdateMapPlace(p.ctx, referencecatalog.UpdateMapPlaceCommand{ID: placeID, ImageFileID: &secondFileID})
 	require.NoError(t, err)
-	require.Equal(t, p.assetURL(t, secondFileID, "map_image"), updated.ImageAsset.GetUrl())
+	require.Equal(t, p.assetURL(t, secondFileID, "map_image"), optional.Value(updated.ImageAsset).URL)
 	require.Equal(t, map[string]string{"image": secondAssetID}, p.bindings(t, "map_place", placeID))
 	require.Equal(t, model.PublicAssetStatusReady, p.assetStatus(t, firstAssetID))
 

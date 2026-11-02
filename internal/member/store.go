@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -114,7 +116,7 @@ type Store interface {
 	// many match.
 	AdminMemberPage(ctx context.Context, filters []*commonv1.FilterSpec, sorts []*commonv1.SortSpec, limit, offset int) ([]Member, int64, error)
 	// Avatars reads the ready avatar of each Member that has one.
-	Avatars(ctx context.Context, memberIDs []string) (map[string]*Asset, error)
+	Avatars(ctx context.Context, memberIDs []string) (map[string]*memberref.Asset, error)
 	// NewsletterSubscriptions reads when each linked Member's Identity
 	// subscribed.
 	NewsletterSubscriptions(ctx context.Context, memberIDs []string) (map[string]time.Time, error)

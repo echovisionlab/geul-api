@@ -463,7 +463,7 @@ func (s *store) ReadyAssetsForFiles(ctx context.Context, fileIDs []string) (map[
 		if _, exists := refs[fileID]; exists {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -529,7 +529,7 @@ func (s *store) CompleteAsset(ctx context.Context, written og.WrittenAsset) (og.
 }
 
 func (s *store) AssetRef(asset og.Asset) (og.AssetRef, error) {
-	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(assetRow(asset))))
+	ref, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(assetRow(asset)))
 	if err != nil {
 		return og.AssetRef{}, err
 	}

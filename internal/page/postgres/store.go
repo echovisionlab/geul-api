@@ -9,20 +9,22 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
+
 	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -38,7 +40,7 @@ type MediaAssets interface {
 	LockAttachableFilesForUpdate(context.Context, *gorm.DB, []string) error
 	ReleasePublicAssetBindings(context.Context, *gorm.DB, string, string, string) error
 	ReleaseExactPublicAssetBindings(context.Context, *gorm.DB, string, string, []string) error
-	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error)
+	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error)
 	LoadUnavailableVersionAttachmentKinds(context.Context, *gorm.DB, proto.Message) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
 }
 

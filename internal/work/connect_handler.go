@@ -5,13 +5,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -142,7 +149,7 @@ func workMessage(ctx context.Context, w View) *managev1.Work {
 		Status:       workStatusToProto(w.Status),
 		CreatedAt:    timestamppb.New(w.CreatedAt),
 		UpdatedAt:    timestamppb.New(w.UpdatedAt),
-		OgAsset:      w.OgAsset,
+		OgAsset:      mediaasset.ReferenceProto(w.OgAsset),
 		Document:     w.Document,
 		Revision:     w.Revision,
 		SourceLocale: w.SourceLocale,
@@ -155,7 +162,7 @@ func workMessage(ctx context.Context, w View) *managev1.Work {
 		work.Summary = w.Summary
 	}
 	if w.FeaturedImage != nil {
-		work.FeaturedImageAsset = w.FeaturedImage
+		work.FeaturedImageAsset = mediaasset.ReferenceProto(w.FeaturedImage)
 	}
 	if w.PublishedAt != nil {
 		work.PublishedAt = timestamppb.New(*w.PublishedAt)
@@ -179,7 +186,7 @@ func clientMessages(clients []Client) []*managev1.WorkClient {
 	}
 	messages := make([]*managev1.WorkClient, 0, len(clients))
 	for _, client := range clients {
-		message := &managev1.WorkClient{Id: client.ID, Name: client.Name, LogoLightAsset: client.LightLogo, LogoDarkAsset: client.DarkLogo}
+		message := &managev1.WorkClient{Id: client.ID, Name: client.Name, LogoLightAsset: mediaasset.ReferenceProto(client.LightLogo), LogoDarkAsset: mediaasset.ReferenceProto(client.DarkLogo)}
 		if client.Website != nil {
 			message.Website = client.Website
 		}
@@ -213,10 +220,10 @@ func creditMessage(view CreditView) *managev1.WorkCredit {
 		credit.CreditRole = c.CreditRole
 	}
 	if artist := view.Artist; artist != nil {
-		credit.Artist = &managev1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: artist.ImageAsset}
+		credit.Artist = &managev1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: mediaasset.ReferenceProto(artist.ImageAsset)}
 	}
 	if c.MemberID != nil {
-		credit.Member = view.Member
+		credit.Member = memberref.ReferenceMessage(view.Member)
 	}
 	return credit
 }
@@ -337,7 +344,7 @@ func updateMessage(update Update) (*managev1.UpdateWorkResponse, error) {
 func (h *ConnectHandler) SetWorkFeaturedImage(ctx context.Context, req *connect.Request[managev1.SetWorkFeaturedImageRequest]) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error) {
 	change, err := h.works.SetWorkFeaturedImage(ctx, SetWorkFeaturedImageCommand{WorkID: req.Msg.WorkId, FileID: req.Msg.FileId})
 	return render(change, err, func(change FeaturedImageChange) *managev1.SetWorkFeaturedImageResponse {
-		return &managev1.SetWorkFeaturedImageResponse{ImageAsset: change.ImageAsset, OgGenerationRunId: change.OgGenerationRunID}
+		return &managev1.SetWorkFeaturedImageResponse{ImageAsset: mediaasset.ReferenceProto(change.ImageAsset), OgGenerationRunId: change.OgGenerationRunID}
 	})
 }
 
@@ -439,7 +446,7 @@ func creditedWorkMessage(credited CreditedWork) *managev1.MyCreditedWork {
 		CreatedAt:            timestamppb.New(credited.CreatedAt),
 		CreditType:           creditType,
 		CreditedAs:           credited.CreditedAs,
-		CreditedAsImageAsset: credited.Image,
+		CreditedAsImageAsset: mediaasset.ReferenceProto(credited.Image),
 	}
 }
 

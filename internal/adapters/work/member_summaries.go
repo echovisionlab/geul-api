@@ -3,10 +3,11 @@ package work
 import (
 	"context"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
+	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
 	"gorm.io/gorm"
 )
 
@@ -26,13 +27,13 @@ func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
 func (a *MemberSummaries) LoadMemberSummaries(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
+) (map[string]*memberref.Summary, error) {
 	return memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }
 
 func (a *MemberSummaries) LoadPublicMemberSummaries(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
+) (map[string]*memberref.Summary, error) {
 	return memberpublicpostgres.LoadPublicMemberSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }

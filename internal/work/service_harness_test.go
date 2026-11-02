@@ -6,20 +6,22 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/echovisionlab/geul-api/internal/work/worktest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -46,7 +48,7 @@ func newHarness(t *testing.T, options ...harnessOption) *harness {
 	store, units := worktest.New()
 	h := &harness{
 		store: store, units: units, checker: authztest.AllowAll(),
-		fence: &identitystatetest.Fence{}, audit: &audittest.Recorder{}, members: &members{summaries: map[string]*commonv1.MemberSummary{}},
+		fence: &identitystatetest.Fence{}, audit: &audittest.Recorder{}, members: &members{summaries: map[string]*memberref.Summary{}},
 	}
 	for _, option := range options {
 		option(h)
@@ -152,15 +154,15 @@ func lastStep(t *testing.T, units *mutationtest.UnitOfWork[work.Store]) mutation
 
 // members is the Member summary fake.
 type members struct {
-	summaries map[string]*commonv1.MemberSummary
+	summaries map[string]*memberref.Summary
 	err       error
 }
 
-func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
+func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*memberref.Summary, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	summaries := map[string]*commonv1.MemberSummary{}
+	summaries := map[string]*memberref.Summary{}
 	for _, id := range memberIDs {
 		if summary := m.summaries[id]; summary != nil {
 			summaries[id] = summary

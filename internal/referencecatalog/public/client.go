@@ -7,7 +7,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -71,7 +73,7 @@ func clientSummary(ctx context.Context, store Store, client referencecatalog.Cli
 	}
 }
 
-func optionalClientLogo(ctx context.Context, store Store, fileID *string) *commonv1.AssetRef {
+func optionalClientLogo(ctx context.Context, store Store, fileID *string) *mediaasset.Reference {
 	if fileID == nil {
 		return nil
 	}

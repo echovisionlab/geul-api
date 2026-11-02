@@ -8,7 +8,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -174,7 +177,7 @@ type ArtistMedia interface {
 	ReplaceImageBindings(ctx context.Context, artistID string, fileIDs []string) error
 	ReleaseImageBindings(ctx context.Context, artistID string) error
 	// ReadyAssets resolves ready public assets by ID.
-	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
 	// RequestOG starts the Artist's current OG generation for locale and
 	// returns its run ID, empty when none started; CancelOG cancels it and
 	// releases its image.

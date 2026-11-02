@@ -8,12 +8,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -259,7 +264,7 @@ type recordingPostRelated struct {
 
 func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, command postdomain.PostParticipantCommand) (postdomain.Participant, error) {
 	r.collaborator = &command
-	return postdomain.Participant{Member: &commonv1.MemberSummary{Id: command.MemberID, Nickname: "Member"}, Role: postdomain.RoleCollaborator, CreatedAt: time.Now()}, nil
+	return postdomain.Participant{Member: &memberref.Summary{ID: command.MemberID, Nickname: "Member"}, Role: postdomain.RoleCollaborator, CreatedAt: time.Now()}, nil
 }
 
 func (r *recordingPostRelated) ListPostVersions(_ context.Context, query postdomain.ListPostVersionsQuery) (postdomain.VersionPage, error) {

@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
@@ -36,15 +35,15 @@ func (a *Assets) BindFeaturedImage(
 	ctx context.Context,
 	tx *gorm.DB,
 	fileID, formID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		fileID,
 		"form",
 		formID,
 		"featured_image",
 		"image",
-	))
+	)
 }
 
 func (a *Assets) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID string) error {
@@ -56,7 +55,7 @@ func (a *Assets) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID s
 	)
 }
 
-func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *commonv1.AssetRef {
+func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *mediaasset.Reference {
 	var row struct {
 		FileID *string `gorm:"column:featured_image_file_id"`
 	}
@@ -67,7 +66,7 @@ func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) 
 		}
 		return nil
 	}
-	asset, err := mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, *row.FileID, "image"))
+	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, *row.FileID, "image")
 	if err != nil {
 		slog.Log(ctx, errs.OperationLogLevel(err), "Form featured image asset resolution failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID, "file_id", *row.FileID)
 		return nil
@@ -98,7 +97,7 @@ func (a *Assets) ResolvedOG(
 	ctx context.Context,
 	db *gorm.DB,
 	sourceID, localizedID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	return formogadapter.ReadyAsset(ctx, db, a.cdnDomain, localizedID, sourceID)
 }
 

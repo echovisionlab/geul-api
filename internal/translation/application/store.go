@@ -5,11 +5,13 @@ import (
 	"errors"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -268,7 +270,7 @@ type Entry struct {
 	ContentJSON []byte
 	UpdatedAt   time.Time
 	// OgAsset is the entry's ready OG image, resolved by the Store.
-	OgAsset *commonv1.AssetRef
+	OgAsset *mediaasset.Reference
 }
 
 // OverviewStats counts locales, translatable entities, active jobs and

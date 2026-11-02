@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -138,8 +140,8 @@ func clientSummaryMessage(view referencecatalog.ClientView) *openv1.ClientSummar
 	if client.Website != nil {
 		summary.Website = client.Website
 	}
-	summary.LogoLightAsset = view.LightLogo
-	summary.LogoDarkAsset = view.DarkLogo
+	summary.LogoLightAsset = mediaasset.ReferenceProto(view.LightLogo)
+	summary.LogoDarkAsset = mediaasset.ReferenceProto(view.DarkLogo)
 	return summary
 }
 
@@ -167,6 +169,6 @@ func mapPlaceMessage(public MapPlace) *openv1.MapPlace {
 	if place.GooglePlaceID != nil && *place.GooglePlaceID != "" {
 		protoPlace.GooglePlaceId = place.GooglePlaceID
 	}
-	protoPlace.ImageAsset = public.Image
+	protoPlace.ImageAsset = mediaasset.ReferenceProto(public.Image)
 	return protoPlace
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -13,12 +14,15 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
-	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 
+	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -63,15 +67,15 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	}))
 	require.NoError(t, err)
 	require.Empty(t, secondSet.Msg.GetOgGenerationRunId())
-	requireHardCutPublicAssetStatus(t, db, firstAsset.GetAssetId(), model.PublicAssetStatusReady)
-	requireHardCutPublicAssetStatus(t, db, secondAsset.GetAssetId(), model.PublicAssetStatusReady)
+	requireHardCutPublicAssetStatus(t, db, optional.Value(firstAsset).AssetID, model.PublicAssetStatusReady)
+	requireHardCutPublicAssetStatus(t, db, optional.Value(secondAsset).AssetID, model.PublicAssetStatusReady)
 	requireFileRowExists(t, db, firstFileID)
 	requireFileRowExists(t, db, secondFileID)
 
 	managedRelease, err := releaseSvc.GetRelease(ctx, connect.NewRequest(&managev1.GetReleaseRequest{Id: releaseResp.Msg.Id}))
 	require.NoError(t, err)
-	require.Equal(t, secondAsset.GetAssetId(), managedRelease.Msg.GetArtworkAsset().GetAssetId())
-	require.Equal(t, secondAsset.GetAssetId(), managedRelease.Msg.GetOgAsset().GetAssetId())
+	require.Equal(t, optional.Value(secondAsset).AssetID, managedRelease.Msg.GetArtworkAsset().GetAssetId())
+	require.Equal(t, optional.Value(secondAsset).AssetID, managedRelease.Msg.GetOgAsset().GetAssetId())
 
 	deleted, err := releaseSvc.DeleteReleaseArtwork(ctx, connect.NewRequest(&managev1.DeleteReleaseArtworkRequest{
 		ReleaseId: releaseResp.Msg.Id,
@@ -79,7 +83,7 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	require.NoError(t, err)
 	require.True(t, deleted.Msg.Success)
 	require.Empty(t, deleted.Msg.GetOgGenerationRunId())
-	requireHardCutPublicAssetStatus(t, db, secondAsset.GetAssetId(), model.PublicAssetStatusReady)
+	requireHardCutPublicAssetStatus(t, db, optional.Value(secondAsset).AssetID, model.PublicAssetStatusReady)
 	requireFileRowExists(t, db, firstFileID)
 	requireFileRowExists(t, db, secondFileID)
 	var artworkBindingCount int64

@@ -14,12 +14,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+	"github.com/google/uuid"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -47,7 +48,7 @@ type state struct {
 	segmentTags      map[string]bool
 	newsletter       map[string]time.Time
 	consents         []member.CookieConsent
-	assets           map[string]*member.Asset
+	assets           map[string]*memberref.Asset
 	assetStatus      map[string]string
 	bindings         map[string]string
 	avatarSources    map[string]string
@@ -65,7 +66,7 @@ func New() (*Store, *mutationtest.UnitOfWork[member.Store]) {
 	store := &Store{state: state{
 		members: map[string]member.Member{}, identities: map[string]Identity{}, pendingDeletions: map[string]bool{},
 		tags: map[string]member.Tag{}, mappings: map[string]map[string]bool{}, segmentTags: map[string]bool{},
-		newsletter: map[string]time.Time{}, assets: map[string]*member.Asset{}, assetStatus: map[string]string{},
+		newsletter: map[string]time.Time{}, assets: map[string]*memberref.Asset{}, assetStatus: map[string]string{},
 		bindings: map[string]string{}, avatarSources: map[string]string{}, tokens: map[string]int{},
 		anchors: map[string]bool{}, bootstrap: map[string]string{}, deliveries: map[string]member.WelcomeDelivery{},
 		failures: map[string]error{},
@@ -193,7 +194,7 @@ func (s *Store) SeedNewsletter(identityID string, subscribedAt time.Time) {
 }
 
 // SeedAsset stores a public asset with its status.
-func (s *Store) SeedAsset(asset *member.Asset, status string) {
+func (s *Store) SeedAsset(asset *memberref.Asset, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.assets[asset.ID] = asset
@@ -201,7 +202,7 @@ func (s *Store) SeedAsset(asset *member.Asset, status string) {
 }
 
 // SeedAvatar binds a ready asset as the Member's avatar.
-func (s *Store) SeedAvatar(memberID string, asset *member.Asset) {
+func (s *Store) SeedAvatar(memberID string, asset *memberref.Asset) {
 	s.SeedAsset(asset, "ready")
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -456,13 +457,13 @@ func (s *Store) AdminMemberPage(_ context.Context, filters []*commonv1.FilterSpe
 	return all, total, nil
 }
 
-func (s *Store) Avatars(_ context.Context, memberIDs []string) (map[string]*member.Asset, error) {
+func (s *Store) Avatars(_ context.Context, memberIDs []string) (map[string]*memberref.Asset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.failure("Avatars"); err != nil {
 		return nil, err
 	}
-	result := make(map[string]*member.Asset, len(memberIDs))
+	result := make(map[string]*memberref.Asset, len(memberIDs))
 	for _, memberID := range memberIDs {
 		assetID, found := s.state.bindings[memberID]
 		if found && s.state.assetStatus[assetID] == "ready" {

@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,17 +19,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
-	// The Series OG requests and projection are og's SQL over the Series rows;
-	// these tests pin them with PostgreSQL alone.
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
+
+// The Series OG requests and projection are og's SQL over the Series rows;
+// these tests pin them with PostgreSQL alone.
 
 type seriesOgSnapshot struct {
 	Title string `json:"title"`
@@ -93,9 +94,9 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 	oldAsset := seedHardCutReadyPublicAsset(t, db, "og", "webp", "image/webp", nil)
 	require.NoError(t, db.Table("series_translation").
 		Where("entity_id = ? AND locale = ?", seriesID, "en").
-		Update("og_asset_id", oldAsset.GetAssetId()).Error)
+		Update("og_asset_id", optional.Value(oldAsset).AssetID).Error)
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
-		AssetID: oldAsset.GetAssetId(), OwnerType: "series", OwnerID: seriesID, BindingKey: "og_en",
+		AssetID: optional.Value(oldAsset).AssetID, OwnerType: "series", OwnerID: seriesID, BindingKey: "og_en",
 	}).Error)
 
 	var plan *og.Plan
@@ -129,14 +130,14 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "series", seriesID, "og_en").
 		Count(&bindingCount).Error)
 	require.Zero(t, bindingCount)
-	requirePublicAssetDeletePending(t, db, oldAsset.GetAssetId())
+	requirePublicAssetDeletePending(t, db, optional.Value(oldAsset).AssetID)
 
 	var generation model.OgGeneration
 	require.NoError(t, db.First(&generation, "id = ?", plan.GenerationIDs[0]).Error)
 	require.Equal(t, model.OgGenerationStatusQueued, generation.Status)
 }
 
-func seedHardCutReadyPublicAsset(t *testing.T, db *gorm.DB, kind, extension, mimeType string, sourceFileID *string) *commonv1.AssetRef {
+func seedHardCutReadyPublicAsset(t *testing.T, db *gorm.DB, kind, extension, mimeType string, sourceFileID *string) *mediaasset.Reference {
 	t.Helper()
 	asset, _, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: sourceFileID, Kind: kind, Extension: extension, MimeType: mimeType,
@@ -151,7 +152,7 @@ func seedHardCutReadyPublicAsset(t *testing.T, db *gorm.DB, kind, extension, mim
 		"status": model.PublicAssetStatusReady, "file_size": fileSize, "sha256": digest,
 		"ready_at": now, "updated_at": now,
 	}).Error)
-	return &commonv1.AssetRef{AssetId: asset.ID, Extension: extension, MimeType: mimeType}
+	return &mediaasset.Reference{AssetID: asset.ID, Extension: extension, MimeType: mimeType}
 }
 
 func requirePublicAssetDeletePending(t *testing.T, db *gorm.DB, assetID string) {

@@ -9,26 +9,25 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/form"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"gorm.io/gorm"
 )
 
 // Assets owns Form integration with File attachment and public asset
 // bindings.
 type Assets interface {
 	LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error
-	BindFeaturedImage(ctx context.Context, tx *gorm.DB, fileID, formID string) (*commonv1.AssetRef, error)
+	BindFeaturedImage(ctx context.Context, tx *gorm.DB, fileID, formID string) (*mediaasset.Reference, error)
 	ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID string) error
 	// FeaturedImage resolves the Form's ready featured image; a failure is
 	// logged and answers nil.
-	FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *commonv1.AssetRef
+	FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *mediaasset.Reference
 }
 
 // OG owns Form integration with generated Open Graph assets.
@@ -37,7 +36,7 @@ type OG interface {
 	// started.
 	Request(ctx context.Context, tx *gorm.DB, formID, locale string, allLocales bool, reason string) (string, error)
 	CancelAndRelease(ctx context.Context, tx *gorm.DB, formID string) error
-	ReadyAsset(ctx context.Context, db *gorm.DB, localizedID, sourceID *string) (*commonv1.AssetRef, error)
+	ReadyAsset(ctx context.Context, db *gorm.DB, localizedID, sourceID *string) (*mediaasset.Reference, error)
 }
 
 // Routes owns collision checks between Form slugs and the routes of other

@@ -5,18 +5,20 @@ import (
 	"testing"
 	"time"
 
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/member/membertest"
 	"github.com/echovisionlab/geul-api/internal/structured"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -107,7 +109,7 @@ func TestSearchMembersCanRestrictCandidatesToEffectiveAuthors(t *testing.T) {
 
 	authors, err := f.service.SearchMembers(f.ctx(t), member.SearchMembersQuery{Query: "alpha", EffectiveAuthorsOnly: true})
 	require.NoError(t, err)
-	require.Equal(t, []member.Summary{{ID: authorID, Nickname: "Author Alpha"}}, authors)
+	require.Equal(t, []memberref.Summary{{ID: authorID, Nickname: "Author Alpha"}}, authors)
 
 	f.spiceDB.Subjects[membertest.Authors()] = nil
 	none, err := f.service.SearchMembers(f.ctx(t), member.SearchMembersQuery{EffectiveAuthorsOnly: true})
@@ -122,13 +124,13 @@ func TestCurrentSessionUsesTheLeanProjectionWithoutSectionAuthorization(t *testi
 		MemberID: f.memberID, Role: policyv1.AuthorizationRole_AUTHOR, Status: member.AdminStatusActive,
 		CanonicalEmail: &member.CanonicalEmail{Email: "member@example.test"},
 	}
-	asset := &member.Asset{ID: uuid.NewString()}
+	asset := &memberref.Asset{ID: uuid.NewString()}
 	f.store.SeedAvatar(f.memberID, asset)
 
 	session, err := f.service.CurrentSession(f.ctx(t), member.CurrentSessionQuery{ClientAddress: "198.51.100.7"})
 
 	require.NoError(t, err)
-	require.Equal(t, member.Summary{ID: f.memberID, Nickname: "principal", Avatar: asset}, session.Member)
+	require.Equal(t, memberref.Summary{ID: f.memberID, Nickname: "principal", Avatar: asset}, session.Member)
 	require.Equal(t, policyv1.AuthorizationRole_AUTHOR, session.Role)
 	require.Equal(t, "member@example.test", *session.Email)
 	require.Equal(t, "198.51.100.7", session.Metadata.IPAddress)

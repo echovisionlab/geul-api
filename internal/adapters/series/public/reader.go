@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/google/uuid"
 )
 
@@ -180,9 +179,9 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 	ctx context.Context,
 	featuredImageFileIDs []string,
 	ogAssetIDs []string,
-) (map[string]*commonv1.AssetRef, map[string]*commonv1.AssetRef, error) {
-	featuredRefs := make(map[string]*commonv1.AssetRef, len(featuredImageFileIDs))
-	ogRefs := make(map[string]*commonv1.AssetRef, len(ogAssetIDs))
+) (map[string]*mediaasset.Reference, map[string]*mediaasset.Reference, error) {
+	featuredRefs := make(map[string]*mediaasset.Reference, len(featuredImageFileIDs))
+	ogRefs := make(map[string]*mediaasset.Reference, len(ogAssetIDs))
 	if len(featuredImageFileIDs) == 0 && len(ogAssetIDs) == 0 {
 		return featuredRefs, ogRefs, nil
 	}
@@ -229,7 +228,7 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 		if !exactOG && !featured {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, nil, err
 		}

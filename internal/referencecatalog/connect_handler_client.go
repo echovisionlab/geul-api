@@ -3,6 +3,8 @@ package referencecatalog
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -64,9 +66,9 @@ func (h *ClientConnectHandler) SetClientLogo(ctx context.Context, req *connect.R
 	asset, err := h.catalog.SetClientLogo(ctx, SetClientLogoCommand{ClientID: req.Msg.ClientId, Slot: slot, FileID: req.Msg.FileId})
 	response := &managev1.SetClientLogoResponse{}
 	if slot == ClientLogoDark {
-		response.LogoDarkAsset = asset
+		response.LogoDarkAsset = mediaasset.ReferenceProto(asset)
 	} else {
-		response.LogoLightAsset = asset
+		response.LogoLightAsset = mediaasset.ReferenceProto(asset)
 	}
 	return respond(response, err)
 }
@@ -98,8 +100,8 @@ func clientMessage(view ClientView) *managev1.Client {
 	if c.Website != nil {
 		client.Website = c.Website
 	}
-	client.LogoLightAsset = view.LightLogo
-	client.LogoDarkAsset = view.DarkLogo
+	client.LogoLightAsset = mediaasset.ReferenceProto(view.LightLogo)
+	client.LogoDarkAsset = mediaasset.ReferenceProto(view.DarkLogo)
 	return client
 }
 

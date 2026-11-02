@@ -9,18 +9,18 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"gorm.io/gorm"
+
 	entityparticipantpostgres "github.com/echovisionlab/geul-api/internal/entityparticipant/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -34,7 +34,7 @@ type Translation interface {
 // infrastructure. Implementations live under internal/adapters/artist.
 type Runtime interface {
 	LoadArtistImages(context.Context, *gorm.DB, []string) (map[string][]artist.ArtistImageProjection, error)
-	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error)
+	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error)
 	ReplaceArtistImageBindings(context.Context, *gorm.DB, string, []string) error
 	RequestCurrentWithDB(context.Context, *gorm.DB, managev1.OgEntityType, string, string, bool, string) (string, error)
 	CancelAndReleaseEntityWithDB(context.Context, *gorm.DB, managev1.OgEntityType, string, string) error

@@ -8,17 +8,19 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"gorm.io/gorm"
 )
 
 type MemberLoader interface {
-	LoadActiveSummary(context.Context, string) (*commonv1.MemberSummary, bool, error)
+	LoadActiveSummary(context.Context, string) (*memberref.Summary, bool, error)
 }
 
 type Service struct {
@@ -130,7 +132,7 @@ func (s *Service) AuthorizeCollaboration(
 	}
 	return connect.NewResponse(&intrav1.AuthorizeCollaborationResponse{
 		Authorized: true,
-		Member:     summary,
+		Member:     memberref.ReferenceMessage(summary),
 		Locale:     *locale,
 	}), nil
 }

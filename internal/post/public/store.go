@@ -41,7 +41,7 @@ type Store interface {
 	ResolveLocalization(ctx context.Context, postID, acceptLanguage string) (LocalizedContentSelection, error)
 	ResolveOgConsistency(ctx context.Context, postID string, selection LocalizedContentSelection) (LocalizedContentSelection, error)
 	// ReadyOgAsset resolves the first ready public asset among candidates.
-	ReadyOgAsset(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error)
+	ReadyOgAsset(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error)
 }
 
 // ErrShareLinkNotFound is a share link that does not admit a draft read.

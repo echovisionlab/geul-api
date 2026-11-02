@@ -13,7 +13,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -163,28 +165,28 @@ type UpdateOwnProfileCommand struct {
 }
 
 // UpdateOwnProfile applies command and returns the Member summary.
-func (s *Service) UpdateOwnProfile(ctx context.Context, command UpdateOwnProfileCommand) (Summary, error) {
+func (s *Service) UpdateOwnProfile(ctx context.Context, command UpdateOwnProfileCommand) (memberref.Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	if err := s.validateSelfMemberProfileMutation(ctx, command.Bio, command.Website, command.SocialLinks); err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.updateOwnProfile(ctx, principal, profileEdit(command))
 }
 
 // updateOwnProfile applies edit to the principal's own profile after the
 // role check of the extended fields.
-func (s *Service) updateOwnProfile(ctx context.Context, principal *auth.UserInfo, edit profileEdit) (Summary, error) {
+func (s *Service) updateOwnProfile(ctx context.Context, principal *auth.UserInfo, edit profileEdit) (memberref.Summary, error) {
 	memberID := principal.MemberID.String()
 	update, err := edit.update()
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	target, err := s.requireTarget(ctx, memberID)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[profileChange, Store]{
 		Subjects: []string{target.IdentityID},
@@ -197,11 +199,11 @@ func (s *Service) updateOwnProfile(ctx context.Context, principal *auth.UserInfo
 		},
 		Audit: func(change profileChange) mutation.Audit { return change.audit(memberID) },
 	}); err != nil {
-		return Summary{}, edit.failure(err, memberID)
+		return memberref.Summary{}, edit.failure(err, memberID)
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return profile.Summary, nil
 }

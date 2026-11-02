@@ -9,9 +9,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -499,7 +503,7 @@ type PostMedia interface {
 	// ErrFileNotFound.
 	FindFile(ctx context.Context, fileID string) error
 	// ReadyOgAssets resolves the ready public assets among assetIDs.
-	ReadyOgAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyOgAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
 	// BlockMedia loads the content document's File attachments with the
 	// delivery principal may read.
 	BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*contentv1.ContentBlockMediaItem, error)

@@ -12,11 +12,15 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -45,7 +49,7 @@ func newView(page Page, source *SourceMetadata) View {
 // ready OG image, featured image and Block media.
 type Detail struct {
 	View
-	OgAsset       *commonv1.AssetRef
+	OgAsset       *mediaasset.Reference
 	FeaturedImage *commonv1.MediaDelivery
 	Document      *contentv1.PageDocument
 	Revision      string
@@ -168,7 +172,7 @@ func loadPageContent(ctx context.Context, store Store, projection *pageContentPr
 
 // readyManageOgAssetRef resolves the first ready OG image of the candidate
 // asset IDs.
-func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*string) (*commonv1.AssetRef, error) {
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*string) (*mediaasset.Reference, error) {
 	ids := make([]string, 0, len(candidateIDs))
 	seen := make(map[string]struct{}, len(candidateIDs))
 	for _, candidateID := range candidateIDs {
@@ -185,7 +189,7 @@ func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*st
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	var ready map[string]*commonv1.AssetRef
+	var ready map[string]*mediaasset.Reference
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		ready, err = store.ReadyAssets(ctx, ids)

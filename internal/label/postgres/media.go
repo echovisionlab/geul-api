@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/label"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
 // The logo bindings of a Label's public assets.
@@ -43,11 +43,11 @@ func (s *store) ReleaseLogoBindings(ctx context.Context, labelID string) error {
 	return labelNotFound(s.ports.Runtime.ReleaseExactPublicAssetBindings(ctx, s.tx, labelOwnerType, labelID, []string{lightLogoBinding, darkLogoBinding}))
 }
 
-func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Runtime.ResolveReadyAssetRefs(ctx, s.tx, assetIDs)
 }
 
-func (s *store) ReadyLogoAssets(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyLogoAssets(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Runtime.ResolveReadySourceFileRefs(ctx, s.tx, fileIDs, logoAssetKind)
 }
 

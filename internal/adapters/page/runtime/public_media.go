@@ -4,8 +4,12 @@ import (
 	"context"
 	"strings"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	publicpage "github.com/echovisionlab/geul-api/internal/page/public"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -13,7 +17,7 @@ import (
 type PublicFiles interface {
 	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
 	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
-	ResolveReadyOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error)
+	ResolveOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
 
 // PublicMedia adapts shared public File projection to Page-owned media ports.
@@ -59,8 +63,8 @@ func (a *PublicMedia) ResolvePageOGAsset(
 	ctx context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
-	return a.files.ResolveReadyOGAsset(ctx, sourceAssetID, localizedAssetID)
+) (*mediaasset.Reference, error) {
+	return a.files.ResolveOGAsset(ctx, sourceAssetID, localizedAssetID)
 }
 
 var _ publicpage.MediaResolver = (*PublicMedia)(nil)

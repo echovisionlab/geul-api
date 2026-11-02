@@ -15,12 +15,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -298,8 +304,8 @@ type postListPage struct {
 	total       int64
 	limit       int32
 	offset      int32
-	readyOg     map[string]*commonv1.AssetRef
-	authors     map[string][]*commonv1.MemberSummary
+	readyOg     map[string]*mediaasset.Reference
+	authors     map[string][]*memberref.Summary
 	featured    map[string]*commonv1.MediaDelivery
 	authorities map[string]PostAuthority
 	// contents are the hydrated content projections of posts, by index; a

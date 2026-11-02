@@ -11,14 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/favicon"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -27,11 +29,11 @@ import (
 type Assets interface {
 	ValidateAttachment(ctx context.Context, tx *gorm.DB, key, fileID string) error
 	LockForAttachment(ctx context.Context, tx *gorm.DB, fileIDs []string) error
-	BindReady(ctx context.Context, tx *gorm.DB, binding sitesettings.AssetBinding) (*commonv1.AssetRef, error)
+	BindReady(ctx context.Context, tx *gorm.DB, binding sitesettings.AssetBinding) (*mediaasset.Reference, error)
 	Release(ctx context.Context, tx *gorm.DB, bindingPrefix string) error
 	ReplaceFavicon(ctx context.Context, tx *gorm.DB, fileID *string) error
-	ReadyRef(ctx context.Context, tx *gorm.DB, fileID, kind string) (*commonv1.AssetRef, error)
-	ProjectFavicon(ctx context.Context, tx *gorm.DB, fileID string) (*commonv1.AssetRef, *commonv1.FaviconAssetSet)
+	ReadyRef(ctx context.Context, tx *gorm.DB, fileID, kind string) (*mediaasset.Reference, error)
+	ProjectFavicon(ctx context.Context, tx *gorm.DB, fileID string) (*mediaasset.Reference, *favicon.Set)
 }
 
 // References validates the selected homepage Page and Menus against the

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
@@ -253,7 +255,7 @@ func PageMessage(detail Detail) (*managev1.Page, error) {
 		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),
 		UpdatedAt:             timestamppb.New(p.UpdatedAt),
-		OgAsset:               detail.OgAsset,
+		OgAsset:               mediaasset.ReferenceProto(detail.OgAsset),
 		FeaturedImageDelivery: detail.FeaturedImage,
 		Document:              detail.Document,
 		Revision:              detail.Revision,

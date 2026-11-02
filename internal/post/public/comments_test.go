@@ -6,18 +6,22 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/post/posttest"
 	"github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/post/public/publictest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -41,8 +45,8 @@ func (fakeLocalizer) ResolveSelections(context.Context, string, []string, string
 
 type fakeMembers struct{}
 
-func (fakeMembers) LoadPublicMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
-	return map[string]*commonv1.MemberSummary{}, nil
+func (fakeMembers) LoadPublicMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error) {
+	return map[string]*memberref.Summary{}, nil
 }
 
 // harness is one public Post read test over the fake stores.

@@ -19,13 +19,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -120,8 +124,8 @@ type Store struct {
 	CreditArtists map[string]programevent.CreditArtist
 	ArtistImages  map[string]string
 	// ReadyImages and InlineImages are the ready image assets of Files.
-	ReadyImages  map[string]*commonv1.AssetRef
-	InlineImages map[string]*commonv1.AssetRef
+	ReadyImages  map[string]*mediaasset.Reference
+	InlineImages map[string]*mediaasset.Reference
 	// AttachableFiles are the Files a Program Event may attach; a nil map
 	// admits every File.
 	AttachableFiles map[string]bool
@@ -1980,7 +1984,7 @@ func (s *Store) ReleaseSeriesPoster(_ context.Context, seriesID string) error {
 }
 
 // ReadyImageAsset implements programevent.Store.
-func (s *Store) ReadyImageAsset(_ context.Context, fileID string) (*commonv1.AssetRef, error) {
+func (s *Store) ReadyImageAsset(_ context.Context, fileID string) (*mediaasset.Reference, error) {
 	if err := s.enter("ReadyImageAsset"); err != nil {
 		return nil, err
 	}
@@ -1990,7 +1994,7 @@ func (s *Store) ReadyImageAsset(_ context.Context, fileID string) (*commonv1.Ass
 }
 
 // InlineImageAsset implements programevent.Store.
-func (s *Store) InlineImageAsset(_ context.Context, fileID string) (*commonv1.AssetRef, error) {
+func (s *Store) InlineImageAsset(_ context.Context, fileID string) (*mediaasset.Reference, error) {
 	if err := s.enter("InlineImageAsset"); err != nil {
 		return nil, err
 	}

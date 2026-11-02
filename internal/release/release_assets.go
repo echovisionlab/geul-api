@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -26,12 +27,12 @@ type DeleteReleaseArtworkCommand struct {
 // is empty when nothing changed.
 type artworkChange struct {
 	FileID string
-	Asset  *commonv1.AssetRef
+	Asset  *mediaasset.Reference
 }
 
 // SetReleaseArtwork sets the release artwork and returns its ready asset, or
 // nil when the File already was the artwork.
-func (s *Service) SetReleaseArtwork(ctx context.Context, command SetReleaseArtworkCommand) (*commonv1.AssetRef, error) {
+func (s *Service) SetReleaseArtwork(ctx context.Context, command SetReleaseArtworkCommand) (*mediaasset.Reference, error) {
 	if err := s.requireArtworkRelease(ctx, command.ReleaseID); err != nil {
 		return nil, err
 	}

@@ -1,9 +1,10 @@
 package ogpostgres
 
 import (
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 )
 
 func targetRow(target og.GenerationTarget) model.OgGenerationTarget {
@@ -74,9 +75,9 @@ func assetRow(asset og.Asset) model.PublicAsset {
 	}
 }
 
-func refFromProto(ref *commonv1.AssetRef) og.AssetRef {
+func refFromProto(ref *mediaasset.Reference) og.AssetRef {
 	return og.AssetRef{
-		AssetID: ref.GetAssetId(), URL: ref.GetUrl(), Extension: ref.GetExtension(), MimeType: ref.GetMimeType(),
-		FileSize: ref.GetFileSize(), SHA256: ref.GetSha256(),
+		AssetID: optional.Value(ref).AssetID, URL: optional.Value(ref).URL, Extension: optional.Value(ref).Extension, MimeType: optional.Value(ref).MimeType,
+		FileSize: optional.Value(ref).FileSize, SHA256: optional.Value(ref).SHA256,
 	}
 }

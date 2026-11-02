@@ -3,12 +3,19 @@ package label
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -116,7 +123,7 @@ func (h *ConnectHandler) UnpublishLabel(ctx context.Context, req *connect.Reques
 func (h *ConnectHandler) SetLabelImage(ctx context.Context, req *connect.Request[managev1.SetLabelImageRequest]) (*connect.Response[managev1.SetLabelImageResponse], error) {
 	update, err := h.labels.SetLabelImage(ctx, SetLabelImageCommand{LabelID: req.Msg.LabelId, FileID: req.Msg.FileId, Variant: logoVariant(req.Msg.Variant)})
 	return respond(&managev1.SetLabelImageResponse{
-		ImageLightAsset: update.Light, ImageDarkAsset: update.Dark, OgGenerationRunId: update.OgGenerationRunID,
+		ImageLightAsset: mediaasset.ReferenceProto(update.Light), ImageDarkAsset: mediaasset.ReferenceProto(update.Dark), OgGenerationRunId: update.OgGenerationRunID,
 	}, err)
 }
 
@@ -230,7 +237,7 @@ func labelMessage(view View) *managev1.Label {
 		Status:       string(l.Status),
 		CreatedAt:    timestamppb.New(l.CreatedAt),
 		UpdatedAt:    timestamppb.New(l.UpdatedAt),
-		OgAsset:      view.OgImage,
+		OgAsset:      mediaasset.ReferenceProto(view.OgImage),
 		Revision:     view.Revision,
 		SourceLocale: l.SourceLocale,
 	}
@@ -243,8 +250,8 @@ func labelMessage(view View) *managev1.Label {
 	if l.Website != nil {
 		label.Website = l.Website
 	}
-	label.ImageLightAsset = view.LightLogo
-	label.ImageDarkAsset = view.DarkLogo
+	label.ImageLightAsset = mediaasset.ReferenceProto(view.LightLogo)
+	label.ImageDarkAsset = mediaasset.ReferenceProto(view.DarkLogo)
 	if l.ParentLabelID != nil {
 		label.ParentLabelId = l.ParentLabelID
 	}
@@ -360,7 +367,7 @@ func labelParticipantMessage(view entityparticipant.View) *managev1.LabelPartici
 		role = managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER
 	}
 	return &managev1.LabelParticipant{
-		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
+		Member: memberref.ReferenceMessage(view.Member), Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
 		HasEffectiveAuthority: view.HasEffectiveAuthority,
 	}
 }

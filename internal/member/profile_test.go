@@ -5,14 +5,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -119,7 +122,7 @@ func TestAdminMutationsKeepAnUnonboardedMemberUnonboarded(t *testing.T) {
 	f.store.SeedMember(pending)
 	tagID := uuid.NewString()
 	f.store.SeedTag(member.Tag{ID: tagID, Name: "patrons"})
-	fileID, asset := uuid.NewString(), &member.Asset{ID: uuid.NewString(), URL: "https://cdn.example.test/avatar.webp"}
+	fileID, asset := uuid.NewString(), &memberref.Asset{ID: uuid.NewString(), URL: "https://cdn.example.test/avatar.webp"}
 	f.store.SeedAvatarSource(fileID, uuid.NewString())
 	f.avatars.assets[fileID] = asset
 	bio := "set by an administrator"
@@ -235,7 +238,7 @@ func TestCheckNicknameAvailabilityIgnoresTheMemberItselfAndDeletedMembers(t *tes
 func TestAvatarAuditRollsBackAndSkipsNoOp(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	fileID, asset := uuid.NewString(), &member.Asset{ID: uuid.NewString()}
+	fileID, asset := uuid.NewString(), &memberref.Asset{ID: uuid.NewString()}
 	f.store.SeedAvatarSource(fileID, f.memberID)
 	f.avatars.assets[fileID] = asset
 

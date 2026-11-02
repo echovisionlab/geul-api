@@ -25,7 +25,7 @@ func TestAddPostAuthorPromotesAMemberWithTheAuthorRole(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, post.RoleAuthor, added.Role)
-	require.Equal(t, "Collaborator", added.Member.GetNickname())
+	require.Equal(t, "Collaborator", added.Member.Nickname)
 	_, isAuthor := h.store.Participant(value.ID, collaborator.memberID, post.RoleAuthor)
 	require.True(t, isAuthor)
 	_, isCollaborator := h.store.Participant(value.ID, collaborator.memberID, post.RoleCollaborator)
@@ -152,7 +152,7 @@ func TestListPostParticipantsReportsEffectiveAuthority(t *testing.T) {
 	participants, err := h.service.ListPostParticipants(ctx, post.PostParticipantsQuery{PostID: value.ID})
 	require.NoError(t, err)
 	require.Len(t, participants, 2)
-	require.Equal(t, "Author", participants[0].Member.GetNickname())
+	require.Equal(t, "Author", participants[0].Member.Nickname)
 	require.Equal(t, post.RoleAuthor, participants[0].Role)
 	require.True(t, participants[0].HasEffectiveAuthority)
 	require.Equal(t, post.RoleCollaborator, participants[1].Role)

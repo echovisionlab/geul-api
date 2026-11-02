@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/member/membertest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // deletionFixture is an onboarded Member, with its email projection and two
@@ -182,7 +182,7 @@ func TestCleanupAvatarReleasesTheBindingAndRequestsAssetDeletionOnce(t *testing.
 	t.Parallel()
 	store, _ := membertest.New()
 	memberID := uuid.NewString()
-	asset := &member.Asset{ID: uuid.NewString()}
+	asset := &memberref.Asset{ID: uuid.NewString()}
 	store.SeedAvatar(memberID, asset)
 
 	assetID, err := member.DeletionLifecycle{}.AvatarAssetID(t.Context(), store, memberID)

@@ -12,24 +12,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
-	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -102,8 +108,8 @@ type artistIntegrationMemberProjection struct{ db *gorm.DB }
 func (p artistIntegrationMemberProjection) LoadMemberSummaries(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
-	result := make(map[string]*commonv1.MemberSummary, len(memberIDs))
+) (map[string]*memberref.Summary, error) {
+	result := make(map[string]*memberref.Summary, len(memberIDs))
 	if len(memberIDs) == 0 {
 		return result, nil
 	}
@@ -112,8 +118,8 @@ func (p artistIntegrationMemberProjection) LoadMemberSummaries(
 		return nil, err
 	}
 	for _, row := range rows {
-		result[row.ID] = &commonv1.MemberSummary{
-			Id: row.ID, Nickname: row.Nickname,
+		result[row.ID] = &memberref.Summary{
+			ID: row.ID, Nickname: row.Nickname,
 			Deleted: row.DeletedAt != nil || row.AccountIdentityID == nil,
 		}
 	}
@@ -123,7 +129,7 @@ func (p artistIntegrationMemberProjection) LoadMemberSummaries(
 func (p artistIntegrationMemberProjection) LoadAuthorizationEligibleMemberSummary(
 	ctx context.Context,
 	memberID string,
-) (*commonv1.MemberSummary, error) {
+) (*memberref.Summary, error) {
 	summaries, err := p.LoadMemberSummaries(ctx, []string{memberID})
 	if err != nil {
 		return nil, err

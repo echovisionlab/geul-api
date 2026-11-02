@@ -19,39 +19,49 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/account"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/account"
 	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
+
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
+
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
+
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
+
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+
 	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
-	// MAIL-01: pinned Kratos login, registration, and verification triggers each
-	// reach one provider-neutral queue event through the authenticated ingress.
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
+
+// MAIL-01: pinned Kratos login, registration, and verification triggers each
+// reach one provider-neutral queue event through the authenticated ingress.
 
 func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	t.Parallel()
@@ -424,7 +434,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 
 type backendIntegrationAvatarFiles struct{}
 
-func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*member.Asset, error) {
+func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*memberref.Asset, error) {
 	return nil, errors.New("the courier stack does not promote avatars")
 }
 

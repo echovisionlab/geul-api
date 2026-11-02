@@ -6,21 +6,23 @@ import (
 	"context"
 	"errors"
 
-	"gorm.io/gorm"
-
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"gorm.io/gorm"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
+
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Assets resolves public assets without exposing file lifecycle mutation
 // (referencecatalogadapter.PublicAssets).
 type Assets interface {
-	ReadyRef(context.Context, *gorm.DB, referencecatalog.AssetSource) *commonv1.AssetRef
+	ReadyRef(context.Context, *gorm.DB, referencecatalog.AssetSource) *mediaasset.Reference
 }
 
 // NewUnits returns the read snapshots of the public catalog reads.
@@ -246,7 +248,7 @@ func (s store) MapPlacesByID(ctx context.Context, ids []string) ([]referencecata
 	return places, nil
 }
 
-func (s store) ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) *commonv1.AssetRef {
+func (s store) ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) *mediaasset.Reference {
 	return s.assets.ReadyRef(ctx, s.tx, source)
 }
 

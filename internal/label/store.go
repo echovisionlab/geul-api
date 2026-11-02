@@ -8,7 +8,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -164,8 +165,8 @@ type LabelMedia interface {
 	ReleaseLogoBindings(ctx context.Context, labelID string) error
 	// ReadyAssets resolves ready public assets by ID, ReadyLogoAssets ready
 	// logo assets by source File ID.
-	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
-	ReadyLogoAssets(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
+	ReadyLogoAssets(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error)
 	// RequestOG starts the Label's current OG generation and returns its
 	// run ID, empty when none started; CancelOG cancels it and releases
 	// its image.

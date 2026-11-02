@@ -8,9 +8,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -63,14 +66,14 @@ type CreditArtist struct {
 	ID         string
 	Name       string
 	Slug       *string
-	ImageAsset *commonv1.AssetRef
+	ImageAsset *mediaasset.Reference
 }
 
 // CreditView is a credit with its Artist and Member, when they resolve.
 type CreditView struct {
 	Credit Credit
 	Artist *CreditArtist
-	Member *commonv1.MemberSummary
+	Member *memberref.Summary
 }
 
 // Credits is a Work's attribution: its groups, credits and their order.

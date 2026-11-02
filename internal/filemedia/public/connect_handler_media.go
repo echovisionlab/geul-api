@@ -32,10 +32,6 @@ func downloadResultProto(result *DownloadResult) *openv1.AuthorizeDownloadRespon
 	}
 	return value
 }
-func (s *Service) ResolveReadyOGAsset(ctx context.Context, source, localized *string) (*commonv1.AssetRef, error) {
-	ref, err := s.ResolveOGAsset(ctx, source, localized)
-	return mediaasset.ReferenceProto(ref), err
-}
 func (s *Service) ResolvePublicDisplayMedia(ctx context.Context, ids []string) (map[string]*commonv1.MediaDelivery, error) {
 	values, err := s.ResolveDisplayMedia(ctx, ids)
 	if values == nil {

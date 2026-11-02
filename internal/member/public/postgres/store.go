@@ -9,18 +9,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/mediamime"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/member"
+
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/member/public"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // NewUnits is the production unit of work of the public Member use cases.
@@ -35,14 +37,14 @@ func NewUnits(db *gorm.DB, cdnDomain string) (mutation.UnitOfWork[public.Store],
 // LoadPublicMemberSummaries reads the public summary of each onboarded
 // Member in memberIDs, for the public reads of other domains. Its reads run
 // on db directly, as their callers' own reads do.
-func LoadPublicMemberSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
+func LoadPublicMemberSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]*memberref.Summary, error) {
 	summaries, err := public.LoadSummaries(ctx, store{tx: db, cdnDomain: cdnDomain}, memberIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*commonv1.MemberSummary, len(summaries))
+	result := make(map[string]*memberref.Summary, len(summaries))
 	for id, summary := range summaries {
-		result[id] = member.SummaryMessage(summary)
+		result[id] = &summary
 	}
 	return result, nil
 }
@@ -56,12 +58,12 @@ var _ public.Store = store{}
 
 type notFoundError struct{ error }
 
-func (err notFoundError) Is(target error) bool { return target == member.ErrMemberNotFound }
+func (err notFoundError) Is(target error) bool { return target == memberdomain.ErrMemberNotFound }
 func (err notFoundError) Unwrap() error        { return err.error }
 
 func (s store) db(ctx context.Context) *gorm.DB { return s.tx.WithContext(ctx) }
 
-func (s store) PublicMember(ctx context.Context, memberID string) (member.Member, error) {
+func (s store) PublicMember(ctx context.Context, memberID string) (memberdomain.Member, error) {
 	var row model.Member
 	if err := s.db(ctx).
 		Table("member AS m").
@@ -69,21 +71,21 @@ func (s store) PublicMember(ctx context.Context, memberID string) (member.Member
 		Where("m.id = ? AND m.onboarded = TRUE", memberID).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return member.Member{}, notFoundError{err}
+			return memberdomain.Member{}, notFoundError{err}
 		}
-		return member.Member{}, err
+		return memberdomain.Member{}, err
 	}
 	return memberFromRow(row), nil
 }
 
-func (s store) PublicMembers(ctx context.Context, memberIDs []string) ([]member.Member, error) {
+func (s store) PublicMembers(ctx context.Context, memberIDs []string) ([]memberdomain.Member, error) {
 	var rows []model.Member
 	if err := s.db(ctx).
 		Where("id IN ? AND onboarded = TRUE", memberIDs).
 		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load members: %w", err)
 	}
-	members := make([]member.Member, len(rows))
+	members := make([]memberdomain.Member, len(rows))
 	for i, row := range rows {
 		members[i] = memberFromRow(row)
 	}
@@ -107,7 +109,7 @@ func readyPublicAssetSelect(alias string) string {
 	`, alias, alias, alias, alias, alias, alias, alias)
 }
 
-func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*member.Asset, error) {
+func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*memberref.Asset, error) {
 	if strings.TrimSpace(row.AssetID) == "" || strings.TrimSpace(row.Extension) == "" ||
 		strings.TrimSpace(row.MimeType) == "" {
 		return nil, errors.New("ready public asset metadata is incomplete")
@@ -122,20 +124,20 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*member
 	if err != nil {
 		return nil, err
 	}
-	return &member.Asset{
+	return &memberref.Asset{
 		ID:          row.AssetID,
 		URL:         strings.TrimRight(cdnDomain, "/") + assetPath,
 		Extension:   row.Extension,
 		MIMEType:    row.MimeType,
 		FileSize:    row.FileSize,
 		SHA256:      append([]byte(nil), row.SHA256...),
-		Disposition: member.AssetDisposition(commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE),
+		Disposition: memberref.AssetDisposition(mediaasset.DispositionInline),
 	}, nil
 }
 
-func (s store) PublicAvatars(ctx context.Context, memberIDs []string) (map[string]*member.Asset, error) {
+func (s store) PublicAvatars(ctx context.Context, memberIDs []string) (map[string]*memberref.Asset, error) {
 	ids := sliceutil.UniqueNonZero(memberIDs)
-	result := make(map[string]*member.Asset, len(ids))
+	result := make(map[string]*memberref.Asset, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
@@ -260,8 +262,8 @@ func (s store) NewsletterSubscription(ctx context.Context, identityID string) (*
 	return &row.SubscribedAt, nil
 }
 
-func memberFromRow(row model.Member) member.Member {
-	return member.Member{
+func memberFromRow(row model.Member) memberdomain.Member {
+	return memberdomain.Member{
 		ID: row.ID, AccountIdentityID: row.AccountIdentityID, Nickname: row.Nickname, Onboarded: row.Onboarded,
 		PrimaryEmail: row.PrimaryEmail, AvailableEmails: []string(row.AvailableEmails),
 		Bio: row.Bio, Website: row.Website, SocialLinks: row.SocialLinks, PreferredLocale: row.PreferredLocale,
