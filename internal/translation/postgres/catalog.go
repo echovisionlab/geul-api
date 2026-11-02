@@ -68,6 +68,19 @@ func localeOf(row localization.RuntimeLocale) application.Locale {
 }
 
 func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
+	defaults := translation.DefaultRuntimeSettings()
+	if err := s.tx.WithContext(ctx).Exec(
+		`INSERT INTO translation_settings (
+			id, default_locale, protected_terms
+		) VALUES (?, ?, ?)
+		ON CONFLICT (id) DO NOTHING`,
+		1,
+		defaults.DefaultLocale,
+		"{}",
+	).Error; err != nil {
+		return defaults, err
+	}
+
 	return translation.LoadRuntimeSettings(ctx, s.tx)
 }
 
