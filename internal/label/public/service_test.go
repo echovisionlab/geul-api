@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/label"
+
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,8 +24,8 @@ import (
 type fakeStore struct {
 	labels   map[string]label.Label
 	titles   map[string]string
-	assets   map[string]*commonv1.AssetRef
-	logos    map[string]*commonv1.AssetRef
+	assets   map[string]*mediaasset.Reference
+	logos    map[string]*mediaasset.Reference
 	parent   labelpublic.ParentRow
 	artists  []labelpublic.ArtistRow
 	releases []labelpublic.ReleaseRow
@@ -74,15 +77,15 @@ func (s *fakeStore) Document(_ context.Context, labelID, _ string) (labelpublic.
 	return labelpublic.ContentDocument{Revision: "revision", SourceTitle: s.titles[labelID]}, nil
 }
 
-func (s *fakeStore) ReadySourceFiles(_ context.Context, fileIDs []string, _ ...string) (map[string]*commonv1.AssetRef, error) {
+func (s *fakeStore) ReadySourceFiles(_ context.Context, fileIDs []string, _ ...string) (map[string]*mediaasset.Reference, error) {
 	return pick(s.logos, fileIDs), nil
 }
 
-func (s *fakeStore) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *fakeStore) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return pick(s.assets, assetIDs), nil
 }
 
-func (s *fakeStore) ResolveOg(_ context.Context, assetID *string) (*commonv1.AssetRef, error) {
+func (s *fakeStore) ResolveOg(_ context.Context, assetID *string) (*mediaasset.Reference, error) {
 	if assetID == nil {
 		return nil, nil
 	}
@@ -109,8 +112,8 @@ func (s *fakeStore) ReleaseArtists(context.Context, []string) ([]labelpublic.Rel
 	return s.credits, nil
 }
 
-func pick(source map[string]*commonv1.AssetRef, ids []string) map[string]*commonv1.AssetRef {
-	refs := map[string]*commonv1.AssetRef{}
+func pick(source map[string]*mediaasset.Reference, ids []string) map[string]*mediaasset.Reference {
+	refs := map[string]*mediaasset.Reference{}
 	for _, id := range ids {
 		if ref := source[id]; ref != nil {
 			refs[id] = ref
@@ -141,8 +144,8 @@ func TestPublicLabelListShowsOGOnlyWithAnEffectiveLogo(t *testing.T) {
 			"draft":        {ID: "draft", Status: label.StatusDraft},
 		},
 		titles: map[string]string{"with-logo": "With logo", "without-logo": "Without logo"},
-		assets: map[string]*commonv1.AssetRef{"og-1": {AssetId: "og-1"}, "og-2": {AssetId: "og-2"}},
-		logos:  map[string]*commonv1.AssetRef{"dark": {AssetId: "dark"}},
+		assets: map[string]*mediaasset.Reference{"og-1": {AssetID: "og-1"}, "og-2": {AssetID: "og-2"}},
+		logos:  map[string]*mediaasset.Reference{"dark": {AssetID: "dark"}},
 	}
 
 	page, err := newPublicService(t, store, draftAccess{}).List(t.Context(), labelpublic.ListLabelsQuery{})
@@ -153,8 +156,8 @@ func TestPublicLabelListShowsOGOnlyWithAnEffectiveLogo(t *testing.T) {
 	for _, summary := range page.Labels {
 		summaries[summary.ID] = summary
 	}
-	require.Equal(t, "og-1", summaries["with-logo"].OgImage.GetAssetId())
-	require.Equal(t, "dark", summaries["with-logo"].DarkLogo.GetAssetId())
+	require.Equal(t, "og-1", optional.Value(summaries["with-logo"].OgImage).AssetID)
+	require.Equal(t, "dark", optional.Value(summaries["with-logo"].DarkLogo).AssetID)
 	require.Nil(t, summaries["without-logo"].OgImage)
 	require.Equal(t, "Without logo", summaries["without-logo"].Name)
 }
@@ -170,7 +173,7 @@ func TestPublicLabelGetProjectsRelationsAndGatesDrafts(t *testing.T) {
 		artists:  []labelpublic.ArtistRow{{ID: "artist", Name: "Artist", ImageFileID: text("image")}},
 		releases: []labelpublic.ReleaseRow{{ID: "release", Title: "Release"}},
 		credits:  []labelpublic.ReleaseArtistRow{{ReleaseID: "release", ArtistID: "artist", ArtistName: "Artist"}},
-		logos:    map[string]*commonv1.AssetRef{"image": {AssetId: "image"}},
+		logos:    map[string]*mediaasset.Reference{"image": {AssetID: "image"}},
 	}
 	denied := errors.New("share token required")
 
@@ -178,7 +181,7 @@ func TestPublicLabelGetProjectsRelationsAndGatesDrafts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Published", detail.Name)
 	require.Equal(t, "Parent", detail.Parent.Name)
-	require.Equal(t, "image", detail.Artists[0].Image.GetAssetId())
+	require.Equal(t, "image", optional.Value(detail.Artists[0].Image).AssetID)
 	require.Equal(t, []labelpublic.ReleaseArtist{{ID: "artist", Name: "Artist"}}, detail.Releases[0].Artists)
 	require.EqualValues(t, 1, detail.ReleaseCount)
 

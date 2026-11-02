@@ -8,9 +8,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -21,9 +23,9 @@ type View struct {
 	Name      string
 	Document  *contentv1.RichTextDocument
 	Revision  string
-	LightLogo *commonv1.AssetRef
-	DarkLogo  *commonv1.AssetRef
-	OgImage   *commonv1.AssetRef
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
+	OgImage   *mediaasset.Reference
 }
 
 // CheckLabelSlugAvailableQuery asks whether Slug is free for a new Label, or
@@ -67,11 +69,11 @@ func (s *Service) CheckLabelSlugAvailable(ctx context.Context, query CheckLabelS
 }
 
 type labelImageAssets struct {
-	Light *commonv1.AssetRef
-	Dark  *commonv1.AssetRef
+	Light *mediaasset.Reference
+	Dark  *mediaasset.Reference
 }
 
-func (s *Service) loadReadyLabelLogoAssets(ctx context.Context, labels []Label) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyLabelLogoAssets(ctx context.Context, labels []Label) (map[string]*mediaasset.Reference, error) {
 	fileIDs := make([]string, 0, len(labels)*2)
 	seen := make(map[string]struct{}, len(labels)*2)
 	for _, label := range labels {
@@ -86,7 +88,7 @@ func (s *Service) loadReadyLabelLogoAssets(ctx context.Context, labels []Label) 
 			fileIDs = append(fileIDs, *candidate)
 		}
 	}
-	refs := make(map[string]*commonv1.AssetRef, len(fileIDs))
+	refs := make(map[string]*mediaasset.Reference, len(fileIDs))
 	if len(fileIDs) == 0 {
 		return refs, nil
 	}
@@ -98,7 +100,7 @@ func (s *Service) loadReadyLabelLogoAssets(ctx context.Context, labels []Label) 
 	return refs, err
 }
 
-func labelImageAssetsFromReadyMap(label *Label, refs map[string]*commonv1.AssetRef) *labelImageAssets {
+func labelImageAssetsFromReadyMap(label *Label, refs map[string]*mediaasset.Reference) *labelImageAssets {
 	result := &labelImageAssets{}
 	if label == nil {
 		return result
@@ -166,7 +168,7 @@ func (s *Service) overlayLabelSourceLocaleDocuments(ctx context.Context, labels 
 	return documents, nil
 }
 
-func (s *Service) loadReadyLabelOgAssets(ctx context.Context, labels []Label) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyLabelOgAssets(ctx context.Context, labels []Label) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(labels))
 	for i := range labels {
 		candidates = append(candidates, labelOgAssetIDForResponse(&labels[i]))
@@ -191,7 +193,7 @@ func (s *Service) labelWithReadyOg(ctx context.Context, label Label, document la
 
 // labelView combines a Label row with its document and assets. A Label
 // without an effective logo shows no OG image.
-func labelView(label Label, document labelDocument, logos *labelImageAssets, ogAsset *commonv1.AssetRef) View {
+func labelView(label Label, document labelDocument, logos *labelImageAssets, ogAsset *mediaasset.Reference) View {
 	if labelOgAssetIDForResponse(&label) == nil {
 		ogAsset = nil
 	}
@@ -202,7 +204,7 @@ func labelView(label Label, document labelDocument, logos *labelImageAssets, ogA
 	return view
 }
 
-func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*mediaasset.Reference, error) {
 	ids := make([]string, 0, len(candidates))
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
@@ -219,7 +221,7 @@ func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...
 		seen[id] = struct{}{}
 		ids = append(ids, id)
 	}
-	var ready map[string]*commonv1.AssetRef
+	var ready map[string]*mediaasset.Reference
 	err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		ready, err = store.ReadyAssets(ctx, ids)
@@ -228,7 +230,7 @@ func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...
 	return ready, err
 }
 
-func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates ...*string) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*mediaasset.Reference, candidates ...*string) *mediaasset.Reference {
 	for _, candidate := range candidates {
 		if candidate != nil {
 			if asset := ready[strings.TrimSpace(*candidate)]; asset != nil {
@@ -239,7 +241,7 @@ func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates .
 	return nil
 }
 
-func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error) {
 	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidates...)
 	if err != nil {
 		return nil, err

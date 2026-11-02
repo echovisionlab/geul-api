@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -46,7 +48,7 @@ func FakeHarness() Harness {
 		SeedMember:      func(_ *testing.T, nickname string) string { return store.SeedMember(nickname) },
 		SeedReadyFile: func(_ *testing.T, kind string) (string, string) {
 			fileID, asset := store.SeedReadyFile(kind)
-			return fileID, asset.GetAssetId()
+			return fileID, optional.Value(asset).AssetID
 		},
 	}
 }
@@ -621,13 +623,13 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 				SourceFileID: fileID, Owner: referencecatalog.AssetOwner{Type: "map_place", ID: place.ID}, Key: "image", Kind: "map_image",
 			})
 			require.NoError(t, err)
-			require.Equal(t, assetID, bound.GetAssetId())
+			require.Equal(t, assetID, optional.Value(bound).AssetID)
 			return store.ReleaseAssets(ctx, referencecatalog.AssetRelease{Owner: referencecatalog.AssetOwner{Type: "map_place", ID: place.ID}, BindingPrefix: "image"})
 		}))
 		read(t, h, func(ctx context.Context, store referencecatalog.Store) error {
 			ready, err := store.ReadyAsset(ctx, referencecatalog.AssetSource{FileID: fileID, Kind: "map_image"})
 			require.NoError(t, err)
-			require.Equal(t, assetID, ready.GetAssetId())
+			require.Equal(t, assetID, optional.Value(ready).AssetID)
 			_, err = store.ReadyAsset(ctx, referencecatalog.AssetSource{FileID: uuid.NewString(), Kind: "map_image"})
 			require.Equal(t, connect.CodeNotFound, codeOf(err))
 			return nil

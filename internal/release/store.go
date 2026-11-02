@@ -7,7 +7,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/google/uuid"
 )
 
@@ -249,7 +249,7 @@ type ReleaseMedia interface {
 	LockAttachableFiles(ctx context.Context, fileIDs []string) error
 	// BindArtwork binds the ready artwork asset of fileID to the Release and
 	// returns it.
-	BindArtwork(ctx context.Context, fileID, releaseID string) (*commonv1.AssetRef, error)
+	BindArtwork(ctx context.Context, fileID, releaseID string) (*mediaasset.Reference, error)
 	// ReleaseArtworkBinding releases the Release's artwork asset binding.
 	ReleaseArtworkBinding(ctx context.Context, releaseID string) error
 	// CancelOG cancels the Release's OG work and releases its image.
@@ -257,8 +257,8 @@ type ReleaseMedia interface {
 	// ReadyArtwork resolves the ready artwork asset of the Release's first
 	// artwork File by sort order; nil when it has none. ReadyArtworks
 	// resolves the newest ready artwork asset of each Release.
-	ReadyArtwork(ctx context.Context, releaseID string) (*commonv1.AssetRef, error)
-	ReadyArtworks(ctx context.Context, releaseIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyArtwork(ctx context.Context, releaseID string) (*mediaasset.Reference, error)
+	ReadyArtworks(ctx context.Context, releaseIDs []string) (map[string]*mediaasset.Reference, error)
 }
 
 // ReleaseCollaboration is the shared collaboration and Member authority a

@@ -115,7 +115,7 @@ func (r publicServiceRegistration) register() error {
 	slog.Info("Registered public service", "path", publicPagePath)
 
 	postLocalization := postadapter.NewLocalization()
-	publicPostUnits, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Deps{
+	publicPostUnits, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Ports{
 		ContentBlocks: contentBlockStore, Localization: postLocalization,
 		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postShareLinks, CDNDomain: cfg.CDNURL,
 	})

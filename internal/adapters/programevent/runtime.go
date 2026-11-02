@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -24,7 +23,7 @@ func NewRuntime(cdnDomain string) *Runtime {
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) BindReadyAssetForSourceFile(
@@ -35,17 +34,17 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	ownerID string,
 	bindingKey string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
-	asset, err := mediaasset.ReferenceResultProto(lifecycle.BindReadyAssetForSourceFile(
+	asset, err := lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
-	))
+	)
 	if expectedKind != "poster" || !mutation.IsNotFound(err) {
 		return asset, err
 	}
-	return mediaasset.ReferenceResultProto(lifecycle.BindReadyAssetForSourceFile(
+	return lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, "image",
-	))
+	)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -64,8 +63,8 @@ func (r *Runtime) ReadyPublicAssetRefForSourceFile(
 	tx *gorm.DB,
 	sourceFileID string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind))
+) (*mediaasset.Reference, error) {
+	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind)
 }
 
 func (r *Runtime) ResolveSingleReadyInlineAssetForSourceFile(
@@ -73,7 +72,7 @@ func (r *Runtime) ResolveSingleReadyInlineAssetForSourceFile(
 	tx *gorm.DB,
 	sourceFileID string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	var assets []model.PublicAsset
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT public_asset.* FROM public_asset
@@ -90,5 +89,5 @@ func (r *Runtime) ResolveSingleReadyInlineAssetForSourceFile(
 	if assets[0].FileSize == nil || *assets[0].FileSize <= 0 || len(assets[0].SHA256) != 32 {
 		return nil, fmt.Errorf("program event Content Block image File public asset integrity metadata is incomplete")
 	}
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).AssetRef(mediaassetpostgres.Asset(assets[0])))
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).AssetRef(mediaassetpostgres.Asset(assets[0]))
 }

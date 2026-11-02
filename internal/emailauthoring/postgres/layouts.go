@@ -217,11 +217,11 @@ func (s *store) TemplateCounts(ctx context.Context, layoutIDs []string) (map[str
 }
 
 func (s *store) LayoutSourceLocale(ctx context.Context, layoutID string) (string, bool, error) {
-	return email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.Bind(s.tx), layoutID)
+	return email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.NewStore(s.tx), layoutID)
 }
 
 func (s *store) CanonicalLayoutSource(ctx context.Context, layoutID, sourceLocale string) (email.LayoutTranslationDocument, error) {
-	document, err := email.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(s.tx), layoutID, sourceLocale)
+	document, err := email.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.NewStore(s.tx), layoutID, sourceLocale)
 	if err != nil || document == nil {
 		return email.LayoutTranslationDocument{}, err
 	}
@@ -229,7 +229,7 @@ func (s *store) CanonicalLayoutSource(ctx context.Context, layoutID, sourceLocal
 }
 
 func (s *store) CanonicalLayoutSources(ctx context.Context, layoutIDs []string) (map[string]string, error) {
-	projections, err := email.LoadCanonicalLayoutProjections(ctx, emailpostgres.Bind(s.tx), layoutIDs)
+	projections, err := email.LoadCanonicalLayoutProjections(ctx, emailpostgres.NewStore(s.tx), layoutIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (s *store) CanonicalLayoutSources(ctx context.Context, layoutIDs []string) 
 }
 
 func (s *store) LayoutTranslationEntry(ctx context.Context, layoutID, locale string) (*email.LayoutTranslationEntry, error) {
-	return email.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(s.tx), layoutID, locale)
+	return email.LoadLayoutTranslationEntry(ctx, emailpostgres.NewStore(s.tx), layoutID, locale)
 }
 
 func (s *store) LockLayoutTranslationEntry(ctx context.Context, layoutID, locale string, lock emailcontent.RowLock) (*email.LayoutTranslationEntry, error) {
@@ -278,15 +278,15 @@ func (s *store) LockLayoutTranslationEntry(ctx context.Context, layoutID, locale
 }
 
 func (s *store) SaveLayoutSource(ctx context.Context, layoutID, locale string, document email.LayoutTranslationDocument, now time.Time) error {
-	return email.SaveLayoutSourceLocaleDocument(ctx, emailpostgres.Bind(s.tx), layoutID, locale, document, now)
+	return email.SaveLayoutSourceLocaleDocument(ctx, emailpostgres.NewStore(s.tx), layoutID, locale, document, now)
 }
 
 func (s *store) UpsertLayoutTranslation(ctx context.Context, layoutID, locale string, input translation.EntryWrite) error {
-	return email.UpsertLayoutTranslationEntry(ctx, emailpostgres.Bind(s.tx), layoutID, locale, input)
+	return email.UpsertLayoutTranslationEntry(ctx, emailpostgres.NewStore(s.tx), layoutID, locale, input)
 }
 
 func (s *store) SeedLayoutTranslation(ctx context.Context, layoutID, locale, sourceLocale string, now time.Time) error {
-	return email.SeedLayoutTranslationEntryFromSource(ctx, emailpostgres.Bind(s.tx), layoutID, locale, sourceLocale, now)
+	return email.SeedLayoutTranslationEntryFromSource(ctx, emailpostgres.NewStore(s.tx), layoutID, locale, sourceLocale, now)
 }
 
 func (s *store) DeleteLayoutTranslation(ctx context.Context, layoutID, locale string) (bool, error) {
@@ -298,6 +298,6 @@ func (s *store) DeleteLayoutTranslation(ctx context.Context, layoutID, locale st
 }
 
 func (s *store) LocalizedLayoutHTML(ctx context.Context, layoutID, locale string) (string, error) {
-	html, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, emailpostgres.Bind(s.tx), layoutID, locale)
+	html, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, emailpostgres.NewStore(s.tx), layoutID, locale)
 	return html, err
 }

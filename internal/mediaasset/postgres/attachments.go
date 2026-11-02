@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func BindAttachments(tx *gorm.DB) mediaasset.AttachmentStore {
+func NewAttachmentStore(tx *gorm.DB) mediaasset.AttachmentStore {
 	if tx == nil {
 		panic("version attachment transaction is required")
 	}

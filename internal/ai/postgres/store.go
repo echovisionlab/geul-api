@@ -34,11 +34,11 @@ func NewUnits(db *gorm.DB, queue Queue) (mutation.UnitOfWork[ai.Store], error) {
 	if db == nil || queue == nil {
 		return nil, errors.New("metadata AI store dependencies are required: DB, Queue")
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) ai.Store { return Bind(tx, queue) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) ai.Store { return NewStore(tx, queue) }), nil
 }
 
-// Bind returns the Store over tx.
-func Bind(tx *gorm.DB, queue Queue) ai.Store {
+// NewStore returns the Store over tx.
+func NewStore(tx *gorm.DB, queue Queue) ai.Store {
 	return &store{tx: tx, queue: queue}
 }
 

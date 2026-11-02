@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -68,7 +70,7 @@ func (h *ConnectHandler) GetReleases(ctx context.Context, req *connect.Request[o
 	}
 	releases := make([]*openv1.ArtistRelease, 0, len(page.Releases))
 	for _, release := range page.Releases {
-		item := &openv1.ArtistRelease{Id: release.ID, Title: release.Title, Slug: release.Slug, Type: release.Type, ArtworkAsset: release.Artwork}
+		item := &openv1.ArtistRelease{Id: release.ID, Title: release.Title, Slug: release.Slug, Type: release.Type, ArtworkAsset: mediaasset.ReferenceProto(release.Artwork)}
 		if release.ReleaseDate != nil {
 			item.ReleaseDate = timestamppb.New(*release.ReleaseDate)
 		}
@@ -95,7 +97,7 @@ func (h *ConnectHandler) GetWorks(ctx context.Context, req *connect.Request[open
 	for _, work := range page.Works {
 		item := &openv1.ArtistWork{
 			Id: work.ID, Title: work.Title, Slug: work.Slug, Summary: work.Summary,
-			Type: artistWorkTypeFromDatabase(work.Type), ImageAsset: work.Image,
+			Type: artistWorkTypeFromDatabase(work.Type), ImageAsset: mediaasset.ReferenceProto(work.Image),
 		}
 		if work.PublishedAt != nil {
 			item.PublishedAt = timestamppb.New(*work.PublishedAt)
@@ -108,7 +110,7 @@ func (h *ConnectHandler) GetWorks(ctx context.Context, req *connect.Request[open
 func summaryMessage(summary Summary) *openv1.ArtistSummary {
 	message := &openv1.ArtistSummary{
 		Id: summary.ID, Name: summary.Name, Slug: summary.Slug, CountryCode: summary.CountryCode,
-		SocialLinks: summary.SocialLinks, ImageAsset: summary.Image, OgAsset: summary.OgImage,
+		SocialLinks: summary.SocialLinks, ImageAsset: mediaasset.ReferenceProto(summary.Image), OgAsset: mediaasset.ReferenceProto(summary.OgImage),
 	}
 	if summary.PublishedAt != nil {
 		message.PublishedAt = timestamppb.New(*summary.PublishedAt)
@@ -131,7 +133,7 @@ func detailMessage(detail Detail) *openv1.Artist {
 		RealName:    value.RealName,
 		CountryCode: value.CountryCode,
 		Website:     value.Website,
-		OgAsset:     detail.OgImage,
+		OgAsset:     mediaasset.ReferenceProto(detail.OgImage),
 	}
 	if value.UpdatedAt != nil {
 		message.UpdatedAt = timestamppb.New(*value.UpdatedAt)
@@ -143,15 +145,15 @@ func detailMessage(detail Detail) *openv1.Artist {
 	message.Images = make([]*openv1.ArtistImage, 0, len(detail.Images))
 	for index, image := range detail.Images {
 		primary := index == 0
-		message.Images = append(message.Images, &openv1.ArtistImage{FileId: image.FileID, Asset: image.Asset, SortOrder: int32(index), Primary: primary})
+		message.Images = append(message.Images, &openv1.ArtistImage{FileId: image.FileID, Asset: mediaasset.ReferenceProto(image.Asset), SortOrder: int32(index), Primary: primary})
 		if primary {
-			message.ImageAsset = image.Asset
+			message.ImageAsset = mediaasset.ReferenceProto(image.Asset)
 		}
 	}
 	message.ReleaseCount, message.WorkCount = detail.ReleaseCount, detail.WorkCount
 	message.Labels = make([]*openv1.ArtistLabel, 0, len(detail.Labels))
 	for _, label := range detail.Labels {
-		message.Labels = append(message.Labels, &openv1.ArtistLabel{Id: label.ID, Name: label.Name, Slug: label.Slug, ImageAsset: label.Image})
+		message.Labels = append(message.Labels, &openv1.ArtistLabel{Id: label.ID, Name: label.Name, Slug: label.Slug, ImageAsset: mediaasset.ReferenceProto(label.Image)})
 	}
 	return message
 }

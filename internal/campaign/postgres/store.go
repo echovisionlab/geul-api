@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
@@ -47,20 +46,7 @@ func NewStore(tx *gorm.DB, ports Ports) campaigndomain.Store {
 	return &store{Store: emailcontentpostgres.New(tx, ports.ContentBlocks, "campaign"), tx: tx, ports: ports}
 }
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) campaigndomain.Joined {
-	joined := campaigndomain.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return campaigndomain.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {
@@ -113,7 +99,7 @@ func (s *store) WrapWithLayout(ctx context.Context, id, locale, html string, dat
 	return s.ports.EmailRendering.WrapWithLayout(ctx, s.tx, id, locale, html, data)
 }
 func (s *store) CheckTestSendReadiness(ctx context.Context, recipient string) error {
-	return email.CheckTestSendReadiness(ctx, emailpostgres.Bind(s.tx), recipient)
+	return email.CheckTestSendReadiness(ctx, emailpostgres.NewStore(s.tx), recipient)
 }
 func (s *store) Enqueue(ctx context.Context, queue, id string, message proto.Message) error {
 	executor, err := contentsignal.TransactionExecutor(s.tx)

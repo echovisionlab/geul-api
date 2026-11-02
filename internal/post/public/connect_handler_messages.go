@@ -1,10 +1,13 @@
 package public
 
 import (
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/post"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -75,13 +78,13 @@ func postMessage(view PostView) *openv1.GetPostResponse {
 		message.ScheduledAt = timestamppb.New(*p.ScheduledAt)
 	}
 	message.ScheduledTimeZone = p.ScheduledTimeZone
-	message.OgAsset = view.OgAsset
+	message.OgAsset = mediaasset.ReferenceProto(view.OgAsset)
 	if p.MapPlaceID != nil {
 		message.MapPlaceId = p.MapPlaceID
 		message.LocationPlace = view.MapPlace
 	}
 	applyPostLocalization(message, localization)
-	message.AuthorMembers = view.Authors
+	message.AuthorMembers = memberref.ReferenceMessages(view.Authors)
 	for _, category := range p.Categories {
 		slug := category.Slug
 		message.Categories = append(message.Categories, &openv1.PostCategory{Id: category.ID, Name: category.Name, Slug: &slug})
@@ -140,7 +143,7 @@ func summaryMessage(listed Summary) *openv1.PostSummary {
 		summary.SeriesOrder = p.SeriesOrder
 	}
 	summary.FeaturedImageDelivery = listed.FeaturedImage
-	summary.AuthorMembers = listed.Authors
+	summary.AuthorMembers = memberref.ReferenceMessages(listed.Authors)
 	for _, category := range p.Categories {
 		slug := category.Slug
 		summary.Categories = append(summary.Categories, &openv1.PostCategory{Id: category.ID, Name: category.Name, Slug: &slug})
@@ -214,7 +217,7 @@ func commentNodeMessages(nodes []*post.CommentNode) []*openv1.PostCommentNode {
 		}
 		if node.MemberID != nil {
 			message.MemberId = node.MemberID
-			message.Author = node.Author
+			message.Author = memberref.ReferenceMessage(node.Author)
 		}
 		result[index] = message
 	}

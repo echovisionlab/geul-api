@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -61,7 +64,7 @@ func TestReleaseManagementDescriptorsAndRequiredFields(t *testing.T) {
 func TestReleaseManagementCreateExactFieldsAndCompactSettings(t *testing.T) {
 	owner := newRecordingReleaseManagement()
 	owner.release.Document = &contentv1.RichTextDocument{Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT}
-	owner.release.Artwork = &commonv1.AssetRef{AssetId: releaseManagementAssetID, Url: "https://private-delivery.test/secret", DownloadFilename: proto.String("private filename")}
+	owner.release.Artwork = &mediaasset.Reference{AssetID: releaseManagementAssetID, URL: "https://private-delivery.test/secret", DownloadFilename: proto.String("private filename")}
 	tools, _ := NewReleaseManagementTools(owner)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseCreate, toolArguments(t, `{
   "title":"Album","source_locale":"ko","type":"ep","slug":"album","catalog_number":"CAT-1","release_date":"2026-10-10T00:00:00+09:00",
@@ -129,8 +132,8 @@ func TestReleaseManagementArtworkNativeResponsesAndSlugRequest(t *testing.T) {
 	owner := newRecordingReleaseManagement()
 	tools, _ := NewReleaseManagementTools(owner)
 	arguments := toolArguments(t, `{"document_id":"`+releaseManagementID+`","file_id":"`+releaseManagementFileID+`"}`)
-	for _, asset := range []*commonv1.AssetRef{
-		{AssetId: releaseManagementAssetID, Url: "private media delivery"},
+	for _, asset := range []*mediaasset.Reference{
+		{AssetID: releaseManagementAssetID, URL: "private media delivery"},
 		nil, // An existing attachment is a successful native no-op with no AssetRef.
 	} {
 		owner.artworkAsset = asset
@@ -272,7 +275,7 @@ type recordingReleaseManagement struct {
 	artwork       releasedomain.SetReleaseArtworkCommand
 	removeArtwork releasedomain.DeleteReleaseArtworkCommand
 	slug          releasedomain.CheckReleaseSlugQuery
-	artworkAsset  *commonv1.AssetRef
+	artworkAsset  *mediaasset.Reference
 	status        releasedomain.Status
 }
 
@@ -337,7 +340,7 @@ func (owner *recordingReleaseManagement) DeleteRelease(ctx context.Context, comm
 	return owner.record(ctx, "delete")
 }
 
-func (owner *recordingReleaseManagement) SetReleaseArtwork(ctx context.Context, command releasedomain.SetReleaseArtworkCommand) (*commonv1.AssetRef, error) {
+func (owner *recordingReleaseManagement) SetReleaseArtwork(ctx context.Context, command releasedomain.SetReleaseArtworkCommand) (*mediaasset.Reference, error) {
 	owner.artwork = command
 	if err := owner.record(ctx, "artwork_set"); err != nil {
 		return nil, err

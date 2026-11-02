@@ -3,11 +3,10 @@ package release
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-
 	"gorm.io/gorm"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // MemberSummaries adapts the Member-owned public summary projection to Track
@@ -24,6 +23,6 @@ func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
 	return &MemberSummaries{db: db, cdnDomain: cdnDomain}
 }
 
-func (a *MemberSummaries) LoadMemberSummaries(ctx context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
+func (a *MemberSummaries) LoadMemberSummaries(ctx context.Context, memberIDs []string) (map[string]*memberref.Summary, error) {
 	return memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }

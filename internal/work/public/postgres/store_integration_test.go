@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -21,20 +22,27 @@ import (
 	"gorm.io/gorm/logger"
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/work"
+
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
+
 	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
+
 	workpublicpostgres "github.com/echovisionlab/geul-api/internal/work/public/postgres"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -409,7 +417,7 @@ func TestPublicReadKeepsItsSnapshotAcrossAnUnpublishIntegration(t *testing.T) {
 	require.Equal(t, work.StatusPublished, got.detail.Work.Status)
 	require.Equal(t, "published body", got.detail.Document.GetLocaleOverlay().GetBlocks()[0].GetParagraph().GetContent()[0].GetText().GetText())
 	require.Equal(t, []workpublic.Client{{ID: publishedClient, Name: "Published client"}}, got.detail.Clients)
-	require.Contains(t, got.detail.FeaturedImage.GetUrl(), publishedAsset)
+	require.Contains(t, optional.Value(got.detail.FeaturedImage).URL, publishedAsset)
 	require.Equal(t, []work.CreditGroup{group}, got.detail.CreditGroups)
 	require.Len(t, got.detail.Credits, 1)
 	require.Equal(t, "Published credit", *got.detail.Credits[0].Credit.Name)
@@ -464,7 +472,7 @@ type projectionGate struct {
 	release chan struct{}
 }
 
-func (g *projectionGate) ResolveReadyOGAsset(ctx context.Context, source, localized *string) (*commonv1.AssetRef, error) {
+func (g *projectionGate) ResolveReadyOGAsset(ctx context.Context, source, localized *string) (*mediaasset.Reference, error) {
 	close(g.entered)
 	<-g.release
 	return g.MediaResolver.ResolveReadyOGAsset(ctx, source, localized)

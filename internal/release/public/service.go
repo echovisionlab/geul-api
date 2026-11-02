@@ -15,11 +15,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/release"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -107,7 +112,7 @@ type ReleasePage struct {
 type Summary struct {
 	Release release.Release
 	Title   string
-	Artwork *commonv1.AssetRef
+	Artwork *mediaasset.Reference
 	Artists []Artist
 }
 
@@ -118,7 +123,7 @@ type View struct {
 	Document     *contentv1.LocalizedRichTextDocument
 	Revision     string
 	Localization publiccontent.Selection
-	Artwork      *commonv1.AssetRef
+	Artwork      *mediaasset.Reference
 	Artists      []Artist
 	Labels       []Label
 	Genres       []release.Reference
@@ -135,7 +140,7 @@ type Artist struct {
 	Name  string
 	Slug  *string
 	Role  string
-	Image *commonv1.AssetRef
+	Image *mediaasset.Reference
 }
 
 // Label is a Label of a Release.
@@ -154,9 +159,9 @@ type Credit struct {
 	CreditRole *string
 	ArtistID   *string
 	MemberID   *string
-	Member     *commonv1.MemberSummary
+	Member     *memberref.Summary
 	Note       *string
-	Image      *commonv1.AssetRef
+	Image      *mediaasset.Reference
 }
 
 // Track is a Track of a Release with its credits, media and download
@@ -176,8 +181,8 @@ type TrackMedia struct {
 	Source      MediaFile
 	Playback    *commonv1.HlsMediaRef
 	Download    *commonv1.ExpiringMediaRef
-	Waveform    *commonv1.AssetRef
-	Spectrogram *commonv1.AssetRef
+	Waveform    *mediaasset.Reference
+	Spectrogram *mediaasset.Reference
 }
 
 // TrackCredit is a credit of a Track; Artist is set for an Artist credit.
@@ -500,8 +505,8 @@ func collectReleaseIDs(releases []release.Release) []string {
 	return ids
 }
 
-func loadReleaseArtworkAssets(ctx context.Context, store Store, releaseIDs []string) (map[string]*commonv1.AssetRef, error) {
-	result := make(map[string]*commonv1.AssetRef, len(releaseIDs))
+func loadReleaseArtworkAssets(ctx context.Context, store Store, releaseIDs []string) (map[string]*mediaasset.Reference, error) {
+	result := make(map[string]*mediaasset.Reference, len(releaseIDs))
 	if len(releaseIDs) == 0 {
 		return result, nil
 	}

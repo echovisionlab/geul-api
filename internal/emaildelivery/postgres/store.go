@@ -5,36 +5,37 @@ package emaildeliverypostgres
 
 import (
 	"context"
+
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	stderrors "errors"
 	"log/slog"
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // NewUnits is the production unit of work of the email delivery use cases.
 func NewUnits(db *gorm.DB) mutation.UnitOfWork[emaildelivery.Store] {
-	return mutation.Postgres(db, Bind)
+	return mutation.Postgres(db, NewStore)
 }
 
-// Bind binds the Store to db: the transaction a principal-less delivery step
+// NewStore binds the Store to db: the transaction a principal-less delivery step
 // runs in (the worker's and the provider callback's suppression writes), or
 // the pool for a read of one statement (a renderer's locale and site
 // defaults, the worker's suppression lookups).
-func Bind(db *gorm.DB) emaildelivery.Store {
+func NewStore(db *gorm.DB) emaildelivery.Store {
 	return store{tx: db}
 }
 
@@ -235,16 +236,16 @@ func (s store) readyEmailLogoURL(ctx context.Context, cdnDomain string, logoFile
 	if logoFileID == nil || strings.TrimSpace(*logoFileID) == "" {
 		return nil
 	}
-	asset, _, err := mediaasset.BrandingResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), cdnDomain).
-		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage))
+	asset, _, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), cdnDomain).
+		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to resolve ready email logo asset", "fileId", *logoFileID, failurecause.Attr(err))
 		return nil
 	}
-	if asset.GetMimeType() == "" || asset.GetUrl() == "" {
+	if optional.Value(asset).MimeType == "" || optional.Value(asset).URL == "" {
 		return nil
 	}
-	url := asset.GetUrl()
+	url := optional.Value(asset).URL
 	return &url
 }
 

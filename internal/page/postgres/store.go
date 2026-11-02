@@ -9,22 +9,23 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
+
 	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // OGRequests is the narrow OG lifecycle a Page transaction drives.
@@ -39,7 +40,7 @@ type MediaAssets interface {
 	LockAttachableFilesForUpdate(context.Context, *gorm.DB, []string) error
 	ReleasePublicAssetBindings(context.Context, *gorm.DB, string, string, string) error
 	ReleaseExactPublicAssetBindings(context.Context, *gorm.DB, string, string, []string) error
-	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error)
+	ResolveReadyAssetRefs(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error)
 	LoadUnavailableVersionAttachmentKinds(context.Context, *gorm.DB, proto.Message) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
 }
 
@@ -137,22 +138,7 @@ func NewStore(tx *gorm.DB, ports Ports) page.Store {
 // Bind joins the Store and audit to tx, a transaction another domain's
 // pipeline opened (translation delivery and interchange).
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) page.Joined {
-	joined := page.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-// boundAudit appends in the joined transaction whatever transaction the
-// Page step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return page.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

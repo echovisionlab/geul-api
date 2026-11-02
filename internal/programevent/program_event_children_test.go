@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/programevent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -166,7 +166,7 @@ func TestProgramEventCreditsAddUpdateReorderAndDelete(t *testing.T) {
 	event := h.seedEvent(t)
 	member := uuid.NewString()
 	h.store.PutMember(member)
-	h.members.summaries[member] = &commonv1.MemberSummary{Id: member}
+	h.members.summaries[member] = &memberref.Summary{ID: member}
 
 	first, err := h.service.AddProgramEventCredit(newPrincipal().context(t), programevent.AddProgramEventCreditCommand{EventID: event.ID, MemberID: &member, CreditRole: text(" host ")})
 	require.NoError(t, err)

@@ -117,14 +117,14 @@ func (s *SuppressionStore) Find(ctx context.Context, recipient string) (*emailde
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	return emaildelivery.FindActiveSuppression(ctx, emaildeliverypostgres.Bind(s.db), recipient)
+	return emaildelivery.FindActiveSuppression(ctx, emaildeliverypostgres.NewStore(s.db), recipient)
 }
 
 func (s *SuppressionStore) Lookup(ctx context.Context, recipients []string) (map[string]emaildelivery.Suppression, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	return emaildelivery.LookupActiveSuppressions(ctx, emaildeliverypostgres.Bind(s.db), recipients)
+	return emaildelivery.LookupActiveSuppressions(ctx, emaildeliverypostgres.NewStore(s.db), recipients)
 }
 
 type BulkCampaignStore struct {
@@ -298,7 +298,7 @@ func (r *Renderer) Render(
 			targetLocale = *normalized
 		}
 	}
-	store := emaildeliverypostgres.Bind(r.db)
+	store := emaildeliverypostgres.NewStore(r.db)
 	if targetLocale == "" {
 		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, store, job.GetRecipient())
 	}
@@ -340,7 +340,7 @@ func (r *Renderer) renderTemplate(
 			}
 			return r.campaignRenderer.RenderCampaignEmail(ctx, r.db, campaignID, targetLocale, templateData)
 		}
-		return email.RenderTemplateForLocale(ctx, emailpostgres.Bind(r.db), job.GetTemplateType(), targetLocale, templateData)
+		return email.RenderTemplateForLocale(ctx, emailpostgres.NewStore(r.db), job.GetTemplateType(), targetLocale, templateData)
 	}
 
 	var recipient model.CampaignDeliveryRecipient

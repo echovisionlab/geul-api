@@ -106,7 +106,7 @@ func newTestService(t *testing.T, deps integrationDeps) *artist.Service {
 	if deps.ShareLinks == nil {
 		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
 	}
-	units, err := artistpostgres.NewUnits(deps.DB, artistpostgres.Deps{
+	units, err := artistpostgres.NewUnits(deps.DB, artistpostgres.Ports{
 		ContentBlocks: deps.ContentBlocks, Publisher: deps.Publisher, Checkpoints: deps.Checkpoints,
 		Translation: deps.Translation, Runtime: deps.Runtime, Labels: deps.Labels, Releases: deps.Releases,
 		ProgramEvents: deps.ProgramEvents, Works: deps.Works, ShareLinks: deps.ShareLinks,
@@ -129,7 +129,7 @@ func newArtistRuntimeForTest(db *gorm.DB, cdnDomain string) artistpostgres.Runti
 // Artist store.
 func seedArtistSourceTitle(t *testing.T, db *gorm.DB, artistID, locale, title string, now time.Time) {
 	t.Helper()
-	require.NoError(t, artistpostgres.Bind(db, artistpostgres.Deps{}).SaveLocaleTitle(t.Context(), artistID, locale, title, now))
+	require.NoError(t, artistpostgres.NewStore(db, artistpostgres.Ports{}).SaveLocaleTitle(t.Context(), artistID, locale, title, now))
 }
 
 type noopArtistAsyncPublisher struct{}

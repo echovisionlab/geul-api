@@ -1,39 +1,29 @@
 # <count> <domain package> <category>: files importing gorm, a SQL driver,
-# internal/model or generated contracts outside connect_handler*.go, and
-# references to auth.SpiceDBClient and kratos.* tables. Lower only.
-12 internal/artist generated contracts
-2 internal/artist/public generated contracts
-1 internal/audience generated contracts
-7 internal/campaign generated contracts
-7 internal/emailauthoring generated contracts
+# internal/model or generated contracts outside transport boundaries and
+# port vocabulary; references to auth.SpiceDBClient and kratos.*. Lower only.
+9 internal/artist generated contracts
+1 internal/artist/public generated contracts
+5 internal/campaign generated contracts
+3 internal/emailauthoring generated contracts
 6 internal/emaildelivery generated contracts
-1 internal/entityparticipant generated contracts
-8 internal/form generated contracts
+4 internal/form generated contracts
 2 internal/form/public generated contracts
-12 internal/label generated contracts
-2 internal/label/public generated contracts
-7 internal/legal generated contracts
+8 internal/label generated contracts
+1 internal/label/public generated contracts
+6 internal/legal generated contracts
 2 internal/legal/public generated contracts
-1 internal/maptheme generated contracts
-3 internal/member generated contracts
 1 internal/member gorm
-1 internal/menu generated contracts
-11 internal/page generated contracts
+9 internal/page generated contracts
 2 internal/page/public generated contracts
-18 internal/post generated contracts
-5 internal/post/public generated contracts
-14 internal/programevent generated contracts
-7 internal/programevent/public generated contracts
-6 internal/referencecatalog generated contracts
-6 internal/referencecatalog/public generated contracts
-12 internal/release generated contracts
+15 internal/post generated contracts
+4 internal/post/public generated contracts
+7 internal/programevent generated contracts
+3 internal/programevent/public generated contracts
+8 internal/release generated contracts
 4 internal/release/public generated contracts
-2 internal/series generated contracts
-1 internal/series/public generated contracts
 5 internal/translation generated contracts
 1 internal/translation gorm
 2 internal/translation model
-4 internal/translation/application generated contracts
-15 internal/work generated contracts
+11 internal/work generated contracts
 2 internal/work/public generated contracts
-8 internal/worker generated contracts
+5 internal/worker generated contracts

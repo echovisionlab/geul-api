@@ -24,7 +24,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if store == nil {
 				return nil, errors.New("label translation content Block store is not configured")
 			}
-			return label.LoadTypedTranslationSourceDocument(ctx, labelStore(db, store), labelID)
+			return label.LoadTypedTranslationSourceDocument(ctx, labelJoined(db, store, nil), labelID)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			if job == nil || job.EntityType != string(core.KindLabel) {
@@ -42,7 +42,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if store == nil || job == nil {
 				return errors.New("typed Label translation candidate and content Block store are required")
 			}
-			return label.ApplyTypedTranslationCandidate(ctx, labelStore(tx, store), labelTranslationJob(job), candidate, input, audit)
+			return label.ApplyTypedTranslationCandidate(ctx, labelJoined(tx, store, audit), labelTranslationJob(job), candidate, input)
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditLabelUpdated, sharedtelemetry.NewLabelSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -54,7 +54,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			"",
 		),
 		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, labelID string) error {
-			return label.RequireLockedSourceLocaleEdit(ctx, labelStore(tx, nil), spiceDB, func(principal *auth.UserInfo) (bool, error) {
+			return label.RequireLockedSourceLocaleEdit(ctx, labelJoined(tx, nil, nil), spiceDB, func(principal *auth.UserInfo) (bool, error) {
 				return identitystate.LockActivePrincipal(ctx, tx, principal)
 			}, labelID)
 		},
@@ -62,10 +62,10 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	})
 }
 
-// labelStore binds the Label Store to the translation domain's database
+// labelJoined binds the Label Store to the translation domain's database
 // handle, with the content store it hands the delivery.
-func labelStore(db *gorm.DB, contents *contentblock.Store) label.Store {
-	return labelpostgres.Bind(db, labelpostgres.Deps{ContentBlocks: contents})
+func labelJoined(db *gorm.DB, contents *contentblock.Store, audit domainaudit.Appender) label.Joined {
+	return labelpostgres.Bind(db, labelpostgres.Ports{ContentBlocks: contents}, audit)
 }
 
 func labelTranslationJob(job *model.TranslationJob) label.TranslationJob {

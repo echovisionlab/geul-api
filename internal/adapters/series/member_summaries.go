@@ -36,10 +36,14 @@ func (a *MemberSummaries) LoadSeriesManagers(
 		if summary == nil {
 			continue
 		}
+		var avatar *seriesdomain.Asset
+		if source := summary.Avatar; source != nil {
+			avatar = &seriesdomain.Asset{ID: source.ID, URL: source.URL, Extension: source.Extension, MIMEType: source.MIMEType, FileSize: source.FileSize, SHA256: source.SHA256, Disposition: seriesdomain.AssetDisposition(source.Disposition), DownloadFilename: source.DownloadFilename}
+		}
 		result[memberID] = seriesdomain.ManagerSummary{
 			MemberID: memberID,
-			Nickname: summary.GetNickname(),
-			Avatar:   AssetFromRef(summary.AvatarAsset),
+			Nickname: summary.Nickname,
+			Avatar:   avatar,
 		}
 	}
 	return result, nil

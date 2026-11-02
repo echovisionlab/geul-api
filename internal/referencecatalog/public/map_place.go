@@ -3,8 +3,8 @@ package public
 import (
 	"context"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // GetMapPlacesByIDsQuery names Map Places to read.
@@ -15,7 +15,7 @@ type GetMapPlacesByIDsQuery struct {
 // MapPlace is a Map Place with its ready public image.
 type MapPlace struct {
 	Place referencecatalog.MapPlace
-	Image *commonv1.AssetRef
+	Image *mediaasset.Reference
 }
 
 // GetMapPlacesByIDs returns the public Map Places among IDs.

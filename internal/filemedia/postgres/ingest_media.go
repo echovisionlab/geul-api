@@ -19,7 +19,7 @@ type IngestTranscodes interface {
 }
 
 func (s *store) LockIngestFile(ctx context.Context, id string) error {
-	return mediaassetpostgres.Bind(s.tx).LockAttachableFiles(ctx, []string{id})
+	return mediaassetpostgres.NewStore(s.tx).LockAttachableFiles(ctx, []string{id})
 }
 
 func (s *store) EnsureIngestGeneration(ctx context.Context, input mediaasset.Generation) (mediaasset.Generation, error) {
@@ -27,11 +27,11 @@ func (s *store) EnsureIngestGeneration(ctx context.Context, input mediaasset.Gen
 	if err := s.tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return mediaasset.Generation{}, err
 	}
-	return mediaassetpostgres.Bind(s.tx).Generation(ctx, input.ID)
+	return mediaassetpostgres.NewStore(s.tx).Generation(ctx, input.ID)
 }
 
 func (s *store) EnsureIngestAsset(ctx context.Context, input mediaasset.Asset) (mediaasset.Asset, error) {
-	return mediaassetpostgres.Bind(s.tx).EnsureAssetAllocation(ctx, input)
+	return mediaassetpostgres.NewStore(s.tx).EnsureAssetAllocation(ctx, input)
 }
 
 func (s *store) CompleteIngestGeneration(ctx context.Context, cdn string, input mediaasset.WrittenGeneration) error {

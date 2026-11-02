@@ -364,7 +364,9 @@ func lockPostParticipantRoot(ctx context.Context, store Store, postID string) (S
 // store is bound to the caller's transaction, which must stay open for the
 // entire Post-owned read. Missing and unauthorized Posts share the same
 // not-found result.
-func RequireLockedView(ctx context.Context, store Store, require mutation.Require, postID string) error {
+func RequireLockedView(ctx context.Context, joined Joined, require mutation.Require, postID string) error {
+	store := joined.Store
+
 	status, err := lockPostAuthorizationRoot(ctx, store, postID)
 	if err != nil {
 		return err
@@ -382,7 +384,9 @@ func RequireLockedView(ctx context.Context, store Store, require mutation.Requir
 // RequireLockedSourceLocaleEdit locks the Post lifecycle, then requires the
 // edit action it selects, for a change another domain makes to the Post in
 // its transaction, which store is bound to.
-func RequireLockedSourceLocaleEdit(ctx context.Context, store Store, require mutation.Require, postID string) error {
+func RequireLockedSourceLocaleEdit(ctx context.Context, joined Joined, require mutation.Require, postID string) error {
+	store := joined.Store
+
 	status, err := lockPostAuthorizationRoot(ctx, store, postID)
 	if err != nil {
 		return err

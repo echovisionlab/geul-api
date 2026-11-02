@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/work"
+	"github.com/echovisionlab/geul-api/internal/work/worktest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/work"
-	"github.com/echovisionlab/geul-api/internal/work/worktest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -43,9 +45,9 @@ func TestCreditsAppendAtTheirGroupEndAndKeepACanonicalOrder(t *testing.T) {
 	ctx := admin.context(t)
 	member := newPrincipal()
 	h.store.PutMember(member.memberID, worktest.Member{Nickname: "Credited"})
-	h.members.summaries[member.memberID] = &commonv1.MemberSummary{Id: member.memberID, Nickname: "Credited"}
+	h.members.summaries[member.memberID] = &memberref.Summary{ID: member.memberID, Nickname: "Credited"}
 	h.store.PutArtist(work.CreditArtistRow{ID: "artist-1", Name: "Artist", ImageFileID: stringPointer("image-1")})
-	h.store.PutFileAsset("image-1", "image", &commonv1.AssetRef{Url: "https://cdn.example/artist.webp"})
+	h.store.PutFileAsset("image-1", "image", &mediaasset.Reference{URL: "https://cdn.example/artist.webp"})
 	value := h.seedWork(t, "Credited")
 
 	group, err := h.service.CreateWorkCreditGroup(ctx, work.CreateWorkCreditGroupCommand{WorkID: value.ID, Name: "  Band  "})
@@ -55,10 +57,10 @@ func TestCreditsAppendAtTheirGroupEndAndKeepACanonicalOrder(t *testing.T) {
 	require.NoError(t, err)
 	grouped, err := h.service.AddWorkCredit(ctx, work.AddWorkCreditCommand{WorkID: value.ID, GroupID: &group.ID, MemberID: &member.memberID})
 	require.NoError(t, err)
-	require.Equal(t, "Credited", grouped.Member.GetNickname())
+	require.Equal(t, "Credited", grouped.Member.Nickname)
 	artist, err := h.service.AddWorkCredit(ctx, work.AddWorkCreditCommand{WorkID: value.ID, GroupID: &group.ID, ArtistID: stringPointer("artist-1")})
 	require.NoError(t, err)
-	require.Equal(t, "https://cdn.example/artist.webp", artist.Artist.ImageAsset.GetUrl())
+	require.Equal(t, "https://cdn.example/artist.webp", optional.Value(artist.Artist.ImageAsset).URL)
 
 	credits := h.credits(t, value.ID)
 	require.Equal(t, []string{"g:" + group.ID, "c:" + grouped.Credit.ID + "@" + group.ID, "c:" + artist.Credit.ID + "@" + group.ID, "c:" + ungrouped.Credit.ID}, orderKeys(credits.Order),
@@ -241,9 +243,9 @@ func TestUpdateAndDeleteWorkCreditKeepTheOrder(t *testing.T) {
 func TestListMyCreditedWorksListsTheCallersAndItsArtistsCredits(t *testing.T) {
 	h := newHarness(t)
 	caller := newPrincipal()
-	h.members.summaries[caller.memberID] = &commonv1.MemberSummary{Id: caller.memberID, Nickname: "Me", AvatarAsset: &commonv1.AssetRef{Url: "avatar"}}
+	h.members.summaries[caller.memberID] = &memberref.Summary{ID: caller.memberID, Nickname: "Me", Avatar: memberref.AssetFromReference(&mediaasset.Reference{URL: "avatar"})}
 	h.store.PutArtist(work.CreditArtistRow{ID: "artist-1", Name: " ", ImageFileID: stringPointer("artist-image")}, caller.memberID)
-	h.store.PutFileAsset("artist-image", "image", &commonv1.AssetRef{Url: "artist"})
+	h.store.PutFileAsset("artist-image", "image", &mediaasset.Reference{URL: "artist"})
 	mine := h.seedWork(t, "Mine", func(value *work.Work) { value.SourceLocale = "ko" })
 	theirs := h.seedWork(t, "Theirs")
 	h.store.PutCredit(work.Credit{WorkID: mine.ID, MemberID: &caller.memberID})
@@ -260,12 +262,12 @@ func TestListMyCreditedWorksListsTheCallersAndItsArtistsCredits(t *testing.T) {
 	}
 	require.Equal(t, work.CreditTypeMember, byWork[mine.ID].CreditType)
 	require.Equal(t, "Me", byWork[mine.ID].CreditedAs)
-	require.Equal(t, "avatar", byWork[mine.ID].Image.GetUrl())
+	require.Equal(t, "avatar", optional.Value(byWork[mine.ID].Image).URL)
 	require.Equal(t, "Mine", byWork[mine.ID].Title)
 	require.Equal(t, "ko", byWork[mine.ID].SourceLocale)
 	require.Equal(t, work.CreditTypeArtist, byWork[theirs.ID].CreditType)
 	require.Equal(t, "Unknown Artist", byWork[theirs.ID].CreditedAs, "a blank Artist name reads as unknown")
-	require.Equal(t, "artist", byWork[theirs.ID].Image.GetUrl())
+	require.Equal(t, "artist", optional.Value(byWork[theirs.ID].Image).URL)
 
 	_, err = h.service.ListMyCreditedWorks(t.Context(), work.ListMyCreditedWorksQuery{})
 	requireCode(t, err, connect.CodeUnauthenticated, "")

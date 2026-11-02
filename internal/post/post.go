@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -158,8 +162,8 @@ type View struct {
 	Post
 	Document      *contentv1.RichTextDocument
 	BlockMedia    []*contentv1.ContentBlockMediaItem
-	OgAsset       *commonv1.AssetRef
-	Authors       []*commonv1.MemberSummary
+	OgAsset       *mediaasset.Reference
+	Authors       []*memberref.Summary
 	FeaturedImage *commonv1.MediaDelivery
 	Actions       []Action
 }
@@ -232,7 +236,7 @@ const (
 
 // Participant is one durable author or collaborator of a Post.
 type Participant struct {
-	Member                *commonv1.MemberSummary
+	Member                *memberref.Summary
 	Role                  ParticipantRole
 	CreatedAt             time.Time
 	HasEffectiveAuthority bool

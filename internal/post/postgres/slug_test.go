@@ -13,7 +13,7 @@ func TestStoreReportsPostAndPageRouteSlugs(t *testing.T) {
 	require.NoError(t, db.Exec("INSERT INTO post (id, slug) VALUES (?, ?)", "post-a", "taken").Error)
 	require.NoError(t, db.Exec("INSERT INTO page (slug) VALUES (?)", "posts/page-owned").Error)
 
-	store := Bind(db, Deps{})
+	store := NewStore(db, Ports{})
 	tests := []struct {
 		name          string
 		slug          string

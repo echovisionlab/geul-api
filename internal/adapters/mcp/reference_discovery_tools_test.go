@@ -9,13 +9,17 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/artist"
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -177,11 +181,11 @@ type recordingMemberReferences struct {
 	count int
 }
 
-func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]memberdomain.Summary, error) {
+func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]memberref.Summary, error) {
 	r.query = query
-	items := make([]memberdomain.Summary, r.count)
+	items := make([]memberref.Summary, r.count)
 	for index := range items {
-		items[index] = memberdomain.Summary{ID: managementWorkID, Nickname: "Member"}
+		items[index] = memberref.Summary{ID: managementWorkID, Nickname: "Member"}
 	}
 	return items, nil
 }

@@ -6,8 +6,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -37,59 +41,20 @@ func memberTagMessage(tag Tag) *managev1.MemberTag {
 	return &managev1.MemberTag{Id: tag.ID, Name: tag.Name, CreatedAt: timestamppb.New(tag.CreatedAt), MemberCount: tag.MemberCount}
 }
 
-func summaryResponse(summary Summary, err error) (*connect.Response[managev1.MemberSummaryMutationResponse], error) {
+func summaryResponse(summary memberref.Summary, err error) (*connect.Response[managev1.MemberSummaryMutationResponse], error) {
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(&managev1.MemberSummaryMutationResponse{Member: SummaryMessage(summary)}), nil
+	return connect.NewResponse(&managev1.MemberSummaryMutationResponse{Member: memberref.Message(summary)}), nil
 }
 
-// AssetMessage is the API form of a ready asset; nil stays nil.
-func AssetMessage(asset *Asset) *commonv1.AssetRef {
-	if asset == nil {
-		return nil
-	}
-	return &commonv1.AssetRef{
-		AssetId:          asset.ID,
-		Url:              asset.URL,
-		Extension:        asset.Extension,
-		MimeType:         asset.MIMEType,
-		FileSize:         asset.FileSize,
-		Sha256:           asset.SHA256,
-		Disposition:      commonv1.AssetDisposition(asset.Disposition),
-		DownloadFilename: asset.DownloadFilename,
-	}
-}
-
-// AssetFromMessage is the domain form of an API asset; nil stays nil.
-func AssetFromMessage(asset *commonv1.AssetRef) *Asset {
-	if asset == nil {
-		return nil
-	}
-	return &Asset{
-		ID:               asset.AssetId,
-		URL:              asset.Url,
-		Extension:        asset.Extension,
-		MIMEType:         asset.MimeType,
-		FileSize:         asset.FileSize,
-		SHA256:           asset.Sha256,
-		Disposition:      AssetDisposition(asset.Disposition),
-		DownloadFilename: asset.DownloadFilename,
-	}
-}
-
-// SummaryMessage is the API form of a Member summary.
-func SummaryMessage(summary Summary) *commonv1.MemberSummary {
-	return &commonv1.MemberSummary{Id: summary.ID, Nickname: summary.Nickname, AvatarAsset: AssetMessage(summary.Avatar), Deleted: summary.Deleted}
-}
-
-func summaryMessages(summaries []Summary) []*commonv1.MemberSummary {
+func summaryMessages(summaries []memberref.Summary) []*commonv1.MemberSummary {
 	if summaries == nil {
 		return nil
 	}
 	messages := make([]*commonv1.MemberSummary, len(summaries))
 	for i, summary := range summaries {
-		messages[i] = SummaryMessage(summary)
+		messages[i] = memberref.Message(summary)
 	}
 	return messages
 }
@@ -103,7 +68,7 @@ func timestampMessage(value *time.Time) *timestamppb.Timestamp {
 
 func profileMessage(profile Profile) *managev1.MemberProfile {
 	return &managev1.MemberProfile{
-		Summary: SummaryMessage(profile.Summary), Bio: profile.Bio, Website: profile.Website,
+		Summary: memberref.Message(profile.Summary), Bio: profile.Bio, Website: profile.Website,
 		SocialLinks: profile.SocialLinks, PreferredLocale: profile.PreferredLocale,
 		CreatedAt: timestamppb.New(profile.CreatedAt), UpdatedAt: timestampMessage(profile.UpdatedAt),
 	}
@@ -262,7 +227,7 @@ func sessionMessage(session Session) *managev1.GetCurrentSessionResponse {
 	}
 	return &managev1.GetCurrentSessionResponse{
 		Member: &managev1.CurrentSessionMember{
-			Summary: SummaryMessage(session.Member), PreferredLocale: session.PreferredLocale,
+			Summary: memberref.Message(session.Member), PreferredLocale: session.PreferredLocale,
 			Role: session.Role, Status: AdminStatusMessage(session.Status), Email: session.Email,
 		},
 		Metadata:           metadata,
@@ -363,7 +328,7 @@ func (h *ConnectHandler) CompleteMyOnboarding(ctx context.Context, req *connect.
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(&managev1.CompleteMyOnboardingResponse{Member: SummaryMessage(summary), Onboarded: true}), nil
+	return connect.NewResponse(&managev1.CompleteMyOnboardingResponse{Member: memberref.Message(summary), Onboarded: true}), nil
 }
 
 func (h *ConnectHandler) UpdateMyPreferences(ctx context.Context, req *connect.Request[managev1.UpdateMyPreferencesRequest]) (*connect.Response[managev1.UpdateMyPreferencesResponse], error) {
@@ -393,7 +358,7 @@ func (h *ConnectHandler) UpdateMyProfile(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(&managev1.UpdateMyProfileResponse{Member: SummaryMessage(summary)}), nil
+	return connect.NewResponse(&managev1.UpdateMyProfileResponse{Member: memberref.Message(summary)}), nil
 }
 
 func (h *ConnectHandler) CheckNicknameAvailability(ctx context.Context, req *connect.Request[managev1.CheckNicknameAvailabilityRequest]) (*connect.Response[managev1.CheckNicknameAvailabilityResponse], error) {

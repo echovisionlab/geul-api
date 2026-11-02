@@ -5,6 +5,9 @@ import (
 	"errors"
 	"time"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -98,7 +101,7 @@ type MapPlace struct {
 type MemberSummary struct {
 	ID       string
 	Nickname string
-	Avatar   *commonv1.AssetRef
+	Avatar   *memberref.Asset
 	Deleted  bool
 }
 
@@ -244,9 +247,9 @@ type Media interface {
 	// ID is skipped.
 	LockFilesForAttachment(ctx context.Context, fileIDs []string) error
 	// BindReadyAsset binds the ready asset of a source file to its owner.
-	BindReadyAsset(ctx context.Context, binding AssetBinding) (*commonv1.AssetRef, error)
+	BindReadyAsset(ctx context.Context, binding AssetBinding) (*mediaasset.Reference, error)
 	// ReleaseAssets releases the owner's bindings under a key prefix.
 	ReleaseAssets(ctx context.Context, release AssetRelease) error
 	// ReadyAsset resolves the ready asset of a source file.
-	ReadyAsset(ctx context.Context, source AssetSource) (*commonv1.AssetRef, error)
+	ReadyAsset(ctx context.Context, source AssetSource) (*mediaasset.Reference, error)
 }

@@ -3,6 +3,8 @@ package member
 import (
 	"errors"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/memberref"
 )
 
 // Member is a Member row: the durable domain actor, retained as a tombstone
@@ -29,34 +31,10 @@ func (m Member) tombstone() bool {
 	return m.DeletedAt != nil || m.AccountIdentityID == nil
 }
 
-// AssetDisposition is the content disposition of a public asset, numbered as
-// the API's AssetDisposition.
-type AssetDisposition int32
-
-// Asset is a ready public asset as the media runtime projects it.
-type Asset struct {
-	ID               string
-	URL              string
-	Extension        string
-	MIMEType         string
-	FileSize         int64
-	SHA256           []byte
-	Disposition      AssetDisposition
-	DownloadFilename *string
-}
-
-// Summary is the Member reference every other domain shows.
-type Summary struct {
-	ID       string
-	Nickname string
-	Avatar   *Asset
-	Deleted  bool
-}
-
 // Profile is a Member's profile. A tombstone carries only its summary and
 // creation time.
 type Profile struct {
-	Summary         Summary
+	Summary         memberref.Summary
 	Bio             *string
 	Website         *string
 	SocialLinks     map[string]string

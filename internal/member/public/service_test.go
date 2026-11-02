@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/member"
@@ -18,7 +19,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member/public"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -192,7 +195,7 @@ func TestPublicProfileOfADeletedOrUnonboardedMember(t *testing.T) {
 	bio := "private"
 	former.DeletedAt, former.Bio = &deletedAt, &bio
 	f.store.members[formerID] = former
-	f.store.avatars[formerID] = &member.Asset{ID: uuid.NewString()}
+	f.store.avatars[formerID] = &memberref.Asset{ID: uuid.NewString()}
 	pendingID, _ := f.seed("pending")
 	pending := f.store.members[pendingID]
 	pending.Onboarded = false

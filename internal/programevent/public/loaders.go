@@ -7,9 +7,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 func loadPublicProgramEventType(ctx context.Context, store Store, typeID string, acceptLanguage string) (TypeEntry, error) {
@@ -69,7 +69,7 @@ func findProgramEventTypeLocale(rows []programevent.TypeLocale, locale string) (
 	return programevent.TypeLocale{}, false
 }
 
-func loadProgramEventPosterAsset(ctx context.Context, store Store, assets Assets, eventID string) *commonv1.AssetRef {
+func loadProgramEventPosterAsset(ctx context.Context, store Store, assets Assets, eventID string) *mediaasset.Reference {
 	fileID, err := store.PosterFileID(ctx, eventID)
 	if err != nil || strings.TrimSpace(fileID) == "" {
 		if err != nil {
@@ -80,7 +80,7 @@ func loadProgramEventPosterAsset(ctx context.Context, store Store, assets Assets
 	return assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
 }
 
-func loadProgramEventFileAsset(ctx context.Context, assets Assets, fileID *string) *commonv1.AssetRef {
+func loadProgramEventFileAsset(ctx context.Context, assets Assets, fileID *string) *mediaasset.Reference {
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil
 	}

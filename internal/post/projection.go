@@ -9,8 +9,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 )
@@ -72,7 +77,7 @@ func (s *Service) overlayPostSourceLocaleDocuments(ctx context.Context, posts []
 	return nil
 }
 
-func (s *Service) loadReadyPostOgAssets(ctx context.Context, posts []Post) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyPostOgAssets(ctx context.Context, posts []Post) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(posts)*2)
 	for i := range posts {
 		candidates = append(
@@ -210,8 +215,8 @@ func LoadLocalizedContent(
 func postViewWithProjection(
 	stored Post,
 	content postContent,
-	ogAsset *commonv1.AssetRef,
-	authors []*commonv1.MemberSummary,
+	ogAsset *mediaasset.Reference,
+	authors []*memberref.Summary,
 	featuredImage *commonv1.MediaDelivery,
 	authority PostAuthority,
 ) (View, error) {
@@ -225,8 +230,8 @@ func postViewWithProjection(
 	}, nil
 }
 
-func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
-	result := make(map[string][]*commonv1.MemberSummary, len(postIDs))
+func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*memberref.Summary, error) {
+	result := make(map[string][]*memberref.Summary, len(postIDs))
 	if len(postIDs) == 0 {
 		return result, nil
 	}

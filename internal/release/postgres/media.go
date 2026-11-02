@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"gorm.io/gorm"
-
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"gorm.io/gorm"
 )
 
 func (s *store) FileID(ctx context.Context, fileID string) (string, error) {
@@ -46,7 +45,7 @@ func (s *store) LockAttachableFiles(ctx context.Context, fileIDs []string) error
 	return s.ports.Assets.LockAttachableFiles(ctx, s.tx, fileIDs)
 }
 
-func (s *store) BindArtwork(ctx context.Context, fileID, releaseID string) (*commonv1.AssetRef, error) {
+func (s *store) BindArtwork(ctx context.Context, fileID, releaseID string) (*mediaasset.Reference, error) {
 	return s.ports.Assets.BindArtwork(ctx, s.tx, fileID, releaseID)
 }
 
@@ -58,7 +57,7 @@ func (s *store) CancelOG(ctx context.Context, releaseID string) error {
 	return s.ports.OG.CancelAndRelease(ctx, s.tx, releaseID)
 }
 
-func (s *store) ReadyArtwork(ctx context.Context, releaseID string) (*commonv1.AssetRef, error) {
+func (s *store) ReadyArtwork(ctx context.Context, releaseID string) (*mediaasset.Reference, error) {
 	var result struct {
 		FileID string `gorm:"column:file_id"`
 	}
@@ -77,12 +76,12 @@ func (s *store) ReadyArtwork(ctx context.Context, releaseID string) (*commonv1.A
 	return s.ports.Assets.ReadyArtwork(ctx, s.tx, result.FileID)
 }
 
-func (s *store) ReadyArtworks(ctx context.Context, releaseIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyArtworks(ctx context.Context, releaseIDs []string) (map[string]*mediaasset.Reference, error) {
 	type row struct {
 		ReleaseID string `gorm:"column:release_id"`
 		AssetID   string `gorm:"column:asset_id"`
 	}
-	result := make(map[string]*commonv1.AssetRef, len(releaseIDs))
+	result := make(map[string]*mediaasset.Reference, len(releaseIDs))
 	if len(releaseIDs) == 0 {
 		return result, nil
 	}

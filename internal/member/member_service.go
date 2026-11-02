@@ -13,12 +13,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+
 	otelmetric "go.opentelemetry.io/otel/metric"
 )
 
@@ -44,7 +48,7 @@ type Authorizer interface {
 // UserAvatarAssetPromoter is the exact File capability required for Member
 // avatar projection; File storage remains outside this domain.
 type UserAvatarAssetPromoter interface {
-	PromoteUserAvatarAsset(ctx context.Context, fileID string) (*Asset, error)
+	PromoteUserAvatarAsset(ctx context.Context, fileID string) (*memberref.Asset, error)
 }
 
 // Deps are the collaborators of the Member use cases. Every field except the

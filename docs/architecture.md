@@ -633,6 +633,12 @@ env -u API_TIMEOUT_MS GOWORK=off go test ./internal/architecture -run <Test> -up
 `TestTableOwnersCoverEveryModelTable` fails when a model's table has no owner.
 `pipelineDomains` in `use_case_ratchet_test.go` lists the migrated domains.
 
+The domain port check allows policy descriptors, collaboration error reason enums,
+and the common filter/sort types and their operator enums as port vocabulary.
+`queue_messages.go`, `job_messages.go`, and `user_deletion_messages.go` are queue
+transport boundaries. A business file that mixes vocabulary with other generated
+types still counts as a dependency on generated contracts.
+
 ## Migrating a domain
 
 Work in this order; each step keeps every Connect response and MCP tool output

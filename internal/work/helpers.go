@@ -10,9 +10,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -111,9 +112,9 @@ func uniqueAssetIDs(candidates ...*string) []string {
 	return ids
 }
 
-func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*mediaasset.Reference, error) {
 	ids := uniqueAssetIDs(candidates...)
-	ready := make(map[string]*commonv1.AssetRef, len(ids))
+	ready := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return ready, nil
 	}
@@ -127,7 +128,7 @@ func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...
 	return ready, nil
 }
 
-func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error) {
 	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidates...)
 	if err != nil {
 		return nil, err
@@ -135,7 +136,7 @@ func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*stri
 	return manageOgAssetFromReadyMap(ready, candidates...), nil
 }
 
-func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates ...*string) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*mediaasset.Reference, candidates ...*string) *mediaasset.Reference {
 	for _, candidate := range candidates {
 		if candidate == nil {
 			continue

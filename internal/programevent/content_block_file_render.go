@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
 )
 
@@ -36,5 +37,5 @@ func (r contentBlockFileRenderResolver) ResolveContentBlockFile(
 	if err != nil {
 		return contentblock.FileRenderTarget{}, err
 	}
-	return contentblock.FileRenderTarget{URL: ref.GetUrl(), MIMEType: ref.GetMimeType()}, nil
+	return contentblock.FileRenderTarget{URL: optional.Value(ref).URL, MIMEType: optional.Value(ref).MimeType}, nil
 }

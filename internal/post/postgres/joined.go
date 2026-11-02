@@ -34,14 +34,14 @@ func freshRequire(ctx context.Context, tx *gorm.DB, checker authz.AuthorizationD
 // tx before one exact view decision (post.RequireLockedView). Callers must
 // keep tx open for the entire Post-owned read.
 func RequireLockedView(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, postID string) error {
-	return post.RequireLockedView(ctx, Bind(tx, Deps{}), freshRequire(ctx, tx, spiceDB), postID)
+	return post.RequireLockedView(ctx, Bind(tx, Ports{}, nil), freshRequire(ctx, tx, spiceDB), postID)
 }
 
 // RequireLockedSourceLocaleEdit locks the Post lifecycle and the current
 // principal in tx and requires the edit action the lifecycle selects
 // (post.RequireLockedSourceLocaleEdit).
 func RequireLockedSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, postID string) error {
-	return post.RequireLockedSourceLocaleEdit(ctx, Bind(tx, Deps{}), freshRequire(ctx, tx, spiceDB), postID)
+	return post.RequireLockedSourceLocaleEdit(ctx, Bind(tx, Ports{}, nil), freshRequire(ctx, tx, spiceDB), postID)
 }
 
 // LoadTypedTranslationSourceDocument reads the Post's translation source
@@ -50,7 +50,7 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, db *gorm.DB, store 
 	if store == nil {
 		return nil, errors.New("post translation content Block store is not configured")
 	}
-	return post.LoadTypedTranslationSourceDocument(ctx, Bind(db, Deps{ContentBlocks: store}), postID)
+	return post.LoadTypedTranslationSourceDocument(ctx, Bind(db, Ports{ContentBlocks: store}, nil), postID)
 }
 
 // ApplyTypedTranslationCandidateWithDB delivers a provider translation in
@@ -67,7 +67,7 @@ func ApplyTypedTranslationCandidateWithDB(
 	if store == nil || job == nil {
 		return errors.New("typed post translation candidate and content Block store are required")
 	}
-	return post.ApplyTypedTranslationCandidate(ctx, Bind(tx, Deps{ContentBlocks: store}), translationJob(job), candidate, metadata, audit)
+	return post.ApplyTypedTranslationCandidate(ctx, Bind(tx, Ports{ContentBlocks: store}, audit), translationJob(job), candidate, metadata)
 }
 
 // TranslationInterchange runs Post's XLIFF seam (post.TranslationInterchange)
@@ -100,7 +100,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if i == nil || tx == nil || store == nil || job == nil || candidate == nil {
 		return post.TranslationInterchangeMutationResult{}, errors.New("post translation interchange dependencies are required")
 	}
-	return i.domain.ApplyCandidate(ctx, Bind(tx, Deps{ContentBlocks: store}), translationJob(job), candidate, entry, expectedRevision)
+	return i.domain.ApplyCandidate(ctx, NewStore(tx, Ports{ContentBlocks: store}), translationJob(job), candidate, entry, expectedRevision)
 }
 
 func translationJob(job *model.TranslationJob) post.TranslationJob {

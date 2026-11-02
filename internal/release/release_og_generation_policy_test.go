@@ -30,7 +30,7 @@ func TestReleaseOgPolicyRetainsLegacyIdentityWithoutNewGeneration(t *testing.T) 
 }
 
 func TestManualReleaseOgGenerationIsDisabledBeforeDatabaseLookup(t *testing.T) {
-	store := ogpostgres.Bind(nil, ogpostgres.Ports{Requests: releaseOGResolverForTest()})
+	store := ogpostgres.NewStore(nil, ogpostgres.Ports{Requests: releaseOGResolverForTest()})
 	_, err := og.ResolveRequests(t.Context(), store, "release", "release-1", og.Selection{Kind: og.SelectionPrimary})
 	require.Error(t, err)
 	assert.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))

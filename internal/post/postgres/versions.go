@@ -78,7 +78,7 @@ func (s *store) InsertVersion(ctx context.Context, version *post.StoredVersion) 
 
 func (s *store) RestoreVersion(ctx context.Context, restore post.VersionRestore) (versionrestore.Outcome, error) {
 	return versionrestore.Restore{
-		Store: s.deps.ContentBlocks, DocumentID: restore.DocumentID, Version: restore.Version,
+		Store: s.ports.ContentBlocks, DocumentID: restore.DocumentID, Version: restore.Version,
 		Fence: s.domainFence(restore.Fence),
 		LoadSource: func(ctx context.Context, tx *gorm.DB) (versionrestore.Source, error) {
 			return restore.LoadSource(ctx, s.with(tx))
@@ -96,5 +96,5 @@ func (s *store) RestoreVersion(ctx context.Context, restore post.VersionRestore)
 }
 
 func (s *store) UnavailableVersionAttachments(ctx context.Context, document *contentv1.LocalizedRichTextDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return s.deps.VersionRestore.LoadUnavailableVersionAttachmentKinds(ctx, s.tx, document)
+	return s.ports.VersionRestore.LoadUnavailableVersionAttachmentKinds(ctx, s.tx, document)
 }

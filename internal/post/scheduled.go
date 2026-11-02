@@ -12,7 +12,8 @@ const defaultScheduledPostBatchSize = 100
 // request principal, and the schedule an authorized SchedulePost stored is its
 // authority. SKIP LOCKED and the status predicate make concurrent/redelivered
 // ticks duplicate-safe; a missed wake-up is recovered by the next minute scan.
-func ProcessDueScheduledPosts(ctx context.Context, store Store, limit int) ([]string, error) {
+func ProcessDueScheduledPosts(ctx context.Context, joined Joined, limit int) ([]string, error) {
+	store := joined.Store
 	if limit <= 0 {
 		limit = defaultScheduledPostBatchSize
 	}

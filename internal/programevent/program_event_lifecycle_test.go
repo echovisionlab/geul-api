@@ -5,15 +5,17 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/authz/authztest"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/programevent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -195,10 +197,10 @@ func TestGetProgramEventProjectsTheStoredEvent(t *testing.T) {
 	h := newHarness(t)
 	admin := newPrincipal()
 	member, artist := uuid.NewString(), uuid.NewString()
-	h.members.summaries[member] = &commonv1.MemberSummary{Id: member, Nickname: "Host"}
+	h.members.summaries[member] = &memberref.Summary{ID: member, Nickname: "Host"}
 	h.store.CreditArtists = map[string]programevent.CreditArtist{artist: {ID: artist, Name: "Artist", Slug: text("artist")}}
 	h.store.ArtistImages = map[string]string{artist: "artist-image"}
-	h.store.ReadyImages = map[string]*commonv1.AssetRef{"artist-image": {AssetId: "image-asset"}}
+	h.store.ReadyImages = map[string]*mediaasset.Reference{"artist-image": {AssetID: "image-asset"}}
 	event := h.seedEvent(t)
 	h.store.PutLocale(event.ID, programevent.LocaleMetadata{Locale: "ko", Summary: text("요약"), UpdatedAt: at(1)})
 	require.NoError(t, h.store.InsertCredit(t.Context(), &programevent.CreditRecord{EventID: event.ID, ArtistID: &artist, SortOrder: 1}))
@@ -213,7 +215,7 @@ func TestGetProgramEventProjectsTheStoredEvent(t *testing.T) {
 	require.Equal(t, "요약", *got.Locales[1].Summary)
 	require.Len(t, got.Credits, 3)
 	require.Equal(t, h.members.summaries[member], got.Credits[0].Member)
-	require.Equal(t, &programevent.CreditArtist{ID: artist, Name: "Artist", Slug: text("artist"), ImageAsset: &commonv1.AssetRef{AssetId: "image-asset"}}, got.Credits[1].Artist)
+	require.Equal(t, &programevent.CreditArtist{ID: artist, Name: "Artist", Slug: text("artist"), ImageAsset: &mediaasset.Reference{AssetID: "image-asset"}}, got.Credits[1].Artist)
 	require.Nil(t, got.Credits[2].Artist, "an unreadable artist is left out")
 	require.Nil(t, got.PosterFileID)
 }

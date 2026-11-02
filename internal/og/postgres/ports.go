@@ -105,7 +105,7 @@ func NewCollector(sources ...AllRequestSource) *Collector {
 
 // Collect returns every source's current requests, once per target.
 func (c *Collector) Collect(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
-	return og.CollectRequests(ctx, Bind(db, Ports{AllRequests: c}))
+	return og.CollectRequests(ctx, NewStore(db, Ports{AllRequests: c}))
 }
 
 func (c *Collector) collect(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
@@ -152,7 +152,7 @@ func (p *Planner) RequestBulkReloadedWithDB(
 	if tx == nil {
 		return nil, domainerr.InvalidField("transaction", "database transaction is required")
 	}
-	return og.RequestBulk(ctx, Bind(tx, p.ports), dbtime.Now(), triggerKind, reason, requests,
+	return og.RequestBulk(ctx, NewStore(tx, p.ports), dbtime.Now(), triggerKind, reason, requests,
 		func(ctx context.Context, _ og.Store) ([]og.Request, error) { return reload(ctx, tx) })
 }
 
@@ -185,7 +185,7 @@ func (r *Refresher) RequestCurrentWithDB(
 	if err != nil {
 		return nil, err
 	}
-	return og.RequestCurrent(ctx, Bind(tx, r.ports), dbtime.Now(), name, entityID, og.RefreshSelection(locale, allLocales), reason)
+	return og.RequestCurrent(ctx, NewStore(tx, r.ports), dbtime.Now(), name, entityID, og.RefreshSelection(locale, allLocales), reason)
 }
 
 // CancelEntity cancels every active generation of an entity in tx, the
@@ -195,7 +195,7 @@ func CancelEntity(ctx context.Context, tx *gorm.DB, entityType managev1.OgEntity
 	if err != nil {
 		return err
 	}
-	return og.CancelEntity(ctx, Bind(tx, Ports{}), dbtime.Now(), name, entityID)
+	return og.CancelEntity(ctx, NewStore(tx, Ports{}), dbtime.Now(), name, entityID)
 }
 
 // AssetProtector keeps an OG asset an entity row still points at from public
@@ -210,7 +210,7 @@ func NewAssetProtector(db *gorm.DB, references ...AssetReference) *AssetProtecto
 }
 
 func (p *AssetProtector) IsPublicAssetProtected(ctx context.Context, asset mediaasset.Asset) (bool, error) {
-	return og.AssetProtected(ctx, Bind(p.db.WithContext(ctx), Ports{References: p.references}), assetFromModel(mediaassetpostgres.AssetRow(asset)))
+	return og.AssetProtected(ctx, NewStore(p.db.WithContext(ctx), Ports{References: p.references}), assetFromModel(mediaassetpostgres.AssetRow(asset)))
 }
 
 // ResolveExactLocalizedGeneration classifies the latest generation attached to

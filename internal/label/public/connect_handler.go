@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/label"
@@ -62,7 +64,7 @@ func (h *ConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.Ge
 func summaryMessage(summary Summary) *openv1.LabelSummary {
 	message := &openv1.LabelSummary{
 		Id: summary.ID, Name: summary.Name, Slug: summary.Slug, CountryCode: summary.CountryCode, Website: summary.Website,
-		OgAsset: summary.OgImage, ImageLightAsset: summary.LightLogo, ImageDarkAsset: summary.DarkLogo,
+		OgAsset: mediaasset.ReferenceProto(summary.OgImage), ImageLightAsset: mediaasset.ReferenceProto(summary.LightLogo), ImageDarkAsset: mediaasset.ReferenceProto(summary.DarkLogo),
 	}
 	if summary.PublishedAt != nil {
 		message.PublishedAt = timestamppb.New(*summary.PublishedAt)
@@ -84,26 +86,26 @@ func detailMessage(detail Detail) *openv1.Label {
 		Slug:        value.Slug,
 		CountryCode: value.CountryCode,
 		Website:     value.Website,
-		OgAsset:     detail.OgImage,
+		OgAsset:     mediaasset.ReferenceProto(detail.OgImage),
 	}
 	if value.PublishedAt != nil {
 		message.PublishedAt = timestamppb.New(*value.PublishedAt)
 	}
-	message.ImageLightAsset, message.ImageDarkAsset = detail.LightLogo, detail.DarkLogo
+	message.ImageLightAsset, message.ImageDarkAsset = mediaasset.ReferenceProto(detail.LightLogo), mediaasset.ReferenceProto(detail.DarkLogo)
 	message.ReleaseCount, message.ArtistCount = detail.ReleaseCount, detail.ArtistCount
 	if detail.Parent != nil {
 		message.ParentLabel = &openv1.LabelSummary{
 			Id: detail.Parent.ID, Name: detail.Parent.Name, Slug: detail.Parent.Slug,
-			ImageLightAsset: detail.Parent.LightLogo, ImageDarkAsset: detail.Parent.DarkLogo, OgAsset: detail.Parent.OgImage,
+			ImageLightAsset: mediaasset.ReferenceProto(detail.Parent.LightLogo), ImageDarkAsset: mediaasset.ReferenceProto(detail.Parent.DarkLogo), OgAsset: mediaasset.ReferenceProto(detail.Parent.OgImage),
 		}
 	}
 	message.Artists = make([]*openv1.LabelArtist, 0, len(detail.Artists))
 	for _, artist := range detail.Artists {
-		message.Artists = append(message.Artists, &openv1.LabelArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: artist.Image})
+		message.Artists = append(message.Artists, &openv1.LabelArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug, ImageAsset: mediaasset.ReferenceProto(artist.Image)})
 	}
 	message.Releases = make([]*openv1.LabelRelease, 0, len(detail.Releases))
 	for _, release := range detail.Releases {
-		item := &openv1.LabelRelease{Id: release.ID, Title: release.Title, Slug: release.Slug, Type: release.Type, ArtworkAsset: release.Artwork}
+		item := &openv1.LabelRelease{Id: release.ID, Title: release.Title, Slug: release.Slug, Type: release.Type, ArtworkAsset: mediaasset.ReferenceProto(release.Artwork)}
 		if release.ReleaseDate != nil {
 			item.ReleaseDate = timestamppb.New(*release.ReleaseDate)
 		}

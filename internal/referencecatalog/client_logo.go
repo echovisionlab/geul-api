@@ -8,9 +8,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -73,7 +75,7 @@ func writeClientLogo(ctx context.Context, store Store, clientID string, slot Cli
 }
 
 // SetClientLogo selects a ready logo for one slot and returns its asset.
-func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoCommand) (_ *commonv1.AssetRef, returnErr error) {
+func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoCommand) (_ *mediaasset.Reference, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("client_id", command.ClientID))
 
 	can, err := policyv1.Client.Edit(command.ClientID)
@@ -89,13 +91,13 @@ func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoComman
 	}
 
 	var selected *string
-	logoAsset, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*commonv1.AssetRef, Store]{
+	logoAsset, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*mediaasset.Reference, Store]{
 		Lock: func(ctx context.Context, store Store) (err error) {
 			selected, err = lockClientLogo(ctx, store, command.ClientID, command.Slot)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, store Store) (*commonv1.AssetRef, error) {
+		Change: func(ctx context.Context, store Store) (*mediaasset.Reference, error) {
 			if selected != nil && *selected == command.FileID {
 				return nil, nil
 			}
@@ -112,7 +114,7 @@ func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoComman
 				Kind:         "logo",
 			})
 		},
-		Audit: func(bound *commonv1.AssetRef) mutation.Audit {
+		Audit: func(bound *mediaasset.Reference) mutation.Audit {
 			if selected != nil && *selected == command.FileID {
 				return mutation.Unchanged()
 			}

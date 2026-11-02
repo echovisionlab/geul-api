@@ -36,13 +36,13 @@ func TestRuntimeBuildsBoundedReadyAssetRefsByAuthorityKey(t *testing.T) {
 	byAsset, err := runtime.assetRefs(db, []model.PublicAsset{ready, invalid}, false)
 	require.NoError(t, err)
 	require.Len(t, byAsset, 1)
-	require.Equal(t, assetID, byAsset[assetID].AssetId)
-	require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/logo.png", byAsset[assetID].Url)
+	require.Equal(t, assetID, byAsset[assetID].AssetID)
+	require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/logo.png", byAsset[assetID].URL)
 
 	bySource, err := runtime.assetRefs(db, []model.PublicAsset{ready, invalid}, true)
 	require.NoError(t, err)
 	require.Len(t, bySource, 1)
-	require.Equal(t, assetID, bySource[fileID].AssetId)
+	require.Equal(t, assetID, bySource[fileID].AssetID)
 }
 
 func TestPublicRuntimeUsesCallerTransactionForMediaProjection(t *testing.T) {
@@ -83,5 +83,5 @@ func TestPublicRuntimeUsesCallerTransactionForMediaProjection(t *testing.T) {
 	runtime := &PublicRuntime{cdnDomain: "https://cdn.example.com"}
 	refs, err := runtime.ReadyForSourceFiles(context.Background(), db, []string{fileID}, "logo")
 	require.NoError(t, err)
-	require.Equal(t, assetID, refs[fileID].AssetId)
+	require.Equal(t, assetID, refs[fileID].AssetID)
 }

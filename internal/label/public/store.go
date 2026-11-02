@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/label"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Store is what the public Label reads read, bound to one read snapshot.
@@ -28,9 +28,9 @@ type Store interface {
 	Document(ctx context.Context, labelID, locale string) (ContentDocument, error)
 	// ReadySourceFiles resolves ready assets of kinds by source File ID,
 	// ReadyAssets by asset ID; ResolveOg resolves one OG image.
-	ReadySourceFiles(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error)
-	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
-	ResolveOg(ctx context.Context, assetID *string) (*commonv1.AssetRef, error)
+	ReadySourceFiles(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error)
+	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
+	ResolveOg(ctx context.Context, assetID *string) (*mediaasset.Reference, error)
 	// RelationCounts counts the Label's published Releases and Artists.
 	RelationCounts(ctx context.Context, labelID string) (releases, artists int32, err error)
 	// PublishedParent reads the parent Label when it is published.

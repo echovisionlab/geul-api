@@ -9,19 +9,22 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/post"
+	"github.com/google/uuid"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -157,8 +160,8 @@ type PostView struct {
 	Localization  LocalizedContentSelection
 	Document      *contentv1.LocalizedRichTextDocument
 	Revision      string
-	OgAsset       *commonv1.AssetRef
-	Authors       []*commonv1.MemberSummary
+	OgAsset       *mediaasset.Reference
+	Authors       []*memberref.Summary
 	SeriesTitle   string
 	BlockMedia    []*contentv1.ContentBlockMediaItem
 	FeaturedImage *commonv1.MediaDelivery
@@ -168,7 +171,7 @@ type PostView struct {
 type Summary struct {
 	Post          post.Post
 	Localization  LocalizedContentSelection
-	Authors       []*commonv1.MemberSummary
+	Authors       []*memberref.Summary
 	FeaturedImage *commonv1.MediaDelivery
 }
 
@@ -755,9 +758,9 @@ func (s *Service) overlayPostSourceLocaleDocuments(ctx context.Context, posts []
 
 // loadPostAuthorMembers resolves durable post authors and Member
 // summaries in a fixed number of queries for any page size.
-func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
+func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*memberref.Summary, error) {
 	ids := sliceutil.UniqueTrimmed(postIDs)
-	result := make(map[string][]*commonv1.MemberSummary, len(ids))
+	result := make(map[string][]*memberref.Summary, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}

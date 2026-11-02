@@ -18,7 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func set(value string) *entityparticipant.StringMutation { return &entityparticipant.StringMutation{Set: &value} }
+func set(value string) *entityparticipant.StringMutation {
+	return &entityparticipant.StringMutation{Set: &value}
+}
 
 func clear(value bool) *entityparticipant.StringMutation {
 	return &entityparticipant.StringMutation{Clear: &value}
@@ -342,14 +344,14 @@ func TestTranslationDeliveryAppliesToADraftLabelAndRejectsADeletedOne(t *testing
 		ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko"},
 	}
 
-	require.NoError(t, label.ApplyTypedTranslationCandidate(f.contributor.context(t), f.h.store, job, candidate, translation.EntryWrite{Now: time.Now()}, f.h.audit),
+	require.NoError(t, label.ApplyTypedTranslationCandidate(f.contributor.context(t), label.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now()}),
 		"an already-submitted translation job may apply to a draft Label")
 	_, exists := f.h.store.Locale(f.label.ID, "ko")
 	require.True(t, exists)
 	require.Equal(t, []sharedtelemetry.AuditItemOperation{sharedtelemetry.AuditItemOperationCreated}, itemOperations(f.h))
 
 	require.NoError(t, f.h.store.DeleteLabel(t.Context(), f.label.ID))
-	err := label.ApplyTypedTranslationCandidate(f.contributor.context(t), f.h.store, job, candidate, translation.EntryWrite{Now: time.Now()}, f.h.audit)
+	err := label.ApplyTypedTranslationCandidate(f.contributor.context(t), label.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now()})
 	requireCode(t, err, connect.CodeNotFound, "label not found: "+f.label.ID)
 }
 
@@ -367,9 +369,9 @@ func TestRequireLockedSourceLocaleEditLocksTheLabelAndThePrincipal(t *testing.T)
 	active := func(*auth.UserInfo) (bool, error) { return true, nil }
 	inactive := func(*auth.UserInfo) (bool, error) { return false, nil }
 
-	require.NoError(t, label.RequireLockedSourceLocaleEdit(ctx, f.h.store, f.h.checker, active, f.label.ID))
-	err := label.RequireLockedSourceLocaleEdit(ctx, f.h.store, f.h.checker, inactive, f.label.ID)
+	require.NoError(t, label.RequireLockedSourceLocaleEdit(ctx, label.Joined{Store: f.h.store}, f.h.checker, active, f.label.ID))
+	err := label.RequireLockedSourceLocaleEdit(ctx, label.Joined{Store: f.h.store}, f.h.checker, inactive, f.label.ID)
 	requireCode(t, err, connect.CodeNotFound, "label not found: "+f.label.ID)
-	err = label.RequireLockedSourceLocaleEdit(ctx, f.h.store, f.h.checker, active, "00000000-0000-4000-8000-000000000006")
+	err = label.RequireLockedSourceLocaleEdit(ctx, label.Joined{Store: f.h.store}, f.h.checker, active, "00000000-0000-4000-8000-000000000006")
 	requireCode(t, err, connect.CodeNotFound, "label not found: 00000000-0000-4000-8000-000000000006")
 }

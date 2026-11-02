@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/post/posttest"
 	"github.com/echovisionlab/geul-api/internal/post/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // ShareLink is a share link of a draft Post.
@@ -148,6 +147,6 @@ func (s *Store) ResolveOgConsistency(_ context.Context, _ string, selection publ
 }
 
 // ReadyOgAsset implements public.Store; the fake has no ready asset.
-func (s *Store) ReadyOgAsset(context.Context, ...*string) (*commonv1.AssetRef, error) {
+func (s *Store) ReadyOgAsset(context.Context, ...*string) (*mediaasset.Reference, error) {
 	return nil, nil
 }

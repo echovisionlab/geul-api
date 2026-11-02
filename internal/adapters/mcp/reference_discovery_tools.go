@@ -9,9 +9,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -64,7 +67,7 @@ type MapPlaceReferenceDiscovery interface {
 	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error)
 }
 type MemberReferenceDiscovery interface {
-	SearchMembers(context.Context, member.SearchMembersQuery) ([]member.Summary, error)
+	SearchMembers(context.Context, member.SearchMembersQuery) ([]memberref.Summary, error)
 }
 type ArtistReferenceDiscovery interface {
 	ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error)

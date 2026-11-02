@@ -22,12 +22,12 @@ import (
 
 // NewUnits returns the transcode unit of work over db.
 func NewUnits(db *gorm.DB) mutation.UnitOfWork[transcode.Store] {
-	return mutation.Postgres(db, Bind)
+	return mutation.Postgres(db, NewStore)
 }
 
-// Bind binds the transcode store to tx, the transaction of a caller that
+// NewStore binds the transcode store to tx, the transaction of a caller that
 // joins it.
-func Bind(tx *gorm.DB) transcode.Store {
+func NewStore(tx *gorm.DB) transcode.Store {
 	return store{tx: tx}
 }
 
@@ -51,7 +51,7 @@ func (t *Tracker) RegisterTranscodeAudio(ctx context.Context, tx *gorm.DB, job *
 	if tx == nil {
 		return errors.New("transcode job transaction is required")
 	}
-	return transcode.RegisterAudio(ctx, Bind(tx), job)
+	return transcode.RegisterAudio(ctx, NewStore(tx), job)
 }
 
 // RegisterTranscodeVideo stores the immutable video allocation in the caller's
@@ -61,7 +61,7 @@ func (t *Tracker) RegisterTranscodeVideo(ctx context.Context, tx *gorm.DB, job *
 	if tx == nil {
 		return errors.New("transcode job transaction is required")
 	}
-	return transcode.RegisterVideo(ctx, Bind(tx), job)
+	return transcode.RegisterVideo(ctx, NewStore(tx), job)
 }
 
 // CancelTrackWaveformJobs cancels the queued waveform jobs of Tracks in tx,
@@ -73,7 +73,7 @@ func CancelTrackWaveformJobs(
 	trackIDs []string,
 	reason managev1.TranscodeCancelReason,
 ) error {
-	return transcode.CancelTrackWaveformJobs(ctx, Bind(tx), publisher, trackIDs, reason)
+	return transcode.CancelTrackWaveformJobs(ctx, NewStore(tx), publisher, trackIDs, reason)
 }
 
 type store struct {

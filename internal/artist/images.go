@@ -10,9 +10,11 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -22,7 +24,7 @@ type ArtistImageProjection struct {
 	ArtistID  string
 	FileID    string
 	SortOrder int32
-	Asset     *commonv1.AssetRef
+	Asset     *mediaasset.Reference
 }
 
 func (s *Service) loadArtistImages(ctx context.Context, artistID string) ([]ArtistImageProjection, error) {

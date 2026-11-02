@@ -3,26 +3,29 @@ package workpostgres
 import (
 	"context"
 
-	"github.com/google/uuid"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/work"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+	"gorm.io/gorm/clause"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Runtime.ResolveReadyAssetRefs(ctx, s.tx, assetIDs)
 }
 
-func (s *store) ReadyFileAsset(ctx context.Context, fileID, kind string) (*commonv1.AssetRef, error) {
+func (s *store) ReadyFileAsset(ctx context.Context, fileID, kind string) (*mediaasset.Reference, error) {
 	return s.ports.Runtime.ReadyPublicAssetRefForSourceFile(ctx, s.tx, fileID, kind)
 }
 
@@ -38,7 +41,7 @@ func (s *store) FileID(ctx context.Context, fileID string) (string, error) {
 	return file.ID, nil
 }
 
-func (s *store) BindFeaturedImage(ctx context.Context, workID, fileID string) (*commonv1.AssetRef, error) {
+func (s *store) BindFeaturedImage(ctx context.Context, workID, fileID string) (*mediaasset.Reference, error) {
 	return s.ports.Runtime.BindReadyAssetForSourceFile(ctx, s.tx, fileID, "work", workID, "featured_image", "image")
 }
 

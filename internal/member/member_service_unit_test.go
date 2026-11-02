@@ -4,13 +4,15 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/echovisionlab/geul-api/internal/memberref"
 )
 
 func TestMemberSummaryDeletedMemberNeverExposesProfilePII(t *testing.T) {
 	t.Parallel()
 	nickname := "Former name"
 	deletedAt := time.Now()
-	avatar := &Asset{ID: "former-avatar"}
+	avatar := &memberref.Asset{ID: "former-avatar"}
 
 	summary := memberSummary(Member{
 		ID:        "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
@@ -96,7 +98,7 @@ func TestHideExtendedMemberProfilePreservesSummary(t *testing.T) {
 	bio := "biography"
 	website := "https://profile.example.test"
 	profile := &Profile{
-		Summary:     Summary{ID: "member-id", Nickname: "nickname"},
+		Summary:     memberref.Summary{ID: "member-id", Nickname: "nickname"},
 		Bio:         &bio,
 		Website:     &website,
 		SocialLinks: map[string]string{"homepage": website},

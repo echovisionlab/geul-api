@@ -215,9 +215,9 @@ func TestListLabelParticipantsReportsEffectiveAuthority(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, views, 2)
-	require.Equal(t, f.owner.memberID, views[0].Member.GetId())
+	require.Equal(t, f.owner.memberID, views[0].Member.ID)
 	require.True(t, views[0].HasEffectiveAuthority)
-	require.Equal(t, f.member.memberID, views[1].Member.GetId())
+	require.Equal(t, f.member.memberID, views[1].Member.ID)
 	require.False(t, views[1].HasEffectiveAuthority)
 }
 

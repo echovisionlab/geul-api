@@ -17,10 +17,10 @@ type NewsletterSubscription struct{}
 var _ accountpostgres.Newsletter = NewsletterSubscription{}
 
 func (NewsletterSubscription) Mutate(ctx context.Context, db *gorm.DB, identityID string, subscribed bool) (bool, error) {
-	return member.MutateNewsletterSubscription(ctx, memberpostgres.Bind(db), identityID, subscribed)
+	return member.MutateNewsletterSubscription(ctx, memberpostgres.NewStore(db), identityID, subscribed)
 }
 
 func (NewsletterSubscription) State(ctx context.Context, db *gorm.DB, identityID string) (accountdomain.NewsletterState, error) {
-	state, err := member.SubscriptionState(ctx, memberpostgres.Bind(db), identityID)
+	state, err := member.SubscriptionState(ctx, memberpostgres.NewStore(db), identityID)
 	return accountdomain.NewsletterState{Subscribed: state.Subscribed, SubscribedAt: state.SubscribedAt}, err
 }

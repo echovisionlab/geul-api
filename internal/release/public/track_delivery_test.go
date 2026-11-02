@@ -3,6 +3,7 @@ package public
 import (
 	"testing"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -21,8 +22,8 @@ func TestProjectTrackMediaDeliveryIncludesOwningReleaseDownloadRef(t *testing.T)
 			},
 			Playback:    &commonv1.HlsMediaRef{FileId: "file-1", Url: "https://cdn.example/playback"},
 			Download:    download,
-			Waveform:    &commonv1.AssetRef{AssetId: "waveform-1"},
-			Spectrogram: &commonv1.AssetRef{AssetId: "spectrogram-1"},
+			Waveform:    &mediaasset.Reference{AssetID: "waveform-1"},
+			Spectrogram: &mediaasset.Reference{AssetID: "spectrogram-1"},
 		},
 	)
 	require.Same(t, download, delivery.GetDownload())

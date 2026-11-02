@@ -3,8 +3,14 @@ package programevent
 import (
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -256,11 +262,11 @@ func CreditMessage(credit CreditView) *managev1.ProgramEventCredit {
 		CreditRole:  credit.CreditRole,
 		Description: credit.Description,
 		SortOrder:   credit.SortOrder,
-		Member:      credit.Member,
+		Member:      memberref.ReferenceMessage(credit.Member),
 	}
 	if credit.Artist != nil {
 		message.Artist = &managev1.ProgramEventCreditArtist{
-			Id: credit.Artist.ID, Name: credit.Artist.Name, Slug: credit.Artist.Slug, ImageAsset: credit.Artist.ImageAsset,
+			Id: credit.Artist.ID, Name: credit.Artist.Name, Slug: credit.Artist.Slug, ImageAsset: mediaasset.ReferenceProto(credit.Artist.ImageAsset),
 		}
 	}
 	return message

@@ -13,21 +13,26 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/release/public"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/release"
-	"github.com/echovisionlab/geul-api/internal/release/public"
 	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -195,16 +200,16 @@ func (releaseListTestMedia) ReadySourceAssets(
 	*gorm.DB,
 	[]string,
 	...string,
-) (map[string]*commonv1.AssetRef, error) {
-	return map[string]*commonv1.AssetRef{}, nil
+) (map[string]*mediaasset.Reference, error) {
+	return map[string]*mediaasset.Reference{}, nil
 }
 
-func (releaseListTestMedia) TrackWaveforms(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error) {
-	return map[string]*commonv1.AssetRef{}, nil
+func (releaseListTestMedia) TrackWaveforms(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error) {
+	return map[string]*mediaasset.Reference{}, nil
 }
 
-func (releaseListTestMedia) TrackSpectrograms(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error) {
-	return map[string]*commonv1.AssetRef{}, nil
+func (releaseListTestMedia) TrackSpectrograms(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error) {
+	return map[string]*mediaasset.Reference{}, nil
 }
 
 func (releaseListTestMedia) TrackHLS(context.Context, *gorm.DB, []string) (map[string]*commonv1.HlsMediaRef, error) {
@@ -235,7 +240,7 @@ func (releaseListTestUnused) Resolve(context.Context, string, string, mediaasset
 	return nil, errors.New("unused")
 }
 
-func (releaseListTestUnused) LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
+func (releaseListTestUnused) LoadMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error) {
 	return nil, errors.New("unused")
 }
 

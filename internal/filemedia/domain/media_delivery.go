@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"slices"
 	"strconv"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -45,15 +44,6 @@ type Delivery struct {
 	Inline, Download                        *mediaauth.Reference
 }
 
-func cloneAsset(value *mediaasset.Reference) *mediaasset.Reference {
-	if value == nil {
-		return nil
-	}
-	result := *value
-	result.DownloadFilename = clonePointer(value.DownloadFilename)
-	result.SHA256 = slices.Clone(value.SHA256)
-	return &result
-}
 func (d *Delivery) Clone() *Delivery {
 	if d == nil {
 		return nil
@@ -68,10 +58,10 @@ func (d *Delivery) Clone() *Delivery {
 		v := *d.DurationSeconds
 		result.DurationSeconds = &v
 	}
-	result.Asset = cloneAsset(d.Asset)
-	result.Thumbnail = cloneAsset(d.Thumbnail)
-	result.Spectrogram = cloneAsset(d.Spectrogram)
-	result.Waveform = cloneAsset(d.Waveform)
+	result.Asset = d.Asset.Clone()
+	result.Thumbnail = d.Thumbnail.Clone()
+	result.Spectrogram = d.Spectrogram.Clone()
+	result.Waveform = d.Waveform.Clone()
 	if d.Playback != nil {
 		v := *d.Playback
 		result.Playback = &v

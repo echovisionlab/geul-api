@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -65,7 +64,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -83,8 +82,8 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	ctx context.Context,
 	tx *gorm.DB,
 	assetIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	refs := make(map[string]*commonv1.AssetRef, len(assetIDs))
+) (map[string]*mediaasset.Reference, error) {
+	refs := make(map[string]*mediaasset.Reference, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return refs, nil
 	}
@@ -99,7 +98,7 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -113,8 +112,8 @@ func (r *Runtime) ReadyPublicAssetRefForSourceFile(
 	tx *gorm.DB,
 	sourceFileID string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind))
+) (*mediaasset.Reference, error) {
+	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind)
 }
 
 func (r *Runtime) BindReadyAssetForSourceFile(
@@ -125,10 +124,10 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	ownerID string,
 	bindingKey string,
 	expectedKind string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
-	))
+	)
 }
 
 func (*Runtime) LoadUnavailableVersionAttachmentKinds(
@@ -136,14 +135,14 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.NewAttachmentStore(tx), document)
 }
 
 func (r *Runtime) ResolveReadyOGAsset(
 	ctx context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	ids := normalizedAssetIDs(localizedAssetID, sourceAssetID)
 	refs, err := r.ResolveReadyAssetRefs(ctx, r.db, ids)
 	if err != nil {
@@ -169,7 +168,7 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 	ctx context.Context,
 	sourceFileID string,
 	kinds ...string,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	for _, kind := range kinds {
 		ref, err := r.ReadyPublicAssetRefForSourceFile(ctx, r.db, sourceFileID, kind)
 		if err != nil {
@@ -182,7 +181,7 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 	return nil
 }
 
-func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) *commonv1.AssetRef {
+func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) *mediaasset.Reference {
 	var row struct {
 		FileID string `gorm:"column:file_id"`
 	}

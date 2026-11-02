@@ -27,7 +27,7 @@ func TestOGResolverMapsMissingWorkToNotFound(t *testing.T) {
 		)
 	`).Error)
 	missingID := uuid.NewString()
-	store := ogpostgres.Bind(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(NewRequests())})
+	store := ogpostgres.NewStore(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(NewRequests())})
 	_, err = og.ResolveRequests(t.Context(), store, "work", missingID, og.Selection{Kind: og.SelectionPrimary})
 	require.Error(t, err)
 	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))

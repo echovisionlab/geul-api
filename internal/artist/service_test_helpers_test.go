@@ -11,11 +11,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -141,21 +143,21 @@ func auditActions(recorder *audittest.Recorder) []sharedtelemetry.AuditAction {
 // members is the Member projection fake: every Member it knows is
 // eligible and acts through its Identity.
 type members struct {
-	summaries  map[string]*commonv1.MemberSummary
+	summaries  map[string]*memberref.Summary
 	identities map[string]string
 }
 
 func newMembers() *members {
-	return &members{summaries: map[string]*commonv1.MemberSummary{}, identities: map[string]string{}}
+	return &members{summaries: map[string]*memberref.Summary{}, identities: map[string]string{}}
 }
 
 func (m *members) add(p principal) {
-	m.summaries[p.memberID] = &commonv1.MemberSummary{Id: p.memberID}
+	m.summaries[p.memberID] = &memberref.Summary{ID: p.memberID}
 	m.identities[p.memberID] = p.identityID
 }
 
-func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
-	summaries := map[string]*commonv1.MemberSummary{}
+func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*memberref.Summary, error) {
+	summaries := map[string]*memberref.Summary{}
 	for _, id := range memberIDs {
 		if summary := m.summaries[id]; summary != nil {
 			summaries[id] = summary
@@ -164,7 +166,7 @@ func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (ma
 	return summaries, nil
 }
 
-func (m *members) LoadAuthorizationEligibleMemberSummary(_ context.Context, memberID string) (*commonv1.MemberSummary, error) {
+func (m *members) LoadAuthorizationEligibleMemberSummary(_ context.Context, memberID string) (*memberref.Summary, error) {
 	summary := m.summaries[memberID]
 	if summary == nil {
 		return nil, errors.New("member not eligible")

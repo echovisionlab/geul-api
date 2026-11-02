@@ -5,15 +5,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/release/releasetest"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -23,13 +25,27 @@ func TestReleaseRelationSettersRequireTheObservedSnapshot(t *testing.T) {
 	value := h.seedRelease(t, "Album")
 	ctx := h.ctx(t)
 	for name, set := range map[string]func() error{
-		"artists":    func() error { return h.service.SetReleaseArtists(ctx, release.SetReleaseArtistsCommand{ReleaseID: value.ID}) },
-		"labels":     func() error { return h.service.SetReleaseLabels(ctx, release.SetReleaseLabelsCommand{ReleaseID: value.ID}) },
-		"formats":    func() error { return h.service.SetReleaseFormats(ctx, release.SetReleaseFormatsCommand{ReleaseID: value.ID}) },
-		"credits":    func() error { return h.service.SetReleaseCredits(ctx, release.SetReleaseCreditsCommand{ReleaseID: value.ID}) },
-		"categories": func() error { return h.service.SetReleaseCategories(ctx, release.SetReleaseCategoriesCommand{ReleaseID: value.ID}) },
-		"genres":     func() error { return h.service.SetReleaseGenres(ctx, release.SetReleaseGenresCommand{ReleaseID: value.ID}) },
-		"styles":     func() error { return h.service.SetReleaseStyles(ctx, release.SetReleaseStylesCommand{ReleaseID: value.ID}) },
+		"artists": func() error {
+			return h.service.SetReleaseArtists(ctx, release.SetReleaseArtistsCommand{ReleaseID: value.ID})
+		},
+		"labels": func() error {
+			return h.service.SetReleaseLabels(ctx, release.SetReleaseLabelsCommand{ReleaseID: value.ID})
+		},
+		"formats": func() error {
+			return h.service.SetReleaseFormats(ctx, release.SetReleaseFormatsCommand{ReleaseID: value.ID})
+		},
+		"credits": func() error {
+			return h.service.SetReleaseCredits(ctx, release.SetReleaseCreditsCommand{ReleaseID: value.ID})
+		},
+		"categories": func() error {
+			return h.service.SetReleaseCategories(ctx, release.SetReleaseCategoriesCommand{ReleaseID: value.ID})
+		},
+		"genres": func() error {
+			return h.service.SetReleaseGenres(ctx, release.SetReleaseGenresCommand{ReleaseID: value.ID})
+		},
+		"styles": func() error {
+			return h.service.SetReleaseStyles(ctx, release.SetReleaseStylesCommand{ReleaseID: value.ID})
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireCode(t, set(), connect.CodeInvalidArgument, "observed: is required")
@@ -159,7 +175,7 @@ func TestReleaseArtworkReplacesAndUnlinksWithoutDeletingFiles(t *testing.T) {
 	value := h.seedRelease(t, "Album")
 	requested, stored := "A1B2C3D4-0000-4000-8000-000000000001", "a1b2c3d4-0000-4000-8000-000000000001"
 	h.store.PutFile(requested, stored)
-	asset := &commonv1.AssetRef{AssetId: "artwork"}
+	asset := &mediaasset.Reference{AssetID: "artwork"}
 	h.store.ReadyAssets[stored] = asset
 
 	ref, err := h.service.SetReleaseArtwork(h.ctx(t), release.SetReleaseArtworkCommand{ReleaseID: value.ID, FileID: requested})

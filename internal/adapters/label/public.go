@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -153,9 +152,9 @@ func (runtime *PublicRuntime) Require(ctx context.Context, labelID, token, passw
 	return nil
 }
 
-func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.DB, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error) {
+func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.DB, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error) {
 	ids := sliceutil.UniqueTrimmed(fileIDs)
-	refs := make(map[string]*commonv1.AssetRef, len(ids))
+	refs := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
 	}
@@ -172,7 +171,7 @@ func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.
 		if asset.SourceFileID == nil || refs[*asset.SourceFileID] != nil || asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -181,9 +180,9 @@ func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.
 	return refs, nil
 }
 
-func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	ids := sliceutil.UniqueTrimmed(assetIDs)
-	refs := make(map[string]*commonv1.AssetRef, len(ids))
+	refs := make(map[string]*mediaasset.Reference, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
 	}
@@ -196,7 +195,7 @@ func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB,
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
+		ref, err := lifecycle.AssetRef(mediaassetpostgres.Asset(asset))
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +204,7 @@ func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB,
 	return refs, nil
 }
 
-func (runtime *PublicRuntime) ResolveOg(ctx context.Context, tx *gorm.DB, assetID *string) (*commonv1.AssetRef, error) {
+func (runtime *PublicRuntime) ResolveOg(ctx context.Context, tx *gorm.DB, assetID *string) (*mediaasset.Reference, error) {
 	if assetID == nil || strings.TrimSpace(*assetID) == "" {
 		return nil, nil
 	}

@@ -138,7 +138,7 @@ func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 	if deps.ShareLinks == nil {
 		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
 	}
-	units, err := labelpostgres.NewUnits(deps.DB, labelpostgres.Deps{
+	units, err := labelpostgres.NewUnits(deps.DB, labelpostgres.Ports{
 		ContentBlocks: deps.ContentBlocks, Publisher: deps.Publisher, Checkpoints: deps.Checkpoints,
 		Translation: deps.Translation, Runtime: deps.Runtime, Artists: deps.Artists, Releases: deps.Releases,
 		ProgramEvents: deps.ProgramEvents, ShareLinks: deps.ShareLinks,

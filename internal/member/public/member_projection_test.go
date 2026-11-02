@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/google/uuid"
 )
 
 func TestProjectPublicDeletedMemberAlwaysScrubsPIIAndAvatar(t *testing.T) {
@@ -16,7 +16,7 @@ func TestProjectPublicDeletedMemberAlwaysScrubsPIIAndAvatar(t *testing.T) {
 		ID:        uuid.NewString(),
 		Nickname:  nickname,
 		DeletedAt: &deletedAt,
-	}, &member.Asset{ID: uuid.NewString()})
+	}, &memberref.Asset{ID: uuid.NewString()})
 	if !summary.Deleted {
 		t.Fatal("deleted marker was not projected")
 	}
@@ -33,7 +33,7 @@ func TestProjectPublicUnlinkedMemberIsImmediatelyTombstoned(t *testing.T) {
 	summary := projectPublicMemberSummary(member.Member{
 		ID:       uuid.NewString(),
 		Nickname: nickname,
-	}, &member.Asset{ID: uuid.NewString()})
+	}, &memberref.Asset{ID: uuid.NewString()})
 	if !summary.Deleted {
 		t.Fatal("unlinked Member was not projected as deleted")
 	}
@@ -48,7 +48,7 @@ func TestProjectPublicUnlinkedMemberIsImmediatelyTombstoned(t *testing.T) {
 func TestProjectUnonboardedMemberShapeKeepsUUIDNickname(t *testing.T) {
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	avatar := &member.Asset{ID: uuid.NewString()}
+	avatar := &memberref.Asset{ID: uuid.NewString()}
 	summary := projectPublicMemberSummary(member.Member{
 		ID:                memberID,
 		AccountIdentityID: &identityID,

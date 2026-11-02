@@ -71,7 +71,7 @@ func (EmailAuthoring) LoadLayoutSnapshot(
 	db *gorm.DB,
 	layoutID string,
 ) ([]campaigndomain.CampaignLayoutLocaleSnapshot, error) {
-	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), layoutID)
+	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.NewStore(db), layoutID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (EmailRendering) BuildRenderData(
 	input map[string]string,
 ) map[string]string {
 	return emaildelivery.BuildEmailRenderData(
-		ctx, emaildeliverypostgres.Bind(db), cdnDomain, siteOrigin, requestedLocale, input,
+		ctx, emaildeliverypostgres.NewStore(db), cdnDomain, siteOrigin, requestedLocale, input,
 	)
 }
 
@@ -114,7 +114,7 @@ func (EmailRendering) WrapWithLayout(
 	data map[string]string,
 ) (string, error) {
 	wrapped, _, err := email.WrapWithLayoutForLocaleStrict(
-		ctx, emailpostgres.Bind(db), layoutID, requestedLocale, content, data,
+		ctx, emailpostgres.NewStore(db), layoutID, requestedLocale, content, data,
 	)
 	return wrapped, err
 }
@@ -166,7 +166,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 	layoutLocale := ""
 	if localized.LayoutID != nil {
 		html, layoutLocale, err = email.WrapWithLayoutForLocaleStrict(
-			ctx, emailpostgres.Bind(db), *localized.LayoutID, requestedLocale, html, data,
+			ctx, emailpostgres.NewStore(db), *localized.LayoutID, requestedLocale, html, data,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("render Campaign email layout: %w", err)

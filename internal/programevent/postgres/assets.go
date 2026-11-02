@@ -3,10 +3,10 @@ package programeventpostgres
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/google/uuid"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -51,11 +51,11 @@ func (s *store) ReleaseSeriesPoster(ctx context.Context, seriesID string) error 
 	return seriesNotFound(s.ports.Media.ReleasePublicAssetBindings(ctx, s.tx, seriesOwnerType, seriesID, posterBinding))
 }
 
-func (s *store) ReadyImageAsset(ctx context.Context, fileID string) (*commonv1.AssetRef, error) {
+func (s *store) ReadyImageAsset(ctx context.Context, fileID string) (*mediaasset.Reference, error) {
 	return s.ports.Media.ReadyPublicAssetRefForSourceFile(ctx, s.tx, fileID, "image")
 }
 
-func (s *store) InlineImageAsset(ctx context.Context, fileID string) (*commonv1.AssetRef, error) {
+func (s *store) InlineImageAsset(ctx context.Context, fileID string) (*mediaasset.Reference, error) {
 	return s.ports.Media.ResolveSingleReadyInlineAssetForSourceFile(ctx, s.tx, fileID, "image")
 }
 

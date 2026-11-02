@@ -30,7 +30,9 @@ type TranslationJob struct {
 // LoadTypedTranslationSourceDocument reads the Artist's source-locale title
 // and content document for translation, through store bound to the
 // translation domain's database handle.
-func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, artistID string) (*translation.SourceDocument, error) {
+func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, artistID string) (*translation.SourceDocument, error) {
+	store := joined.Store
+
 	sourceLocale, err := loadCreativeDocumentAuthority(ctx, store, artistID, Unlocked)
 	if err != nil {
 		return nil, err
@@ -66,12 +68,14 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, artist
 // current target row.
 func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
+	store := joined.Store
+	auditWriter := joined.Audit
+
 	return applyTypedTranslationCandidate(
 		ctx, store, job, candidate, metadata, nil, targetlocale.RevisionCurrent, auditWriter, true,
 	)
@@ -82,12 +86,14 @@ func ApplyTypedTranslationCandidate(
 // transaction, which store is bound to.
 func ApplyTypedTranslationInterchangeCandidate(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	expectedTargetRevision *string,
 ) error {
+	store := joined.Store
+
 	return applyTypedTranslationCandidate(
 		ctx, store, job, candidate, metadata, expectedTargetRevision, targetlocale.RevisionObserved, nil, false,
 	)
@@ -246,7 +252,9 @@ func applyProviderSourceArtistTranslation(
 // RequireLockedSourceLocaleEdit locks the Artist row, then requires Edit of
 // the principal lockActive locks, for the translation domain's source locale
 // change in its transaction, which store is bound to.
-func RequireLockedSourceLocaleEdit(ctx context.Context, store Store, checker entityparticipant.PermissionChecker, lockActive func(*auth.UserInfo) (bool, error), artistID string) error {
+func RequireLockedSourceLocaleEdit(ctx context.Context, joined Joined, checker entityparticipant.PermissionChecker, lockActive func(*auth.UserInfo) (bool, error), artistID string) error {
+	store := joined.Store
+
 	if err := artistEntity.LockRoot(ctx, store, artistID); err != nil {
 		return err
 	}

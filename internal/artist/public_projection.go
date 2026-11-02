@@ -19,7 +19,9 @@ type PublicCreativeContentDocument struct {
 // LoadCreativeContentDocumentForPublic reads the Artist's content document
 // in locale, the source locale when empty, in the public read's snapshot,
 // which store is bound to.
-func LoadCreativeContentDocumentForPublic(ctx context.Context, store Store, artistID, locale string) (PublicCreativeContentDocument, error) {
+func LoadCreativeContentDocumentForPublic(ctx context.Context, joined Joined, artistID, locale string) (PublicCreativeContentDocument, error) {
+	store := joined.Store
+
 	snapshot, sourceLocale, err := loadCreativeContentSnapshotInTransaction(ctx, store, artistID)
 	if err != nil {
 		return PublicCreativeContentDocument{}, err

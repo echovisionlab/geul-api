@@ -82,7 +82,7 @@ func (r serviceRegistration) registerPost(publicFileService *filepublic.Service,
 	postMedia := postruntime.ContentBlockMedia{}
 	postFiles := postadapter.NewFiles(fileService, publicFileService)
 	postVersionRestore := postruntime.VersionRestore{}
-	postUnits, err := postpostgres.NewUnits(deps.db, postpostgres.Deps{
+	postUnits, err := postpostgres.NewUnits(deps.db, postpostgres.Ports{
 		ContentBlocks: deps.contentBlockStore, Signals: deps.servicePublisher, OG: deps.og.refresher,
 		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
 		MediaLoader:      postMedia, Media: fileContentMedia, VersionRestore: postVersionRestore, CDNDomain: deps.cfg.CDNURL,

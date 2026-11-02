@@ -8,16 +8,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // Members supplies the Member-owned summaries of participants and the
 // Identities they act through.
 type Members interface {
-	LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
-	LoadAuthorizationEligibleMemberSummary(context.Context, string) (*commonv1.MemberSummary, error)
+	LoadMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
+	LoadAuthorizationEligibleMemberSummary(context.Context, string) (*memberref.Summary, error)
 	// LoadAuthorizationEligibleIdentities maps each active, onboarded Member
 	// whose linked Identity is active and not banned to that Identity.
 	LoadAuthorizationEligibleIdentities(context.Context, []string) (map[string]string, error)
@@ -25,7 +27,7 @@ type Members interface {
 
 // View is one participant as the domain RPCs return it.
 type View struct {
-	Member                *commonv1.MemberSummary
+	Member                *memberref.Summary
 	Role                  string
 	CreatedAt             time.Time
 	HasEffectiveAuthority bool

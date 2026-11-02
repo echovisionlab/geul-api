@@ -14,7 +14,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -34,14 +36,14 @@ type onboarding struct {
 // CompleteOnboarding onboards the authenticated Member, enqueues the welcome
 // email in the same transaction, and returns the Member summary. Repeating a
 // completed onboarding with the same nickname succeeds without a change.
-func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboardingCommand) (Summary, error) {
+func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboardingCommand) (memberref.Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	nickname, err := normalizeMemberNickname(command.Nickname)
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	memberID, identityID := principal.MemberID.String(), principal.IdentityID.String()
 	welcomeOutcome := ""
@@ -71,7 +73,7 @@ func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboar
 		s.onboardingMetrics.recordWelcomePublish(ctx, welcomeOutcome)
 	}
 	if err != nil {
-		return Summary{}, failurecause.WithPrivate(err, nickname)
+		return memberref.Summary{}, failurecause.WithPrivate(err, nickname)
 	}
 	if result.transitioned && welcomeOutcome == "accepted" {
 		slog.InfoContext(ctx,

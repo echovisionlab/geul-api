@@ -8,9 +8,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -424,10 +427,10 @@ type MediaAssets interface {
 	BindSeriesPoster(ctx context.Context, seriesID, fileID string) error
 	ReleaseSeriesPoster(ctx context.Context, seriesID string) error
 	// ReadyImageAsset resolves the ready image asset of a File.
-	ReadyImageAsset(ctx context.Context, fileID string) (*commonv1.AssetRef, error)
+	ReadyImageAsset(ctx context.Context, fileID string) (*mediaasset.Reference, error)
 	// InlineImageAsset resolves the single ready inline image asset of a
 	// Block File.
-	InlineImageAsset(ctx context.Context, fileID string) (*commonv1.AssetRef, error)
+	InlineImageAsset(ctx context.Context, fileID string) (*mediaasset.Reference, error)
 	// HydrateBlockMedia adds the principal's delivery to authorized Block
 	// media.
 	HydrateBlockMedia(ctx context.Context, eventID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)

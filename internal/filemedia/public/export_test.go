@@ -12,13 +12,13 @@ var (
 	ExportPublicMediaSupportsInlineSource = publicMediaSupportsInlineSource
 )
 
-func ExportProjectReadyPublicAsset(cdn string, row ReadyAsset) (*commonv1.AssetRef, error) {
+func ExportProjectReadyPublicAsset(cdn string, row ReadyAsset) (*mediaasset.Reference, error) {
 	ref, err := projectReadyPublicAsset(cdn, row)
-	return mediaasset.ReferenceProto(ref), err
+	return ref, err
 }
-func ExportResolvedOGAssetRef(ctx context.Context, store Store, cdn string, source, localized *string) (*commonv1.AssetRef, error) {
+func ExportResolvedOGAssetRef(ctx context.Context, store Store, cdn string, source, localized *string) (*mediaasset.Reference, error) {
 	ref, err := resolvedOgAssetRef(ctx, store, cdn, source, localized)
-	return mediaasset.ReferenceProto(ref), err
+	return ref, err
 }
 func ExportBuildPublicHLSRef(domain string, row ReadyGeneration) (*commonv1.HlsMediaRef, error) {
 	ref, err := buildPublicHLSRef(domain, row)

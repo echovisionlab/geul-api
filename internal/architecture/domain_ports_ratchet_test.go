@@ -15,7 +15,8 @@ const policyDescriptorsImport = contractsImport + "api/policy/v1"
 // (docs/architecture.md, "Domain packages"): no gorm or SQL driver, no
 // internal/model rows, no SpiceDB client, no Kratos table, and no generated
 // API type outside the connect_handler*.go translators. Generated policy
-// descriptors are the authorization port's vocabulary and stay allowed. A
+// descriptors, error reason enums and shared filter/sort types are port
+// vocabulary. Connect handlers and queue decoders own transport messages. A
 // domain's PostgreSQL Store package (<domain>/postgres) is the adapter that
 // owns these dependencies and is not counted. The baseline counts files per
 // domain package and category, and SpiceDB client and Kratos table
@@ -35,7 +36,7 @@ func TestDomainPackagesDependOnPortsRatchet(t *testing.T) {
 				categories["sql driver"] = true
 			case imported == modulePath+"/internal/model":
 				categories["model"] = true
-			case strings.HasPrefix(imported, contractsImport) && imported != policyDescriptorsImport && !isConnectHandlerFile(file.path):
+			case strings.HasPrefix(imported, contractsImport) && hasTransportContractReferences(file, imported):
 				categories["generated contracts"] = true
 			}
 		}
@@ -64,4 +65,63 @@ func TestDomainPackagesDependOnPortsRatchet(t *testing.T) {
 // isStoreAdapter reports whether pkg is a domain's PostgreSQL Store package.
 func isStoreAdapter(pkg string) bool {
 	return path.Base(pkg) == "postgres"
+}
+
+func hasTransportContractReferences(file productionFile, imported string) bool {
+	if imported == policyDescriptorsImport || isConnectHandlerFile(file.path) || isQueueDecoderFile(file.path) {
+		return false
+	}
+	for alias, path := range file.imports {
+		if path == imported && (alias == "." || alias == "_") {
+			return true
+		}
+	}
+	transport := false
+	ast.Inspect(file.syntax, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		owner, ok := selector.X.(*ast.Ident)
+		if !ok || file.imports[owner.Name] != imported {
+			return true
+		}
+		if !isContractVocabulary(imported, selector.Sel.Name) {
+			transport = true
+		}
+		return true
+	})
+	return transport
+}
+
+func isContractVocabulary(imported, name string) bool {
+	switch imported {
+	case contractsImport + "api/common/v1":
+		if name == "FilterSpec" || name == "SortSpec" {
+			return true
+		}
+		return isEnumVocabulary(name, "FilterOp", "SortOrder")
+	case contractsImport + "api/intra/v1":
+		return isEnumVocabulary(name, "CollaborationConflictReason", "CollaborationMutationRejectionReason")
+	default:
+		return false
+	}
+}
+
+func isEnumVocabulary(name string, enums ...string) bool {
+	for _, enum := range enums {
+		if name == enum || strings.HasPrefix(name, enum+"_") {
+			return true
+		}
+	}
+	return false
+}
+
+func isQueueDecoderFile(file string) bool {
+	switch path.Base(file) {
+	case "queue_messages.go", "job_messages.go", "user_deletion_messages.go":
+		return true
+	default:
+		return false
+	}
 }

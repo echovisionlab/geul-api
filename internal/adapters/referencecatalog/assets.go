@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	referencecatalogpublicpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/public/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Assets adapts file-owned lifecycle operations to reference catalogs.
@@ -33,22 +32,22 @@ func NewAssets(cdnDomain string) Assets {
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(db).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(
 	ctx context.Context,
 	db *gorm.DB,
 	binding referencecatalog.AssetBinding,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		binding.Owner.Type,
 		binding.Owner.ID,
 		binding.Key,
 		binding.Kind,
-	))
+	)
 }
 
 func (a Assets) Release(
@@ -64,9 +63,9 @@ func (a Assets) ReadyRef(
 	ctx context.Context,
 	db *gorm.DB,
 	source referencecatalog.AssetSource,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
-		ReadyAssetRefForSourceFile(ctx, source.FileID, source.Kind))
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
+		ReadyAssetRefForSourceFile(ctx, source.FileID, source.Kind)
 }
 
 // PublicAssets resolves ready file-owned assets for public catalog projections.
@@ -84,7 +83,7 @@ func (a PublicAssets) ReadyRef(
 	ctx context.Context,
 	db *gorm.DB,
 	source referencecatalog.AssetSource,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	kinds := make([]string, 0, 1+len(source.FallbackKinds))
 	kinds = append(kinds, source.Kind)
 	kinds = append(kinds, source.FallbackKinds...)
@@ -107,7 +106,7 @@ func (a PublicAssets) ReadyRef(
 		expectedExtension == "bin" || expectedExtension != asset.Extension {
 		return nil
 	}
-	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset)))
+	ref, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset))
 	if err != nil {
 		slog.ErrorContext(ctx, "Public catalog asset reference failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID, "asset_id", asset.ID)
 		return nil

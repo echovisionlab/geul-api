@@ -24,7 +24,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -61,7 +60,7 @@ type state struct {
 	routes         map[string]bool
 	files          map[string]page.PublicationFile
 	presentations  page.Presentations
-	readyAssets    map[string]*commonv1.AssetRef
+	readyAssets    map[string]*mediaasset.Reference
 	unavailable    map[uuid.UUID]contentv1.MissingAttachmentMediaKind
 	attachments    map[uuid.UUID][]contentblock.PublicationAttachment
 	blockMedia     map[uuid.UUID][]*contentv1.ContentBlockMediaItem
@@ -134,7 +133,7 @@ func NewStore() *Store {
 			pages: map[string]page.Page{}, locales: map[localeKey]page.Locale{}, versions: map[string]page.Version{},
 			documents: map[uuid.UUID]Document{}, routes: map[string]bool{}, files: map[string]page.PublicationFile{},
 			presentations: page.Presentations{SourceAssets: map[page.PresentationKey]bool{}, Derivatives: map[page.PresentationKey]bool{}},
-			readyAssets:   map[string]*commonv1.AssetRef{}, unavailable: map[uuid.UUID]contentv1.MissingAttachmentMediaKind{},
+			readyAssets:   map[string]*mediaasset.Reference{}, unavailable: map[uuid.UUID]contentv1.MissingAttachmentMediaKind{},
 			attachments: map[uuid.UUID][]contentblock.PublicationAttachment{}, blockMedia: map[uuid.UUID][]*contentv1.ContentBlockMediaItem{},
 			members: map[string]string{}, identities: map[string]string{}, preferred: map[string]*string{},
 			tags: map[string]bool{}, memberTags: map[string][]string{}, subscribers: map[string]bool{},
@@ -301,7 +300,7 @@ func (s *Store) PutBlockMedia(documentID uuid.UUID, items ...*contentv1.ContentB
 }
 
 // PutReadyAsset makes assetID a ready public asset.
-func (s *Store) PutReadyAsset(assetID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyAsset(assetID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyAssets[assetID] = ref

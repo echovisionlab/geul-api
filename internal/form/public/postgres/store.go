@@ -9,24 +9,24 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/form"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/form"
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/form/public"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Assets projects Form-owned File and OG references for public reads.
 type Assets interface {
 	LocalizedOGDisposition(ctx context.Context, db *gorm.DB, formID, locale string) (form.LocalizedOGDisposition, error)
-	ResolvedOG(ctx context.Context, db *gorm.DB, sourceID, localizedID *string) (*commonv1.AssetRef, error)
+	ResolvedOG(ctx context.Context, db *gorm.DB, sourceID, localizedID *string) (*mediaasset.Reference, error)
 	// FeaturedImage resolves the Form's ready featured image; a failure is
 	// logged and answers nil.
-	FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *commonv1.AssetRef
+	FeaturedImage(ctx context.Context, db *gorm.DB, formID string) *mediaasset.Reference
 }
 
 // Members reads the Member rows public Forms need; Member owns them.

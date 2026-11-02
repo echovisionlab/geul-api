@@ -3,8 +3,8 @@ package public
 import (
 	"context"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Category is a category with its published and archived Post count.
@@ -40,5 +40,5 @@ type Store interface {
 	MapPlacesByID(ctx context.Context, ids []string) ([]referencecatalog.MapPlace, error)
 	// ReadyAsset resolves the ready public asset of a source file, or nil
 	// when there is none or it cannot be served.
-	ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) *commonv1.AssetRef
+	ReadyAsset(ctx context.Context, source referencecatalog.AssetSource) *mediaasset.Reference
 }

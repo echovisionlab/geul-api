@@ -3,12 +3,13 @@ package legalpublicpostgres
 import (
 	"context"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"gorm.io/gorm"
 
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/legal/public"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // localizationSpec is where a version's localized title lives.
@@ -44,7 +45,7 @@ func (l Localizer) FallbackToSource(ctx context.Context, kind legaldomain.Policy
 type Media interface {
 	RouteID(kind string) string
 	LocalizedOGDisposition(ctx context.Context, db *gorm.DB, kind, routeID, locale string) (public.OGDisposition, error)
-	ReadyLocalizedOGAsset(ctx context.Context, db *gorm.DB, kind, routeID, locale string) (*commonv1.AssetRef, error)
+	ReadyLocalizedOGAsset(ctx context.Context, db *gorm.DB, kind, routeID, locale string) (*mediaasset.Reference, error)
 }
 
 // OGImages reads the OG images of the public routes on the pool.
@@ -73,17 +74,17 @@ func (o OGImages) ReadyLocalizedOGImage(ctx context.Context, kind legaldomain.Po
 }
 
 // asset maps a ready asset reference to the public domain's asset.
-func asset(ref *commonv1.AssetRef) *public.Asset {
+func asset(ref *mediaasset.Reference) *public.Asset {
 	disposition := public.DispositionUnspecified
-	switch ref.GetDisposition() {
-	case commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE:
+	switch optional.Value(ref).Disposition {
+	case mediaasset.DispositionInline:
 		disposition = public.DispositionInline
-	case commonv1.AssetDisposition_ASSET_DISPOSITION_ATTACHMENT:
+	case mediaasset.DispositionAttachment:
 		disposition = public.DispositionAttachment
 	}
 	return &public.Asset{
-		ID: ref.GetAssetId(), URL: ref.GetUrl(), Extension: ref.GetExtension(), MIMEType: ref.GetMimeType(),
-		FileSize: ref.GetFileSize(), SHA256: ref.GetSha256(), Disposition: disposition,
+		ID: optional.Value(ref).AssetID, URL: optional.Value(ref).URL, Extension: optional.Value(ref).Extension, MIMEType: optional.Value(ref).MimeType,
+		FileSize: optional.Value(ref).FileSize, SHA256: optional.Value(ref).SHA256, Disposition: disposition,
 		DownloadFilename: ref.DownloadFilename,
 	}
 }

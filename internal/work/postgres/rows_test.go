@@ -56,7 +56,7 @@ func TestListWorksPagesKeepTiesUniqueAndRequestedDirection(t *testing.T) {
 	} {
 		require.NoError(t, db.Exec(`INSERT INTO work (id, updated_at) VALUES (?, ?)`, row.id, row.updatedAt).Error)
 	}
-	store := newStore(db, Ports{})
+	store := NewStore(db, Ports{})
 	for _, test := range []struct {
 		name  string
 		order commonv1.SortOrder
@@ -94,7 +94,7 @@ func TestClientsDistinguishesEmptyResultFromQueryFailure(t *testing.T) {
 	}
 	const workID = "22222222-2222-4222-8222-222222222222"
 	const clientID = "11111111-1111-4111-8111-111111111111"
-	store := newStore(db, Ports{})
+	store := NewStore(db, Ports{})
 	clients, err := store.Clients(t.Context(), workID)
 	require.NoError(t, err)
 	require.Empty(t, clients)

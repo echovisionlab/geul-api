@@ -6,18 +6,20 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/member/membertest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -49,7 +51,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		store: store, units: units, checker: authztest.AllowAll(), fence: &identitystatetest.Fence{},
 		audit: &audittest.Recorder{}, accounts: &fakeAccounts{summaries: map[string]*member.AccountSummary{}},
-		identity: &fakeIdentity{identities: map[string]*auth.Identity{}}, avatars: &fakeAvatarFiles{assets: map[string]*member.Asset{}},
+		identity: &fakeIdentity{identities: map[string]*auth.Identity{}}, avatars: &fakeAvatarFiles{assets: map[string]*memberref.Asset{}},
 		memberID: uuid.NewString(), identityID: uuid.NewString(),
 	}
 	f.spiceDB = membertest.NewAuthorizer(f.checker)
@@ -205,10 +207,10 @@ func (f *fakeIdentity) UpdateIdentityTraits(context.Context, string, structured.
 
 type fakeAvatarFiles struct {
 	mu     sync.Mutex
-	assets map[string]*member.Asset
+	assets map[string]*memberref.Asset
 }
 
-func (f *fakeAvatarFiles) PromoteUserAvatarAsset(_ context.Context, fileID string) (*member.Asset, error) {
+func (f *fakeAvatarFiles) PromoteUserAvatarAsset(_ context.Context, fileID string) (*memberref.Asset, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	asset, found := f.assets[fileID]

@@ -3,6 +3,8 @@ package post
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -18,5 +20,5 @@ type FileService interface {
 // MemberSummaryLoader supplies Member-owned manage projections after Post has
 // resolved the durable author, collaborator, or commenter identities.
 type MemberSummaryLoader interface {
-	LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }

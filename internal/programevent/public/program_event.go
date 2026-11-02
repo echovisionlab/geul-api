@@ -7,19 +7,24 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/google/uuid"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -39,7 +44,7 @@ type TypeEntry struct {
 // SeriesEntry is a published series with its ready poster.
 type SeriesEntry struct {
 	programevent.Series
-	PosterAsset *commonv1.AssetRef
+	PosterAsset *mediaasset.Reference
 }
 
 // CreditArtist is the published artist a public credit names.
@@ -47,7 +52,7 @@ type CreditArtist struct {
 	ID         string
 	Name       string
 	Slug       *string
-	ImageAsset *commonv1.AssetRef
+	ImageAsset *mediaasset.Reference
 }
 
 // Credit is one credit of a public event with its projections.
@@ -58,7 +63,7 @@ type Credit struct {
 	Description *string
 	SortOrder   int32
 	Artist      *CreditArtist
-	Member      *commonv1.MemberSummary
+	Member      *memberref.Summary
 }
 
 // EventDetail is a public event in its displayed locale. MapPlaceID is set
@@ -70,7 +75,7 @@ type EventDetail struct {
 	ContentHTML      string
 	ContentText      string
 	DocumentRevision string
-	PosterAsset      *commonv1.AssetRef
+	PosterAsset      *mediaasset.Reference
 	LocationPlace    *MapPlace
 	Type             *TypeEntry
 	Series           *SeriesEntry
@@ -153,7 +158,7 @@ type ListProgramEventsQuery struct {
 type EventSummary struct {
 	programevent.Event
 	Localization publiccontent.Selection
-	PosterAsset  *commonv1.AssetRef
+	PosterAsset  *mediaasset.Reference
 	Type         *TypeEntry
 }
 
@@ -250,14 +255,14 @@ func publicLocation(event programevent.Event) programevent.Event {
 // listPosterAssets resolves the poster of each event of a page in two
 // batches, falling back to one lookup per event or per File when a batch
 // fails.
-func (s *Service) listPosterAssets(ctx context.Context, events []programevent.Event) map[string]*commonv1.AssetRef {
+func (s *Service) listPosterAssets(ctx context.Context, events []programevent.Event) map[string]*mediaasset.Reference {
 	var posterFilesByEvent map[string]string
 	posterQueryErr := s.units.Read(ctx, func(store Store) error {
 		var err error
 		posterFilesByEvent, err = store.PosterFileIDs(ctx, collectPublicProgramEventIDs(events))
 		return err
 	})
-	posterAssetsByEvent := make(map[string]*commonv1.AssetRef, len(posterFilesByEvent))
+	posterAssetsByEvent := make(map[string]*mediaasset.Reference, len(posterFilesByEvent))
 	if posterQueryErr != nil {
 		slog.ErrorContext(ctx, "Program Event poster batch lookup failed; resolving posters per event", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
 		for i := range events {
@@ -272,7 +277,7 @@ func (s *Service) listPosterAssets(ctx context.Context, events []programevent.Ev
 	for _, fileID := range posterFilesByEvent {
 		posterFileIDs = append(posterFileIDs, fileID)
 	}
-	assetsByFile := make(map[string]*commonv1.AssetRef)
+	assetsByFile := make(map[string]*mediaasset.Reference)
 	if len(posterFileIDs) > 0 {
 		resolved, resolveErr := s.assets.ResolveReadyAssetsForSourceFiles(ctx, posterFileIDs, "poster", "image")
 		if resolveErr == nil {
@@ -392,8 +397,8 @@ func (r *programEventPublicFileRenderResolver) ResolveContentBlockFile(
 	if asset == nil {
 		return contentblock.FileRenderTarget{}, fmt.Errorf("public Program Event Content Block image asset is unavailable")
 	}
-	target.URL = asset.GetUrl()
-	target.MIMEType = asset.GetMimeType()
+	target.URL = optional.Value(asset).URL
+	target.MIMEType = optional.Value(asset).MimeType
 	return target, nil
 }
 

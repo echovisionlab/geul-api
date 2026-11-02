@@ -8,20 +8,26 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	"github.com/echovisionlab/geul-api/internal/work/public"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -197,22 +203,22 @@ func (s *fakeStore) CreditArtist(_ context.Context, artistID string) (public.Cre
 // assets resolves every ready asset to a URL naming what it stands for.
 type assets struct{}
 
-func (assets) ResolveReadyOGAsset(_ context.Context, source, localized *string) (*commonv1.AssetRef, error) {
+func (assets) ResolveReadyOGAsset(_ context.Context, source, localized *string) (*mediaasset.Reference, error) {
 	if localized != nil {
-		return &commonv1.AssetRef{Url: "og:" + *localized}, nil
+		return &mediaasset.Reference{URL: "og:" + *localized}, nil
 	}
 	if source != nil {
-		return &commonv1.AssetRef{Url: "og:" + *source}, nil
+		return &mediaasset.Reference{URL: "og:" + *source}, nil
 	}
 	return nil, nil
 }
 
-func (assets) ResolveReadyAssetForSourceFile(_ context.Context, fileID string, kinds ...string) *commonv1.AssetRef {
-	return &commonv1.AssetRef{Url: kinds[0] + ":" + fileID}
+func (assets) ResolveReadyAssetForSourceFile(_ context.Context, fileID string, kinds ...string) *mediaasset.Reference {
+	return &mediaasset.Reference{URL: kinds[0] + ":" + fileID}
 }
 
-func (assets) ResolveArtistImageAsset(_ context.Context, artistID string) *commonv1.AssetRef {
-	return &commonv1.AssetRef{Url: "artist:" + artistID}
+func (assets) ResolveArtistImageAsset(_ context.Context, artistID string) *mediaasset.Reference {
+	return &mediaasset.Reference{URL: "artist:" + artistID}
 }
 
 // blockMedia records the download authorization each hydration ran under.
@@ -226,10 +232,10 @@ func (m *blockMedia) HydrateAuthorizedContentBlockMedia(ctx context.Context, ite
 	return items, nil
 }
 
-type members map[string]*commonv1.MemberSummary
+type members map[string]*memberref.Summary
 
-func (m members) LoadPublicMemberSummaries(_ context.Context, ids []string) (map[string]*commonv1.MemberSummary, error) {
-	summaries := map[string]*commonv1.MemberSummary{}
+func (m members) LoadPublicMemberSummaries(_ context.Context, ids []string) (map[string]*memberref.Summary, error) {
+	summaries := map[string]*memberref.Summary{}
 	for _, id := range ids {
 		if summary, ok := m[id]; ok {
 			summaries[id] = summary
@@ -349,7 +355,7 @@ func TestGetProjectsTheDisplayedLocaleAndTheWorksRelations(t *testing.T) {
 		{ID: "gone-artist-credit", ArtistID: stringPointer(uuid.NewString())},
 	}
 	h.store.artists[artistID] = public.CreditArtistRow{ID: artistID, Name: "Artist"}
-	h.members[memberID] = &commonv1.MemberSummary{Id: memberID}
+	h.members[memberID] = &memberref.Summary{ID: memberID}
 	h.store.clients[value.ID] = []workdomain.ClientRow{
 		{ID: "client-b", Name: "B", DarkFileID: stringPointer("dark-file")},
 		{ID: "client-a", Name: "A", LightFileID: stringPointer("light-file")},
@@ -360,17 +366,17 @@ func TestGetProjectsTheDisplayedLocaleAndTheWorksRelations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "번역 제목", detail.Title)
 	require.Equal(t, "Source summary", *detail.Summary, "a locale without its own summary shows the source summary")
-	require.Equal(t, "og:"+localizedOG, detail.OgAsset.GetUrl())
-	require.Equal(t, "image:"+featured, detail.FeaturedImage.GetUrl())
+	require.Equal(t, "og:"+localizedOG, optional.Value(detail.OgAsset).URL)
+	require.Equal(t, "image:"+featured, optional.Value(detail.FeaturedImage).URL)
 	require.Equal(t, "ko", detail.Document.GetLocale())
 	require.Equal(t, "revision-"+value.ID, detail.Revision)
 	require.Equal(t, h.store.groups[value.ID], detail.CreditGroups)
-	require.Equal(t, &public.CreditArtist{ID: artistID, Name: "Artist", Image: &commonv1.AssetRef{Url: "artist:" + artistID}}, detail.Credits[0].Artist)
-	require.Equal(t, memberID, detail.Credits[1].Member.GetId())
+	require.Equal(t, &public.CreditArtist{ID: artistID, Name: "Artist", Image: &mediaasset.Reference{URL: "artist:" + artistID}}, detail.Credits[0].Artist)
+	require.Equal(t, memberID, detail.Credits[1].Member.ID)
 	require.Nil(t, detail.Credits[2].Artist, "a credit whose Artist is gone shows without it")
 	require.Equal(t, []public.Client{
-		{ID: "client-b", Name: "B", DarkLogo: &commonv1.AssetRef{Url: "logo:dark-file"}},
-		{ID: "client-a", Name: "A", LightLogo: &commonv1.AssetRef{Url: "logo:light-file"}},
+		{ID: "client-b", Name: "B", DarkLogo: &mediaasset.Reference{URL: "logo:dark-file"}},
+		{ID: "client-a", Name: "A", LightLogo: &mediaasset.Reference{URL: "logo:light-file"}},
 	}, detail.Clients)
 
 	h.store.localizations[value.ID] = publiccontent.Selection{DisplayedLocale: "ko", OmitSourceOgFallback: true}
@@ -417,7 +423,7 @@ func TestListShowsEachWorkInItsDisplayedLocale(t *testing.T) {
 	require.Equal(t, "번역", byID[localized.ID].Title)
 	require.Equal(t, "요약", *byID[localized.ID].Summary)
 	require.Equal(t, "Archived", byID[plain.ID].Title)
-	require.Equal(t, "image:"+featured, byID[plain.ID].FeaturedImage.GetUrl())
+	require.Equal(t, "image:"+featured, optional.Value(byID[plain.ID].FeaturedImage).URL)
 
 	h.store.Fail = map[string]error{"ResolveLocalizations": errReadDown}
 	page, err = h.service.List(context.Background(), public.ListWorksQuery{})

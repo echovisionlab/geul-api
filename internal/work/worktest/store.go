@@ -16,18 +16,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"github.com/echovisionlab/geul-api/internal/work"
+	"github.com/google/uuid"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -79,8 +82,8 @@ type state struct {
 	members          map[string]Member
 	mapPlaces        map[string]bool
 	files            map[string]bool
-	readyAssets      map[string]*commonv1.AssetRef
-	fileAssets       map[string]*commonv1.AssetRef
+	readyAssets      map[string]*mediaasset.Reference
+	fileAssets       map[string]*mediaasset.Reference
 	artists          map[string]work.CreditArtistRow
 	artistMembers    map[string][]string
 	sessions         map[string]*auth.UserInfo
@@ -143,7 +146,7 @@ func NewStore() *Store {
 		groups: map[string]work.CreditGroup{}, credits: map[string]work.Credit{}, clients: map[string]work.ClientRow{},
 		workClients: map[string][]string{}, versions: map[string]work.Version{}, documents: map[uuid.UUID]Document{},
 		routes: map[string]bool{}, members: map[string]Member{}, mapPlaces: map[string]bool{}, files: map[string]bool{},
-		readyAssets: map[string]*commonv1.AssetRef{}, fileAssets: map[string]*commonv1.AssetRef{},
+		readyAssets: map[string]*mediaasset.Reference{}, fileAssets: map[string]*mediaasset.Reference{},
 		artists: map[string]work.CreditArtistRow{}, artistMembers: map[string][]string{},
 		sessions: map[string]*auth.UserInfo{}, revokedRoom: map[string]bool{}, bindings: map[string]string{},
 	}}
@@ -334,14 +337,14 @@ func (s *Store) PutFile(fileID string) {
 }
 
 // PutReadyAsset makes assetID a ready public asset.
-func (s *Store) PutReadyAsset(assetID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyAsset(assetID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyAssets[assetID] = ref
 }
 
 // PutFileAsset makes ref the ready asset of fileID's kind.
-func (s *Store) PutFileAsset(fileID, kind string, ref *commonv1.AssetRef) {
+func (s *Store) PutFileAsset(fileID, kind string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fileAssets[fileID+"\x00"+kind] = ref
@@ -1682,13 +1685,13 @@ func (s *Store) ContributorNicknames(_ context.Context, memberIDs []string) (map
 }
 
 // ReadyAssets implements work.Store.
-func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	if err := s.fail("ReadyAssets"); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	refs := map[string]*commonv1.AssetRef{}
+	refs := map[string]*mediaasset.Reference{}
 	for _, id := range assetIDs {
 		if ref, ok := s.readyAssets[id]; ok {
 			refs[id] = ref
@@ -1698,7 +1701,7 @@ func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*c
 }
 
 // ReadyFileAsset implements work.Store.
-func (s *Store) ReadyFileAsset(_ context.Context, fileID, kind string) (*commonv1.AssetRef, error) {
+func (s *Store) ReadyFileAsset(_ context.Context, fileID, kind string) (*mediaasset.Reference, error) {
 	if err := s.fail("ReadyFileAsset"); err != nil {
 		return nil, err
 	}
@@ -1736,7 +1739,7 @@ func (s *Store) FileID(_ context.Context, fileID string) (string, error) {
 
 // BindFeaturedImage implements work.Store; it answers the File's ready
 // image asset.
-func (s *Store) BindFeaturedImage(_ context.Context, workID, fileID string) (*commonv1.AssetRef, error) {
+func (s *Store) BindFeaturedImage(_ context.Context, workID, fileID string) (*mediaasset.Reference, error) {
 	if err := s.fail("BindFeaturedImage"); err != nil {
 		return nil, err
 	}

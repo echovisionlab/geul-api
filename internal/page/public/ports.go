@@ -25,8 +25,9 @@ type DraftAccessChecker interface {
 type MediaResolver interface {
 	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
 	ResolvePageFeaturedImageDelivery(context.Context, *string) (*commonv1.MediaDelivery, error)
-	ResolvePageOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error)
+	ResolvePageOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
+
 // Store is what the public Page read reads, bound to one read snapshot.
 // pagepublicpostgres implements it; a missing Page is page.ErrPageNotFound.
 type Store interface {

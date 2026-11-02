@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +27,7 @@ func TestAvatarFilesPreservesThePromotedAssetAndOwnsItsChecksum(t *testing.T) {
 	})}
 	result, err := adapter.PromoteUserAvatarAsset(t.Context(), "source-id")
 	require.NoError(t, err)
-	require.Equal(t, &member.Asset{ID: "asset-id", URL: "https://cdn.example.com/asset/avatar.webp", Extension: "webp", MIMEType: "image/webp", FileSize: 64, SHA256: bytes.Repeat([]byte{0x19}, 32), Disposition: member.AssetDisposition(1)}, result)
+	require.Equal(t, &memberref.Asset{ID: "asset-id", URL: "https://cdn.example.com/asset/avatar.webp", Extension: "webp", MIMEType: "image/webp", FileSize: 64, SHA256: bytes.Repeat([]byte{0x19}, 32), Disposition: memberref.AssetDisposition(1)}, result)
 	result.SHA256[0] = 0xff
 	require.Equal(t, byte(0x19), source.SHA256[0])
 }

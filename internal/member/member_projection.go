@@ -4,30 +4,31 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 )
 
 // loadAvatars reads no row for no Members.
-func loadAvatars(ctx context.Context, store Store, memberIDs []string) (map[string]*Asset, error) {
+func loadAvatars(ctx context.Context, store Store, memberIDs []string) (map[string]*memberref.Asset, error) {
 	if len(memberIDs) == 0 {
-		return map[string]*Asset{}, nil
+		return map[string]*memberref.Asset{}, nil
 	}
 	return store.Avatars(ctx, memberIDs)
 }
 
-func memberSummary(member Member, avatar *Asset) Summary {
+func memberSummary(member Member, avatar *memberref.Asset) memberref.Summary {
 	deleted := member.tombstone()
 	if deleted {
 		// A tombstone must never expose profile PII, even while asynchronous
 		// cleanup of the former avatar binding is still pending.
 		avatar = nil
 	}
-	return Summary{ID: member.ID, Nickname: member.Nickname, Avatar: avatar, Deleted: deleted}
+	return memberref.Summary{ID: member.ID, Nickname: member.Nickname, Avatar: avatar, Deleted: deleted}
 }
 
 // LoadSummaries reads the summary of each Member in memberIDs that exists.
-func LoadSummaries(ctx context.Context, store Store, memberIDs []string) (map[string]Summary, error) {
-	result := make(map[string]Summary, len(memberIDs))
+func LoadSummaries(ctx context.Context, store Store, memberIDs []string) (map[string]memberref.Summary, error) {
+	result := make(map[string]memberref.Summary, len(memberIDs))
 	if len(memberIDs) == 0 {
 		return result, nil
 	}
@@ -47,22 +48,22 @@ func LoadSummaries(ctx context.Context, store Store, memberIDs []string) (map[st
 
 // LoadAuthorizationEligibleSummary reads the summary of an active, onboarded
 // Member that may hold authority, answering any other as not found.
-func LoadAuthorizationEligibleSummary(ctx context.Context, store Store, memberID string) (Summary, error) {
+func LoadAuthorizationEligibleSummary(ctx context.Context, store Store, memberID string) (memberref.Summary, error) {
 	if _, err := store.RequireTarget(ctx, memberID); err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	summaries, err := LoadSummaries(ctx, store, []string{memberID})
 	if err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	summary, found := summaries[memberID]
 	if !found || summary.Deleted {
-		return Summary{}, domainerr.ResourceNotFound("member", memberID)
+		return memberref.Summary{}, domainerr.ResourceNotFound("member", memberID)
 	}
 	return summary, nil
 }
 
-func memberProfile(member Member, avatar *Asset) Profile {
+func memberProfile(member Member, avatar *memberref.Asset) Profile {
 	profile := Profile{
 		Summary:   memberSummary(member, avatar),
 		CreatedAt: member.CreatedAt,
@@ -111,7 +112,7 @@ func (s *Service) memberProfileByID(ctx context.Context, memberID string) (Membe
 	}
 	var (
 		members []Member
-		assets  map[string]*Asset
+		assets  map[string]*memberref.Asset
 	)
 	if err := s.read(ctx, func(store Store) error {
 		var err error

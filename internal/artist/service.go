@@ -11,8 +11,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -233,7 +236,7 @@ func (s *Service) ListArtistsAdmin(ctx context.Context, query ListArtistsQuery) 
 type artistListing struct {
 	rows       []Artist
 	documents  []artistDocument
-	ogAssets   map[string]*commonv1.AssetRef
+	ogAssets   map[string]*mediaasset.Reference
 	images     map[string][]ArtistImageProjection
 	pagination Pagination
 }

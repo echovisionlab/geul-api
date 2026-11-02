@@ -180,7 +180,7 @@ func seedHardCutReadyPublicAsset(
 	db *gorm.DB,
 	kind, extension, mimeType string,
 	sourceFileID *string,
-) *commonv1.AssetRef {
+) *mediaasset.Reference {
 	t.Helper()
 	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com")
 	asset, _, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
@@ -196,7 +196,7 @@ func seedHardCutReadyPublicAsset(
 		AssetId: asset.ID, FileSize: 1024, Sha256: digest[:],
 	}))
 	require.NoError(t, err)
-	ref, err := mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(t.Context(), asset.ID))
+	ref, err := lifecycle.ReadyAssetRef(t.Context(), asset.ID)
 	require.NoError(t, err)
 	return ref
 }

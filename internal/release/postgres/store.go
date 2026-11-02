@@ -9,18 +9,16 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // TrackFiles is the File domain's check that a Track has no audio upload
@@ -32,10 +30,10 @@ type TrackFiles interface {
 // Assets is the shared File and public asset lifecycle of Release artwork.
 type Assets interface {
 	LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error
-	BindArtwork(ctx context.Context, tx *gorm.DB, fileID, releaseID string) (*commonv1.AssetRef, error)
+	BindArtwork(ctx context.Context, tx *gorm.DB, fileID, releaseID string) (*mediaasset.Reference, error)
 	ReleaseArtwork(ctx context.Context, tx *gorm.DB, releaseID string) error
-	ReadyArtwork(ctx context.Context, db *gorm.DB, fileID string) (*commonv1.AssetRef, error)
-	ReadyAssets(ctx context.Context, db *gorm.DB, candidateIDs ...*string) (map[string]*commonv1.AssetRef, error)
+	ReadyArtwork(ctx context.Context, db *gorm.DB, fileID string) (*mediaasset.Reference, error)
+	ReadyAssets(ctx context.Context, db *gorm.DB, candidateIDs ...*string) (map[string]*mediaasset.Reference, error)
 }
 
 // OG cancels Release-generated Open Graph work and releases its image.
@@ -120,22 +118,7 @@ func NewStore(tx *gorm.DB, ports Ports) release.Store {
 // tx, and audit appending in tx. A nil audit leaves Joined.Audit nil for a
 // step that records nothing.
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) release.Joined {
-	joined := release.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-// boundAudit appends in the joined transaction whatever transaction the
-// Release step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return release.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

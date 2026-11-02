@@ -6,21 +6,24 @@ import (
 	"fmt"
 	"strings"
 
-	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
+
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -31,7 +34,7 @@ const (
 
 type faviconBinding struct {
 	key   string
-	asset *commonv1.AssetRef
+	asset *mediaasset.Reference
 }
 
 // Assets adapts shared public-asset lifecycle operations to Site Settings.
@@ -103,26 +106,26 @@ func normalizeSiteSettingMIME(value string) string {
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(db).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(
 	ctx context.Context,
 	db *gorm.DB,
 	binding domain.AssetBinding,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	_, kind, err := readySiteSettingAsset(ctx, db, a.cdnDomain, binding.SourceFileID, binding.Kind)
 	if err != nil {
 		return nil, err
 	}
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		siteSettingsAssetOwnerType,
 		siteSettingsAssetOwnerID,
 		binding.Key,
 		kind,
-	))
+	)
 }
 
 func (a Assets) Release(ctx context.Context, db *gorm.DB, bindingPrefix string) error {
@@ -154,12 +157,12 @@ func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string)
 		})
 		return err
 	}
-	for _, binding := range siteSettingsFaviconBindings(favicon.SetProto(set)) {
-		if binding.asset == nil || strings.TrimSpace(binding.asset.GetAssetId()) == "" {
+	for _, binding := range siteSettingsFaviconBindings(set) {
+		if binding.asset == nil || strings.TrimSpace(optional.Value(binding.asset).AssetID) == "" {
 			return errs.FailedPrecondition("generated favicon bundle is missing " + binding.key)
 		}
 		if err := lifecycle.BindPublicAsset(ctx, mediaasset.Binding{
-			AssetID:      binding.asset.GetAssetId(),
+			AssetID:      optional.Value(binding.asset).AssetID,
 			OwnerType:    siteSettingsAssetOwnerType,
 			OwnerID:      siteSettingsAssetOwnerID,
 			BindingKey:   binding.key,
@@ -171,18 +174,18 @@ func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string)
 	return nil
 }
 
-func siteSettingsFaviconBindings(set *commonv1.FaviconAssetSet) []faviconBinding {
+func siteSettingsFaviconBindings(set *favicon.Set) []faviconBinding {
 	bindings := []faviconBinding{
-		{key: "favicon", asset: set.GetIconPng_32()},
-		{key: "favicon_ico", asset: set.GetIconIco()},
-		{key: "favicon_png16", asset: set.GetIconPng_16()},
-		{key: "favicon_png48", asset: set.GetIconPng_48()},
-		{key: "favicon_apple180", asset: set.GetAppleTouchIcon_180()},
-		{key: "favicon_manifest192", asset: set.GetManifestIcon_192()},
-		{key: "favicon_manifest512", asset: set.GetManifestIcon_512()},
+		{key: "favicon", asset: set.IconPNG32},
+		{key: "favicon_ico", asset: set.IconICO},
+		{key: "favicon_png16", asset: set.IconPNG16},
+		{key: "favicon_png48", asset: set.IconPNG48},
+		{key: "favicon_apple180", asset: set.AppleTouch180},
+		{key: "favicon_manifest192", asset: set.Manifest192},
+		{key: "favicon_manifest512", asset: set.Manifest512},
 	}
-	if set.GetIconSvg() != nil {
-		bindings = append(bindings, faviconBinding{key: "favicon_svg", asset: set.GetIconSvg()})
+	if set.IconSVG != nil {
+		bindings = append(bindings, faviconBinding{key: "favicon_svg", asset: set.IconSVG})
 	}
 	return bindings
 }
@@ -192,28 +195,28 @@ func (a Assets) ReadyRef(
 	db *gorm.DB,
 	fileID string,
 	kind string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	ref, _, err := readySiteSettingAsset(ctx, db, a.cdnDomain, fileID, kind)
 	return ref, err
 }
 
-func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*commonv1.AssetRef, string, error) {
-	return mediaasset.BrandingResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind))
+func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*mediaasset.Reference, string, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind)
 }
 
 func (a Assets) ReadyAsset(
 	ctx context.Context,
 	db *gorm.DB,
 	assetID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).ReadyAssetRef(ctx, assetID))
+) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).ReadyAssetRef(ctx, assetID)
 }
 
 func (a Assets) ProjectFavicon(
 	ctx context.Context,
 	db *gorm.DB,
 	fileID string,
-) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
+) (*mediaasset.Reference, *favicon.Set) {
 	ref, set := faviconpostgres.Projection(ctx, db, a.cdnDomain, fileID)
-	return mediaasset.ReferenceProto(ref), favicon.SetProto(set)
+	return ref, set
 }

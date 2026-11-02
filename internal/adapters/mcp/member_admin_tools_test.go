@@ -8,10 +8,16 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -93,7 +99,7 @@ func TestMemberAdminGetProjectsBoundedDetailAndNativeStatuses(t *testing.T) {
 			when := time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC)
 			status, _ := memberdomain.AdminStatusFromProto(test.status)
 			reader := &recordingMemberAdminReader{member: memberdomain.AdminMember{
-				Profile: memberdomain.Profile{Summary: memberdomain.Summary{ID: memberAdminTestID, Nickname: "Member", Avatar: &memberdomain.Asset{ID: memberAdminTestID, URL: "https://private.example.test/avatar", SHA256: []byte("private-native-bytes")}}, Bio: &bio, CreatedAt: when},
+				Profile: memberdomain.Profile{Summary: memberref.Summary{ID: memberAdminTestID, Nickname: "Member", Avatar: &memberref.Asset{ID: memberAdminTestID, URL: "https://private.example.test/avatar", SHA256: []byte("private-native-bytes")}}, Bio: &bio, CreatedAt: when},
 				Account: &memberdomain.AccountSummary{Role: policyv1.AuthorizationRole_ADMIN, Status: status, CanonicalEmail: &memberdomain.CanonicalEmail{Email: "member@example.test", Verified: true}, Banned: true,
 					BanDetails: &memberdomain.BanDetails{MetadataBanned: true, IdentityState: "inactive", InactiveState: true, Reason: &reason, ExpiresAt: &when}},
 				TagIDs: []string{memberAdminTestID}, Onboarded: true, Newsletter: memberdomain.NewsletterState{Subscribed: true, SubscribedAt: &when},

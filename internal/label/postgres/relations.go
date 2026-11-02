@@ -1,4 +1,4 @@
-package postgres
+package labelpostgres
 
 import (
 	"context"
@@ -31,9 +31,9 @@ func (s *store) DeletionImpacts(ctx context.Context, labelID string) ([]label.De
 		kind label.DeletionImpactKind
 		load func(context.Context, *gorm.DB, string) ([]entityparticipant.Related, error)
 	}{
-		{kind: label.ImpactArtist, load: s.deps.Artists.ArtistsOfLabel},
-		{kind: label.ImpactProgramEvent, load: s.deps.ProgramEvents.ProgramEventsOfLabel},
-		{kind: label.ImpactRelease, load: s.deps.Releases.ReleasesOfLabel},
+		{kind: label.ImpactArtist, load: s.ports.Artists.ArtistsOfLabel},
+		{kind: label.ImpactProgramEvent, load: s.ports.ProgramEvents.ProgramEventsOfLabel},
+		{kind: label.ImpactRelease, load: s.ports.Releases.ReleasesOfLabel},
 	} {
 		entities, err := related.load(ctx, s.tx, labelID)
 		if err != nil {
@@ -47,13 +47,13 @@ func (s *store) DeletionImpacts(ctx context.Context, labelID string) ([]label.De
 }
 
 func (s *store) CountArtistsByLabel(ctx context.Context, labelIDs []string) (map[string]int32, error) {
-	return s.deps.Artists.CountArtistsByLabel(ctx, s.tx, labelIDs)
+	return s.ports.Artists.CountArtistsByLabel(ctx, s.tx, labelIDs)
 }
 
 func (s *store) CountReleasesByLabel(ctx context.Context, labelIDs []string) (map[string]int32, error) {
-	return s.deps.Releases.CountReleasesByLabel(ctx, s.tx, labelIDs)
+	return s.ports.Releases.CountReleasesByLabel(ctx, s.tx, labelIDs)
 }
 
 func (s *store) DeleteShareLinks(ctx context.Context, labelID string) error {
-	return s.deps.ShareLinks.DeleteLabelShareLinks(ctx, s.tx, labelID)
+	return s.ports.ShareLinks.DeleteLabelShareLinks(ctx, s.tx, labelID)
 }

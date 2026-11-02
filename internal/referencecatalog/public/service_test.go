@@ -6,14 +6,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -26,7 +29,7 @@ type fakeStore struct {
 	clients    []referencecatalog.Client
 	places     []referencecatalog.MapPlace
 	total      int64
-	assets     map[string]*commonv1.AssetRef
+	assets     map[string]*mediaasset.Reference
 	pages      []referencecatalog.ListPage
 	sources    []referencecatalog.AssetSource
 }
@@ -61,7 +64,7 @@ func (s *fakeStore) MapPlacesByID(context.Context, []string) ([]referencecatalog
 	return s.places, nil
 }
 
-func (s *fakeStore) ReadyAsset(_ context.Context, source referencecatalog.AssetSource) *commonv1.AssetRef {
+func (s *fakeStore) ReadyAsset(_ context.Context, source referencecatalog.AssetSource) *mediaasset.Reference {
 	s.sources = append(s.sources, source)
 	return s.assets[source.FileID]
 }
@@ -115,14 +118,14 @@ func TestPublicCategoryAndTagListsDefaultTheirPageAndCountTheReturnedRows(t *tes
 func TestPublicClientsServeTheirReadyLogos(t *testing.T) {
 	createdAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	light, dark, website := "light-file", "dark-file", "https://client.example.test"
-	logo := &commonv1.AssetRef{AssetId: "logo", Url: "https://cdn.example.test/logo.webp"}
+	logo := &mediaasset.Reference{AssetID: "logo", URL: "https://cdn.example.test/logo.webp"}
 	store := &fakeStore{
 		clients: []referencecatalog.Client{{ID: "client", Name: "Client", Website: &website, LogoLightFileID: &light, LogoDarkFileID: &dark, CreatedAt: createdAt}},
 		total:   1,
-		assets:  map[string]*commonv1.AssetRef{light: logo},
+		assets:  map[string]*mediaasset.Reference{light: logo},
 	}
 	handler := publicreferencecatalog.NewClientConnectHandler(newService(t, store))
-	summary := &openv1.ClientSummary{Id: "client", Name: "Client", Website: &website, CreatedAt: timestamppb.New(createdAt), LogoLightAsset: logo}
+	summary := &openv1.ClientSummary{Id: "client", Name: "Client", Website: &website, CreatedAt: timestamppb.New(createdAt), LogoLightAsset: &commonv1.AssetRef{AssetId: logo.AssetID, Url: logo.URL}}
 
 	got, err := handler.Get(t.Context(), connect.NewRequest(&openv1.GetClientRequest{Id: "client"}))
 	require.NoError(t, err)
@@ -141,14 +144,14 @@ func TestPublicClientsServeTheirReadyLogos(t *testing.T) {
 func TestPublicMapPlacesFallBackToImageAssets(t *testing.T) {
 	createdAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	fileID, google, city := "image-file", "google", "Seoul"
-	image := &commonv1.AssetRef{AssetId: "image", Url: "https://cdn.example.test/image.webp"}
+	image := &mediaasset.Reference{AssetID: "image", URL: "https://cdn.example.test/image.webp"}
 	store := &fakeStore{
 		places: []referencecatalog.MapPlace{
 			{ID: "imaged", Name: "Imaged", Address: "Road", Lat: 1, Lng: 2, ImageFileID: &fileID, GooglePlaceID: &google,
 				AddressComponents: &referencecatalog.AddressComponents{City: &city}, CreatedAt: createdAt},
 			{ID: "bare", Name: "Bare", Address: "Road", CreatedAt: createdAt},
 		},
-		assets: map[string]*commonv1.AssetRef{fileID: image},
+		assets: map[string]*mediaasset.Reference{fileID: image},
 	}
 	handler := publicreferencecatalog.NewMapPlaceConnectHandler(newService(t, store))
 
@@ -156,7 +159,7 @@ func TestPublicMapPlacesFallBackToImageAssets(t *testing.T) {
 	require.NoError(t, err)
 	requireMessage(t, &openv1.GetMapPlacesByIdsResponse{Places: []*openv1.MapPlace{
 		{Id: "imaged", Name: "Imaged", Address: "Road", Lat: 1, Lng: 2, CreatedAt: timestamppb.New(createdAt),
-			AddressComponents: &openv1.AddressComponents{City: &city}, GooglePlaceId: &google, ImageAsset: image},
+			AddressComponents: &openv1.AddressComponents{City: &city}, GooglePlaceId: &google, ImageAsset: &commonv1.AssetRef{AssetId: image.AssetID, Url: image.URL}},
 		{Id: "bare", Name: "Bare", Address: "Road", CreatedAt: timestamppb.New(createdAt)},
 	}}, got.Msg)
 	require.Equal(t, []referencecatalog.AssetSource{{FileID: fileID, Kind: "map_image", FallbackKinds: []string{"image"}}}, store.sources)

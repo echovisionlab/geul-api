@@ -104,7 +104,7 @@ type Read struct {
 	Document      *contentv1.LocalizedPageDocument
 	Revision      string
 	Localization  publiccontent.Selection
-	OgAsset       *commonv1.AssetRef
+	OgAsset       *mediaasset.Reference
 	FeaturedImage *commonv1.MediaDelivery
 	BlockMedia    []*contentv1.ContentBlockMediaItem
 }

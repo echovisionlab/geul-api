@@ -15,15 +15,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -86,7 +87,7 @@ type state struct {
 	mapPlaces     map[string]bool
 	files         map[string]bool
 	routes        map[string]bool
-	readyAssets   map[string]*commonv1.AssetRef
+	readyAssets   map[string]*mediaasset.Reference
 	blockMedia    map[uuid.UUID][]*contentv1.ContentBlockMediaItem
 	sessions      map[string]*auth.UserInfo
 	updates       []post.ContentUpdate
@@ -148,7 +149,7 @@ func NewStore() *Store {
 		relations: map[relationKey]time.Time{}, members: map[string]Member{}, comments: map[string]post.Comment{},
 		versions: map[string][]post.StoredVersion{}, documents: map[uuid.UUID]Document{},
 		mapPlaces: map[string]bool{}, files: map[string]bool{}, routes: map[string]bool{},
-		readyAssets: map[string]*commonv1.AssetRef{}, blockMedia: map[uuid.UUID][]*contentv1.ContentBlockMediaItem{},
+		readyAssets: map[string]*mediaasset.Reference{}, blockMedia: map[uuid.UUID][]*contentv1.ContentBlockMediaItem{},
 		sessions: map[string]*auth.UserInfo{}, unavailable: map[uuid.UUID]contentv1.MissingAttachmentMediaKind{},
 	}}
 }
@@ -302,7 +303,7 @@ func (s *Store) PutFile(id string)     { s.mu.Lock(); s.files[id] = true; s.mu.U
 func (s *Store) PutRoute(slug string)  { s.mu.Lock(); s.routes[slug] = true; s.mu.Unlock() }
 
 // PutReadyAsset stores a ready public asset.
-func (s *Store) PutReadyAsset(id string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyAsset(id string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyAssets[id] = ref

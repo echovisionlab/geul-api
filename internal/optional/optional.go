@@ -18,3 +18,11 @@ func Equal[T comparable](left, right *T) bool {
 	}
 	return *left == *right
 }
+
+// Value returns the pointed value, or its zero value when absent.
+func Value[T any](value *T) (result T) {
+	if value != nil {
+		return *value
+	}
+	return result
+}

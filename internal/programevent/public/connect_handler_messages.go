@@ -3,11 +3,15 @@ package public
 import (
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -106,7 +110,7 @@ func seriesMessage(series *SeriesEntry) *openv1.ProgramEventSeries {
 		Slug:        series.Slug,
 		Summary:     series.Summary,
 		Description: series.Description,
-		PosterAsset: series.PosterAsset,
+		PosterAsset: mediaasset.ReferenceProto(series.PosterAsset),
 	}
 }
 
@@ -130,7 +134,7 @@ func summaryMessage(summary EventSummary) *openv1.ProgramEventSummary {
 		PublishedAt:      timestampProto(event.PublishedAt),
 		UpdatedAt:        timestamppb.New(event.UpdatedAt),
 		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(summary.Localization),
-		PosterAsset:      summary.PosterAsset,
+		PosterAsset:      mediaasset.ReferenceProto(summary.PosterAsset),
 		Type:             typeMessage(summary.Type),
 	}
 }
@@ -171,7 +175,7 @@ func eventMessage(detail EventDetail) *openv1.ProgramEvent {
 		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(detail.Localization),
 		Document:         detail.Document,
 		DocumentRevision: detail.DocumentRevision,
-		PosterAsset:      detail.PosterAsset,
+		PosterAsset:      mediaasset.ReferenceProto(detail.PosterAsset),
 		Type:             typeMessage(detail.Type),
 		Series:           seriesMessage(detail.Series),
 	}
@@ -195,10 +199,10 @@ func eventMessage(detail EventDetail) *openv1.ProgramEvent {
 	for _, credit := range detail.Credits {
 		item := &openv1.ProgramEventCredit{
 			Id: credit.ID, DisplayName: credit.DisplayName, CreditRole: credit.CreditRole,
-			Description: credit.Description, SortOrder: credit.SortOrder, Member: credit.Member,
+			Description: credit.Description, SortOrder: credit.SortOrder, Member: memberref.ReferenceMessage(credit.Member),
 		}
 		if credit.Artist != nil {
-			item.Artist = &openv1.ProgramEventArtist{Id: credit.Artist.ID, Name: credit.Artist.Name, Slug: credit.Artist.Slug, ImageAsset: credit.Artist.ImageAsset}
+			item.Artist = &openv1.ProgramEventArtist{Id: credit.Artist.ID, Name: credit.Artist.Name, Slug: credit.Artist.Slug, ImageAsset: mediaasset.ReferenceProto(credit.Artist.ImageAsset)}
 		}
 		message.Credits = append(message.Credits, item)
 	}

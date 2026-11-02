@@ -1,4 +1,4 @@
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -20,15 +20,15 @@ func (s *store) domainFence(fence artist.ContentFence) contentblock.DomainFence 
 }
 
 func (s *store) CreateContentDocument(ctx context.Context, input contentblock.CreateInput) (contentblock.Snapshot, error) {
-	return s.deps.ContentBlocks.CreateDocument(ctx, s.tx, input)
+	return s.ports.ContentBlocks.CreateDocument(ctx, s.tx, input)
 }
 
 func (s *store) LockedContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error) {
-	return s.deps.ContentBlocks.LoadSnapshotInTransaction(ctx, s.tx, documentID, sourceLocale)
+	return s.ports.ContentBlocks.LoadSnapshotInTransaction(ctx, s.tx, documentID, sourceLocale)
 }
 
 func (s *store) ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error) {
-	return s.deps.ContentBlocks.LoadSnapshot(ctx, s.tx, documentID, sourceLocale)
+	return s.ports.ContentBlocks.LoadSnapshot(ctx, s.tx, documentID, sourceLocale)
 }
 
 func (s *store) CurrentContentRevision(ctx context.Context, documentID uuid.UUID) (uuid.UUID, error) {
@@ -44,27 +44,27 @@ func (s *store) LocaleOwnershipConflict(ctx context.Context, documentID uuid.UUI
 }
 
 func (s *store) ApplyContentBatch(ctx context.Context, batch contentblock.Batch, fence artist.ContentFence) (contentblock.Result, error) {
-	return s.deps.ContentBlocks.ApplyBatch(ctx, s.tx, batch, s.domainFence(fence))
+	return s.ports.ContentBlocks.ApplyBatch(ctx, s.tx, batch, s.domainFence(fence))
 }
 
 func (s *store) ApplyTargetLocaleContentBatch(ctx context.Context, batch contentblock.Batch, locale string, fence artist.ContentFence, effect artist.TargetMetadataEffect) (contentblock.Result, error) {
-	return s.deps.ContentBlocks.ApplyTargetLocaleBatchWithMetadata(ctx, s.tx, batch, locale, s.domainFence(fence),
+	return s.ports.ContentBlocks.ApplyTargetLocaleBatchWithMetadata(ctx, s.tx, batch, locale, s.domainFence(fence),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			return effect(ctx, s.with(tx), contentChanged)
 		})
 }
 
 func (s *store) ReplaceContentSnapshot(ctx context.Context, replace contentblock.ReplaceInput, fence artist.ContentFence) (contentblock.Result, error) {
-	return s.deps.ContentBlocks.ReplaceSnapshot(ctx, s.tx, replace, s.domainFence(fence))
+	return s.ports.ContentBlocks.ReplaceSnapshot(ctx, s.tx, replace, s.domainFence(fence))
 }
 
 func (s *store) AdvanceContentRevision(ctx context.Context, input contentblock.AdvanceInput, fence artist.ContentFence, effect artist.MetadataEffect) (contentblock.AdvanceResult, error) {
-	return s.deps.ContentBlocks.AdvanceRevision(ctx, s.tx, input, s.domainFence(fence),
+	return s.ports.ContentBlocks.AdvanceRevision(ctx, s.tx, input, s.domainFence(fence),
 		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 			return effect(ctx, s.with(tx))
 		})
 }
 
 func (s *store) DeleteContentDocument(ctx context.Context, documentID uuid.UUID, fence artist.ContentFence) error {
-	return s.deps.ContentBlocks.DeleteDocument(ctx, s.tx, documentID, s.domainFence(fence))
+	return s.ports.ContentBlocks.DeleteDocument(ctx, s.tx, documentID, s.domainFence(fence))
 }

@@ -18,7 +18,7 @@ import (
 // worker owns no table; workerpostgres binds each port to the transaction.
 type Jobs interface {
 	// ScheduledPosts is the Post Store the scheduled publishing runs on.
-	ScheduledPosts() post.Store
+	ScheduledPosts() post.Joined
 	// MetadataAIRecovery republishes the expired metadata AI jobs.
 	MetadataAIRecovery() MetadataAIRecovery
 	// LegalActivation activates a scheduled Terms or Privacy version.

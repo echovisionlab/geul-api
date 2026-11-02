@@ -6,7 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -17,7 +18,7 @@ type MediaHydrator interface {
 
 // CreditMemberSummaries projects public Member-owned identity details for Program Event credits.
 type CreditMemberSummaries interface {
-	LoadPublicCreditMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadPublicCreditMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
 // Deps are the collaborators of the public Program Event reads; all are

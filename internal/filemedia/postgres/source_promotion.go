@@ -18,7 +18,7 @@ func (s *store) PromotionFile(ctx context.Context, id string, lock bool) (domain
 	var file model.File
 	columns := []string{"id", "delete_requested_at"}
 	if lock {
-		if err := mediaassetpostgres.Bind(s.tx).LockAttachableFiles(ctx, []string{id}); err != nil {
+		if err := mediaassetpostgres.NewStore(s.tx).LockAttachableFiles(ctx, []string{id}); err != nil {
 			return domain.File{}, err
 		}
 		columns = []string{"id", "mime_type", "file_size", "extension"}
@@ -40,9 +40,9 @@ func (s *store) SourcePromotionAsset(ctx context.Context, id string, lock bool) 
 }
 func (s *store) PromotionAsset(ctx context.Context, id string, lock bool) (mediaasset.Asset, error) {
 	if lock {
-		return mediaassetpostgres.Bind(s.tx).LockAsset(ctx, id)
+		return mediaassetpostgres.NewStore(s.tx).LockAsset(ctx, id)
 	}
-	return mediaassetpostgres.Bind(s.tx).Asset(ctx, id)
+	return mediaassetpostgres.NewStore(s.tx).Asset(ctx, id)
 }
 func (s *store) ResumePromotionAsset(ctx context.Context, id string, clearDeletion bool, now time.Time) (bool, error) {
 	fields := structured.Fields{"file_size": nil, "sha256": nil, "status": model.PublicAssetStatusAllocated, "ready_at": nil, "failed_at": nil, "failure_reason": nil, "updated_at": now}

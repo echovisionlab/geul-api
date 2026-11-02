@@ -11,8 +11,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -51,7 +54,7 @@ type SearchMembersQuery struct {
 }
 
 // SearchMembers returns the summaries matching query in nickname order.
-func (s *Service) SearchMembers(ctx context.Context, query SearchMembersQuery) ([]Summary, error) {
+func (s *Service) SearchMembers(ctx context.Context, query SearchMembersQuery) ([]memberref.Summary, error) {
 	if _, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
@@ -77,7 +80,7 @@ func (s *Service) SearchMembers(ctx context.Context, query SearchMembersQuery) (
 		}
 		search.IdentityIDs = identityIDs
 	}
-	var result []Summary
+	var result []memberref.Summary
 	err := s.read(ctx, func(store Store) error {
 		members, err := store.SearchMembers(ctx, search)
 		if err != nil {
@@ -91,7 +94,7 @@ func (s *Service) SearchMembers(ctx context.Context, query SearchMembersQuery) (
 		if err != nil {
 			return err
 		}
-		result = make([]Summary, len(members))
+		result = make([]memberref.Summary, len(members))
 		for i := range members {
 			result[i] = memberSummary(members[i], assets[members[i].ID])
 		}
@@ -218,7 +221,7 @@ func (s *Service) ListAdminMembers(ctx context.Context, query ListAdminMembersQu
 	var (
 		members []Member
 		total   int64
-		assets  map[string]*Asset
+		assets  map[string]*memberref.Asset
 		ids     []string
 	)
 	if err := s.read(ctx, func(store Store) error {
@@ -303,9 +306,9 @@ type SetMemberAvatarCommand struct {
 }
 
 // SetMemberAvatar applies command and returns the Member summary.
-func (s *Service) SetMemberAvatar(ctx context.Context, command SetMemberAvatarCommand) (Summary, error) {
+func (s *Service) SetMemberAvatar(ctx context.Context, command SetMemberAvatarCommand) (memberref.Summary, error) {
 	if _, err := s.requireAdminMember(ctx); err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.setAvatar(ctx, command.MemberID, command.FileID, freshAdmin(), true)
 }
@@ -317,9 +320,9 @@ type DeleteMemberAvatarCommand struct {
 }
 
 // DeleteMemberAvatar applies command and returns the Member summary.
-func (s *Service) DeleteMemberAvatar(ctx context.Context, command DeleteMemberAvatarCommand) (Summary, error) {
+func (s *Service) DeleteMemberAvatar(ctx context.Context, command DeleteMemberAvatarCommand) (memberref.Summary, error) {
 	if _, err := s.requireAdminMember(ctx); err != nil {
-		return Summary{}, err
+		return memberref.Summary{}, err
 	}
 	return s.deleteAvatar(ctx, command.MemberID, freshAdmin(), true)
 }

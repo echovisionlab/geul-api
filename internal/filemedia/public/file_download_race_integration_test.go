@@ -304,9 +304,9 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 
 	assertDenied := func() {
 		t.Helper()
-		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), mediaassetpostgres.BindDownload(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), mediaassetpostgres.NewDownloadStore(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
 		require.NoError(t, loadErr)
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), mediaassetpostgres.BindDownload(db, nil), stack.SpiceDBClient, sources, member.AuthUserInfo())
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), mediaassetpostgres.NewDownloadStore(db, nil), stack.SpiceDBClient, sources, member.AuthUserInfo())
 		require.NoError(t, evaluateErr)
 		require.False(t, allowed[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")])
 		response, authorizeErr := NewConnectHandler(svc).AuthorizeDownload(ctx, request)

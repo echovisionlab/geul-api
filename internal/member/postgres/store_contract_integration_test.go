@@ -23,7 +23,7 @@ import (
 )
 
 func contractUnits(db *gorm.DB) mutation.UnitOfWork[member.Store] {
-	return mutation.Postgres(db, func(tx *gorm.DB) member.Store { return memberpostgres.Bind(tx) })
+	return mutation.Postgres(db, func(tx *gorm.DB) member.Store { return memberpostgres.NewStore(tx) })
 }
 
 // seedLinked stores a Kratos stub Identity, its account anchor and a Member

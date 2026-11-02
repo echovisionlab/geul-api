@@ -9,9 +9,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -78,7 +81,7 @@ func trackWithCreditsFixture() releasedomain.TrackWithCredits {
 		},
 		Credits: []releasedomain.TrackCreditView{{
 			CreditRow:  releasedomain.CreditRow{ID: trackTestCredit, ArtistID: &artist, CreditRole: &role, SortOrder: 0},
-			ArtistName: &private, ArtistSlug: &private, Member: &commonv1.MemberSummary{Id: private},
+			ArtistName: &private, ArtistSlug: &private, Member: &memberref.Summary{ID: private},
 		}},
 	}
 }

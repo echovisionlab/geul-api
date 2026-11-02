@@ -9,9 +9,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -116,8 +118,8 @@ type SetLabelImageCommand struct {
 // LogoUpdate is the Label's ready logos after a logo change and the OG
 // generation run it started.
 type LogoUpdate struct {
-	Light             *commonv1.AssetRef
-	Dark              *commonv1.AssetRef
+	Light             *mediaasset.Reference
+	Dark              *mediaasset.Reference
 	OgGenerationRunID *string
 }
 

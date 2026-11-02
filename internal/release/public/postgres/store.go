@@ -9,27 +9,31 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"gorm.io/gorm"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/release"
+
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/release/public"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // Media resolves the ready public assets and Track derivatives the public
 // reads deliver; the Release adapter implements it.
 type Media interface {
-	ReadySourceAssets(ctx context.Context, db *gorm.DB, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error)
-	TrackWaveforms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*commonv1.AssetRef, error)
-	TrackSpectrograms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadySourceAssets(ctx context.Context, db *gorm.DB, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error)
+	TrackWaveforms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*mediaasset.Reference, error)
+	TrackSpectrograms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*mediaasset.Reference, error)
 	TrackHLS(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*commonv1.HlsMediaRef, error)
 }
 
@@ -233,7 +237,7 @@ func (s store) ArtworkFiles(ctx context.Context, releaseIDs []string) ([]public.
 	return files, nil
 }
 
-func (s store) ReadySourceAssets(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error) {
+func (s store) ReadySourceAssets(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Media.ReadySourceAssets(ctx, s.tx, fileIDs, kinds...)
 }
 
@@ -448,11 +452,11 @@ func (s store) TrackFiles(ctx context.Context, fileIDs []string) (map[string]pub
 	return result, nil
 }
 
-func (s store) TrackWaveforms(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s store) TrackWaveforms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Media.TrackWaveforms(ctx, s.tx, fileIDs)
 }
 
-func (s store) TrackSpectrograms(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s store) TrackSpectrograms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ports.Media.TrackSpectrograms(ctx, s.tx, fileIDs)
 }
 

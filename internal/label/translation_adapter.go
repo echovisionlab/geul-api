@@ -33,7 +33,9 @@ type TranslationJob struct {
 // LoadTypedTranslationSourceDocument reads the Label's source-locale title
 // and content document for translation, through store bound to the
 // translation domain's database handle.
-func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, labelID string) (*translation.SourceDocument, error) {
+func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, labelID string) (*translation.SourceDocument, error) {
+	store := joined.Store
+
 	sourceLocale, title, documentID, err := loadTypedLabelTranslationSource(ctx, store, labelID)
 	if err != nil {
 		return nil, err
@@ -57,12 +59,14 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, labelI
 // current target row.
 func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
+	store := joined.Store
+	auditWriter := joined.Audit
+
 	return applyTypedTranslationCandidateWithTargetRevision(
 		ctx, store, job, candidate, metadata, auditWriter, nil, targetlocale.RevisionCurrent,
 	)
@@ -74,13 +78,15 @@ func ApplyTypedTranslationCandidate(
 // through ApplyTypedTranslationCandidate above.
 func ApplyTypedTranslationCandidateWithTargetRevision(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 	expectedTargetRevision *string,
 ) error {
+	store := joined.Store
+	auditWriter := joined.Audit
+
 	return applyTypedTranslationCandidateWithTargetRevision(
 		ctx, store, job, candidate, metadata, auditWriter, expectedTargetRevision, targetlocale.RevisionObserved,
 	)
@@ -224,7 +230,9 @@ func applyProviderSourceLabelTranslation(
 // RequireLockedSourceLocaleEdit locks the Label row, then requires Edit of
 // the principal lockActive locks, for the translation domain's source locale
 // change in its transaction, which store is bound to.
-func RequireLockedSourceLocaleEdit(ctx context.Context, store Store, checker entityparticipant.PermissionChecker, lockActive func(*auth.UserInfo) (bool, error), labelID string) error {
+func RequireLockedSourceLocaleEdit(ctx context.Context, joined Joined, checker entityparticipant.PermissionChecker, lockActive func(*auth.UserInfo) (bool, error), labelID string) error {
+	store := joined.Store
+
 	if err := labelEntity.LockRoot(ctx, store, labelID); err != nil {
 		return err
 	}

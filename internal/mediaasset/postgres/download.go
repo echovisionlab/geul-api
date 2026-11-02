@@ -25,7 +25,7 @@ type downloadStore struct {
 	loader SegmentConfigLoader
 }
 
-func BindDownload(tx *gorm.DB, loader SegmentConfigLoader) mediaasset.DownloadStore {
+func NewDownloadStore(tx *gorm.DB, loader SegmentConfigLoader) mediaasset.DownloadStore {
 	if tx == nil {
 		panic("media asset download store: database is required")
 	}

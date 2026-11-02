@@ -23,7 +23,7 @@ import (
 )
 
 func contractUnits(db *gorm.DB) mutation.UnitOfWork[account.Store] {
-	return mutation.Postgres(db, func(tx *gorm.DB) account.Store { return accountpostgres.Bind(tx, accountpostgres.Ports{}) })
+	return mutation.Postgres(db, func(tx *gorm.DB) account.Store { return accountpostgres.NewStore(tx, accountpostgres.Ports{}) })
 }
 
 // seedPair stores a Kratos stub Identity, its account anchor and a Member

@@ -9,10 +9,14 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 )
@@ -336,17 +340,17 @@ type VersionRestore struct {
 // WorkMedia is the shared File, public asset and OG lifecycle of a Work.
 type WorkMedia interface {
 	// ReadyAssets resolves ready public assets by ID.
-	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error)
+	ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
 	// ReadyFileAsset resolves the ready public asset of a source File of
 	// kind.
-	ReadyFileAsset(ctx context.Context, fileID, kind string) (*commonv1.AssetRef, error)
+	ReadyFileAsset(ctx context.Context, fileID, kind string) (*mediaasset.Reference, error)
 	// LockAttachableFile locks a File a Work may attach; FileID reads its
 	// stored ID, a missing File answering ErrFileNotFound.
 	LockAttachableFile(ctx context.Context, fileID string) error
 	FileID(ctx context.Context, fileID string) (string, error)
 	// BindFeaturedImage binds the File's ready image as the featured image;
 	// ReleaseFeaturedImage releases the binding.
-	BindFeaturedImage(ctx context.Context, workID, fileID string) (*commonv1.AssetRef, error)
+	BindFeaturedImage(ctx context.Context, workID, fileID string) (*mediaasset.Reference, error)
 	ReleaseFeaturedImage(ctx context.Context, workID string) error
 	// UnavailableAttachmentKinds names the attachments of a version
 	// document that are no longer available.

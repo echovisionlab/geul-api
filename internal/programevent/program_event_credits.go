@@ -11,9 +11,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -496,7 +499,7 @@ func (s *Service) committedCreditView(ctx context.Context, row CreditRecord) Cre
 	return creditView(ctx, func(read func(Store) error) error { return s.units.Read(ctx, read) }, row, summaries)
 }
 
-func creditView(ctx context.Context, read creditReader, row CreditRecord, summaries map[string]*commonv1.MemberSummary) CreditView {
+func creditView(ctx context.Context, read creditReader, row CreditRecord, summaries map[string]*memberref.Summary) CreditView {
 	credit := CreditView{CreditRecord: row}
 	if row.ArtistID != nil {
 		credit.Artist = loadCreditArtist(ctx, read, row)
@@ -529,7 +532,7 @@ func loadCreditArtist(ctx context.Context, read creditReader, row CreditRecord) 
 	return &artist
 }
 
-func loadCreditArtistImage(ctx context.Context, read creditReader, artistID string) *commonv1.AssetRef {
+func loadCreditArtistImage(ctx context.Context, read creditReader, artistID string) *mediaasset.Reference {
 	var fileID string
 	err := read(func(store Store) error {
 		var err error
@@ -542,7 +545,7 @@ func loadCreditArtistImage(ctx context.Context, read creditReader, artistID stri
 		}
 		return nil
 	}
-	var asset *commonv1.AssetRef
+	var asset *mediaasset.Reference
 	err = read(func(store Store) error {
 		var err error
 		asset, err = store.ReadyImageAsset(ctx, fileID)

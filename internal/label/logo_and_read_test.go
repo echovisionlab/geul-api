@@ -6,8 +6,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/label"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +19,7 @@ func TestSetLabelImageBindsTheLogoAndRegeneratesTheOGImage(t *testing.T) {
 	h.store.OGRunID = "run-1"
 	caller := newPrincipal()
 	value := h.seedLabel(t, "Logo")
-	light := &commonv1.AssetRef{AssetId: "light-asset"}
+	light := &mediaasset.Reference{AssetID: "light-asset"}
 	h.store.PutReadyLogo("file-light", light)
 
 	update, err := h.service.SetLabelImage(caller.context(t), label.SetLabelImageCommand{LabelID: value.ID, FileID: "file-light", Variant: label.LogoVariantLight})
@@ -98,7 +100,7 @@ func TestGetLabelEditorDataNeedsViewAndListsTheCallersActions(t *testing.T) {
 		value.LogoDarkFileID = stringPointer("dark-file")
 		value.OgAssetID = stringPointer("og-asset")
 	})
-	og := &commonv1.AssetRef{AssetId: "og-asset"}
+	og := &mediaasset.Reference{AssetID: "og-asset"}
 	h.store.PutReadyAsset("og-asset", og)
 	edit, err := policyv1.Label.Edit(value.ID)
 	require.NoError(t, err)

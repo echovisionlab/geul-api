@@ -88,12 +88,12 @@ func TestClientHandlerRendersLogosAndMapsThemeVariants(t *testing.T) {
 		ClientId: client.ID, FileId: lightID, Variant: managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_UNSPECIFIED,
 	}))
 	require.NoError(t, err)
-	requireMessage(t, &managev1.SetClientLogoResponse{LogoLightAsset: lightAsset}, light.Msg)
+	requireMessage(t, &managev1.SetClientLogoResponse{LogoLightAsset: &commonv1.AssetRef{AssetId: lightAsset.AssetID, Url: lightAsset.URL}}, light.Msg)
 	dark, err := handler.SetClientLogo(p.ctx, connect.NewRequest(&managev1.SetClientLogoRequest{
 		ClientId: client.ID, FileId: darkID, Variant: managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK,
 	}))
 	require.NoError(t, err)
-	requireMessage(t, &managev1.SetClientLogoResponse{LogoDarkAsset: darkAsset}, dark.Msg)
+	requireMessage(t, &managev1.SetClientLogoResponse{LogoDarkAsset: &commonv1.AssetRef{AssetId: darkAsset.AssetID, Url: darkAsset.URL}}, dark.Msg)
 	_, err = handler.SetClientLogo(p.ctx, connect.NewRequest(&managev1.SetClientLogoRequest{ClientId: client.ID, FileId: darkID, Variant: 99}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
@@ -102,7 +102,7 @@ func TestClientHandlerRendersLogosAndMapsThemeVariants(t *testing.T) {
 	requireMessage(t, &managev1.ListClientsAdminResponse{
 		Clients: []*managev1.ClientWithStats{{Client: &managev1.Client{
 			Id: client.ID, Name: "Client", Website: &website, CreatedAt: timestamppb.New(client.CreatedAt),
-			LogoLightAsset: lightAsset, LogoDarkAsset: darkAsset,
+			LogoLightAsset: &commonv1.AssetRef{AssetId: lightAsset.AssetID, Url: lightAsset.URL}, LogoDarkAsset: &commonv1.AssetRef{AssetId: darkAsset.AssetID, Url: darkAsset.URL},
 		}, WorkCount: 1}},
 		Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20},
 	}, listed.Msg)
@@ -129,7 +129,7 @@ func TestMapPlaceHandlerRendersSetFieldsAndMemberSummaries(t *testing.T) {
 		Id: place.ID, Name: "Hall", Address: "Road", Lat: 37.5, Lng: 127,
 		CreatedAt: timestamppb.New(place.CreatedAt), UpdatedAt: timestamppb.New(place.UpdatedAt),
 		AddressComponents: &managev1.AddressComponents{City: &city},
-		ImageFileId:       &fileID, ImageAsset: image,
+		ImageFileId:       &fileID, ImageAsset: &commonv1.AssetRef{AssetId: image.AssetID, Url: image.URL},
 		CreatedByMemberId: new(p.memberID), CreatedByMember: &commonv1.MemberSummary{Id: p.memberID, Nickname: "Author"},
 	}, got.Msg)
 

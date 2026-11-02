@@ -6,16 +6,21 @@ import (
 	"sort"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
@@ -147,7 +152,7 @@ func lifecycleMessage(change LifecycleChange) *managev1.ReleaseLifecycleMutation
 
 func (h *ConnectHandler) SetReleaseArtwork(ctx context.Context, req *connect.Request[managev1.SetReleaseArtworkRequest]) (*connect.Response[managev1.SetReleaseArtworkResponse], error) {
 	asset, err := h.releases.SetReleaseArtwork(ctx, SetReleaseArtworkCommand{ReleaseID: req.Msg.ReleaseId, FileID: req.Msg.FileId})
-	return respond(&managev1.SetReleaseArtworkResponse{ArtworkAsset: asset}, err)
+	return respond(&managev1.SetReleaseArtworkResponse{ArtworkAsset: mediaasset.ReferenceProto(asset)}, err)
 }
 
 func (h *ConnectHandler) DeleteReleaseArtwork(ctx context.Context, req *connect.Request[managev1.DeleteReleaseArtworkRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
@@ -391,6 +396,7 @@ func timestampProtoPtr(value *time.Time) *timestamppb.Timestamp {
 // as well.
 func ReleaseMessage(view View) *managev1.Release {
 	r := view.Release
+	artwork := mediaasset.ReferenceProto(view.Artwork)
 	return &managev1.Release{
 		Id:              r.ID,
 		Title:           view.Title,
@@ -400,8 +406,8 @@ func ReleaseMessage(view View) *managev1.Release {
 		Status:          string(r.Status),
 		CreatedAt:       timestamppb.New(r.CreatedAt),
 		UpdatedAt:       timestamppb.New(r.UpdatedAt),
-		OgAsset:         view.Artwork,
-		ArtworkAsset:    view.Artwork,
+		OgAsset:         artwork,
+		ArtworkAsset:    artwork,
 		Revision:        view.Revision,
 		Slug:            r.Slug,
 		ReleaseDate:     timestampProtoPtr(r.ReleaseDate),
@@ -512,7 +518,7 @@ func TrackWithCreditsMessage(ctx context.Context, track TrackWithCredits) *manag
 			MemberId:     credit.MemberID,
 			CreditedName: credit.CreditedName,
 			CreditRole:   credit.CreditRole,
-			Member:       credit.Member,
+			Member:       memberref.ReferenceMessage(credit.Member),
 		}
 	}
 	return &managev1.TrackWithCredits{Track: TrackMessage(ctx, track.Track), Credits: credits}

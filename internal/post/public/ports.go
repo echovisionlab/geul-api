@@ -3,8 +3,12 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
@@ -15,7 +19,7 @@ type FileService interface {
 }
 
 type MemberSummaryLoader interface {
-	LoadPublicMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadPublicMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
 type LocalizedContentSelection struct {

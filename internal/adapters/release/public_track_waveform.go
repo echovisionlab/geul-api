@@ -3,8 +3,11 @@ package release
 import (
 	"context"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -14,7 +17,7 @@ func loadTrackWaveformRefs(
 	db *gorm.DB,
 	mediaDomain string,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	return loadTrackStaticAssetRefs(
 		ctx,
 		db,
@@ -29,7 +32,7 @@ func loadTrackSpectrogramRefs(
 	db *gorm.DB,
 	mediaDomain string,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	return loadTrackStaticAssetRefs(
 		ctx,
 		db,
@@ -45,10 +48,10 @@ func loadTrackStaticAssetRefs(
 	mediaDomain string,
 	fileIDs []string,
 	derivativeType managev1.FileDerivativeType,
-) (map[string]*commonv1.AssetRef, error) {
+) (map[string]*mediaasset.Reference, error) {
 	ids := sliceutil.UniqueNonZero(fileIDs)
 	if len(ids) == 0 {
-		return map[string]*commonv1.AssetRef{}, nil
+		return map[string]*mediaasset.Reference{}, nil
 	}
 
 	var rows []trackStaticDerivativeRow
@@ -99,8 +102,8 @@ type trackHLSDerivativeRow struct {
 	ManifestName string `gorm:"column:manifest_name"`
 }
 
-func projectTrackStaticDerivativeRefs(mediaDomain string, rows []trackStaticDerivativeRow) (map[string]*commonv1.AssetRef, error) {
-	result := make(map[string]*commonv1.AssetRef, len(rows))
+func projectTrackStaticDerivativeRefs(mediaDomain string, rows []trackStaticDerivativeRow) (map[string]*mediaasset.Reference, error) {
+	result := make(map[string]*mediaasset.Reference, len(rows))
 	for _, row := range rows {
 		ref, err := projectReadyPublicAsset(mediaDomain, row.Asset)
 		if err != nil {

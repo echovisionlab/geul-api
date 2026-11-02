@@ -5,13 +5,13 @@ import (
 	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 type commentMembers struct{ MemberSummaryLoader }
 
-func (m commentMembers) LoadMemberSummaries(ctx context.Context, ids []string) (map[string]*commonv1.MemberSummary, error) {
+func (m commentMembers) LoadMemberSummaries(ctx context.Context, ids []string) (map[string]*memberref.Summary, error) {
 	return m.LoadPublicMemberSummaries(ctx, ids)
 }
 

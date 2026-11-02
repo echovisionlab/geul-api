@@ -74,8 +74,7 @@ func (a *LabelInterchange) ApplyTranslationInterchange(
 		expectedTargetRevision = command.ExpectedRevision
 	}
 	if err := labeldomain.ApplyTypedTranslationCandidateWithTargetRevision(
-		ctx, labelStore(db, store), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, a.audit,
-		expectedTargetRevision,
+		ctx, labelJoined(db, store, a.audit), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, expectedTargetRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
@@ -104,7 +103,7 @@ func loadLabelInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindLabel)); err != nil {
 		return creativeInterchangeTarget{}, err
 	}
-	target, err := labeldomain.LoadTypedTranslationInterchangeTarget(ctx, labelStore(db, store), entityID, locale)
+	target, err := labeldomain.LoadTypedTranslationInterchangeTarget(ctx, labelJoined(db, store, nil), entityID, locale)
 	if err != nil {
 		return creativeInterchangeTarget{}, err
 	}

@@ -20,8 +20,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -81,8 +84,8 @@ type state struct {
 	members        map[string]bool
 	sessions       map[string]*auth.UserInfo
 	revokedRoom    map[string]bool
-	readyAssets    map[string]*commonv1.AssetRef
-	readyImages    map[string]*commonv1.AssetRef
+	readyAssets    map[string]*mediaasset.Reference
+	readyImages    map[string]*mediaasset.Reference
 	contentResults []contentblock.Result
 }
 
@@ -129,8 +132,8 @@ func NewStore() *Store {
 		labels: map[string]string{}, draftLabels: map[string]bool{}, images: map[string][]string{},
 		relations: map[string]Relations{}, releaseCounts: map[string]int32{},
 		identities: map[string]string{}, members: map[string]bool{}, sessions: map[string]*auth.UserInfo{},
-		revokedRoom: map[string]bool{}, readyAssets: map[string]*commonv1.AssetRef{},
-		readyImages: map[string]*commonv1.AssetRef{},
+		revokedRoom: map[string]bool{}, readyAssets: map[string]*mediaasset.Reference{},
+		readyImages: map[string]*mediaasset.Reference{},
 	}}
 }
 
@@ -297,14 +300,14 @@ func (s *Store) PutReleaseCount(artistID string, count int32) {
 }
 
 // PutReadyAsset makes assetID a ready public asset.
-func (s *Store) PutReadyAsset(assetID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyAsset(assetID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyAssets[assetID] = ref
 }
 
 // PutReadyImage makes the image asset of fileID ready.
-func (s *Store) PutReadyImage(fileID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyImage(fileID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyImages[fileID] = ref
@@ -922,13 +925,13 @@ func (s *Store) ReleaseImageBindings(_ context.Context, artistID string) error {
 }
 
 // ReadyAssets implements artist.Store.
-func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	if err := s.fail("ReadyAssets"); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	refs := map[string]*commonv1.AssetRef{}
+	refs := map[string]*mediaasset.Reference{}
 	for _, id := range assetIDs {
 		if ref := s.readyAssets[id]; ref != nil {
 			refs[id] = ref

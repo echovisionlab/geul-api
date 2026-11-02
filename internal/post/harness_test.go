@@ -8,19 +8,22 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/post/posttest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -151,27 +154,27 @@ var errDown = errors.New("dependency down")
 // members is the Member summary fake.
 type members struct {
 	mu        sync.Mutex
-	summaries map[string]*commonv1.MemberSummary
+	summaries map[string]*memberref.Summary
 	err       error
 }
 
 func newMembers() *members {
-	return &members{summaries: map[string]*commonv1.MemberSummary{}}
+	return &members{summaries: map[string]*memberref.Summary{}}
 }
 
 func (m *members) put(memberID, nickname string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.summaries[memberID] = &commonv1.MemberSummary{Id: memberID, Nickname: nickname}
+	m.summaries[memberID] = &memberref.Summary{ID: memberID, Nickname: nickname}
 }
 
-func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
+func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (map[string]*memberref.Summary, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
-	summaries := map[string]*commonv1.MemberSummary{}
+	summaries := map[string]*memberref.Summary{}
 	for _, memberID := range memberIDs {
 		if summary, ok := m.summaries[memberID]; ok {
 			summaries[memberID] = summary

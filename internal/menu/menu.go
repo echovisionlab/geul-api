@@ -238,7 +238,7 @@ type Store interface {
 // joins instead of opening its own: a translation apply, or an owning
 // domain's target rename. Store and Audit are both bound to that
 // transaction, so the step passes a nil transaction to domainaudit.
-// menuadapter.Join binds a gorm transaction; a test joins the fake Store
+// menupostgres.Bind binds a gorm transaction; a test joins the fake Store
 // and an audittest.Recorder.
 type Joined struct {
 	Store Store

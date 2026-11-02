@@ -4,9 +4,15 @@ import (
 	"testing"
 	"time"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -62,9 +68,9 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.NoError(t, err)
 	viewCan, err := policyv1.Post.View(id)
 	require.NoError(t, err)
-	author := &commonv1.MemberSummary{Id: uuid.NewString(), Nickname: "Author"}
+	author := &memberref.Summary{ID: uuid.NewString(), Nickname: "Author"}
 	featured := &commonv1.MediaDelivery{FileId: uuid.NewString()}
-	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
+	og := &mediaasset.Reference{AssetID: uuid.NewString(), URL: "https://cdn.example/og.webp"}
 	view, err := postViewWithProjection(Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
 		ContentRevision: revision, ConfigurationRevision: configurationRevision,
@@ -75,7 +81,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 		Categories: []Category{{ID: "category-1", Name: "Category", Slug: "category", CreatedAt: now}},
 		Tags:       []Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
 		Series:     &Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
-	}, postContent{document: document, blockMedia: media}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(viewCan, can))
+	}, postContent{document: document, blockMedia: media}, og, []*memberref.Summary{author}, featured, postAuthority(viewCan, can))
 	require.NoError(t, err)
 	wire, err := protojson.Marshal(PostMessage(view))
 	require.NoError(t, err)
@@ -90,9 +96,9 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.Equal(t, revision, decoded.Revision)
 	require.Equal(t, configurationRevision, decoded.ConfigurationRevision)
 	require.True(t, proto.Equal(media[0], decoded.BlockMedia[0]))
-	require.True(t, proto.Equal(author, decoded.AuthorMembers[0]))
+	require.True(t, proto.Equal(memberref.ReferenceMessage(author), decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
-	require.True(t, proto.Equal(og, decoded.OgAsset))
+	require.True(t, proto.Equal(mediaasset.ReferenceProto(og), decoded.OgAsset))
 	require.True(t, proto.Equal(&commonv1.DocumentLayout{
 		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT,
 		PageChrome:    commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW,

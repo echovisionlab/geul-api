@@ -6,16 +6,17 @@ import (
 	"errors"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/label"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/label"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // ContentProjection reads a Label's source titles and its content document
@@ -27,9 +28,9 @@ type ContentProjection interface {
 
 // MediaHydrator resolves ready public assets.
 type MediaHydrator interface {
-	ReadyForSourceFiles(context.Context, *gorm.DB, []string, ...string) (map[string]*commonv1.AssetRef, error)
-	ReadyForAssetIDs(context.Context, *gorm.DB, []string) (map[string]*commonv1.AssetRef, error)
-	ResolveOg(context.Context, *gorm.DB, *string) (*commonv1.AssetRef, error)
+	ReadyForSourceFiles(context.Context, *gorm.DB, []string, ...string) (map[string]*mediaasset.Reference, error)
+	ReadyForAssetIDs(context.Context, *gorm.DB, []string) (map[string]*mediaasset.Reference, error)
+	ResolveOg(context.Context, *gorm.DB, *string) (*mediaasset.Reference, error)
 }
 
 // NewUnits returns the read snapshots of the public Label reads.
@@ -137,15 +138,15 @@ func (s store) Document(ctx context.Context, labelID, locale string) (labelpubli
 	return s.content.LoadDocument(ctx, s.tx, labelID, locale)
 }
 
-func (s store) ReadySourceFiles(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error) {
+func (s store) ReadySourceFiles(ctx context.Context, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error) {
 	return s.media.ReadyForSourceFiles(ctx, s.tx, fileIDs, kinds...)
 }
 
-func (s store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.media.ReadyForAssetIDs(ctx, s.tx, assetIDs)
 }
 
-func (s store) ResolveOg(ctx context.Context, assetID *string) (*commonv1.AssetRef, error) {
+func (s store) ResolveOg(ctx context.Context, assetID *string) (*mediaasset.Reference, error) {
 	return s.media.ResolveOg(ctx, s.tx, assetID)
 }
 

@@ -67,6 +67,7 @@ var guardedPackageRoots = []string{
 	"internal/mediaasset",
 	"internal/mcp",
 	"internal/member",
+	"internal/memberref",
 	"internal/menu",
 	"internal/mutation",
 	"internal/og",

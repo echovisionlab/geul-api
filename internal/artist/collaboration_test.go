@@ -270,7 +270,7 @@ func TestApplyTypedTranslationCandidateRequiresTheLockedSourceRevision(t *testin
 	}
 	job := artist.TranslationJob{EntityType: "artist", EntityID: f.artist.ID, TargetLocale: "fr", RequestedByMemberID: f.contributor.memberID}
 
-	err := artist.ApplyTypedTranslationCandidate(t.Context(), f.h.store, job, candidate, translation.EntryWrite{Now: time.Now().UTC()}, f.h.audit)
+	err := artist.ApplyTypedTranslationCandidate(t.Context(), artist.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now().UTC()})
 
 	requireCode(t, err, connect.CodeInvalidArgument, "batch: Artist target document identity and revision must match the locked state")
 	_, exists := f.h.store.Locale(f.artist.ID, "fr")
@@ -278,7 +278,7 @@ func TestApplyTypedTranslationCandidateRequiresTheLockedSourceRevision(t *testin
 	require.Empty(t, f.h.audit.Records())
 
 	candidate.ContentDocumentRevision = f.h.revision(t, f.artist.ID).String()
-	require.NoError(t, artist.ApplyTypedTranslationCandidate(t.Context(), f.h.store, job, candidate, translation.EntryWrite{Now: time.Now().UTC()}, f.h.audit))
+	require.NoError(t, artist.ApplyTypedTranslationCandidate(t.Context(), artist.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now().UTC()}))
 	stored, exists := f.h.store.Locale(f.artist.ID, "fr")
 	require.True(t, exists)
 	require.Equal(t, "Traduit", *stored.Title)

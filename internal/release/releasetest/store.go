@@ -16,14 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/release"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
 )
 
 // Document is a fake content document: its revision, profile and source
@@ -159,7 +158,7 @@ type Store struct {
 	Artists     map[string]release.Summary
 	Labels      map[string]release.Summary
 	Catalog     map[string]release.Reference
-	ReadyAssets map[string]*commonv1.AssetRef
+	ReadyAssets map[string]*mediaasset.Reference
 	Routes      map[string]bool
 }
 
@@ -178,7 +177,7 @@ func NewStore() *Store {
 		},
 		Fail: map[string]error{}, Members: map[string]Member{}, Sessions: map[string]*auth.UserInfo{},
 		Artists: map[string]release.Summary{}, Labels: map[string]release.Summary{},
-		Catalog: map[string]release.Reference{}, ReadyAssets: map[string]*commonv1.AssetRef{},
+		Catalog: map[string]release.Reference{}, ReadyAssets: map[string]*mediaasset.Reference{},
 		Routes: map[string]bool{},
 	}
 }
@@ -1553,7 +1552,7 @@ func (s *Store) LockAttachableFiles(_ context.Context, fileIDs []string) error {
 	return nil
 }
 
-func (s *Store) BindArtwork(_ context.Context, fileID, releaseID string) (*commonv1.AssetRef, error) {
+func (s *Store) BindArtwork(_ context.Context, fileID, releaseID string) (*mediaasset.Reference, error) {
 	if err := s.fail("BindArtwork"); err != nil {
 		return nil, err
 	}
@@ -1583,7 +1582,7 @@ func (s *Store) CancelOG(_ context.Context, releaseID string) error {
 	return nil
 }
 
-func (s *Store) ReadyArtwork(_ context.Context, releaseID string) (*commonv1.AssetRef, error) {
+func (s *Store) ReadyArtwork(_ context.Context, releaseID string) (*mediaasset.Reference, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fileID, ok := s.artwork[releaseID]
@@ -1593,10 +1592,10 @@ func (s *Store) ReadyArtwork(_ context.Context, releaseID string) (*commonv1.Ass
 	return s.ReadyAssets[fileID], nil
 }
 
-func (s *Store) ReadyArtworks(_ context.Context, releaseIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyArtworks(_ context.Context, releaseIDs []string) (map[string]*mediaasset.Reference, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := map[string]*commonv1.AssetRef{}
+	result := map[string]*mediaasset.Reference{}
 	for _, releaseID := range releaseIDs {
 		if fileID, ok := s.artwork[releaseID]; ok {
 			if asset, ready := s.ReadyAssets[fileID]; ready {

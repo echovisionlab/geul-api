@@ -10,7 +10,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -27,7 +29,7 @@ type Store interface {
 	PublicMembers(ctx context.Context, memberIDs []string) ([]member.Member, error)
 	// PublicAvatars reads the ready, inline avatar of each Member that has
 	// one.
-	PublicAvatars(ctx context.Context, memberIDs []string) (map[string]*member.Asset, error)
+	PublicAvatars(ctx context.Context, memberIDs []string) (map[string]*memberref.Asset, error)
 	// TopAuthors reads the onboarded Members with the most published or
 	// archived posts, most first.
 	TopAuthors(ctx context.Context, limit int32) ([]AuthorRow, error)

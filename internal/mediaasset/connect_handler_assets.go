@@ -27,22 +27,6 @@ func WrittenGenerationFromProto(result *commonv1.MediaGenerationWriteResult) *Wr
 	return &WrittenGeneration{GenerationID: result.GetGenerationId(), ManifestSHA256: result.GetManifestSha256(), ObjectCount: result.GetObjectCount(), TotalSize: result.GetTotalSize()}
 }
 
-func ReferenceResultProto(ref *Reference, err error) (*commonv1.AssetRef, error) {
-	return ReferenceProto(ref), err
-}
 func AllocationResultProto(asset *Asset, target *WriteTarget, err error) (*Asset, *commonv1.AssetWriteTarget, error) {
 	return asset, WriteTargetProto(target), err
-}
-func BrandingResultProto(ref *Reference, kind string, err error) (*commonv1.AssetRef, string, error) {
-	return ReferenceProto(ref), kind, err
-}
-func ReferenceMapResultProto(refs map[string]*Reference, err error) (map[string]*commonv1.AssetRef, error) {
-	if refs == nil {
-		return nil, err
-	}
-	result := make(map[string]*commonv1.AssetRef, len(refs))
-	for id, ref := range refs {
-		result[id] = ReferenceProto(ref)
-	}
-	return result, err
 }

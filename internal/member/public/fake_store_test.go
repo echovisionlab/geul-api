@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/member/public"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
@@ -18,13 +19,13 @@ import (
 type fakeStore struct {
 	mu         sync.Mutex
 	members    map[string]member.Member
-	avatars    map[string]*member.Asset
+	avatars    map[string]*memberref.Asset
 	authors    []public.AuthorRow
 	newsletter map[string]time.Time
 }
 
 func newFakeStore() (*fakeStore, *mutationtest.UnitOfWork[public.Store]) {
-	store := &fakeStore{members: map[string]member.Member{}, avatars: map[string]*member.Asset{}, newsletter: map[string]time.Time{}}
+	store := &fakeStore{members: map[string]member.Member{}, avatars: map[string]*memberref.Asset{}, newsletter: map[string]time.Time{}}
 	return store, mutationtest.New[public.Store](store)
 }
 
@@ -61,10 +62,10 @@ func (s *fakeStore) PublicMembers(_ context.Context, memberIDs []string) ([]memb
 	return result, nil
 }
 
-func (s *fakeStore) PublicAvatars(_ context.Context, memberIDs []string) (map[string]*member.Asset, error) {
+func (s *fakeStore) PublicAvatars(_ context.Context, memberIDs []string) (map[string]*memberref.Asset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := map[string]*member.Asset{}
+	result := map[string]*memberref.Asset{}
 	for _, memberID := range memberIDs {
 		if avatar, found := s.avatars[memberID]; found {
 			result[memberID] = avatar

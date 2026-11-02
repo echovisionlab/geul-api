@@ -15,13 +15,20 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -34,13 +41,13 @@ type ContentBlockMediaHydrator interface {
 // MediaResolver is the Work public-read projection supplied by its runtime
 // adapter.
 type MediaResolver interface {
-	ResolveReadyOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error)
-	ResolveReadyAssetForSourceFile(context.Context, string, ...string) *commonv1.AssetRef
-	ResolveArtistImageAsset(context.Context, string) *commonv1.AssetRef
+	ResolveReadyOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
+	ResolveReadyAssetForSourceFile(context.Context, string, ...string) *mediaasset.Reference
+	ResolveArtistImageAsset(context.Context, string) *mediaasset.Reference
 }
 
 type MemberSummaryLoader interface {
-	LoadPublicMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	LoadPublicMemberSummaries(context.Context, []string) (map[string]*memberref.Summary, error)
 }
 
 // Deps are the collaborators of the public Work reads; all are required.
@@ -127,7 +134,7 @@ type Summary struct {
 	Work          workdomain.Work
 	Title         string
 	Summary       *string
-	FeaturedImage *commonv1.AssetRef
+	FeaturedImage *mediaasset.Reference
 }
 
 // WorkPage is one page of public Work summaries.
@@ -146,7 +153,7 @@ type MapFeatures struct {
 type Credit struct {
 	Credit workdomain.Credit
 	Artist *CreditArtist
-	Member *commonv1.MemberSummary
+	Member *memberref.Summary
 }
 
 // CreditArtist is a credited Artist with its image.
@@ -154,7 +161,7 @@ type CreditArtist struct {
 	ID    string
 	Name  string
 	Slug  *string
-	Image *commonv1.AssetRef
+	Image *mediaasset.Reference
 }
 
 // Client is a client of a public Work with its logos.
@@ -162,8 +169,8 @@ type Client struct {
 	ID        string
 	Name      string
 	Website   *string
-	LightLogo *commonv1.AssetRef
-	DarkLogo  *commonv1.AssetRef
+	LightLogo *mediaasset.Reference
+	DarkLogo  *mediaasset.Reference
 }
 
 // Detail is a public Work with its displayed locale, content and
@@ -173,8 +180,8 @@ type Detail struct {
 	Title         string
 	Summary       *string
 	Localization  publiccontent.Selection
-	OgAsset       *commonv1.AssetRef
-	FeaturedImage *commonv1.AssetRef
+	OgAsset       *mediaasset.Reference
+	FeaturedImage *mediaasset.Reference
 	Document      *contentv1.LocalizedRichTextDocument
 	Revision      string
 	CreditGroups  []workdomain.CreditGroup
@@ -558,7 +565,7 @@ func (s *Service) loadPublicCreditArtist(ctx context.Context, artistID string) *
 	return &CreditArtist{ID: artist.ID, Name: artist.Name, Slug: artist.Slug, Image: s.assets.ResolveArtistImageAsset(ctx, artist.ID)}
 }
 
-func (s *Service) getWorkFeaturedImageAssetForSourceFile(ctx context.Context, sourceFileID *string) *commonv1.AssetRef {
+func (s *Service) getWorkFeaturedImageAssetForSourceFile(ctx context.Context, sourceFileID *string) *mediaasset.Reference {
 	if sourceFileID == nil {
 		return nil
 	}

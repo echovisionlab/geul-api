@@ -9,6 +9,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/geoip"
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -78,7 +80,7 @@ func requestMetadata(ctx context.Context, clientAddress string) RequestMetadata 
 
 // Session is the authenticated Member's session view.
 type Session struct {
-	Member             Summary
+	Member             memberref.Summary
 	PreferredLocale    *string
 	Role               policyv1.AuthorizationRole
 	Status             AdminStatus
@@ -104,7 +106,7 @@ func (s *Service) CurrentSession(ctx context.Context, query CurrentSessionQuery)
 	}
 	var (
 		member Member
-		assets map[string]*Asset
+		assets map[string]*memberref.Asset
 	)
 	if err := s.read(ctx, func(store Store) error {
 		var err error

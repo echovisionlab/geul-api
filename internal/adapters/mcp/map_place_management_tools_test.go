@@ -6,8 +6,11 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -49,7 +52,7 @@ func TestMapPlaceManagementReadProjectionAndOrder(t *testing.T) {
 			ID: mapPlaceManagementTestID, Name: "Park", Address: "1 Park Road", Lat: 0, Lng: 0,
 			AddressComponents: &referencecatalog.AddressComponents{City: &city}, ImageFileID: &image, GooglePlaceID: &google,
 		},
-		ImageAsset: &commonv1.AssetRef{Url: "https://cdn.example.test/map.png"},
+		ImageAsset: &mediaasset.Reference{URL: "https://cdn.example.test/map.png"},
 	}
 	app := &recordingMapPlaceManagement{place: place, places: []referencecatalog.MapPlaceView{*place}}
 	tools, err := NewMapPlaceManagementTools(app)

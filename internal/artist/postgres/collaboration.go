@@ -1,4 +1,4 @@
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -14,15 +14,15 @@ func (s *store) ResolveSessionPrincipal(ctx context.Context, sessionID string) (
 }
 
 func (s *store) RequireCurrentContributors(ctx context.Context, artistID string, contributors []string) error {
-	return s.deps.Checkpoints.RequireCurrentContributors(ctx, s.tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_ARTIST, artistID, contributors)
+	return s.ports.Checkpoints.RequireCurrentContributors(ctx, s.tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_ARTIST, artistID, contributors)
 }
 
 func (s *store) RequireDocumentContributors(ctx context.Context, contributors []string) error {
-	return s.deps.Translation.RequireDocumentContributors(ctx, s.tx, contributors)
+	return s.ports.Translation.RequireDocumentContributors(ctx, s.tx, contributors)
 }
 
 func (s *store) ResolveInitialSourceLocale(ctx context.Context, acceptLanguage string) string {
-	return s.deps.Translation.ResolveInitialSourceLocale(ctx, s.tx, acceptLanguage)
+	return s.ports.Translation.ResolveInitialSourceLocale(ctx, s.tx, acceptLanguage)
 }
 
 func (s *store) AppendMemberAudit(ctx context.Context, writer domainaudit.Appender, memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) error {

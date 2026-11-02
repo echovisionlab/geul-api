@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/authz/authztest"
-	"github.com/echovisionlab/geul-api/internal/work"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -19,10 +21,10 @@ func TestGetWorkProjectsTheSourceDocumentAssetsAndClients(t *testing.T) {
 	value := h.seedWork(t, "Projected", func(value *work.Work) { value.FeaturedImageFileID = stringPointer("image-file") })
 	h.store.PutLocale(value.ID, work.LocaleMetadata{Locale: "en", Title: stringPointer("Projected"), Summary: stringPointer("Summary")})
 	h.store.PutLocaleOgAsset(value.ID, "en", "og-asset")
-	h.store.PutReadyAsset("og-asset", &commonv1.AssetRef{Url: "og"})
-	h.store.PutFileAsset("image-file", "image", &commonv1.AssetRef{Url: "featured"})
+	h.store.PutReadyAsset("og-asset", &mediaasset.Reference{URL: "og"})
+	h.store.PutFileAsset("image-file", "image", &mediaasset.Reference{URL: "featured"})
 	h.store.PutClient(work.ClientRow{ID: "client-1", Name: "Client", LightFileID: stringPointer("logo-file")})
-	h.store.PutFileAsset("logo-file", "logo", &commonv1.AssetRef{Url: "logo"})
+	h.store.PutFileAsset("logo-file", "logo", &mediaasset.Reference{URL: "logo"})
 	h.store.LinkClients(value.ID, "client-1")
 
 	view, err := h.service.GetWork(admin.context(t), work.GetWorkQuery{ID: value.ID})
@@ -30,11 +32,11 @@ func TestGetWorkProjectsTheSourceDocumentAssetsAndClients(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Projected", view.Title)
 	require.Equal(t, "Summary", *view.Summary)
-	require.Equal(t, "og", view.OgAsset.GetUrl())
-	require.Equal(t, "featured", view.FeaturedImage.GetUrl())
+	require.Equal(t, "og", optional.Value(view.OgAsset).URL)
+	require.Equal(t, "featured", optional.Value(view.FeaturedImage).URL)
 	require.Equal(t, h.revision(t, value.ID).String(), view.Revision)
 	require.NotNil(t, view.Document)
-	require.Equal(t, []work.Client{{ID: "client-1", Name: "Client", LightLogo: &commonv1.AssetRef{Url: "logo"}}}, view.Clients)
+	require.Equal(t, []work.Client{{ID: "client-1", Name: "Client", LightLogo: &mediaasset.Reference{URL: "logo"}}}, view.Clients)
 }
 
 func TestGetWorkHidesAWorkTheCallerMayNotView(t *testing.T) {
@@ -122,12 +124,12 @@ func TestWorkFeaturedImageBindsOnceAndReleasesTheCurrentImage(t *testing.T) {
 	admin := newPrincipal()
 	value := h.seedWork(t, "Pictured")
 	h.store.PutFile("file-1")
-	h.store.PutFileAsset("file-1", "image", &commonv1.AssetRef{Url: "image"})
+	h.store.PutFileAsset("file-1", "image", &mediaasset.Reference{URL: "image"})
 	h.store.OGRunID = "og-run"
 
 	set, err := h.service.SetWorkFeaturedImage(admin.context(t), work.SetWorkFeaturedImageCommand{WorkID: value.ID, FileID: "file-1"})
 	require.NoError(t, err)
-	require.Equal(t, "image", set.ImageAsset.GetUrl())
+	require.Equal(t, "image", optional.Value(set.ImageAsset).URL)
 	require.Equal(t, "og-run", *set.OgGenerationRunID)
 	bound, ok := h.store.FeaturedImageBinding(value.ID)
 	require.True(t, ok)

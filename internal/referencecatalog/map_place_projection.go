@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
 // MapPlaceView is a Map Place with its ready image and the Members who
 // created and last updated it.
 type MapPlaceView struct {
 	Place           MapPlace
-	ImageAsset      *commonv1.AssetRef
+	ImageAsset      *mediaasset.Reference
 	CreatedByMember *MemberSummary
 	UpdatedByMember *MemberSummary
 }

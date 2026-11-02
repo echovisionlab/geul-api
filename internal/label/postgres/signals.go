@@ -1,4 +1,4 @@
-package postgres
+package labelpostgres
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update label.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.deps.Publisher, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Publisher, contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders a Label's content.updated signal; nil when the

@@ -48,7 +48,7 @@ func TestDownloadStoreRequiresExactActiveIdentityLinkIntegration(t *testing.T) {
 			case "wrong identity":
 				identity = uuid.NewString()
 			}
-			facts, found, err := mediaassetpostgres.BindDownload(db, segmentConfigs{}).MemberFacts(t.Context(), member, identity)
+			facts, found, err := mediaassetpostgres.NewDownloadStore(db, segmentConfigs{}).MemberFacts(t.Context(), member, identity)
 			require.NoError(t, err)
 			require.Equal(t, condition == "active", found)
 			if found {
@@ -85,7 +85,7 @@ func downloadPolicyQueryCount(t *testing.T, count int) int {
 		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{AudienceSegmentID: id, UserTagID: tag}).Error)
 		require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, block, id).Error)
 	}
-	store := mediaassetpostgres.BindDownload(db, segmentConfigs{})
+	store := mediaassetpostgres.NewDownloadStore(db, segmentConfigs{})
 	sources, err := mediaasset.LoadContentBlockDownloadSources(t.Context(), store, []mediaasset.ContentBlockDownloadSelector{{BlockID: block, ReferencePath: "file"}})
 	require.NoError(t, err)
 	require.Len(t, sources, 1)

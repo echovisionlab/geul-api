@@ -63,7 +63,7 @@ func (f fixture) harness(t *testing.T) mutationtest.Harness[public.Store] {
 	t.Helper()
 	contents, err := contentblock.NewGeneratedStore(unusedFileReuse{})
 	require.NoError(t, err)
-	units, err := postpublicpostgres.NewUnits(f.db, postpublicpostgres.Deps{
+	units, err := postpublicpostgres.NewUnits(f.db, postpublicpostgres.Ports{
 		ContentBlocks: contents, Localization: unusedLocalization{}, MapPlaces: unusedMapPlaces{}, ShareLinks: unusedShareLinks{},
 	})
 	require.NoError(t, err)

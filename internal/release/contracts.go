@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 )
 
 // ErrTrackUploadSessionNotAbortable is returned by the File boundary when a
@@ -31,5 +31,5 @@ type WaveformJobs interface {
 // MemberSummaryLoader projects foreign Member references without coupling the
 // Release domain to the Member domain implementation.
 type MemberSummaryLoader interface {
-	LoadMemberSummaries(ctx context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error)
+	LoadMemberSummaries(ctx context.Context, memberIDs []string) (map[string]*memberref.Summary, error)
 }

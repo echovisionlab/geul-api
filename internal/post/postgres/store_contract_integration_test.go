@@ -28,8 +28,8 @@ func TestPostgresStoreKeepsThePostStoreContractIntegration(t *testing.T) {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the Post rows and the content revision; OG,
 		// media, signals and collaboration stay with their own tests.
-		deps := postpostgres.Deps{ContentBlocks: contenttest.NewPostContentBlockStore(t)}
-		units := mutation.Postgres(db, func(tx *gorm.DB) post.Store { return postpostgres.Bind(tx, deps) })
+		ports := postpostgres.Ports{ContentBlocks: contenttest.NewPostContentBlockStore(t)}
+		units := mutation.Postgres(db, func(tx *gorm.DB) post.Store { return postpostgres.NewStore(tx, ports) })
 		insert := func(t *testing.T, query string, args ...any) {
 			t.Helper()
 			require.NoError(t, db.Exec(query, args...).Error)

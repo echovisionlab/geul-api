@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // Routes is the public route of a policy kind and its OG generation;
@@ -97,7 +96,7 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[legal.Store], error
 	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) legal.Store { return newStore(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) legal.Store { return NewStore(tx, ports) }), nil
 }
 
 // Bind joins tx, a transaction another pipeline opened: a scheduled
@@ -105,25 +104,10 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[legal.Store], error
 // Only the methods whose ports are set are usable; a nil audit leaves the
 // step unaudited.
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) legal.Joined {
-	joined := legal.Joined{Store: newStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
+	return legal.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
-// boundAudit appends in the joined transaction whatever transaction the
-// Legal step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
-}
-
-func newStore(tx *gorm.DB, ports Ports) *store {
+func NewStore(tx *gorm.DB, ports Ports) *store {
 	return &store{tx: tx, ports: ports}
 }
 
@@ -137,7 +121,7 @@ var _ legal.Store = (*store)(nil)
 // with binds the Store to tx, the transaction a shared runtime hands back
 // to a domain callback.
 func (s *store) with(tx *gorm.DB) legal.Store {
-	return newStore(tx, s.ports)
+	return NewStore(tx, s.ports)
 }
 
 func historyTable(kind legal.PolicyKind) string     { return string(kind) + "_history" }

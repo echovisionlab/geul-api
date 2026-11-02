@@ -10,13 +10,14 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -77,7 +78,7 @@ type TrackCreditView struct {
 	CreditRow
 	ArtistName *string
 	ArtistSlug *string
-	Member     *commonv1.MemberSummary
+	Member     *memberref.Summary
 }
 
 // TrackWithCredits is a Track with its credits in order.

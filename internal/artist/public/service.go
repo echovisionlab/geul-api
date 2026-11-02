@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
@@ -17,9 +19,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 )
@@ -36,12 +42,12 @@ var artistWorksSortAllowedFields = map[string]bool{
 // MediaProjection resolves the public media of Artists and what they link.
 type MediaProjection interface {
 	LoadArtistImages(context.Context, []string) (map[string][]artistdomain.ArtistImageProjection, error)
-	ResolveReadyAssetRefs(context.Context, []*string) (map[string]*commonv1.AssetRef, error)
-	ResolveArtistOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error)
+	ResolveReadyAssetRefs(context.Context, []*string) (map[string]*mediaasset.Reference, error)
+	ResolveArtistOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 	IsReadyAsset(context.Context, string) (bool, error)
-	LoadReleaseArtworkAssets(context.Context, []string) (map[string]*commonv1.AssetRef, error)
-	LoadWorkImageAssets(context.Context, map[string]*string) (map[string]*commonv1.AssetRef, error)
-	LoadReadySourceFileAssets(context.Context, string, []string) (map[string]*commonv1.AssetRef, error)
+	LoadReleaseArtworkAssets(context.Context, []string) (map[string]*mediaasset.Reference, error)
+	LoadWorkImageAssets(context.Context, map[string]*string) (map[string]*mediaasset.Reference, error)
+	LoadReadySourceFileAssets(context.Context, string, []string) (map[string]*mediaasset.Reference, error)
 }
 
 // Deps are the collaborators of the public Artist reads; all are required.
@@ -108,8 +114,8 @@ type Summary struct {
 	CountryCode *string
 	PublishedAt *time.Time
 	SocialLinks map[string]string
-	Image       *commonv1.AssetRef
-	OgImage     *commonv1.AssetRef
+	Image       *mediaasset.Reference
+	OgImage     *mediaasset.Reference
 }
 
 // ArtistPage is one page of published Artist summaries.
@@ -332,7 +338,7 @@ type Release struct {
 	Type        string
 	ReleaseDate *time.Time
 	PublishedAt *time.Time
-	Artwork     *commonv1.AssetRef
+	Artwork     *mediaasset.Reference
 	Artists     []ReleaseArtist
 }
 
@@ -417,7 +423,7 @@ type Work struct {
 	Summary     *string
 	Type        string
 	PublishedAt *time.Time
-	Image       *commonv1.AssetRef
+	Image       *mediaasset.Reference
 }
 
 // WorksPage is one page of an Artist's visible Works.
@@ -499,7 +505,7 @@ type Detail struct {
 	Revision     string
 	IsGroup      bool
 	Localization publiccontent.Selection
-	OgImage      *commonv1.AssetRef
+	OgImage      *mediaasset.Reference
 	Images       []artistdomain.ArtistImageProjection
 	ReleaseCount int32
 	WorkCount    int32
@@ -511,7 +517,7 @@ type Label struct {
 	ID    string
 	Name  string
 	Slug  *string
-	Image *commonv1.AssetRef
+	Image *mediaasset.Reference
 }
 
 // buildArtistResponse projects the Artist in one snapshot that waits out a

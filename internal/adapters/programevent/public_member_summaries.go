@@ -3,11 +3,10 @@ package programevent
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
-
 	"gorm.io/gorm"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // PublicCreditMemberSummaries adapts public Member summaries to Program Event credits.
@@ -26,6 +25,6 @@ func NewPublicCreditMemberSummaries(db *gorm.DB, cdnDomain string) *PublicCredit
 func (a *PublicCreditMemberSummaries) LoadPublicCreditMemberSummaries(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
+) (map[string]*memberref.Summary, error) {
 	return memberpublicpostgres.LoadPublicMemberSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }

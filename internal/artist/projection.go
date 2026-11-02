@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -19,11 +21,11 @@ type View struct {
 	Name     string
 	Document *contentv1.RichTextDocument
 	Revision string
-	OgImage  *commonv1.AssetRef
+	OgImage  *mediaasset.Reference
 	Images   []ArtistImageProjection
 }
 
-func artistView(artist Artist, document artistDocument, ogAsset *commonv1.AssetRef, images []ArtistImageProjection) View {
+func artistView(artist Artist, document artistDocument, ogAsset *mediaasset.Reference, images []ArtistImageProjection) View {
 	return View{Artist: artist, Name: document.Name, Document: document.Document, Revision: document.Revision, OgImage: ogAsset, Images: images}
 }
 
@@ -147,7 +149,7 @@ func (s *Service) overlayArtistSourceLocaleDocuments(ctx context.Context, artist
 	return documents, nil
 }
 
-func (s *Service) loadReadyArtistOgAssets(ctx context.Context, documents []artistDocument) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyArtistOgAssets(ctx context.Context, documents []artistDocument) (map[string]*mediaasset.Reference, error) {
 	candidates := make([]*string, 0, len(documents))
 	for i := range documents {
 		candidates = append(candidates, documents[i].OgAssetID)
@@ -167,7 +169,7 @@ func (s *Service) artistWithReadyOg(ctx context.Context, artist Artist, document
 	return artistView(artist, document, ogAsset, images), nil
 }
 
-func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*commonv1.AssetRef, error) {
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*mediaasset.Reference, error) {
 	ids := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}
 	for _, candidate := range candidates {
@@ -181,7 +183,7 @@ func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...
 			}
 		}
 	}
-	var ready map[string]*commonv1.AssetRef
+	var ready map[string]*mediaasset.Reference
 	err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		ready, err = store.ReadyAssets(ctx, ids)
@@ -190,7 +192,7 @@ func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...
 	return ready, err
 }
 
-func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates ...*string) *commonv1.AssetRef {
+func manageOgAssetFromReadyMap(ready map[string]*mediaasset.Reference, candidates ...*string) *mediaasset.Reference {
 	for _, candidate := range candidates {
 		if candidate != nil {
 			if asset := ready[strings.TrimSpace(*candidate)]; asset != nil {
@@ -201,7 +203,7 @@ func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates .
 	return nil
 }
 
-func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*mediaasset.Reference, error) {
 	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidates...)
 	if err != nil {
 		return nil, err

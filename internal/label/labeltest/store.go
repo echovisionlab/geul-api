@@ -21,8 +21,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/label"
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -73,8 +76,8 @@ type state struct {
 	members        map[string]bool
 	sessions       map[string]*auth.UserInfo
 	revokedRoom    map[string]bool
-	readyAssets    map[string]*commonv1.AssetRef
-	readyLogos     map[string]*commonv1.AssetRef
+	readyAssets    map[string]*mediaasset.Reference
+	readyLogos     map[string]*mediaasset.Reference
 	contentResults []contentblock.Result
 }
 
@@ -123,7 +126,7 @@ func NewStore() *Store {
 		impacts: map[string][]label.DeletionImpact{}, artistCounts: map[string]int32{},
 		releaseCounts: map[string]int32{}, identities: map[string]string{}, members: map[string]bool{},
 		sessions: map[string]*auth.UserInfo{}, revokedRoom: map[string]bool{},
-		readyAssets: map[string]*commonv1.AssetRef{}, readyLogos: map[string]*commonv1.AssetRef{},
+		readyAssets: map[string]*mediaasset.Reference{}, readyLogos: map[string]*mediaasset.Reference{},
 	}}
 }
 
@@ -270,14 +273,14 @@ func (s *Store) PutCounts(labelID string, artists, releases int32) {
 }
 
 // PutReadyAsset makes assetID a ready public asset.
-func (s *Store) PutReadyAsset(assetID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyAsset(assetID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyAssets[assetID] = ref
 }
 
 // PutReadyLogo makes the logo asset of fileID ready.
-func (s *Store) PutReadyLogo(fileID string, ref *commonv1.AssetRef) {
+func (s *Store) PutReadyLogo(fileID string, ref *mediaasset.Reference) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyLogos[fileID] = ref
@@ -943,22 +946,22 @@ func (s *Store) ReleaseLogoBindings(_ context.Context, labelID string) error {
 }
 
 // ReadyAssets implements label.Store.
-func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyAssets(_ context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ready("ReadyAssets", s.readyAssets, assetIDs)
 }
 
 // ReadyLogoAssets implements label.Store.
-func (s *Store) ReadyLogoAssets(_ context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ReadyLogoAssets(_ context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error) {
 	return s.ready("ReadyLogoAssets", s.readyLogos, fileIDs)
 }
 
-func (s *Store) ready(method string, source map[string]*commonv1.AssetRef, ids []string) (map[string]*commonv1.AssetRef, error) {
+func (s *Store) ready(method string, source map[string]*mediaasset.Reference, ids []string) (map[string]*mediaasset.Reference, error) {
 	if err := s.fail(method); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	refs := map[string]*commonv1.AssetRef{}
+	refs := map[string]*mediaasset.Reference{}
 	for _, id := range ids {
 		if ref := source[id]; ref != nil {
 			refs[id] = ref
