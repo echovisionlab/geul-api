@@ -201,7 +201,7 @@ func (a Assets) ReadyRef(
 }
 
 func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*mediaasset.Reference, string, error) {
-	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind)
+	return mediaasset.NewReferenceReader(mediaassetpostgres.NewStore(db), cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind)
 }
 
 func (a Assets) ReadyAsset(
@@ -209,7 +209,7 @@ func (a Assets) ReadyAsset(
 	db *gorm.DB,
 	assetID string,
 ) (*mediaasset.Reference, error) {
-	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).ReadyAssetRef(ctx, assetID)
+	return mediaasset.NewReferenceReader(mediaassetpostgres.NewStore(db), a.cdnDomain).ReadyAssetRef(ctx, assetID)
 }
 
 func (a Assets) ProjectFavicon(

@@ -120,7 +120,7 @@ func (s *Service) GetSettings(ctx context.Context) (AdminSettings, error) {
 		SiteOrigin:             s.siteOrigin,
 	}
 	if settings.FaviconFileID != nil {
-		all.Favicon, all.FaviconSet = s.favicon(ctx, *settings.FaviconFileID)
+		all.Favicon, all.FaviconSet = s.assets.Favicon(ctx, *settings.FaviconFileID)
 	}
 	all.SiteOgBackground = s.optionalFileAsset(ctx, settings.SiteOgBackgroundFileID, "image")
 	all.PrivacyOgBackground = s.optionalFileAsset(ctx, settings.PrivacyOgBackgroundFileID, "image")
@@ -162,35 +162,17 @@ func loaderAssets(ctx context.Context, store Store) ([]LoaderAsset, error) {
 	return assets, nil
 }
 
-// optionalFileAsset reads the ready asset of a set File setting in its own
-// snapshot; a failure is logged and serves the setting without it.
+// optionalFileAsset logs a failed lookup and serves the setting without the asset.
 func (s *Service) optionalFileAsset(ctx context.Context, fileID *string, expectedKind string) *Asset {
 	if fileID == nil || *fileID == "" {
 		return nil
 	}
-	var asset *Asset
-	err := s.units.Read(ctx, func(store Store) (err error) {
-		asset, err = store.ReadyAsset(ctx, *fileID, expectedKind)
-		return err
-	})
+	asset, err := s.assets.ReadyAsset(ctx, *fileID, expectedKind)
 	if err != nil {
 		slog.WarnContext(ctx, "Site setting asset lookup failed; serving the setting without it", "domain", "sitesettings", "operation", "resolve_setting_asset", "outcome", "failed", "file_id", *fileID, failurecause.Attr(err))
 		return nil
 	}
 	return asset
-}
-
-// favicon reads the favicon and its generated set in their own snapshot,
-// which serves none when it fails.
-func (s *Service) favicon(ctx context.Context, fileID string) (asset *Asset, set *FaviconSet) {
-	if err := s.units.Read(ctx, func(store Store) error {
-		asset, set = store.Favicon(ctx, fileID)
-		return nil
-	}); err != nil {
-		slog.WarnContext(ctx, "Site setting asset lookup failed; serving the setting without it", "domain", "sitesettings", "operation", "resolve_setting_asset", "outcome", "failed", "file_id", fileID, failurecause.Attr(err))
-		return nil, nil
-	}
-	return asset, set
 }
 
 // nonEmpty returns a copy of a set, non-empty value.

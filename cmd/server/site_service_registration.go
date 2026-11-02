@@ -30,7 +30,8 @@ func (r serviceRegistration) registerSiteSettings() (*sitesettings.Service, erro
 		return nil, fmt.Errorf("initialize site settings store: %w", err)
 	}
 	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
-		Units: siteSettingUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Assets: sitesettingspostgres.NewAssetReader(deps.db, sitesettingsadapter.NewAssets(deps.cfg.CDNURL)),
+		Units:  siteSettingUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
 		SiteOrigin: deps.cfg.SiteOrigin,
 	})
 	if err != nil {

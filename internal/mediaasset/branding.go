@@ -24,12 +24,20 @@ func (s *Lifecycle) ReadyBrandingAssetRef(
 	sourceFileID string,
 	brandingKind string,
 ) (*Reference, string, error) {
-	ref, err := s.ReadyAssetRefForSourceFile(ctx, sourceFileID, brandingKind)
+	return readyBrandingAssetRef(ctx, s.ReadyAssetRefForSourceFile, sourceFileID, brandingKind)
+}
+
+func (s *ReferenceReader) ReadyBrandingAssetRef(ctx context.Context, sourceFileID, brandingKind string) (*Reference, string, error) {
+	return readyBrandingAssetRef(ctx, s.ReadyAssetRefForSourceFile, sourceFileID, brandingKind)
+}
+
+func readyBrandingAssetRef(ctx context.Context, resolve func(context.Context, string, string) (*Reference, error), sourceFileID, brandingKind string) (*Reference, string, error) {
+	ref, err := resolve(ctx, sourceFileID, brandingKind)
 	if err == nil || !mutation.IsNotFound(err) ||
 		(brandingKind != BrandingKindLogo && brandingKind != BrandingKindEmailImage) {
 		return ref, brandingKind, err
 	}
-	ref, err = s.ReadyAssetRefForSourceFile(ctx, sourceFileID, "image")
+	ref, err = resolve(ctx, sourceFileID, "image")
 	if err != nil {
 		return nil, brandingKind, err
 	}

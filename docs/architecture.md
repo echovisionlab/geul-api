@@ -805,8 +805,13 @@ it.
   `units.Read`; the fake cannot catch this, so the contract case calls it
   through the PostgreSQL unit it needs. A read that must not hold locks goes
   through a port outside the snapshot.
-- **Best-effort reads.** A read whose failure is logged and ignored runs in
-  its own `units.Read`, so its error cannot abort the main transaction.
+- **Best-effort reads.** A lookup whose failure is logged and ignored must
+  leave subsequent SQL usable. In a mutation, authorize first and isolate
+  the lookup with `mutation.BestEffortRead` in the Store adapter. Independent
+  display assets use a narrow pool port outside the settings snapshot; the
+  port and its callees do not open a transaction for each asset. Settings and
+  loader rows stay in one `units.Read` snapshot; optional assets may reflect
+  readiness changes after that snapshot.
 - **The fence in a domain check.** A `Checked` step of a Store domain reaches
   the identity fence through `mutation.Fenced`. Inside `Locked`,
   `errors.Is(err, identitystate.ErrInactivePrincipal)` tells an inactive

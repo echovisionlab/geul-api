@@ -19,6 +19,7 @@ const siteSettingAuthorizationID = "1"
 // Deps are the collaborators of the Site Settings use cases. Every field
 // except SiteOrigin is required; NewService rejects a missing one.
 type Deps struct {
+	Assets  AssetReader
 	Units   mutation.UnitOfWork[Store] // sitesettingspostgres.NewUnits(db, ports)
 	SpiceDB mutation.Authorizer
 	Fence   identitystate.Fence // identitystate.PostgresFence{}
@@ -31,7 +32,7 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Assets": d.Assets == nil, "Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -47,6 +48,7 @@ func (d Deps) validate() error {
 // Service holds the Site Settings use cases. Connect and MCP adapters
 // translate their requests into its commands and queries.
 type Service struct {
+	assets     AssetReader
 	units      mutation.UnitOfWork[Store]
 	spiceDB    mutation.Authorizer
 	siteOrigin string
@@ -63,7 +65,7 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		units: deps.Units, spiceDB: deps.SpiceDB, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
+		assets: deps.Assets, units: deps.Units, spiceDB: deps.SpiceDB, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
 		mutations: mutations,
 	}, nil
 }
