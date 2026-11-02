@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"github.com/google/uuid"
@@ -171,7 +173,7 @@ func (s store) SourceDocuments(ctx context.Context, workIDs []string) (map[strin
 }
 
 func (s store) ResolveLocalizations(ctx context.Context, workIDs []string, acceptLanguage string) (map[string]publiccontent.Selection, error) {
-	return publiccontent.ResolveBatch(ctx, s.tx, workLocalizationSpec, workIDs, acceptLanguage)
+	return publiccontent.ResolveBatch(ctx, s.tx, workLocalizationSpec, workIDs, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) MapFeatures(ctx context.Context, bounds workpublic.MapBounds, filters []*commonv1.FilterSpec, sorts []*commonv1.SortSpec) ([]workpublic.MapFeatureRow, error) {
@@ -256,7 +258,7 @@ func (s store) ContentDocumentID(ctx context.Context, workID string) (uuid.UUID,
 }
 
 func (s store) ResolveLocalization(ctx context.Context, workID, acceptLanguage string) (publiccontent.Selection, error) {
-	return publiccontent.Resolve(ctx, s.tx, workLocalizationSpec, workID, acceptLanguage)
+	return publiccontent.Resolve(ctx, s.tx, workLocalizationSpec, workID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) ResolveOGConsistency(ctx context.Context, workID string, selection publiccontent.Selection) (publiccontent.Selection, error) {

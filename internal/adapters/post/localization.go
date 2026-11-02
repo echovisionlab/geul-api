@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -30,7 +32,7 @@ func (*Localization) ResolveSelectionWithPolicy(
 	if err != nil {
 		return postpublic.LocalizedContentSelection{}, err
 	}
-	selection, err := publiccontent.Resolve(ctx, db, spec, entityID, acceptLanguage)
+	selection, err := publiccontent.Resolve(ctx, db, spec, entityID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(db))
 	return toPostSelection(selection), err
 }
 
@@ -46,7 +48,7 @@ func (*Localization) ResolveSelectionsWithPolicy(
 	if err != nil {
 		return nil, err
 	}
-	selections, err := publiccontent.ResolveBatch(ctx, db, spec, entityIDs, acceptLanguage)
+	selections, err := publiccontent.ResolveBatch(ctx, db, spec, entityIDs, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(db))
 	if err != nil {
 		return nil, err
 	}

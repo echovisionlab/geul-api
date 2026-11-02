@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -25,7 +24,7 @@ func TestProgramEventInterchangeImportKeepsTitleSourceOwnedAndExplicitEmptySumma
 		),
 	}
 	plan, err := core.BuildRichTextExtractionPlan(
-		&model.TranslationJob{
+		&core.JobIdentity{
 			EntityType: "program_event", EntityID: "event-1", SourceLocale: "en", TargetLocale: "ko",
 		},
 		source,

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/google/uuid"
@@ -473,6 +475,6 @@ func (s *store) InsertVersion(ctx context.Context, version *page.Version) error 
 
 func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
 	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
-		return translation.LoadRuntimeSettings(ctx, tx)
+		return translationpostgres.NewRuntimeSettingsReader(tx).RuntimeSettings(ctx)
 	})
 }

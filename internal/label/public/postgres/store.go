@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/label"
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"gorm.io/gorm"
@@ -127,7 +129,7 @@ func (s store) ShareLockLabel(ctx context.Context, labelID string) (label.Label,
 }
 
 func (s store) ResolveLocalization(ctx context.Context, labelID, acceptLanguage string) (publiccontent.Selection, error) {
-	return publiccontent.Resolve(ctx, s.tx, labelLocalizationSpec, labelID, acceptLanguage)
+	return publiccontent.Resolve(ctx, s.tx, labelLocalizationSpec, labelID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) SourceTitles(ctx context.Context, labelIDs []string) (map[string]string, error) {

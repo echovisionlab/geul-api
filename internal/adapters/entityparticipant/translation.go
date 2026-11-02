@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -41,7 +43,7 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
+	if settings, err := translationpostgres.NewRuntimeSettingsReader(db).RuntimeSettings(ctx); err != nil {
 		slog.ErrorContext(ctx, "Source locale settings load failed; using the default locale", failurecause.Attr(err))
 	} else {
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {

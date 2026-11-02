@@ -3,7 +3,6 @@ package translationadapter
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -105,7 +104,7 @@ func emailInterchangePlan(
 ) *core.ExtractionPlan {
 	t.Helper()
 	plan, err := core.BuildRichTextExtractionPlan(
-		&model.TranslationJob{
+		&core.JobIdentity{
 			EntityType: entityType, EntityID: entityID,
 			SourceLocale: source.GetLocale(), TargetLocale: targetLocale,
 		},

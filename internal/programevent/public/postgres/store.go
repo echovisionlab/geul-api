@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -188,7 +190,7 @@ func programEventTBAFirstOrder() string {
 }
 
 func (s *store) ResolveLocalizations(ctx context.Context, eventIDs []string, acceptLanguage string) (map[string]publiccontent.Selection, error) {
-	return publiccontent.ResolveBatch(ctx, s.tx, localizationSpec, eventIDs, acceptLanguage)
+	return publiccontent.ResolveBatch(ctx, s.tx, localizationSpec, eventIDs, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s *store) ResolveLocalization(ctx context.Context, eventID, acceptLanguage string, settings translation.RuntimeSettings) (publiccontent.Selection, error) {
@@ -200,7 +202,7 @@ func (s *store) AvailableLocales(ctx context.Context, eventID, sourceLocale stri
 }
 
 func (s *store) TranslationSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return translationpostgres.NewRuntimeSettingsReader(s.tx).RuntimeSettings(ctx)
 }
 
 func (s *store) PosterFileIDs(ctx context.Context, eventIDs []string) (map[string]string, error) {

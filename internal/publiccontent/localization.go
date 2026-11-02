@@ -85,8 +85,9 @@ func Resolve(
 	spec Spec,
 	entityID string,
 	acceptLanguage string,
+	settingsReader translation.RuntimeSettingsReader,
 ) (Selection, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
+	settings, err := settingsReader.RuntimeSettings(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()
@@ -145,8 +146,9 @@ func ResolveBatch(
 	spec Spec,
 	entityIDs []string,
 	acceptLanguage string,
+	settingsReader translation.RuntimeSettingsReader,
 ) (map[string]Selection, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, db)
+	settings, err := settingsReader.RuntimeSettings(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()

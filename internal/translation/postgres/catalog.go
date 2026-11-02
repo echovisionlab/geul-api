@@ -81,7 +81,7 @@ func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSetting
 		return defaults, err
 	}
 
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return (runtimeSettingsReader{db: s.tx}).RuntimeSettings(ctx)
 }
 
 func (s *store) LockRuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {

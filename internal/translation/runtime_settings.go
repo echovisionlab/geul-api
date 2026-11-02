@@ -2,13 +2,10 @@ package translation
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
 )
 
 const DefaultLocale = localization.LocaleEnglish
@@ -38,23 +35,7 @@ func NormalizeRuntimeSettings(input RuntimeSettings) (RuntimeSettings, error) {
 	return settings, nil
 }
 
-func LoadRuntimeSettings(ctx context.Context, db *gorm.DB) (RuntimeSettings, error) {
-	defaults := DefaultRuntimeSettings()
-
-	var row model.TranslationSettings
-	if err := db.WithContext(ctx).First(&row, "id = 1").Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return defaults, nil
-		}
-		return defaults, err
-	}
-	settings, err := NormalizeRuntimeSettings(RuntimeSettings{
-		DefaultLocale:  row.DefaultLocale,
-		ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
-		UpdatedAt:      &row.UpdatedAt,
-	})
-	if err != nil {
-		return defaults, err
-	}
-	return settings, nil
+// RuntimeSettingsReader reads policy without initializing the settings singleton.
+type RuntimeSettingsReader interface {
+	RuntimeSettings(context.Context) (RuntimeSettings, error)
 }

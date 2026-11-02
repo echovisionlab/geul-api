@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"gorm.io/gorm"
@@ -112,7 +114,7 @@ func (r *PublicReader) projectSeriesRows(
 			fileIDs = append(fileIDs, *row.FeaturedImageFileID)
 		}
 	}
-	selections, err := publiccontent.ResolveBatch(ctx, r.db, seriesLocalizationSpec, ids, acceptLanguage)
+	selections, err := publiccontent.ResolveBatch(ctx, r.db, seriesLocalizationSpec, ids, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(r.db))
 	if err != nil {
 		return nil, errs.Internal(err)
 	}

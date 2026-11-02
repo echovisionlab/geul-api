@@ -36,7 +36,7 @@ func programEventDomainRegistration(audit domainaudit.Appender) domainRegistrati
 			return output, err
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Summary: true})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Summary: true})
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {

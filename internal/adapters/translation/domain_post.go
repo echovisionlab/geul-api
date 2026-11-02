@@ -18,7 +18,7 @@ func postDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindPost, domainPortFunctions{
 		loadSourceDocument: postpostgres.LoadTypedTranslationSourceDocument,
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Title: true, Summary: true})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Title: true, Summary: true})
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {

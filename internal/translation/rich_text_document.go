@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -16,10 +15,17 @@ type RichTextDocumentFields struct {
 	Summary bool
 }
 
+type JobIdentity struct {
+	EntityType   string
+	EntityID     string
+	SourceLocale string
+	TargetLocale string
+}
+
 // BuildRichTextExtractionPlan extracts entity fields and locale-owned Rich
 // Text values while leaving structure and shared Block props untouched.
 func BuildRichTextExtractionPlan(
-	job *model.TranslationJob,
+	job *JobIdentity,
 	source *SourceDocument,
 	fields RichTextDocumentFields,
 ) (*ExtractionPlan, error) {

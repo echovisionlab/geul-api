@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -166,6 +168,6 @@ func (s *store) DeleteShareLinks(ctx context.Context, formID string) error {
 
 func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
 	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
-		return translation.LoadRuntimeSettings(ctx, tx)
+		return translationpostgres.NewRuntimeSettingsReader(tx).RuntimeSettings(ctx)
 	})
 }

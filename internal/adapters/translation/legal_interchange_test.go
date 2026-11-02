@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -302,7 +301,7 @@ func newLegalInterchangeFixture(t *testing.T, entityType string) legalInterchang
 			LocaleOverlay:           sourceOverlay,
 		},
 	}
-	plan, err := core.BuildRichTextExtractionPlan(&model.TranslationJob{
+	plan, err := core.BuildRichTextExtractionPlan(&core.JobIdentity{
 		EntityType: entityType, EntityID: entityID, SourceLocale: "en", TargetLocale: "ko",
 	}, source, core.RichTextDocumentFields{Title: true})
 	require.NoError(t, err)

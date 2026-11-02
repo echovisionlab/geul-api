@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/series"
-	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
 // Locales reads the source locale fallbacks of a new Series outside any
@@ -36,6 +37,6 @@ func (l Locales) MemberPreferredLocale(ctx context.Context, memberID string) (*s
 }
 
 func (l Locales) DefaultTranslationLocale(ctx context.Context) (string, error) {
-	settings, err := translation.LoadRuntimeSettings(ctx, l.db)
+	settings, err := translationpostgres.NewRuntimeSettingsReader(l.db).RuntimeSettings(ctx)
 	return settings.DefaultLocale, err
 }

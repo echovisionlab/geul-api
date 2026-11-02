@@ -123,3 +123,13 @@ func noLocaleOG(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refr
 }
 
 func noDomainRequirement(context.Context, *gorm.DB, string) error { return nil }
+
+func jobIdentity(job *model.TranslationJob) *core.JobIdentity {
+	if job == nil {
+		return nil
+	}
+	return &core.JobIdentity{
+		EntityType: job.EntityType, EntityID: job.EntityID,
+		SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -173,7 +175,7 @@ func (s store) SourceOgAssetIDs(ctx context.Context, artistIDs []string) (map[st
 }
 
 func (s store) ResolveLocalization(ctx context.Context, artistID, acceptLanguage string) (publiccontent.Selection, error) {
-	return publiccontent.Resolve(ctx, s.tx, artistLocalizationSpec, artistID, acceptLanguage)
+	return publiccontent.Resolve(ctx, s.tx, artistLocalizationSpec, artistID, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) ResolveOGConsistency(ctx context.Context, artistID string, selection publiccontent.Selection, ready publiccontent.ReadyAsset) (publiccontent.Selection, error) {
@@ -351,7 +353,7 @@ func (s store) VisibleWorks(ctx context.Context, artistID string, sorts []artist
 }
 
 func (s store) WorkLocalizations(ctx context.Context, workIDs []string, acceptLanguage string) (map[string]publiccontent.Selection, error) {
-	return publiccontent.ResolveBatch(ctx, s.tx, artistWorkLocalizationSpec, workIDs, acceptLanguage)
+	return publiccontent.ResolveBatch(ctx, s.tx, artistWorkLocalizationSpec, workIDs, acceptLanguage, translationpostgres.NewRuntimeSettingsReader(s.tx))
 }
 
 func (s store) ShareLink(ctx context.Context, token, artistID string, now time.Time) (*string, bool, error) {

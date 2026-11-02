@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
+
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -32,7 +34,7 @@ func TestRuntimeSettingsCanReadSnapshotWithoutWritingIntegration(t *testing.T) {
 			var settings translation.RuntimeSettings
 			require.NoError(t, mutation.Read(t.Context(), db, func(tx *gorm.DB) error {
 				var err error
-				settings, err = translation.LoadRuntimeSettings(t.Context(), tx)
+				settings, err = translationpostgres.NewRuntimeSettingsReader(tx).RuntimeSettings(t.Context())
 				if err != nil {
 					return err
 				}

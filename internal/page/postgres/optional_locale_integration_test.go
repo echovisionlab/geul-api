@@ -9,6 +9,7 @@ import (
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -27,7 +28,9 @@ func TestOptionalLocaleLookupFailureKeepsTheCreationTransactionIntegration(t *te
 		require.ErrorContains(t, err, "division by zero")
 		require.NoError(t, tx.Exec("ALTER TABLE translation_settings RENAME COLUMN default_locale TO optional_read_unavailable").Error)
 		_, err = store.RuntimeSettings(t.Context())
-		require.Error(t, err)
+		var queryError *pgconn.PgError
+		require.ErrorAs(t, err, &queryError)
+		require.Equal(t, "42703", queryError.Code)
 		require.NoError(t, tx.Exec("ALTER TABLE translation_settings RENAME COLUMN optional_read_unavailable TO default_locale").Error)
 		settings, err := store.RuntimeSettings(t.Context())
 		require.NoError(t, err)

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -153,7 +152,7 @@ func TestPostInterchangeValidateRejectsIdentityAndRevisionMismatch(t *testing.T)
 func requirePostInterchangePlan(t *testing.T, source *core.SourceDocument) *core.ExtractionPlan {
 	t.Helper()
 	plan, err := core.BuildRichTextExtractionPlan(
-		&model.TranslationJob{
+		&core.JobIdentity{
 			EntityType: "post", EntityID: "post-1", SourceLocale: "en", TargetLocale: "ko",
 		},
 		source,

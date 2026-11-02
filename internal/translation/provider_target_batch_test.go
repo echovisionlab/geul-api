@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -398,7 +397,7 @@ func TestProviderTargetReplacesOldInlineStructure(t *testing.T) {
 			sourceDocument, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
 			require.NoError(t, err)
 			source := &SourceDocument{ContentBlockDocument: sourceDocument, ContentDocumentRevision: revision.String()}
-			plan, err := BuildRichTextExtractionPlan(&model.TranslationJob{EntityType: "terms", EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "fr"}, source, RichTextDocumentFields{})
+			plan, err := BuildRichTextExtractionPlan(&JobIdentity{EntityType: "terms", EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "fr"}, source, RichTextDocumentFields{})
 			require.NoError(t, err)
 			results := map[string]UnitResult{}
 			for _, unit := range plan.Units {

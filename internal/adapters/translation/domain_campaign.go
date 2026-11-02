@@ -27,7 +27,7 @@ func campaignDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			return campaign.LoadTranslationSourceDocument(ctx, campaignpostgres.Bind(db, campaignpostgres.Ports{ContentBlocks: contents}, nil), id)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Title: true})
+			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Title: true})
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
