@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 // AdapterCacheTTL bounds cross-instance staleness when an ephemeral
@@ -17,7 +16,7 @@ const AdapterCacheTTL = 30 * time.Second
 
 // AdapterStore lists the active mail adapters (Store).
 type AdapterStore interface {
-	ActiveMailAdapters(ctx context.Context) ([]model.MailAdapter, error)
+	ActiveMailAdapters(ctx context.Context) ([]MailAdapter, error)
 }
 
 // AdapterLoader loads and caches active mail adapters from the database.
@@ -157,9 +156,9 @@ func newManagedMailAdapter(adapter Adapter) Adapter {
 	return &managedMailAdapter{adapter: adapter}
 }
 
-func (a *managedMailAdapter) ID() string                  { return a.adapter.ID() }
-func (a *managedMailAdapter) Name() string                { return a.adapter.Name() }
-func (a *managedMailAdapter) Type() model.MailAdapterType { return a.adapter.Type() }
+func (a *managedMailAdapter) ID() string            { return a.adapter.ID() }
+func (a *managedMailAdapter) Name() string          { return a.adapter.Name() }
+func (a *managedMailAdapter) Type() MailAdapterType { return a.adapter.Type() }
 
 func (a *managedMailAdapter) Send(ctx context.Context, message *Email) (*SendResult, error) {
 	a.mu.Lock()

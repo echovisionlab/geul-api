@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 // ErrTemplateNotFound answers a template lookup that matched no row.
@@ -20,10 +18,10 @@ var ErrTemplateNotFound = errors.New("email template not found")
 type Store interface {
 	// ActiveTemplateByEventKey returns the active template of eventKey, or
 	// ErrTemplateNotFound.
-	ActiveTemplateByEventKey(ctx context.Context, eventKey string) (model.EmailTemplate, error)
+	ActiveTemplateByEventKey(ctx context.Context, eventKey string) (Template, error)
 	// TemplateByID returns the template, active or not, or
 	// ErrTemplateNotFound.
-	TemplateByID(ctx context.Context, templateID string) (model.EmailTemplate, error)
+	TemplateByID(ctx context.Context, templateID string) (Template, error)
 	// TemplateSourceLocale returns the template's stored source locale;
 	// found is false when there is no such template.
 	TemplateSourceLocale(ctx context.Context, templateID string) (locale string, found bool, err error)
@@ -68,7 +66,7 @@ type Store interface {
 	ActiveMailAdapterCount(ctx context.Context) (int64, error)
 	// ActiveMailAdapters returns the active mail adapters by priority, then
 	// creation.
-	ActiveMailAdapters(ctx context.Context) ([]model.MailAdapter, error)
+	ActiveMailAdapters(ctx context.Context) ([]MailAdapter, error)
 }
 
 // TemplateContent is one locale row of a template.

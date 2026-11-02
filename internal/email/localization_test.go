@@ -2,8 +2,6 @@ package email
 
 import (
 	"testing"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestLocalesForEmailLookup(t *testing.T) {
@@ -73,7 +71,7 @@ func TestApplyCanonicalEmailTemplateSourceRowOverlaysCanonicalSourceContent(t *t
 	sourceHTML := "<p>Source row body</p>"
 	sourceSubject := "Source row subject"
 	baseHTML := "<p>Base body</p>"
-	source := model.EmailTemplate{
+	source := Template{
 		ID:          "template-1",
 		Subject:     "Base subject",
 		ContentHTML: &baseHTML,

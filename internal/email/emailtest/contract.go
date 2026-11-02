@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
@@ -21,7 +20,7 @@ import (
 type Harness struct {
 	mutationtest.Harness[email.Store]
 	// SeedTemplate stores template, whose ID, Key and Name it fills.
-	SeedTemplate func(t *testing.T, template model.EmailTemplate) string
+	SeedTemplate func(t *testing.T, template email.Template) string
 	// SeedTemplateContent stores one locale row of a template.
 	SeedTemplateContent func(t *testing.T, templateID string, content email.TemplateContent)
 	// SeedLayout stores a layout with sourceLocale and returns its ID.
@@ -29,7 +28,7 @@ type Harness struct {
 	// SeedSuppression stores a suppression of address.
 	SeedSuppression func(t *testing.T, address string, released bool)
 	// SeedMailAdapter stores adapter, whose ID it fills and returns.
-	SeedMailAdapter func(t *testing.T, adapter model.MailAdapter) string
+	SeedMailAdapter func(t *testing.T, adapter email.MailAdapter) string
 }
 
 // FakeHarness is the Harness of a fresh in-memory Store.
@@ -37,7 +36,7 @@ func FakeHarness() Harness {
 	store := NewStore()
 	return Harness{
 		Harness: mutationtest.FakeHarness[email.Store](store),
-		SeedTemplate: func(_ *testing.T, template model.EmailTemplate) string {
+		SeedTemplate: func(_ *testing.T, template email.Template) string {
 			template.ID = uuid.NewString()
 			store.SeedTemplate(template)
 			return template.ID
@@ -53,7 +52,7 @@ func FakeHarness() Harness {
 		SeedSuppression: func(_ *testing.T, address string, released bool) {
 			store.SeedSuppression(address, released)
 		},
-		SeedMailAdapter: func(_ *testing.T, adapter model.MailAdapter) string {
+		SeedMailAdapter: func(_ *testing.T, adapter email.MailAdapter) string {
 			adapter.ID = uuid.NewString()
 			store.SeedMailAdapter(adapter)
 			return adapter.ID
@@ -116,8 +115,8 @@ func localesOf(rows []email.LayoutContent) []string {
 var storeContract = map[string]func(t *testing.T, h Harness){
 	"an active template is found by its event key, an inactive one is not": func(t *testing.T, h Harness) {
 		activeKey, inactiveKey := "event-"+uuid.NewString(), "event-"+uuid.NewString()
-		active := h.SeedTemplate(t, model.EmailTemplate{IsActive: true, EventKey: &activeKey, SourceLocale: "en"})
-		h.SeedTemplate(t, model.EmailTemplate{IsActive: false, EventKey: &inactiveKey, SourceLocale: "en"})
+		active := h.SeedTemplate(t, email.Template{IsActive: true, EventKey: &activeKey, SourceLocale: "en"})
+		h.SeedTemplate(t, email.Template{IsActive: false, EventKey: &inactiveKey, SourceLocale: "en"})
 
 		read(t, h, func(ctx context.Context, store email.Store) error {
 			found, err := store.ActiveTemplateByEventKey(ctx, activeKey)
@@ -132,7 +131,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"a template is found by ID whether it is active or not": func(t *testing.T, h Harness) {
 		layoutID := h.SeedLayout(t, "en")
-		inactive := h.SeedTemplate(t, model.EmailTemplate{IsActive: false, SourceLocale: "ko", LayoutID: &layoutID})
+		inactive := h.SeedTemplate(t, email.Template{IsActive: false, SourceLocale: "ko", LayoutID: &layoutID})
 
 		read(t, h, func(ctx context.Context, store email.Store) error {
 			found, err := store.TemplateByID(ctx, inactive)
@@ -145,7 +144,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		})
 	},
 	"a template's source locale and locale rows": func(t *testing.T, h Harness) {
-		template := h.SeedTemplate(t, model.EmailTemplate{IsActive: true, SourceLocale: "ko"})
+		template := h.SeedTemplate(t, email.Template{IsActive: true, SourceLocale: "ko"})
 		h.SeedTemplateContent(t, template, email.TemplateContent{Locale: "ko", Subject: text("제목"), ContentHTML: text("<p>본문</p>")})
 		h.SeedTemplateContent(t, template, email.TemplateContent{Locale: "en", Subject: text("Subject")})
 		h.SeedTemplateContent(t, template, email.TemplateContent{Locale: "fr", Subject: text("Sujet"), ContentHTML: text("<p>Corps</p>")})
@@ -315,9 +314,9 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			before, err = store.ActiveMailAdapterCount(ctx)
 			return err
 		})
-		config := model.MailAdapterConfig{RawMessage: json.RawMessage(`{}`)}
-		adapter := func(name string, active bool, priority, minute int) model.MailAdapter {
-			return model.MailAdapter{Name: name, Type: "MAIL_ADAPTER_TYPE_SES", IsActive: active, Priority: priority, Config: config, CreatedAt: at(minute)}
+		config := json.RawMessage(`{}`)
+		adapter := func(name string, active bool, priority, minute int) email.MailAdapter {
+			return email.MailAdapter{Name: name, Type: "MAIL_ADAPTER_TYPE_SES", IsActive: active, Priority: priority, Config: config, CreatedAt: at(minute)}
 		}
 		late := h.SeedMailAdapter(t, adapter("late", true, 1, 2))
 		early := h.SeedMailAdapter(t, adapter("early", true, 1, 1))

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
@@ -118,7 +117,7 @@ func (s deliveryAdapterStub) Send(context.Context, *email.Email) (*email.SendRes
 }
 func (deliveryAdapterStub) ID() string                  { return "adapter-1" }
 func (deliveryAdapterStub) Name() string                { return "Adapter" }
-func (deliveryAdapterStub) Type() model.MailAdapterType { return "smtp" }
+func (deliveryAdapterStub) Type() email.MailAdapterType { return "smtp" }
 
 type deliveryMetricsStub struct{}
 

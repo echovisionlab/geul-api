@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -140,7 +139,7 @@ func TestStrictRenderersRejectUnknownPlaceholdersAndUseChannelEscaping(t *testin
 }
 
 func TestRenderCampaignSnapshotForLocaleUsesFrozenLocalizedContentAndLayout(t *testing.T) {
-	snapshot := model.JSONFields{
+	snapshot := structured.Fields{
 		"source_locale":        "en",
 		"layout_source_locale": "en",
 		"translations": []structured.Fields{
@@ -186,7 +185,7 @@ func TestRenderCampaignSnapshotForLocaleUsesFrozenLocalizedContentAndLayout(t *t
 }
 
 func TestRenderCampaignSnapshotForLocaleSupportsJSONBRoundTripRowsAndIgnoresLegacyStatus(t *testing.T) {
-	snapshot := model.JSONFields{
+	snapshot := structured.Fields{
 		"source_locale": "en",
 		"translations": structured.Values{
 			structured.Fields{
@@ -224,7 +223,7 @@ func TestRenderCampaignSnapshotForLocaleSupportsJSONBRoundTripRowsAndIgnoresLega
 func TestRenderCampaignSnapshotForLocaleResolvesContentAndLayoutIndependently(t *testing.T) {
 	testCases := []struct {
 		name                    string
-		snapshot                model.JSONFields
+		snapshot                structured.Fields
 		expectedSubject         string
 		expectedHTMLFragment    string
 		unexpectedHTMLFragment  string
@@ -236,7 +235,7 @@ func TestRenderCampaignSnapshotForLocaleResolvesContentAndLayoutIndependently(t 
 	}{
 		{
 			name: "target content with source layout",
-			snapshot: model.JSONFields{
+			snapshot: structured.Fields{
 				"source_locale":        "en",
 				"layout_source_locale": "en",
 				"translations": []structured.Fields{
@@ -257,7 +256,7 @@ func TestRenderCampaignSnapshotForLocaleResolvesContentAndLayoutIndependently(t 
 		},
 		{
 			name: "source content with target layout",
-			snapshot: model.JSONFields{
+			snapshot: structured.Fields{
 				"source_locale":        "en",
 				"layout_source_locale": "en",
 				"translations": []structured.Fields{
@@ -278,7 +277,7 @@ func TestRenderCampaignSnapshotForLocaleResolvesContentAndLayoutIndependently(t 
 		},
 		{
 			name: "empty target layout does not fall back to source layout",
-			snapshot: model.JSONFields{
+			snapshot: structured.Fields{
 				"source_locale":        "en",
 				"layout_source_locale": "en",
 				"translations": []structured.Fields{
@@ -336,7 +335,7 @@ func TestRenderCampaignSnapshotForLocaleResolvesContentAndLayoutIndependently(t 
 }
 
 func TestRenderCampaignSnapshotForLocaleDoesNotFillExactTargetFieldsFromSource(t *testing.T) {
-	snapshot := model.JSONFields{
+	snapshot := structured.Fields{
 		"subject":       "Source",
 		"content_html":  "<p>Source body</p>",
 		"source_locale": "en",

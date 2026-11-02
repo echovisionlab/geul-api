@@ -27,8 +27,9 @@ func (*Runtime) ResolveLocalizedTemplate(
 	template model.EmailTemplate,
 	locale string,
 ) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.NewStore(db), template, locale)
-	return resolved, err
+	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.NewStore(db), emailpostgres.TemplateFromRow(template), locale)
+	template.Subject, template.ContentHTML = resolved.Subject, resolved.ContentHTML
+	return template, err
 }
 
 func (*Runtime) NormalizeSupportedLocale(value string) *string {

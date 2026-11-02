@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,12 +23,12 @@ func templateRows(subject, contentHTML, layoutSource string) *renderRows {
 	return &renderRows{subject: subject, contentHTML: contentHTML, layoutSource: layoutSource}
 }
 
-func (r *renderRows) TemplateByID(_ context.Context, templateID string) (model.EmailTemplate, error) {
+func (r *renderRows) TemplateByID(_ context.Context, templateID string) (Template, error) {
 	if templateID != "template-1" {
-		return model.EmailTemplate{}, ErrTemplateNotFound
+		return Template{}, ErrTemplateNotFound
 	}
 	layoutID := "legacy"
-	return model.EmailTemplate{ID: templateID, LayoutID: &layoutID}, nil
+	return Template{ID: templateID, LayoutID: &layoutID}, nil
 }
 
 func (r *renderRows) TemplateSourceLocale(context.Context, string) (string, bool, error) {

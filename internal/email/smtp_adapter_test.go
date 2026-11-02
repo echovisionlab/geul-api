@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestSMTPAdapterSendHonorsCanceledDialContext(t *testing.T) {
@@ -214,7 +212,7 @@ func newSMTPTestAdapter(t *testing.T, address net.Addr) *SMTPAdapter {
 	adapter, err := NewSMTPAdapter(
 		"smtp-test",
 		"SMTP test",
-		&model.SMTPAdapterConfig{
+		&SMTPAdapterConfig{
 			Host:      host,
 			Port:      port,
 			FromEmail: "sender@example.test",

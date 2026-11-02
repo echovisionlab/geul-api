@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,16 +25,16 @@ func TestAdapterCacheFreshExpiresMissedBroadcastInvalidation(t *testing.T) {
 // adapterRows is the mail_adapter table in memory.
 type adapterRows struct {
 	mu   sync.Mutex
-	rows []model.MailAdapter
+	rows []MailAdapter
 }
 
-func (a *adapterRows) ActiveMailAdapters(context.Context) ([]model.MailAdapter, error) {
+func (a *adapterRows) ActiveMailAdapters(context.Context) ([]MailAdapter, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return slices.Clone(a.rows), nil
 }
 
-func (a *adapterRows) set(rows ...model.MailAdapter) {
+func (a *adapterRows) set(rows ...MailAdapter) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rows = rows
@@ -43,10 +42,10 @@ func (a *adapterRows) set(rows ...model.MailAdapter) {
 
 const sesTestConfig = `{"region":"us-east-1","access_key_id":"test","secret_access_key":"test","from_email":"sender@example.test"}`
 
-func mailAdapterRow(id, name string, adapterType model.MailAdapterType, config string) model.MailAdapter {
-	return model.MailAdapter{
+func mailAdapterRow(id, name string, adapterType MailAdapterType, config string) MailAdapter {
+	return MailAdapter{
 		ID: id, Name: name, Type: adapterType, IsActive: true, Priority: 1,
-		Config: model.MailAdapterConfig{RawMessage: json.RawMessage(config)},
+		Config: json.RawMessage(config),
 	}
 }
 
@@ -162,8 +161,8 @@ type blockingCloseableAdapter struct {
 
 func (a *blockingCloseableAdapter) ID() string   { return "blocking" }
 func (a *blockingCloseableAdapter) Name() string { return "Blocking" }
-func (a *blockingCloseableAdapter) Type() model.MailAdapterType {
-	return model.MailAdapterType("test")
+func (a *blockingCloseableAdapter) Type() MailAdapterType {
+	return MailAdapterType("test")
 }
 func (a *blockingCloseableAdapter) Send(context.Context, *Email) (*SendResult, error) {
 	close(a.started)

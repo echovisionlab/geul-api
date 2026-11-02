@@ -7,7 +7,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type localizedEmailTemplateRow struct {
@@ -45,9 +44,9 @@ func loadEmailLocalizationPolicy(context.Context, Store) emailLocalizationPolicy
 func ResolveLocalizedEmailTemplate(
 	ctx context.Context,
 	store Store,
-	source model.EmailTemplate,
+	source Template,
 	requestedLocale string,
-) (model.EmailTemplate, string, error) {
+) (Template, string, error) {
 	sourceLocale := loadCanonicalEmailTemplateSourceLocale(ctx, store, source.ID)
 	source, err := applyCanonicalEmailTemplateSourceContent(ctx, store, source, sourceLocale)
 	if err != nil {
@@ -88,9 +87,9 @@ func loadCanonicalEmailTemplateSourceLocale(ctx context.Context, store Store, te
 func applyCanonicalEmailTemplateSourceContent(
 	ctx context.Context,
 	store Store,
-	source model.EmailTemplate,
+	source Template,
 	sourceLocale string,
-) (model.EmailTemplate, error) {
+) (Template, error) {
 	sourceLocale = normalizeEmailLocale(sourceLocale)
 	if sourceLocale == "" {
 		return source, errs.NotFound("email template source translation", source.ID)
@@ -108,9 +107,9 @@ func applyCanonicalEmailTemplateSourceContent(
 }
 
 func applyCanonicalEmailTemplateSourceRow(
-	source model.EmailTemplate,
+	source Template,
 	row *canonicalEmailTemplateSourceRow,
-) model.EmailTemplate {
+) Template {
 	if row == nil {
 		return source
 	}

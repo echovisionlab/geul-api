@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
@@ -80,7 +79,7 @@ func TestLayoutUnsubscribePlaceholderStillRequiresExplicitBulkData(t *testing.T)
 
 func TestCampaignSnapshotPreservesParagraphsAndHardBreaks(t *testing.T) {
 	body := `<p>First<br>after break</p><p>Second paragraph</p>`
-	rendered, err := RenderCampaignSnapshotForLocale(model.JSONFields{
+	rendered, err := RenderCampaignSnapshotForLocale(structured.Fields{
 		"source_locale": "en", "subject": "Campaign", "content_html": body,
 		"layout_source_locale": "en",
 		"layout_translations":  []structured.Fields{{"locale": "en", "html_content": `<html><head><title>{{subject}}</title></head><body>{{content}}</body></html>`}},
@@ -115,7 +114,7 @@ func TestBlockRoomEmailBreaksReachTemplateCampaignAndProvider(t *testing.T) {
 	template, err := RenderTemplateForLocale(t.Context(), db, DirectTemplateType("template-1"), "en", map[string]string{})
 	require.NoError(t, err)
 	require.Equal(t, "\na\n\nb\n", template.Text)
-	campaign, err := RenderCampaignSnapshotForLocale(model.JSONFields{
+	campaign, err := RenderCampaignSnapshotForLocale(structured.Fields{
 		"source_locale": "en", "subject": "Breaks", "content_html": materialized.HTML, "layout_source_locale": "en",
 		"layout_translations": []structured.Fields{{"locale": "en", "html_content": layout}},
 	}, "en", map[string]string{})

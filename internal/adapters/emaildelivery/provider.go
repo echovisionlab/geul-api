@@ -7,7 +7,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -41,9 +40,9 @@ type MailProviders struct{}
 var _ emaildelivery.MailProviders = MailProviders{}
 
 func (MailProviders) Open(adapter emaildelivery.MailAdapter) (emaildelivery.MailProvider, error) {
-	sender, err := email.NewAdapterFactory().Create(&model.MailAdapter{
-		ID: adapter.ID, Name: adapter.Name, Type: model.MailAdapterType(adapter.Type), IsActive: adapter.IsActive,
-		Priority: adapter.Priority, Config: model.MailAdapterConfig{RawMessage: adapter.Config},
+	sender, err := email.NewAdapterFactory().Create(&email.MailAdapter{
+		ID: adapter.ID, Name: adapter.Name, Type: email.MailAdapterType(adapter.Type), IsActive: adapter.IsActive,
+		Priority: adapter.Priority, Config: adapter.Config,
 		CreatedAt: adapter.CreatedAt, UpdatedAt: adapter.UpdatedAt,
 	})
 	if err != nil {

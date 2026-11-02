@@ -40,14 +40,14 @@ type templateNotFoundError struct{ error }
 func (err templateNotFoundError) Is(target error) bool { return target == email.ErrTemplateNotFound }
 func (err templateNotFoundError) Unwrap() error        { return err.error }
 
-func templateLookup(template model.EmailTemplate, err error) (model.EmailTemplate, error) {
+func templateLookup(template model.EmailTemplate, err error) (email.Template, error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return template, templateNotFoundError{err}
+		return TemplateFromRow(template), templateNotFoundError{err}
 	}
-	return template, err
+	return TemplateFromRow(template), err
 }
 
-func (s store) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (model.EmailTemplate, error) {
+func (s store) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (email.Template, error) {
 	var template model.EmailTemplate
 	err := s.db.WithContext(ctx).
 		Where("event_key = ?", eventKey).
@@ -56,7 +56,7 @@ func (s store) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (m
 	return templateLookup(template, err)
 }
 
-func (s store) TemplateByID(ctx context.Context, templateID string) (model.EmailTemplate, error) {
+func (s store) TemplateByID(ctx context.Context, templateID string) (email.Template, error) {
 	var template model.EmailTemplate
 	err := s.db.WithContext(ctx).First(&template, "id = ?", templateID).Error
 	return templateLookup(template, err)
@@ -316,11 +316,18 @@ func (s store) ActiveMailAdapterCount(ctx context.Context) (int64, error) {
 	return active, err
 }
 
-func (s store) ActiveMailAdapters(ctx context.Context) ([]model.MailAdapter, error) {
+func (s store) ActiveMailAdapters(ctx context.Context) ([]email.MailAdapter, error) {
 	var adapters []model.MailAdapter
 	err := s.db.WithContext(ctx).
 		Where("is_active = ?", true).
 		Order("priority ASC, created_at ASC").
 		Find(&adapters).Error
-	return adapters, err
+	if err != nil {
+		return nil, err
+	}
+	result := make([]email.MailAdapter, len(adapters))
+	for i, adapter := range adapters {
+		result[i] = MailAdapterFromRow(adapter)
+	}
+	return result, nil
 }
