@@ -122,7 +122,7 @@ func TestHandleScheduledRoutesEachJobToItsOwner(t *testing.T) {
 			recorded := &calls{}
 			jobs := newFakeJobs()
 			jobs.calls = recorded
-			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded}, jobs, metadataAIProcessor{})
+			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded}, jobs, metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}})
 
 			require.NoError(t, handlers.HandleScheduled(t.Context(), job))
 			require.Equal(t, want, recorded.all())
@@ -281,31 +281,31 @@ func TestScheduledPostsRollBackWhenAPublishFails(t *testing.T) {
 	require.Equal(t, []mutation.Step{mutation.StepRollback}, units.Steps())
 }
 
-type metadataAIProcessor struct{}
+type metadataAIProcessor struct{ MetadataAIRecovery }
 
 func (metadataAIProcessor) ProcessJob(context.Context, string) error { return nil }
 
-func TestMetadataAIRecoveryRunsInAJobTransactionAtTheOwnersBatch(t *testing.T) {
+func TestMetadataAIRecoveryUsesTheOwnersBatchWithoutAJobTransaction(t *testing.T) {
 	jobs := newFakeJobs()
 	jobs.recovered = 2
 	units := mutationtest.New[Jobs](jobs)
-	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{}})
+	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}}})
 
 	require.NoError(t, handlers.HandleScheduled(t.Context(), scheduler.JobRecoverMetadataAI))
 
 	require.Equal(t, []int{0}, jobs.recoveryLimits, "0 keeps the owner's bounded batch")
-	require.Equal(t, []mutation.Step{mutation.StepCommit}, units.Steps())
+	require.Empty(t, units.Steps(), "recovery owns its transaction")
 }
 
-func TestMetadataAIRecoveryFailureRollsBackAndFailsTheJob(t *testing.T) {
+func TestMetadataAIRecoveryFailureFailsTheJobWithoutAJobTransaction(t *testing.T) {
 	failed := errors.New("recovery scan failed")
 	jobs := newFakeJobs()
 	jobs.recovery = failed
 	units := mutationtest.New[Jobs](jobs)
-	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{}})
+	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}}})
 
 	require.ErrorIs(t, handlers.HandleScheduled(t.Context(), scheduler.JobRecoverMetadataAI), failed)
-	require.Equal(t, []mutation.Step{mutation.StepRollback}, units.Steps())
+	require.Empty(t, units.Steps(), "a recovery error must not open an unrelated transaction")
 }
 
 func TestMetadataAIRecoveryIsSkippedWithoutTheProcessor(t *testing.T) {

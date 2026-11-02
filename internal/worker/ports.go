@@ -19,14 +19,11 @@ import (
 type Jobs interface {
 	// ScheduledPosts is the Post Store the scheduled publishing runs on.
 	ScheduledPosts() post.Joined
-	// MetadataAIRecovery republishes the expired metadata AI jobs.
-	MetadataAIRecovery() MetadataAIRecovery
 	// LegalActivation activates a scheduled Terms or Privacy version.
 	LegalActivation() LegalActivation
 }
 
-// MetadataAIRecovery republishes expired metadata AI jobs in the job
-// transaction.
+// MetadataAIRecovery republishes expired metadata AI jobs in the owner's transaction.
 type MetadataAIRecovery interface {
 	// RecoverExpiredJobs republishes up to limit expired jobs (0: the
 	// owner's batch) and returns how many it republished.
@@ -235,8 +232,9 @@ type BulkEmail interface {
 	Handle(ctx context.Context, job *managev1.SendBulkEmailBatchEvent) error
 }
 
-// MetadataAIJobProcessor runs one queued metadata AI job.
+// MetadataAIJobProcessor runs queued jobs and recovers expired jobs in its own unit of work.
 type MetadataAIJobProcessor interface {
+	MetadataAIRecovery
 	ProcessJob(ctx context.Context, jobID string) error
 }
 

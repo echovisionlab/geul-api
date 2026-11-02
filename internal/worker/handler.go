@@ -211,12 +211,8 @@ func (h *Handlers) handleRecoverMetadataAI(ctx context.Context) error {
 	if h.metadataAI == nil {
 		return nil
 	}
-	republished := 0
-	if err := h.units.Transaction(ctx, false, func(tx mutation.Tx[Jobs]) error {
-		var err error
-		republished, err = tx.Store().MetadataAIRecovery().RecoverExpiredJobs(ctx, 0)
-		return err
-	}); err != nil {
+	republished, err := h.metadataAI.RecoverExpiredJobs(ctx, 0)
+	if err != nil {
 		return err
 	}
 	if republished > 0 {

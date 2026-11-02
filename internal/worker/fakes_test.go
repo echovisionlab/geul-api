@@ -103,6 +103,9 @@ func (u unreachable) fail(method string) error {
 	return errUnreachable
 }
 
+func (u unreachable) RecoverExpiredJobs(context.Context, int) (int, error) {
+	return 0, u.fail("RecoverExpiredJobs")
+}
 func (u unreachable) HandleFileDelete(context.Context, *managev1.FileDeleteEvent) error {
 	return u.fail("HandleFileDelete")
 }
@@ -288,8 +291,6 @@ func (f *fakeJobs) Savepoint() func() {
 func (f *fakeJobs) ScheduledPosts() post.Joined {
 	return post.Joined{Store: fakeScheduledPosts{jobs: f}}
 }
-
-func (f *fakeJobs) MetadataAIRecovery() MetadataAIRecovery { return fakeMetadataAIRecovery{jobs: f} }
 
 func (f *fakeJobs) LegalActivation() LegalActivation { return fakeLegalActivation{jobs: f} }
 

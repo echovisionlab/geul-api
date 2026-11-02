@@ -23,17 +23,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
 
-// MetadataAIRecoverer republishes expired metadata AI jobs in its own unit
-// of work (*ai.MetadataJobManager).
-type MetadataAIRecoverer interface {
-	RecoverExpiredJobs(ctx context.Context, limit int) (int, error)
-}
-
 // Ports are the runtimes a job transaction calls.
 type Ports struct {
-	Audit      domainaudit.Appender // the legal activation's audit records
-	OGPlanner  *ogpostgres.Planner
-	MetadataAI MetadataAIRecoverer // optional: the recovery is then never bound
+	Audit     domainaudit.Appender // the legal activation's audit records
+	OGPlanner *ogpostgres.Planner
 }
 
 func (ports Ports) validate() error {
@@ -73,21 +66,8 @@ func (j jobs) ScheduledPosts() post.Joined {
 	return postpostgres.Bind(j.tx, postpostgres.Ports{}, nil)
 }
 
-func (j jobs) MetadataAIRecovery() worker.MetadataAIRecovery {
-	return metadataAIRecovery(j)
-}
-
 func (j jobs) LegalActivation() worker.LegalActivation {
 	return legalActivation(j)
-}
-
-type metadataAIRecovery jobs
-
-func (r metadataAIRecovery) RecoverExpiredJobs(ctx context.Context, limit int) (int, error) {
-	if r.ports.MetadataAI == nil {
-		return 0, errors.New("metadata AI job recovery is not configured")
-	}
-	return r.ports.MetadataAI.RecoverExpiredJobs(ctx, limit)
 }
 
 type legalActivation jobs
