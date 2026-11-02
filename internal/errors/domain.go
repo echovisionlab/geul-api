@@ -21,9 +21,9 @@ var domainCodes = map[domainerr.Kind]connect.Code{
 	domainerr.Aborted:            connect.CodeAborted,
 }
 
-// Classified returns the Connect form of err when err carries a client
-// classification: a Connect error or a use-case error in its chain. Adapters
-// that are not Connect handlers (MCP tools) read use-case outcomes through it.
+// Classified returns the Connect form of a client outcome carried by err:
+// a Connect error, a use-case error, or a malformed UUID database parameter.
+// MCP adapters use the same classification as the Connect boundary.
 func Classified(err error) (*connect.Error, bool) {
 	connectErr, domainErr := outermostClassification(err)
 	if connectErr != nil {
@@ -35,6 +35,9 @@ func Classified(err error) (*connect.Error, bool) {
 		return WithCause(connectErr, err), true
 	}
 	if domainErr == nil {
+		if isRequestUUIDRejection(err) {
+			return classifiedError(connect.CodeInvalidArgument, msgInvalidRequestUUID, err), true
+		}
 		return nil, false
 	}
 	code, known := domainCodes[domainErr.Kind]

@@ -443,6 +443,12 @@ func fileToolErrorText(err error) string {
 	text := err.Error()
 	var useCase *domainerr.Error
 	if !errors.As(err, &useCase) {
+		var legacy *connect.Error
+		if !errors.As(err, &legacy) {
+			if classified, ok := errs.Classified(err); ok {
+				return classified.Error()
+			}
+		}
 		return text
 	}
 	classified, ok := errs.Classified(useCase)

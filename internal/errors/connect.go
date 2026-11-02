@@ -381,9 +381,6 @@ func Wrap(err error) *connect.Error {
 	if stderrors.Is(err, context.DeadlineExceeded) {
 		return classifiedError(connect.CodeDeadlineExceeded, context.DeadlineExceeded.Error(), err)
 	}
-	if isRequestUUIDRejection(err) {
-		return classifiedError(connect.CodeInvalidArgument, msgInvalidRequestUUID, err)
-	}
 	return connect.NewError(connect.CodeInternal, err)
 }
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -45,5 +47,38 @@ func TestExpectedToolErrorPreservesActionableFailuresWithoutPrivateContext(t *te
 		if errors.As(got, &actionable) {
 			t.Fatalf("internal failure was exposed as actionable: %v", got)
 		}
+	}
+}
+
+func TestToolErrorsClassifyRequestUUIDFailuresWithoutExposingDatabaseInput(t *testing.T) {
+	for _, handler := range []struct {
+		name    string
+		call    func(error) (mcpserver.ToolResult, error)
+		message string
+	}{
+		{"application", expectedToolError, "request contains an invalid UUID"},
+		{"translation", translationCallError, "invalid_argument: request contains an invalid UUID"},
+		{"file", fileToolCallError, "invalid_argument: request contains an invalid UUID"},
+	} {
+		t.Run(handler.name, func(t *testing.T) {
+			original := fmt.Errorf("private operation: %w", &pgconn.PgError{
+				Code: "22P02", Message: `invalid input syntax for type uuid: "private-request-id"`, Where: "unnamed portal parameter $1",
+			})
+			_, err := handler.call(original)
+			var actionable *mcpserver.ToolExecutionError
+			if !errors.As(err, &actionable) || actionable.Message != handler.message {
+				t.Fatalf("request error=%v, want %q", err, handler.message)
+			}
+			if !errors.Is(actionable.Cause, original) {
+				t.Fatal("request driver cause was dropped")
+			}
+			for _, where := range []string{"", `SQL function "stored_uuid" statement 1`} {
+				stored := &pgconn.PgError{Code: "22P02", Message: `invalid input syntax for type uuid: "private-stored-id"`, Where: where}
+				_, err := handler.call(stored)
+				if errors.As(err, &actionable) {
+					t.Fatalf("stored data failure became actionable: %v", err)
+				}
+			}
+		})
 	}
 }

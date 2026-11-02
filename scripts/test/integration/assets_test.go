@@ -20,6 +20,12 @@ func TestSuiteAssetsPreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Empty siblings keep ancestor workspace checkouts out of this fixture.
+	for _, repo := range []string{"geul-identity", "geul-editor-collab", "geul-common", "geul-event-contracts", "geul-telemetry"} {
+		if err := os.MkdirAll(filepath.Join(workspace, repo), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	db, _ := selectedIntegrationBands("db", "")
 	ory, _ := selectedIntegrationBands("ory", "")
 	if err := requireSuiteAssets(repoRoot, schemaRoot, db); err == nil || !strings.Contains(err.Error(), "--schema-root") {
