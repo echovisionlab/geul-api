@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	contentsignaladapter "github.com/echovisionlab/geul-api/internal/adapters/contentsignal"
+
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -12,7 +14,12 @@ import (
 
 type PolicyPublisher struct{ publisher any }
 
-func Policy(publisher any) PolicyPublisher { return PolicyPublisher{publisher} }
+func Policy(publisher any) PolicyPublisher {
+	if signals, ok := publisher.(contentsignal.Publisher); ok {
+		publisher = contentsignaladapter.NewPublisher(signals)
+	}
+	return PolicyPublisher{publisher}
+}
 func (p PolicyPublisher) PublishPolicyChange(ctx context.Context, tx *gorm.DB, signal domain.PolicyChangeSignal) error {
 	event, err := PolicyChangedEvent(signal)
 	if err != nil {

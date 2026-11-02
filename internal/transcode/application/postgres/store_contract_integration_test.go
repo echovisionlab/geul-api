@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"github.com/google/uuid"
@@ -62,7 +64,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	applicationtest.RunStoreContract(t, func(t *testing.T) applicationtest.Harness {
 		db := newDB(t)
 		return applicationtest.Harness{
-			Harness:  mutationtest.PostgresHarness(db, applicationpostgres.NewUnits(db)),
+			Harness:  mutationtest.PostgresHarness(db, applicationpostgres.NewUnits(db, filemediaadapter.DerivativeResults{})),
 			SeedFile: func(t *testing.T, extension, mimeType string) string { return seedFile(t, db, extension, mimeType) },
 			RequestFileDeletion: func(t *testing.T, fileID string) {
 				require.NoError(t, db.Model(&model.File{}).Where("id = ?", fileID).
@@ -100,7 +102,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 func TestCompletingAGenerationSwitchesTheHLSDerivativeAndRetiresThePreviousIntegration(t *testing.T) {
 	t.Parallel()
 	db := newDB(t)
-	units := applicationpostgres.NewUnits(db)
+	units := applicationpostgres.NewUnits(db, filemediaadapter.DerivativeResults{})
 	harness := mutationtest.PostgresHarness(db, units)
 	fileID := seedFile(t, db, "mp4", "video/mp4")
 	previous, current := seedGeneration(t, db, fileID), seedGeneration(t, db, fileID)

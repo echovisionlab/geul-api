@@ -57,10 +57,11 @@ func newDatabase(t *testing.T) *gorm.DB {
 func newUnits(t *testing.T, db *gorm.DB, menuAudit domainaudit.Appender) mutation.UnitOfWork[referencecatalog.Store] {
 	t.Helper()
 	units, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
-		Assets:      referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		Members:     referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		MenuTargets: referencecatalogmenuadapter.NewTargets(menuAudit),
-		ClientWorks: workadapter.ClientWorks{},
+		DeletionReferences: referencecatalogadapter.DeletionReferences{},
+		Assets:             referencecatalogadapter.NewAssets("https://cdn.example.com"),
+		Members:            referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
+		MenuTargets:        referencecatalogmenuadapter.NewTargets(menuAudit),
+		ClientWorks:        workadapter.ClientWorks{},
 	})
 	require.NoError(t, err)
 	return units

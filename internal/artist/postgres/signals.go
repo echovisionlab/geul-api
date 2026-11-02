@@ -12,7 +12,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update artist.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Publisher, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Publisher), contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders an Artist's content.updated signal; nil when

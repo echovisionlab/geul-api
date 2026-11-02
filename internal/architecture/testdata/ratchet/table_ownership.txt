@@ -55,7 +55,6 @@
 1 internal/campaign/postgres -> user_tag_mapping
 2 internal/contentblock -> audience_segment
 1 internal/contentblock -> file
-1 internal/contentsignal -> content_document
 1 internal/emailauthoring/postgres -> content_document
 1 internal/emaildelivery/postgres -> member
 1 internal/emaildelivery/postgres -> site_settings

@@ -7,6 +7,10 @@ import (
 	"log/slog"
 	"strings"
 
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
+
 	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 
 	"gorm.io/gorm"
@@ -268,19 +272,26 @@ func (ManifestMenus) TargetSlug(ctx context.Context, db *gorm.DB, item *model.Me
 	if item.TargetID == nil || strings.TrimSpace(*item.TargetID) == "" {
 		return item.TargetSlug
 	}
-	table := map[string]string{"page": "page", "category": "category", "tag": "tag", "series": "series"}[item.LinkType]
-	if table == "" {
+	var lookup func(context.Context, *gorm.DB, string) (*string, error)
+	switch item.LinkType {
+	case "page":
+		lookup = pagepostgres.PageTargetSlug
+	case "category":
+		lookup = referencecatalogpostgres.CategoryTargetSlug
+	case "tag":
+		lookup = referencecatalogpostgres.TagTargetSlug
+	case "series":
+		lookup = seriespostgres.SeriesTargetSlug
+	default:
 		return item.TargetSlug
 	}
-	var row struct {
-		Slug *string `gorm:"column:slug"`
-	}
-	if err := db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", strings.TrimSpace(*item.TargetID)).Take(&row).Error; err != nil || row.Slug == nil || strings.TrimSpace(*row.Slug) == "" {
+	targetSlug, err := lookup(ctx, db, strings.TrimSpace(*item.TargetID))
+	if err != nil || targetSlug == nil || strings.TrimSpace(*targetSlug) == "" {
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.ErrorContext(ctx, "Menu target slug lookup failed; keeping the stored slug", failurecause.Attr(err), "link_type", item.LinkType, "target_id", strings.TrimSpace(*item.TargetID))
 		}
 		return item.TargetSlug
 	}
-	slug := strings.TrimSpace(*row.Slug)
+	slug := strings.TrimSpace(*targetSlug)
 	return &slug
 }

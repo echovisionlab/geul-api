@@ -188,7 +188,7 @@ func ownsTable(pkg, owner string) bool {
 	return false
 }
 
-// TestTableOwnershipRatchet flags SQL text, Table("x") and Model(&model.X{})
+// TestTableOwnershipRatchet flags SQL text and source-known Table or model calls
 // that touch a table another package owns, and any Kratos table outside
 // identityread. The baseline lists today's crossings; move each one behind
 // a port of the owner and lower the baseline.
@@ -201,71 +201,39 @@ func TestTableOwnershipRatchet(t *testing.T) {
 			observed[pkg+" -> "+table]++
 		}
 	}
-	for _, file := range productionFiles(t, "internal") {
-		ast.Inspect(file.syntax, func(node ast.Node) bool {
-			switch node := node.(type) {
-			case *ast.BasicLit:
-				if node.Kind != token.STRING {
-					return true
-				}
-				text, err := strconv.Unquote(node.Value)
-				if err != nil {
-					return true
-				}
-				for _, match := range kratosTable.FindAllStringSubmatch(text, -1) {
-					record(file.pkg, "kratos."+match[1])
-				}
-				if !sqlStatement.MatchString(text) {
-					return true
-				}
-				for _, match := range sqlTableRef.FindAllStringSubmatch(text, -1) {
-					if !strings.HasPrefix(match[1], "kratos.") {
-						record(file.pkg, match[1])
-					}
-				}
-			case *ast.CallExpr:
-				selector, ok := node.Fun.(*ast.SelectorExpr)
-				if !ok || len(node.Args) == 0 {
-					return true
-				}
-				switch selector.Sel.Name {
-				case "Table":
-					if literal, ok := node.Args[0].(*ast.BasicLit); ok && literal.Kind == token.STRING {
-						if text, err := strconv.Unquote(literal.Value); err == nil && !strings.HasPrefix(text, "kratos.") {
-							table, _, _ := strings.Cut(strings.TrimPrefix(text, "public."), " ")
-							record(file.pkg, table)
-						}
-					}
-				case "Model", "Create", "Delete":
-					if table, ok := modelTables[file.modelTypeOf(node.Args[0])]; ok {
-						record(file.pkg, table)
-					}
-				}
-			}
-			return true
-		})
+	files := productionFiles(t, "internal")
+	for _, file := range files {
+		inspectOwnershipLiterals(file, record)
 	}
+	inspectOwnershipCalls(files, modelTables, record)
 	requireRatchet(t, "table_ownership", observed)
 }
 
-// modelTypeOf names the internal/model type of &model.X{...} or model.X{...}.
-func (f productionFile) modelTypeOf(expression ast.Expr) string {
-	if unary, ok := expression.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-		expression = unary.X
+func inspectOwnershipLiterals(file productionFile, record func(string, string)) {
+	ast.Inspect(file.syntax, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		if text, err := strconv.Unquote(literal.Value); err == nil {
+			recordOwnershipText(file.pkg, text, record)
+		}
+		return true
+	})
+}
+
+func recordOwnershipText(pkg, text string, record func(string, string)) {
+	for _, match := range kratosTable.FindAllStringSubmatch(text, -1) {
+		record(pkg, "kratos."+match[1])
 	}
-	literal, ok := expression.(*ast.CompositeLit)
-	if !ok {
-		return ""
+	if !sqlStatement.MatchString(text) {
+		return
 	}
-	selector, ok := literal.Type.(*ast.SelectorExpr)
-	if !ok {
-		return ""
+	for _, match := range sqlTableRef.FindAllStringSubmatch(text, -1) {
+		if !strings.HasPrefix(match[1], "kratos.") {
+			record(pkg, match[1])
+		}
 	}
-	ident, ok := selector.X.(*ast.Ident)
-	if !ok || f.imports[ident.Name] != modulePath+"/internal/model" {
-		return ""
-	}
-	return selector.Sel.Name
 }
 
 // modelTableNames maps each internal/model type with a TableName method to

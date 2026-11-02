@@ -163,16 +163,7 @@ func (s store) SaveMapPlace(_ context.Context, place referencecatalog.MapPlace) 
 // MapPlaceInUse relies on the caller's root row lock, as ReferenceInUse
 // does.
 func (s store) MapPlaceInUse(ctx context.Context, id string) (bool, error) {
-	for _, table := range []string{"post", "work", "program_event"} {
-		var count int64
-		if err := s.tx.WithContext(ctx).Table(table).Where("map_place_id = ?", id).Limit(1).Count(&count).Error; err != nil {
-			return false, err
-		}
-		if count > 0 {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.ports.DeletionReferences.MapPlaceInUse(ctx, s.tx, id)
 }
 
 func (s store) DeleteMapPlace(_ context.Context, id string) error {

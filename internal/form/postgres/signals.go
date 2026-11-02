@@ -10,7 +10,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update form.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Signals), contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders the content.updated signal of an AI document

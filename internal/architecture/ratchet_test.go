@@ -112,50 +112,69 @@ func productionFiles(t *testing.T, roots ...string) []productionFile {
 	var files []productionFile
 	fileSet := token.NewFileSet()
 	for _, root := range roots {
-		err := filepath.WalkDir(filepath.Join(repositoryRoot, root), func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			relative, err := filepath.Rel(repositoryRoot, path)
-			if err != nil {
-				return err
-			}
-			relative = filepath.ToSlash(relative)
-			if entry.IsDir() {
-				// A package named *test (audittest, authztest) is test support.
-				if relative == "internal/testutil" || strings.HasPrefix(relative, "internal/testutil/") ||
-					relative == "internal/architecture" || strings.HasSuffix(entry.Name(), "test") || entry.Name() == "testdata" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			syntax, err := parser.ParseFile(fileSet, path, nil, 0)
-			if err != nil {
-				return err
-			}
-			imports := map[string]string{}
-			for _, spec := range syntax.Imports {
-				importPath, err := strconv.Unquote(spec.Path.Value)
-				if err != nil {
-					return err
-				}
-				name := importPath[strings.LastIndex(importPath, "/")+1:]
-				if spec.Name != nil {
-					name = spec.Name.Name
-				}
-				imports[name] = importPath
-			}
-			files = append(files, productionFile{path: relative, pkg: filepath.ToSlash(filepath.Dir(relative)), syntax: syntax, imports: imports})
-			return nil
-		})
+		parsed, err := walkProductionFiles(repositoryRoot, root, fileSet)
 		if err != nil {
 			t.Fatalf("parse production files under %s: %v", root, err)
 		}
+		files = append(files, parsed...)
 	}
 	return files
+}
+
+func walkProductionFiles(repositoryRoot, root string, fileSet *token.FileSet) ([]productionFile, error) {
+	var files []productionFile
+	err := filepath.WalkDir(filepath.Join(repositoryRoot, root), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(repositoryRoot, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if entry.IsDir() {
+			if skipProductionDirectory(relative, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parseProductionFile(path, relative, fileSet)
+		if err != nil {
+			return err
+		}
+		files = append(files, file)
+		return nil
+	})
+	return files, err
+}
+
+func skipProductionDirectory(relative, name string) bool {
+	// A package named *test (audittest, authztest) is test support.
+	return relative == "internal/testutil" || strings.HasPrefix(relative, "internal/testutil/") ||
+		relative == "internal/architecture" || strings.HasSuffix(name, "test") || name == "testdata"
+}
+
+func parseProductionFile(path, relative string, fileSet *token.FileSet) (productionFile, error) {
+	syntax, err := parser.ParseFile(fileSet, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return productionFile{}, err
+	}
+	imports := map[string]string{}
+	for _, spec := range syntax.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return productionFile{}, err
+		}
+		name := importPath[strings.LastIndex(importPath, "/")+1:]
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		imports[name] = importPath
+	}
+	return productionFile{path: relative, pkg: filepath.ToSlash(filepath.Dir(relative)), syntax: syntax, imports: imports}, nil
 }
 
 // importedAs reports whether expression is a selector of the package the

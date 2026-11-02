@@ -48,5 +48,5 @@ func (s *store) TranslationSettings(ctx context.Context) (translation.RuntimeSet
 }
 
 func (s *store) PublishContentUpdate(ctx context.Context, update programevent.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Signals), contentUpdatedEvent(update))
 }

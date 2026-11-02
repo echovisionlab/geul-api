@@ -128,17 +128,8 @@ func (s store) UpdateClient(ctx context.Context, id string, changes referencecat
 }
 
 // ClientInUse relies on the caller's root row lock, as ReferenceInUse does.
-func (s store) ClientInUse(_ context.Context, id string) (bool, error) {
-	for _, relation := range []struct{ table string }{{"work_client"}, {"program_event_client"}} {
-		var count int64
-		if err := s.tx.Table(relation.table).Where("client_id = ?", id).Limit(1).Count(&count).Error; err != nil {
-			return false, err
-		}
-		if count > 0 {
-			return true, nil
-		}
-	}
-	return false, nil
+func (s store) ClientInUse(ctx context.Context, id string) (bool, error) {
+	return s.ports.DeletionReferences.ClientInUse(ctx, s.tx, id)
 }
 
 func (s store) DeleteClient(_ context.Context, id string) error {

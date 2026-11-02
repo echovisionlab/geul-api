@@ -28,12 +28,20 @@ import (
 )
 
 // NewUnits returns the transcode application's unit of work over db.
-func NewUnits(db *gorm.DB) mutation.UnitOfWork[application.Store] {
-	return mutation.Postgres(db, func(tx *gorm.DB) application.Store { return store{tx: tx} })
+type Derivatives interface {
+	Upsert(context.Context, *gorm.DB, application.Derivative) error
+}
+
+func NewUnits(db *gorm.DB, derivatives Derivatives) mutation.UnitOfWork[application.Store] {
+	if derivatives == nil {
+		panic("File derivative results port is required")
+	}
+	return mutation.Postgres(db, func(tx *gorm.DB) application.Store { return store{tx: tx, derivatives: derivatives} })
 }
 
 type store struct {
-	tx *gorm.DB
+	tx          *gorm.DB
+	derivatives Derivatives
 }
 
 func (s store) lifecycle() *mediaasset.Lifecycle {
@@ -338,17 +346,7 @@ func (s store) DerivativeTypes(ctx context.Context, fileID string, types []strin
 }
 
 func (s store) UpsertDerivative(ctx context.Context, derivative application.Derivative) error {
-	row := model.FileDerivative{
-		ID: derivative.ID, FileID: derivative.FileID, Type: managev1.FileDerivativeType(managev1.FileDerivativeType_value[derivative.Type]),
-		AssetID: derivative.AssetID, MediaGenerationID: derivative.MediaGenerationID,
-	}
-	return s.tx.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "file_id"}, {Name: "type"}},
-		DoUpdates: clause.Assignments(structured.Fields{
-			"asset_id":            row.AssetID,
-			"media_generation_id": row.MediaGenerationID,
-		}),
-	}).Create(&row).Error
+	return s.derivatives.Upsert(ctx, s.tx, derivative)
 }
 
 func (s store) DeleteDerivative(ctx context.Context, fileID, derivativeType string) error {

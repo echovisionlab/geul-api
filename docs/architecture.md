@@ -638,6 +638,12 @@ env -u API_TIMEOUT_MS GOWORK=off go test ./internal/architecture -run <Test> -up
 | `TestAuditWriterNilGuardRatchet` | `audit_writer_nil_guards` | `== nil` / `!= nil` on an audit writer, per package | 27 packages, 169 guards |
 | `TestDomainPackagesDependOnPortsRatchet` | `domain_port_dependencies` | per domain package (Store adapters under `<domain>/postgres` excluded): files importing gorm, a SQL driver, `internal/model`, or generated contracts outside `connect_handler*.go` (policy descriptors allowed); references to `auth.SpiceDBClient` and `kratos.*` | 399 gorm, 343 model, 359 contracts, 12 driver files; 133 SpiceDB client and 2 Kratos references |
 
+The table check resolves source-known variables, true type aliases and finite
+registries within lexical scope. Mutable registry escapes and unproven targets
+remain unknown; direct literal and model calls are collected independently of
+inferred control flow. Owner query ports use the caller's transaction and
+preserve the existing query count and snapshot.
+
 `TestTableOwnersCoverEveryModelTable` fails when a model's table has no owner.
 `pipelineDomains` in `use_case_ratchet_test.go` lists the migrated domains.
 
