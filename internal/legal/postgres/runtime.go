@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"gorm.io/gorm"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/legal"
@@ -99,11 +102,15 @@ func (s *store) RequireCurrentContributors(ctx context.Context, kind legal.Polic
 }
 
 func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, error) {
-	return s.ports.Members.PreferredLocale(ctx, s.tx, memberID)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (*string, error) {
+		return s.ports.Members.PreferredLocale(ctx, tx, memberID)
+	})
 }
 
 func (s *store) TranslationSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
+		return translation.LoadRuntimeSettings(ctx, tx)
+	})
 }
 
 func (s *store) PublishContentUpdate(ctx context.Context, update legal.ContentUpdate) error {

@@ -249,7 +249,6 @@ func (s *Service) CreatePolicyVersion(ctx context.Context, kind PolicyKind, comm
 	if err != nil {
 		return Policy{}, err
 	}
-	sourceLocale := s.resolveInitialSourceLocale(ctx, command.AcceptLanguage)
 	version, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Version, Store]{
 		// Serialize version assignment.
 		Lock: func(ctx context.Context, store Store) error {
@@ -257,6 +256,7 @@ func (s *Service) CreatePolicyVersion(ctx context.Context, kind PolicyKind, comm
 		},
 		Access: mutation.FreshAdminCan(descriptor.create()),
 		Change: func(ctx context.Context, store Store) (Version, error) {
+			sourceLocale := resolveInitialSourceLocale(ctx, store, command.AcceptLanguage)
 			return createDraftVersion(ctx, store, descriptor, command, sourceLocale)
 		},
 		Audit: func(version Version) mutation.Audit {

@@ -18,12 +18,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
-// lookupStore records whether the source locale lookups ran inside a
-// transaction, where PostgreSQL aborts the transaction on a failed read.
+// lookupStore records the optional lookups and their transaction scope.
 type lookupStore struct {
 	legal.Store
 	inTransaction *atomic.Bool
 	insideReads   *atomic.Int32
+	totalReads    *atomic.Int32
 }
 
 func (s lookupStore) Savepoint() func() {
@@ -31,6 +31,7 @@ func (s lookupStore) Savepoint() func() {
 }
 
 func (s lookupStore) PreferredLocale(ctx context.Context, memberID string) (*string, error) {
+	s.totalReads.Add(1)
 	if s.inTransaction.Load() {
 		s.insideReads.Add(1)
 	}
@@ -38,6 +39,7 @@ func (s lookupStore) PreferredLocale(ctx context.Context, memberID string) (*str
 }
 
 func (s lookupStore) TranslationSettings(ctx context.Context) (translation.RuntimeSettings, error) {
+	s.totalReads.Add(1)
 	if s.inTransaction.Load() {
 		s.insideReads.Add(1)
 	}
@@ -66,18 +68,29 @@ func (u transactionMarker) RelationshipTransaction(
 	return u.UnitOfWork.RelationshipTransaction(ctx, writer, work)
 }
 
-func TestCreatePolicyVersionLooksUpTheSourceLocaleOutsideItsTransaction(t *testing.T) {
-	store := legaltest.NewStore()
-	inTransaction, insideReads := &atomic.Bool{}, &atomic.Int32{}
-	units := mutationtest.New[legal.Store](lookupStore{Store: store, inTransaction: inTransaction, insideReads: insideReads})
-	service, err := legal.NewService(legal.Deps{
-		Units: transactionMarker{UnitOfWork: units, inTransaction: inTransaction}, SpiceDB: authztest.AllowAll(),
-		Fence: &identitystatetest.Fence{}, Audit: &audittest.Recorder{}, Dispatch: &dispatch{}, OGAssets: &ogAssets{},
-	})
-	require.NoError(t, err)
-
-	created, err := service.CreatePolicyVersion(newPrincipal().context(t), legal.Terms, legal.CreatePolicyVersionCommand{})
-	require.NoError(t, err)
-	require.Equal(t, "en", created.SourceLocale)
-	require.Zero(t, insideReads.Load(), "a failed best-effort lookup must not abort the create transaction")
+func TestCreatePolicyVersionAuthorizesBeforeSourceLocaleLookups(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "denied", true: "allowed"}[allowed], func(t *testing.T) {
+			store := legaltest.NewStore()
+			inTransaction, insideReads, totalReads := &atomic.Bool{}, &atomic.Int32{}, &atomic.Int32{}
+			units := mutationtest.New[legal.Store](lookupStore{Store: store, inTransaction: inTransaction, insideReads: insideReads, totalReads: totalReads})
+			checker := &authztest.Checker{}
+			if allowed {
+				checker = authztest.AllowAll()
+			}
+			service, err := legal.NewService(legal.Deps{Units: transactionMarker{UnitOfWork: units, inTransaction: inTransaction}, SpiceDB: checker, Fence: &identitystatetest.Fence{}, Audit: &audittest.Recorder{}, Dispatch: &dispatch{}, OGAssets: &ogAssets{}})
+			require.NoError(t, err)
+			created, err := service.CreatePolicyVersion(newPrincipal().context(t), legal.Terms, legal.CreatePolicyVersionCommand{})
+			require.NotEmpty(t, checker.Checks())
+			if !allowed {
+				require.Error(t, err)
+				require.Zero(t, totalReads.Load(), "a denied caller must not query locale preferences or initialize settings")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "en", created.SourceLocale)
+			require.EqualValues(t, 2, totalReads.Load())
+			require.EqualValues(t, 2, insideReads.Load(), "optional source lookups belong to the authorized creation transaction")
+		})
+	}
 }
