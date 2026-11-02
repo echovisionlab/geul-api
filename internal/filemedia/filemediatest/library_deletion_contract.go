@@ -30,7 +30,7 @@ func libraryDeletionCases() map[string]func(*testing.T, CatalogHarness) {
 func libraryDeletionContractIntentRollback(t *testing.T, h CatalogHarness) {
 	row := CatalogFile("delete", nil)
 	h.SeedFile(t, row, false, false)
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	abort := errors.New("abort")
 	require.ErrorIs(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
 		f, err := s.LockDeletionCandidate(ctx, row.ID)
@@ -218,7 +218,7 @@ func libraryDeletionContractMeshCandidates(t *testing.T, h CatalogHarness) {
 	pending, ready := domain.MeshDeliveryWitness{CandidateID: uuid.NewString(), SourceFileID: source.ID, OutputFileID: out.ID}, domain.MeshDeliveryWitness{CandidateID: uuid.NewString(), SourceFileID: source.ID, OutputFileID: out.ID}
 	h.SeedMesh(t, pending, "processing")
 	h.SeedMesh(t, ready, "ready")
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
 		ids, err := domain.PrepareMeshCandidatesForDeletion(ctx, s, source.ID, now)
 		require.NoError(t, err)
