@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -18,21 +19,26 @@ import (
 	"gorm.io/gorm"
 
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -223,7 +229,7 @@ func (acceptedSignals) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX
 type noBlockMedia struct{}
 
 func (noBlockMedia) HydrateAuthorizedProgramEventBlockMediaWithDB(
-	_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }

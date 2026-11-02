@@ -9,11 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
-
-	"github.com/echovisionlab/geul-api/internal/mediamime"
-
 	"connectrpc.com/connect"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -21,49 +20,75 @@ import (
 	"gorm.io/gorm"
 
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
+
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
+
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
+
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+
 	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
+
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
+
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+
 	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
+
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
+
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
-	workdomain "github.com/echovisionlab/geul-api/internal/work"
-	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
-	// ArtistLabelPublicFixture contains only the cross-domain records consumed by
-	// the Artist and Label public read integration tests. Assertions stay in each
-	// owning public package.
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
+
+// ArtistLabelPublicFixture contains only the cross-domain records consumed by
+// the Artist and Label public read integration tests. Assertions stay in each
+// owning public package.
 
 const artistLabelPublicCDN = "https://cdn.example.com"
 
@@ -430,8 +455,8 @@ type artistLabelMediaHydrator struct{}
 
 func (artistLabelMediaHydrator) HydrateAuthorizedContentBlockMedia(
 	_ context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 
@@ -441,8 +466,8 @@ func (artistLabelMediaHydrator) HydrateAuthorizedWorkBlockMediaWithDB(
 	_ string,
 	_ uuid.UUID,
 	_ *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

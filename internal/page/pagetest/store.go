@@ -15,15 +15,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -63,7 +64,7 @@ type state struct {
 	readyAssets    map[string]*mediaasset.Reference
 	unavailable    map[uuid.UUID]contentv1.MissingAttachmentMediaKind
 	attachments    map[uuid.UUID][]contentblock.PublicationAttachment
-	blockMedia     map[uuid.UUID][]*contentv1.ContentBlockMediaItem
+	blockMedia     map[uuid.UUID][]*fileref.BlockMediaItem
 	members        map[string]string
 	identities     map[string]string
 	preferred      map[string]*string
@@ -134,7 +135,7 @@ func NewStore() *Store {
 			documents: map[uuid.UUID]Document{}, routes: map[string]bool{}, files: map[string]page.PublicationFile{},
 			presentations: page.Presentations{SourceAssets: map[page.PresentationKey]bool{}, Derivatives: map[page.PresentationKey]bool{}},
 			readyAssets:   map[string]*mediaasset.Reference{}, unavailable: map[uuid.UUID]contentv1.MissingAttachmentMediaKind{},
-			attachments: map[uuid.UUID][]contentblock.PublicationAttachment{}, blockMedia: map[uuid.UUID][]*contentv1.ContentBlockMediaItem{},
+			attachments: map[uuid.UUID][]contentblock.PublicationAttachment{}, blockMedia: map[uuid.UUID][]*fileref.BlockMediaItem{},
 			members: map[string]string{}, identities: map[string]string{}, preferred: map[string]*string{},
 			tags: map[string]bool{}, memberTags: map[string][]string{}, subscribers: map[string]bool{},
 			sessions: map[string]*auth.UserInfo{}, lockedSessions: map[string]bool{},
@@ -293,7 +294,7 @@ func (s *Store) PutAttachments(documentID uuid.UUID, attachments ...contentblock
 }
 
 // PutBlockMedia names the Block media of a document.
-func (s *Store) PutBlockMedia(documentID uuid.UUID, items ...*contentv1.ContentBlockMediaItem) {
+func (s *Store) PutBlockMedia(documentID uuid.UUID, items ...*fileref.BlockMediaItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.blockMedia[documentID] = items

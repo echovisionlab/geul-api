@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
 
@@ -72,7 +72,7 @@ func (s *Store) ContentSnapshot(_ context.Context, documentID uuid.UUID, sourceL
 }
 
 // MediaReferences implements programevent.Store.
-func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	if err := s.enter("MediaReferences"); err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*con
 	defer s.mu.Unlock()
 	items := s.BlockMedia[documentID]
 	if items == nil {
-		return []*contentv1.ContentBlockMediaItem{}, nil
+		return []*fileref.BlockMediaItem{}, nil
 	}
 	return items, nil
 }

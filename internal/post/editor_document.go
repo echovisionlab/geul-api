@@ -7,8 +7,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 )
@@ -25,7 +28,7 @@ type EditorDocument struct {
 	LocaleExists     bool
 	TargetRevision   *string
 	SourceLocale     string
-	BlockMedia       []*contentv1.ContentBlockMediaItem
+	BlockMedia       []*fileref.BlockMediaItem
 	Editable         bool
 	Title            *string
 	Summary          *string

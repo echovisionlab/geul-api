@@ -11,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/post"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +29,7 @@ func (f publicDisplayPostFiles) ResolveDisplayMedia(
 func (publicDisplayPostFiles) ResolveAuthorizedContentBlockMedia(
 	context.Context,
 	uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 

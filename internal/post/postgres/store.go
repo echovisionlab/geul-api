@@ -9,18 +9,19 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -33,13 +34,13 @@ type ShareLinkCleanup interface {
 // ContentBlockMediaLoader loads persisted attachment references only after a
 // Post operation has authorized the document.
 type ContentBlockMediaLoader interface {
-	LoadContentBlockMediaReferences(context.Context, *gorm.DB, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	LoadContentBlockMediaReferences(context.Context, *gorm.DB, uuid.UUID) ([]*fileref.BlockMediaItem, error)
 }
 
 // ContentBlockMediaHydrator adds private delivery while Post holds the
 // authorized owner, document, and attachment witnesses in one transaction.
 type ContentBlockMediaHydrator interface {
-	HydrateAuthorizedPostBlockMediaWithDB(context.Context, *gorm.DB, string, uuid.UUID, *auth.UserInfo, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedPostBlockMediaWithDB(context.Context, *gorm.DB, string, uuid.UUID, *auth.UserInfo, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
 // VersionRestoreSupport reads which attachments of a version document can

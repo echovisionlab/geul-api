@@ -8,13 +8,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
 
@@ -399,7 +399,7 @@ type ContentDocuments interface {
 	// ContentSnapshot reads the document in the transaction.
 	ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
 	// MediaReferences lists the document's active File usages.
-	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error)
 	ApplyContentBatch(ctx context.Context, batch contentblock.Batch, fence ContentFence) (contentblock.Result, error)
 	ApplyContentBatchWithMetadata(ctx context.Context, batch contentblock.Batch, fence ContentFence, effect MetadataEffect) (contentblock.Result, error)
 	ApplyTargetLocaleContentBatch(ctx context.Context, batch contentblock.Batch, locale string, fence ContentFence, effect TargetMetadataEffect) (contentblock.Result, error)
@@ -433,7 +433,7 @@ type MediaAssets interface {
 	InlineImageAsset(ctx context.Context, fileID string) (*mediaasset.Reference, error)
 	// HydrateBlockMedia adds the principal's delivery to authorized Block
 	// media.
-	HydrateBlockMedia(ctx context.Context, eventID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateBlockMedia(ctx context.Context, eventID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
 // UpdateSource names the surface a locale change came from.

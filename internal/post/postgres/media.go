@@ -3,16 +3,17 @@ package postpostgres
 import (
 	"context"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
-	"github.com/google/uuid"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/google/uuid"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -47,7 +48,7 @@ func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[strin
 	return ready, nil
 }
 
-func (s *store) BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*fileref.BlockMediaItem, error) {
 	items, err := s.ports.MediaLoader.LoadContentBlockMediaReferences(ctx, s.tx, documentID)
 	if err != nil {
 		return nil, err

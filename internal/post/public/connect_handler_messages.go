@@ -102,7 +102,7 @@ func postMessage(view PostView) *openv1.GetPostResponse {
 		message.SeriesOrder = p.SeriesOrder
 	}
 	message.FeaturedImageDelivery = fileref.DeliveryProto(view.FeaturedImage)
-	return &openv1.GetPostResponse{Post: message, BlockMedia: view.BlockMedia}
+	return &openv1.GetPostResponse{Post: message, BlockMedia: fileref.BlockMediaItemsProto(view.BlockMedia)}
 }
 
 func applyPostLocalization(protoPost *openv1.Post, localization LocalizedContentSelection) {

@@ -9,12 +9,10 @@ import (
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	publicpage "github.com/echovisionlab/geul-api/internal/page/public"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 type PublicFiles interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 	ResolveOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
@@ -31,8 +29,8 @@ func NewPublicMedia(files PublicFiles) *PublicMedia {
 
 func (a *PublicMedia) HydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return a.files.HydrateAuthorizedContentBlockMedia(ctx, items)
 }
 

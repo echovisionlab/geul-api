@@ -79,7 +79,7 @@ func getPageResponse(read Read) (*openv1.GetPageResponse, error) {
 		message.PublishedAt = timestamppb.New(*p.PublishedAt)
 	}
 	response.Page = message
-	response.BlockMedia = read.BlockMedia
+	response.BlockMedia = fileref.BlockMediaItemsProto(read.BlockMedia)
 	return response, nil
 }
 

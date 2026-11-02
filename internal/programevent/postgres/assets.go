@@ -4,10 +4,10 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/google/uuid"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // The public asset owners and bindings of event media and series posters.
@@ -59,6 +59,6 @@ func (s *store) InlineImageAsset(ctx context.Context, fileID string) (*mediaasse
 	return s.ports.Media.ResolveSingleReadyInlineAssetForSourceFile(ctx, s.tx, fileID, "image")
 }
 
-func (s *store) HydrateBlockMedia(ctx context.Context, eventID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) HydrateBlockMedia(ctx context.Context, eventID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return s.ports.Files.HydrateAuthorizedProgramEventBlockMediaWithDB(ctx, s.tx, eventID, documentID, principal, items)
 }

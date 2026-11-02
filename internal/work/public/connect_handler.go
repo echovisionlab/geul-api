@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"connectrpc.com/connect"
@@ -47,7 +49,7 @@ func (h *ConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.Ge
 		AcceptLanguage: req.Header().Get("Accept-Language"),
 	})
 	return render(detail, err, func(detail Detail) *openv1.GetWorkResponse {
-		return &openv1.GetWorkResponse{Work: workMessage(ctx, detail), BlockMedia: detail.BlockMedia}
+		return &openv1.GetWorkResponse{Work: workMessage(ctx, detail), BlockMedia: fileref.BlockMediaItemsProto(detail.BlockMedia)}
 	})
 }
 

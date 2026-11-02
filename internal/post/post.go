@@ -161,7 +161,7 @@ const (
 type View struct {
 	Post
 	Document      *contentv1.RichTextDocument
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 	OgAsset       *mediaasset.Reference
 	Authors       []*memberref.Summary
 	FeaturedImage *fileref.Delivery

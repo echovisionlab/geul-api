@@ -15,7 +15,6 @@ import (
 
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
 
@@ -65,8 +64,8 @@ type publicFiles interface {
 	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 	HydrateAuthorizedContentBlockMedia(
 		context.Context,
-		[]*contentv1.ContentBlockMediaItem,
-	) ([]*contentv1.ContentBlockMediaItem, error)
+		[]*fileref.BlockMediaItem,
+	) ([]*fileref.BlockMediaItem, error)
 }
 
 // PublicFiles keeps Post's authorization decision ahead of File Media lookup:
@@ -94,7 +93,7 @@ func (a *PublicFiles) ResolveDisplayMedia(
 func (a *PublicFiles) ResolveAuthorizedContentBlockMedia(
 	ctx context.Context,
 	documentID uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	items, err := contentblock.LoadMediaReferences(ctx, a.db, documentID)
 	if err != nil {
 		return nil, errs.Internal(err)

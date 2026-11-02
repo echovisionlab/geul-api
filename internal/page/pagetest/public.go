@@ -3,17 +3,17 @@ package pagetest
 import (
 	"context"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/page"
+	"github.com/google/uuid"
+
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // PublicStore is the fake pagepublic.Store over the rows of a Store.
@@ -53,7 +53,7 @@ func (s PublicStore) ContentSnapshot(ctx context.Context, documentID uuid.UUID, 
 }
 
 // MediaReferences implements pagepublic.Store.
-func (s PublicStore) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s PublicStore) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return s.Store.MediaReferences(ctx, documentID)
 }
 

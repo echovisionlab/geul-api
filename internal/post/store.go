@@ -9,6 +9,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
 
@@ -506,7 +508,7 @@ type PostMedia interface {
 	ReadyOgAssets(ctx context.Context, assetIDs []string) (map[string]*mediaasset.Reference, error)
 	// BlockMedia loads the content document's File attachments with the
 	// delivery principal may read.
-	BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*contentv1.ContentBlockMediaItem, error)
+	BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*fileref.BlockMediaItem, error)
 	// RequestOG starts the Post's current OG generation in locale and
 	// returns its run ID, nil when none started.
 	RequestOG(ctx context.Context, postID, locale string, force bool, reason string) (*string, error)

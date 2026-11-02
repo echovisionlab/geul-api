@@ -9,23 +9,25 @@ import (
 	"errors"
 	"log/slog"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
-	"github.com/google/uuid"
-	"gorm.io/gorm"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
+
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -110,7 +112,7 @@ func (s store) ContentSnapshot(ctx context.Context, documentID uuid.UUID, source
 	return s.Store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 }
 
-func (s store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return s.Store.MediaReferences(ctx, documentID)
 }
 

@@ -65,7 +65,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	layout := DefaultDocumentLayout()
 	now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	document := &contentv1.RichTextDocument{SourceLocale: "ko"}
-	media := []*contentv1.ContentBlockMediaItem{{Delivery: &commonv1.MediaDelivery{FileId: uuid.NewString()}}}
+	media := []*fileref.BlockMediaItem{{Delivery: &fileref.Delivery{FileID: uuid.NewString()}}}
 	can, err := policyv1.Post.Edit(id)
 	require.NoError(t, err)
 	viewCan, err := policyv1.Post.View(id)
@@ -97,7 +97,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.True(t, proto.Equal(document, decoded.Document))
 	require.Equal(t, revision, decoded.Revision)
 	require.Equal(t, configurationRevision, decoded.ConfigurationRevision)
-	require.True(t, proto.Equal(media[0], decoded.BlockMedia[0]))
+	require.True(t, proto.Equal(fileref.BlockMediaProto(media[0]), decoded.BlockMedia[0]))
 	require.True(t, proto.Equal(memberref.ReferenceMessage(author), decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(fileref.DeliveryProto(featured), decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(mediaasset.ReferenceProto(og), decoded.OgAsset))

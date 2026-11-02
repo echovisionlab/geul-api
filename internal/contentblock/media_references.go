@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -22,12 +22,12 @@ func LoadMediaReferences(
 	ctx context.Context,
 	db *gorm.DB,
 	documentID uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is required")
 	}
 	if documentID == uuid.Nil {
-		return []*contentv1.ContentBlockMediaItem{}, nil
+		return []*fileref.BlockMediaItem{}, nil
 	}
 	var rows []mediaReferenceRow
 	if err := db.WithContext(ctx).Raw(`
@@ -39,11 +39,11 @@ func LoadMediaReferences(
 	`, documentID).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load active Content Block attachment references: %w", err)
 	}
-	items := make([]*contentv1.ContentBlockMediaItem, 0, len(rows))
+	items := make([]*fileref.BlockMediaItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, &contentv1.ContentBlockMediaItem{
-			Selector:   &contentv1.ContentBlockMediaSelector{BlockId: row.BlockID, ReferencePath: row.ReferencePath},
-			Attachment: &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: row.FileID}},
+		items = append(items, &fileref.BlockMediaItem{
+			Selector:   &fileref.BlockMediaSelector{BlockID: row.BlockID, ReferencePath: row.ReferencePath},
+			Attachment: &fileref.Attachment{Kind: fileref.AttachmentActive, FileID: row.FileID},
 		})
 	}
 	return items, nil

@@ -7,18 +7,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -113,7 +117,7 @@ type RoomDocument struct {
 	Locale              string
 	LocaleExists        bool
 	DocumentLayout      DocumentLayout
-	BlockMedia          []*contentv1.ContentBlockMediaItem
+	BlockMedia          []*fileref.BlockMediaItem
 	LocaleMetadata      *LocaleMetadata
 	TargetRevision      *string
 	PresentLocaleValues []*managev1.AIDocumentFieldTarget
@@ -124,7 +128,7 @@ type RoomDocument struct {
 type pageBlockDocument struct {
 	state          pageTargetLocaleState
 	documentLayout DocumentLayout
-	blockMedia     []*contentv1.ContentBlockMediaItem
+	blockMedia     []*fileref.BlockMediaItem
 }
 
 func (s *Service) LoadPageBlockDocument(ctx context.Context, query LoadPageBlockDocumentQuery) (_ RoomDocument, returnErr error) {

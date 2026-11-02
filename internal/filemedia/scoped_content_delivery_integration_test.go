@@ -10,14 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	"github.com/echovisionlab/geul-api/internal/model"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
-
-	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -86,7 +87,7 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 			case "wrong owner":
 				postID = uuid.NewString()
 			}
-			var items []*contentv1.ContentBlockMediaItem
+			var items []*fileref.BlockMediaItem
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 				if err := tx.Exec(`SELECT id FROM post WHERE id = ?::uuid FOR SHARE`, postID).Error; err != nil {
 					return err
@@ -97,12 +98,12 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 			}))
 			require.Len(t, items, 1)
 			if state == "active" {
-				require.NotNil(t, items[0].GetDelivery().GetInline())
+				require.NotNil(t, optional.Value(optional.Value(items[0]).Delivery).Inline)
 			} else {
-				require.Nil(t, items[0].GetDelivery())
+				require.Nil(t, optional.Value(items[0]).Delivery)
 			}
-			require.Nil(t, items[0].GetDelivery().GetDownload())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, items[0].GetDownloadAvailability())
+			require.Nil(t, optional.Value(optional.Value(items[0]).Delivery).Download)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(items[0]).DownloadAvailability)
 		})
 	}
 }
@@ -146,7 +147,7 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 			fixture := seedScopedPageBlockFixture(t, db)
 			require.NoError(t, testCase.mutate(db, fixture))
 
-			var hydrated []*contentv1.ContentBlockMediaItem
+			var hydrated []*fileref.BlockMediaItem
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 				if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 					return err
@@ -158,9 +159,9 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 				return err
 			}))
 			require.Len(t, hydrated, 1)
-			require.Nil(t, hydrated[0].GetDelivery())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, hydrated[0].GetDownloadAvailability())
-			require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, hydrated[0].GetDownloadAction())
+			require.Nil(t, optional.Value(hydrated[0]).Delivery)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(hydrated[0]).DownloadAvailability)
+			require.Equal(t, fileref.NoDownload, optional.Value(hydrated[0]).DownloadAction)
 		})
 	}
 }
@@ -214,12 +215,12 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 				<-release
 			}
 			type resolution struct {
-				items []*contentv1.ContentBlockMediaItem
+				items []*fileref.BlockMediaItem
 				err   error
 			}
 			resolved := make(chan resolution, 1)
 			go func() {
-				var hydrated []*contentv1.ContentBlockMediaItem
+				var hydrated []*fileref.BlockMediaItem
 				err := db.Transaction(func(tx *gorm.DB) error {
 					if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 						return err
@@ -252,10 +253,10 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 			result := <-resolved
 			require.NoError(t, result.err)
 			require.Len(t, result.items, 1)
-			require.Equal(t, fixture.fileID, result.items[0].GetDelivery().GetFileId())
-			require.NotNil(t, result.items[0].GetDelivery().GetInline())
-			require.Nil(t, result.items[0].GetDelivery().GetDownload())
-			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, result.items[0].GetDownloadAvailability())
+			require.Equal(t, fixture.fileID, optional.Value(optional.Value(result.items[0]).Delivery).FileID)
+			require.NotNil(t, optional.Value(optional.Value(result.items[0]).Delivery).Inline)
+			require.Nil(t, optional.Value(optional.Value(result.items[0]).Delivery).Download)
+			require.Equal(t, fileref.DownloadUnavailable, optional.Value(result.items[0]).DownloadAvailability)
 			select {
 			case err := <-mutationDone:
 				require.NoError(t, err)
@@ -283,12 +284,12 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 		`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id) VALUES (?::uuid, 'file', 'active', ?::uuid)`,
 		ownedBlockID, fixture.replacementFileID,
 	).Error)
-	items := []*contentv1.ContentBlockMediaItem{
+	items := []*fileref.BlockMediaItem{
 		fixture.item(fixture.blockID, fixture.fileID),
 		fixture.item(ownedBlockID, fixture.replacementFileID),
 	}
 
-	var hydrated []*contentv1.ContentBlockMediaItem
+	var hydrated []*fileref.BlockMediaItem
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 			return err
@@ -300,13 +301,13 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 		return err
 	}))
 	require.Len(t, hydrated, 2)
-	require.NotNil(t, hydrated[0].GetDelivery().GetInline())
-	require.Nil(t, hydrated[0].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, hydrated[0].GetDownloadAvailability())
-	require.NotNil(t, hydrated[1].GetDelivery().GetInline())
-	require.NotNil(t, hydrated[1].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE, hydrated[1].GetDownloadAvailability())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, hydrated[1].GetDownloadAction())
+	require.NotNil(t, optional.Value(optional.Value(hydrated[0]).Delivery).Inline)
+	require.Nil(t, optional.Value(optional.Value(hydrated[0]).Delivery).Download)
+	require.Equal(t, fileref.DownloadUnavailable, optional.Value(hydrated[0]).DownloadAvailability)
+	require.NotNil(t, optional.Value(optional.Value(hydrated[1]).Delivery).Inline)
+	require.NotNil(t, optional.Value(optional.Value(hydrated[1]).Delivery).Download)
+	require.Equal(t, fileref.DownloadAvailable, optional.Value(hydrated[1]).DownloadAvailability)
+	require.Equal(t, fileref.Download, optional.Value(hydrated[1]).DownloadAction)
 }
 
 func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegration(t *testing.T) {
@@ -448,14 +449,14 @@ type scopedBlockFixture struct {
 	replacementFileID string
 }
 
-func (fixture scopedBlockFixture) items() []*contentv1.ContentBlockMediaItem {
-	return []*contentv1.ContentBlockMediaItem{fixture.item(fixture.blockID, fixture.fileID)}
+func (fixture scopedBlockFixture) items() []*fileref.BlockMediaItem {
+	return []*fileref.BlockMediaItem{fixture.item(fixture.blockID, fixture.fileID)}
 }
 
-func (fixture scopedBlockFixture) item(blockID, fileID string) *contentv1.ContentBlockMediaItem {
-	return &contentv1.ContentBlockMediaItem{
-		Selector:   &contentv1.ContentBlockMediaSelector{BlockId: blockID, ReferencePath: "file"},
-		Attachment: &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: fileID}},
+func (fixture scopedBlockFixture) item(blockID, fileID string) *fileref.BlockMediaItem {
+	return &fileref.BlockMediaItem{
+		Selector:   &fileref.BlockMediaSelector{BlockID: blockID, ReferencePath: "file"},
+		Attachment: &fileref.Attachment{Kind: fileref.AttachmentActive, FileID: fileID},
 	}
 }
 
@@ -587,7 +588,7 @@ func TestScopedMediaReadsUncommittedOwnerTransactionFactsIntegration(t *testing.
 	fixture := seedScopedPageBlockFixture(t, db)
 	assetID := uuid.NewString()
 	aborted := errors.New("roll back owner transaction")
-	var hydrated []*contentv1.ContentBlockMediaItem
+	var hydrated []*fileref.BlockMediaItem
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 			return err
@@ -609,8 +610,8 @@ func TestScopedMediaReadsUncommittedOwnerTransactionFactsIntegration(t *testing.
 	})
 	require.ErrorIs(t, err, aborted)
 	require.Len(t, hydrated, 1)
-	assert.Equal(t, "uncommitted-original", hydrated[0].GetDelivery().GetFileName())
-	assert.Equal(t, assetID, hydrated[0].GetDelivery().GetAsset().GetAssetId())
+	assert.Equal(t, "uncommitted-original", optional.Value(optional.Value(optional.Value(hydrated[0]).Delivery).FileName))
+	assert.Equal(t, assetID, optional.Value(optional.Value(optional.Value(hydrated[0]).Delivery).Asset).AssetID)
 	var file model.File
 	require.NoError(t, db.First(&file, "id = ?", fixture.fileID).Error)
 	require.Equal(t, fixture.fileID, file.FileName)

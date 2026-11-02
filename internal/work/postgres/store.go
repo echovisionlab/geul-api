@@ -14,6 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
@@ -43,8 +45,8 @@ type BlockMedia interface {
 		string,
 		uuid.UUID,
 		*auth.UserInfo,
-		[]*contentv1.ContentBlockMediaItem,
-	) ([]*contentv1.ContentBlockMediaItem, error)
+		[]*fileref.BlockMediaItem,
+	) ([]*fileref.BlockMediaItem, error)
 }
 
 // Runtime is the shared OG and File/media lifecycle a Work transaction

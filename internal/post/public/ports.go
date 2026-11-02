@@ -7,15 +7,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/memberref"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
 
 type FileService interface {
 	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
-	ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*fileref.BlockMediaItem, error)
 }
 
 type MemberSummaryLoader interface {

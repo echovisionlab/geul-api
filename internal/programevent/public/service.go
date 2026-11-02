@@ -6,14 +6,13 @@ import (
 	"slices"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/memberref"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // MediaHydrator resolves request-scoped delivery for authorized Program Event Block media.
 type MediaHydrator interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
 // CreditMemberSummaries projects public Member-owned identity details for Program Event credits.

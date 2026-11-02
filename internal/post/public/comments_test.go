@@ -20,8 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/post/public/publictest"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -30,7 +28,7 @@ type fakeFiles struct{}
 func (fakeFiles) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
 	return map[string]*fileref.Delivery{}, nil
 }
-func (fakeFiles) ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (fakeFiles) ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 

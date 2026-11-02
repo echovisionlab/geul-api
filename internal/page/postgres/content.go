@@ -7,6 +7,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/page"
@@ -80,7 +82,7 @@ func (s *store) PublicationAttachments(ctx context.Context, documentID uuid.UUID
 	return s.ports.ContentBlocks.LoadPublicationAttachments(ctx, s.tx, documentID)
 }
 
-func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return contentblock.LoadMediaReferences(ctx, s.tx, documentID)
 }
 
@@ -189,7 +191,7 @@ func (s *store) UnavailableAttachments(ctx context.Context, document *contentv1.
 	return s.ports.Runtime.LoadUnavailableVersionAttachmentKinds(ctx, s.tx, document)
 }
 
-func (s *store) HydrateBlockMedia(ctx context.Context, pageID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) HydrateBlockMedia(ctx context.Context, pageID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return s.ports.MediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(ctx, s.tx, pageID, documentID, principal, items)
 }
 

@@ -9,9 +9,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -71,7 +75,7 @@ type RoomDocument struct {
 	DocumentRevision    string
 	SourceMetadata      RoomMetadata
 	LocaleMetadata      *RoomMetadata
-	BlockMedia          []*contentv1.ContentBlockMediaItem
+	BlockMedia          []*fileref.BlockMediaItem
 	Locale              string
 	LocaleExists        bool
 	TargetRevision      *string
@@ -103,7 +107,7 @@ func (s *Service) LoadWorkBlockDocument(ctx context.Context, query LoadWorkBlock
 	}
 	var principal *auth.UserInfo
 	var state workTargetLocaleState
-	var mediaItems []*contentv1.ContentBlockMediaItem
+	var mediaItems []*fileref.BlockMediaItem
 	// editor-collab reads as itself on behalf of the admitted session.
 	access := mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 		var err error

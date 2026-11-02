@@ -4,11 +4,16 @@ import (
 	"context"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
@@ -92,7 +97,7 @@ type Work struct {
 type Document struct {
 	Document   *contentv1.LocalizedRichTextDocument
 	Revision   string
-	BlockMedia []*contentv1.ContentBlockMediaItem
+	BlockMedia []*fileref.BlockMediaItem
 }
 
 // ShareLink is a live share link of a Work.

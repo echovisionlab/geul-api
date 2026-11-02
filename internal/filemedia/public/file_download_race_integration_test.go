@@ -10,22 +10,29 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
+	"connectrpc.com/connect"
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
-	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -238,7 +245,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 		Mode: mediaasset.ContentDownloadOwnerAccessPublic,
 	})
 	type hydrationResult struct {
-		items []*contentv1.ContentBlockMediaItem
+		items []*fileref.BlockMediaItem
 		err   error
 	}
 	hydrated := make(chan hydrationResult, 1)
@@ -265,19 +272,19 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 	require.NoError(t, result.err)
 	require.Len(t, result.items, 2)
 
-	byBlock := make(map[string]*contentv1.ContentBlockMediaItem, len(result.items))
+	byBlock := make(map[string]*fileref.BlockMediaItem, len(result.items))
 	for _, item := range result.items {
-		byBlock[item.GetSelector().GetBlockId()] = item
+		byBlock[optional.Value(optional.Value(item).Selector).BlockID] = item
 	}
 	stable := byBlock[stableBlockID]
-	require.NotNil(t, stable.GetDelivery())
-	require.NotNil(t, stable.GetDelivery().GetInline())
-	require.NotNil(t, stable.GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, stable.GetDownloadAction())
+	require.NotNil(t, optional.Value(stable).Delivery)
+	require.NotNil(t, optional.Value(optional.Value(stable).Delivery).Inline)
+	require.NotNil(t, optional.Value(optional.Value(stable).Delivery).Download)
+	require.Equal(t, fileref.Download, optional.Value(stable).DownloadAction)
 
 	replaced := byBlock[replacedBlockID]
-	require.Nil(t, replaced.GetDelivery())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, replaced.GetDownloadAction())
+	require.Nil(t, optional.Value(replaced).Delivery)
+	require.Equal(t, fileref.NoDownload, optional.Value(replaced).DownloadAction)
 }
 
 func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIntegration(t *testing.T) {

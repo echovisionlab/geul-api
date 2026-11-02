@@ -7,8 +7,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -58,24 +60,24 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 	require.NoError(t, err)
 	require.Len(t, items, 3)
 
-	byBlock := make(map[string]*contentv1.ContentBlockMediaItem, len(items))
+	byBlock := make(map[string]*fileref.BlockMediaItem, len(items))
 	for _, item := range items {
-		byBlock[item.GetSelector().GetBlockId()] = item
+		byBlock[optional.Value(optional.Value(item).Selector).BlockID] = item
 	}
 	for _, blockID := range []string{firstBlockID, secondBlockID, thirdBlockID} {
 		item := byBlock[blockID]
 		require.NotNil(t, item)
-		require.Equal(t, fileID, item.GetAttachment().GetActiveFileId())
-		require.Equal(t, fileID, item.GetDelivery().GetFileId())
-		require.Equal(t, fileName, item.GetDelivery().GetFileName())
-		require.NotNil(t, item.GetDelivery().GetInline())
+		require.Equal(t, fileID, item.Attachment.ActiveFileID())
+		require.Equal(t, fileID, item.Delivery.FileID)
+		require.Equal(t, fileName, optional.Value(item.Delivery.FileName))
+		require.NotNil(t, item.Delivery.Inline)
 	}
-	require.NotNil(t, byBlock[firstBlockID].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, byBlock[firstBlockID].GetDownloadAction())
-	require.Nil(t, byBlock[secondBlockID].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_SIGN_IN, byBlock[secondBlockID].GetDownloadAction())
-	require.Nil(t, byBlock[thirdBlockID].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, byBlock[thirdBlockID].GetDownloadAction())
+	require.NotNil(t, byBlock[firstBlockID].Delivery.Download)
+	require.Equal(t, fileref.Download, byBlock[firstBlockID].DownloadAction)
+	require.Nil(t, byBlock[secondBlockID].Delivery.Download)
+	require.Equal(t, fileref.SignIn, byBlock[secondBlockID].DownloadAction)
+	require.Nil(t, byBlock[thirdBlockID].Delivery.Download)
+	require.Equal(t, fileref.NoDownload, byBlock[thirdBlockID].DownloadAction)
 
 	inactiveContext := auth.WithUser(hydrationContext, &auth.UserInfo{
 		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()), Authenticated: true,
@@ -84,14 +86,14 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 	require.NoError(t, err)
 	inactiveItems, err = service.HydrateAuthorizedContentBlockMedia(inactiveContext, inactiveItems)
 	require.NoError(t, err)
-	inactiveByBlock := make(map[string]*contentv1.ContentBlockMediaItem, len(inactiveItems))
+	inactiveByBlock := make(map[string]*fileref.BlockMediaItem, len(inactiveItems))
 	for _, item := range inactiveItems {
-		inactiveByBlock[item.GetSelector().GetBlockId()] = item
+		inactiveByBlock[optional.Value(optional.Value(item).Selector).BlockID] = item
 	}
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD, inactiveByBlock[firstBlockID].GetDownloadAction())
-	require.NotNil(t, inactiveByBlock[firstBlockID].GetDelivery().GetDownload())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, inactiveByBlock[secondBlockID].GetDownloadAction())
-	require.Nil(t, inactiveByBlock[secondBlockID].GetDelivery().GetDownload())
+	require.Equal(t, fileref.Download, inactiveByBlock[firstBlockID].DownloadAction)
+	require.NotNil(t, inactiveByBlock[firstBlockID].Delivery.Download)
+	require.Equal(t, fileref.NoDownload, inactiveByBlock[secondBlockID].DownloadAction)
+	require.Nil(t, inactiveByBlock[secondBlockID].Delivery.Download)
 }
 
 func TestHydrateAuthorizedContentBlockMediaDeliversImmersiveSceneAttachmentsWithoutFileDownloadPolicy(t *testing.T) {
@@ -123,11 +125,11 @@ func TestHydrateAuthorizedContentBlockMediaDeliversImmersiveSceneAttachmentsWith
 	require.NoError(t, err)
 	require.Len(t, items, len(referencePaths))
 	for _, item := range items {
-		require.Equal(t, meshFileID, item.GetDelivery().GetFileId())
-		require.NotNil(t, item.GetDelivery().GetInline())
-		require.Nil(t, item.GetDelivery().GetDownload())
-		require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, item.GetDownloadAvailability())
-		require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, item.GetDownloadAction())
+		require.Equal(t, meshFileID, optional.Value(item).Delivery.FileID)
+		require.NotNil(t, optional.Value(item).Delivery.Inline)
+		require.Nil(t, optional.Value(item).Delivery.Download)
+		require.Equal(t, fileref.DownloadUnavailable, optional.Value(item).DownloadAvailability)
+		require.Equal(t, fileref.NoDownload, optional.Value(item).DownloadAction)
 	}
 }
 
@@ -141,7 +143,7 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size) VALUES (?, 'private.png', 'png', 'image/png', 1024)`, fileID).Error)
 
 	service := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "unit-secret", DownloadTTL: time.Minute})
-	loadItems := func() []*contentv1.ContentBlockMediaItem {
+	loadItems := func() []*fileref.BlockMediaItem {
 		items, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 		require.NoError(t, err)
 		return items
@@ -157,8 +159,8 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Nil(t, items[0].GetDelivery())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, items[0].GetDownloadAction())
+	require.Nil(t, items[0].Delivery)
+	require.Equal(t, fileref.NoDownload, items[0].DownloadAction)
 
 	shareID := uuid.NewString()
 	expiresAt := time.Now().Add(time.Hour).UTC()
@@ -176,8 +178,8 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Nil(t, items[0].GetDelivery())
-	require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, items[0].GetDownloadAction())
+	require.Nil(t, items[0].Delivery)
+	require.Equal(t, fileref.NoDownload, items[0].DownloadAction)
 }
 
 func newContentBlockMediaUnitDB(t *testing.T) *gorm.DB {

@@ -54,7 +54,7 @@ type Detail struct {
 	FeaturedImage *fileref.Delivery
 	Document      *contentv1.PageDocument
 	Revision      string
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 }
 
 // pageBy reads the management projection of the Page whose locator column
@@ -86,7 +86,7 @@ type pageContentProjection struct {
 	sourceMetadata SourceMetadata
 	snapshot       contentblock.Snapshot
 	document       *contentv1.PageDocument
-	blockMedia     []*contentv1.ContentBlockMediaItem
+	blockMedia     []*fileref.BlockMediaItem
 }
 
 func (s *Service) loadPageContentProjection(ctx context.Context, locator Locator, value string) (pageContentProjection, error) {

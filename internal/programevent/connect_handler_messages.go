@@ -3,6 +3,8 @@ package programevent
 import (
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"github.com/echovisionlab/geul-api/internal/memberref"
@@ -210,7 +212,7 @@ func EventMessage(event EventView) *managev1.ProgramEvent {
 		Slug:             event.Slug,
 		Document:         event.Document,
 		DocumentRevision: event.DocumentRevision,
-		BlockMedia:       event.BlockMedia,
+		BlockMedia:       fileref.BlockMediaItemsProto(event.BlockMedia),
 	}
 }
 
@@ -318,7 +320,7 @@ func blockLocaleMetadataMessage(metadata *BlockLocaleMetadata) *intrav1.ProgramE
 func roomDocumentMessage(room RoomDocument) *intrav1.LoadProgramEventBlockDocumentResponse {
 	return &intrav1.LoadProgramEventBlockDocumentResponse{
 		Document: room.Document, DocumentRevision: room.DocumentRevision,
-		SourceMetadata: blockLocaleMetadataMessage(room.SourceMetadata), BlockMedia: room.BlockMedia, Locale: room.Locale,
+		SourceMetadata: blockLocaleMetadataMessage(room.SourceMetadata), BlockMedia: fileref.BlockMediaItemsProto(room.BlockMedia), Locale: room.Locale,
 		LocaleExists: room.LocaleExists, LocaleMetadata: blockLocaleMetadataMessage(room.LocaleMetadata),
 		TargetRevision:      room.TargetRevision,
 		PresentLocaleValues: room.PresentLocaleValues,

@@ -165,7 +165,7 @@ type PostView struct {
 	OgAsset       *mediaasset.Reference
 	Authors       []*memberref.Summary
 	SeriesTitle   string
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 	FeaturedImage *fileref.Delivery
 }
 
