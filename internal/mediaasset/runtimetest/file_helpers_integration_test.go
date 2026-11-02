@@ -1,6 +1,6 @@
 //go:build integration
 
-package worker
+package mediaassetruntime_test
 
 import (
 	"crypto/sha256"
@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func seedWorkerAssetDerivative(
+func seedAssetDerivative(
 	t *testing.T,
 	db *gorm.DB,
 	fileID string,
@@ -42,7 +42,7 @@ func seedWorkerAssetDerivative(
 	return assetID, objectKey
 }
 
-func seedWorkerHLSGenerationDerivative(t *testing.T, db *gorm.DB, fileID string) (string, string) {
+func seedHLSGenerationDerivative(t *testing.T, db *gorm.DB, fileID string) (string, string) {
 	t.Helper()
 	generationID := uuid.NewString()
 	objectPrefix, err := mediaauth.MediaHLSObjectPrefix(fileID, generationID)
@@ -62,7 +62,7 @@ func seedWorkerHLSGenerationDerivative(t *testing.T, db *gorm.DB, fileID string)
 	return generationID, objectPrefix
 }
 
-func requireWorkerFilePresent(t *testing.T, db *gorm.DB, fileID string) {
+func requireFilePresent(t *testing.T, db *gorm.DB, fileID string) {
 	t.Helper()
 
 	var count int64

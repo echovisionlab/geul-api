@@ -1,12 +1,16 @@
 //go:build integration
 
-package worker
+package faviconpostgres_test
 
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
@@ -22,10 +26,10 @@ import (
 
 func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 	t.Parallel()
-	pg := newWorkerIntegrationPostgres(t)
+	pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	now := time.Now().UTC()
 	cutoff := now.Add(-24 * time.Hour)
-	handlers := &cleanupFixture{db: pg.DB}
+	cleanupService := favicon.NewCleanup(faviconpostgres.NewUnits(pg.DB, ""))
 
 	t.Run("cleanup lock wins", func(t *testing.T) {
 		asset := seedPostgresReadyFaviconAsset(t, pg.DB, now.Add(-25*time.Hour))
@@ -35,13 +39,16 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 		})
 		locked := make(chan struct{})
 		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseCleanup := func() { releaseOnce.Do(func() { close(release) }) }
+		t.Cleanup(releaseCleanup)
 		type cleanupResult struct {
 			changed bool
 			err     error
 		}
 		cleanupDone := make(chan cleanupResult, 1)
 		go func() {
-			changed, cleanupErr := faviconCleanupForIntegration(handlers).MarkDanglingReadyAsset(context.Background(), asset.ID, cutoff, now, func() {
+			changed, cleanupErr := cleanupService.MarkDanglingReadyAsset(context.Background(), asset.ID, cutoff, now, func() {
 				close(locked)
 				<-release
 			})
@@ -54,7 +61,8 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 				AssetID: asset.ID, OwnerType: "integration", OwnerID: uuid.NewString(), BindingKey: "favicon",
 			})
 		}()
-		close(release)
+		pgtest.RequireLockWaiters(t, pg.DB, 1)
+		releaseCleanup()
 		cleanup := <-cleanupDone
 		require.NoError(t, cleanup.err)
 		require.True(t, cleanup.changed)
@@ -68,6 +76,7 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 			_ = pg.DB.Where("id = ?", asset.ID).Delete(&model.PublicAsset{}).Error
 		})
 		tx := pg.DB.Begin()
+		t.Cleanup(func() { _ = tx.Rollback().Error })
 		require.NoError(t, tx.Error)
 		ownerID := uuid.NewString()
 		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "").BindPublicAsset(t.Context(), mediaasset.Binding{
@@ -79,14 +88,9 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 		}
 		cleanupDone := make(chan cleanupResult, 1)
 		go func() {
-			changed, cleanupErr := faviconCleanupForIntegration(handlers).MarkDanglingReadyAsset(context.Background(), asset.ID, cutoff, now, nil)
+			changed, cleanupErr := cleanupService.MarkDanglingReadyAsset(context.Background(), asset.ID, cutoff, now, nil)
 			cleanupDone <- cleanupResult{changed: changed, err: cleanupErr}
 		}()
-		select {
-		case result := <-cleanupDone:
-			t.Fatalf("cleanup did not wait for binding transaction: changed=%v err=%v", result.changed, result.err)
-		case <-time.After(100 * time.Millisecond):
-		}
 		pgtest.RequireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		cleanup := <-cleanupDone

@@ -1,36 +1,29 @@
 //go:build integration
 
-package worker
+package mediaassetruntime_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sort"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/structured"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -50,11 +43,11 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	db := newWorkerIntegrationDB(t)
-	handlers := &cleanupFixture{
+	db := newCleanupDB(t)
+	fixture := &cleanupFixture{
 		db:     db,
 		config: &config.Config{S3Bucket: "media"},
-		s3Client: newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s3Client: filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				t.Errorf("unexpected object storage write %s %s", r.Method, r.URL)
 				http.Error(w, "unexpected", http.StatusBadRequest)
@@ -74,11 +67,11 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 	referencedFileID := randomHLSCleanupIntegrationUUID()
 	mapImageFileID := randomHLSCleanupIntegrationUUID()
 	eventMediaFileID := randomHLSCleanupIntegrationUUID()
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, orphanFileID, expiredAt))
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, youngFileID, youngAt))
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, referencedFileID, expiredAt))
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, mapImageFileID, expiredAt))
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, eventMediaFileID, expiredAt))
+	require.NoError(t, insertCleanupFileCreatedAt(db, orphanFileID, expiredAt))
+	require.NoError(t, insertCleanupFileCreatedAt(db, youngFileID, youngAt))
+	require.NoError(t, insertCleanupFileCreatedAt(db, referencedFileID, expiredAt))
+	require.NoError(t, insertCleanupFileCreatedAt(db, mapImageFileID, expiredAt))
+	require.NoError(t, insertCleanupFileCreatedAt(db, eventMediaFileID, expiredAt))
 	defaultMapThemeID := randomHLSCleanupIntegrationUUID()
 	defaultMapThemeVariant := model.MapThemeVariant{
 		BackgroundColor: "#ffffff", WaterColor: "#ffffff", LandColor: "#ffffff", RoadColor: "#ffffff",
@@ -93,8 +86,8 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 		ID: defaultMapThemeID, Name: "cleanup-default", CalloutFields: pq.StringArray{"name", "address"},
 		AttributionFontSize: 11, LightVariant: defaultMapThemeVariant, DarkVariant: defaultMapThemeVariant,
 	}).Error)
-	orphanThumbID, _ := seedWorkerAssetDerivative(t, db, orphanFileID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL, "thumbnail", "webp", "image/webp")
-	seedWorkerHLSGenerationDerivative(t, db, orphanFileID)
+	orphanThumbID, _ := seedAssetDerivative(t, db, orphanFileID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL, "thumbnail", "webp", "image/webp")
+	seedHLSGenerationDerivative(t, db, orphanFileID)
 	require.NoError(t, db.Exec(`
 		INSERT INTO site_settings (id, logo_full_light_file_id, default_map_theme_id)
 		VALUES (1, ?, ?)
@@ -142,7 +135,7 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 		recentTrackID:      now.Add(-48 * time.Hour),
 		expiredTrackID:     now.Add(-8 * 24 * time.Hour),
 	} {
-		require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, fileID, createdAt))
+		require.NoError(t, insertCleanupFileCreatedAt(db, fileID, createdAt))
 	}
 	require.NoError(t, db.Model(&model.File{}).
 		Where("id = ?", structuredEditorID).
@@ -172,7 +165,7 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 
 	require.NoError(t, cleanupDanglingFilesBeforeForIntegration(
 		ctx,
-		handlers,
+		fixture,
 		orphanCutoff,
 	))
 
@@ -180,7 +173,7 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 		orphanFileID, youngFileID, referencedFileID, mapImageFileID, eventMediaFileID,
 		generalOrphanID, structuredEditorID, recentRichTextID, expiredRichTextID, recentTrackID, expiredTrackID,
 	} {
-		requireWorkerFilePresent(t, db, fileID)
+		requireFilePresent(t, db, fileID)
 	}
 
 	var thumbnail model.PublicAsset
@@ -192,11 +185,11 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := newWorkerIntegrationDB(t)
-	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
+	db := newCleanupDB(t)
+	s3Client, cfg, err := filetest.NewS3FromSharedLease(ctx)
 	require.NoError(t, err)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(s3Client, cfg.S3Bucket)
-	handlers := &cleanupFixture{
+	fixture := &cleanupFixture{
 		db:           db,
 		config:       cfg,
 		s3Client:     s3Client,
@@ -204,24 +197,24 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 	}
 	now := time.Now().UTC()
 
-	due := seedWorkerRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
-	notDue := seedWorkerRetiredMediaGeneration(t, db, now, now.Add(7*time.Hour))
-	currentPointer := seedWorkerRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
+	due := seedRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
+	notDue := seedRetiredMediaGeneration(t, db, now, now.Add(7*time.Hour))
+	currentPointer := seedRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
 	require.NoError(t, db.Exec(`
 		INSERT INTO file_derivative (file_id, type, media_generation_id)
 		VALUES (?, ?, ?)
 	`, currentPointer.FileID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String(), currentPointer.ID).Error)
-	changed := seedWorkerRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
+	changed := seedRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
 
 	for _, generation := range []model.MediaGeneration{due, notDue, currentPointer, changed} {
-		require.NoError(t, putWorkerIntegrationObject(
+		require.NoError(t, filetest.PutObject(
 			ctx,
 			s3Client,
 			cfg.S3Bucket,
 			generation.ObjectPrefix+"/master.m3u8",
 			"manifest",
 		))
-		require.NoError(t, putWorkerIntegrationObject(
+		require.NoError(t, filetest.PutObject(
 			ctx,
 			s3Client,
 			cfg.S3Bucket,
@@ -238,27 +231,27 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 			"delete_after": nil,
 		}).Error)
 
-	require.NoError(t, handlers.handlers(t).HandleScheduled(ctx, scheduler.JobCleanupDangling))
+	require.NoError(t, mediaAssetCleanupForIntegration(fixture).CleanupDangling(ctx, now))
 
-	requireWorkerMediaGenerationMissing(t, db, due.ID)
-	require.Empty(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, due.ObjectPrefix))
+	requireMediaGenerationMissing(t, db, due.ID)
+	require.Empty(t, filetest.ListKeys(t, ctx, s3Client, cfg.S3Bucket, due.ObjectPrefix))
 	for _, generation := range []model.MediaGeneration{notDue, currentPointer, changed} {
-		requireWorkerMediaGenerationPresent(t, db, generation.ID)
-		require.Len(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, generation.ObjectPrefix), 2)
+		requireMediaGenerationPresent(t, db, generation.ID)
+		require.Len(t, filetest.ListKeys(t, ctx, s3Client, cfg.S3Bucket, generation.ObjectPrefix), 2)
 	}
 }
 
 func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	db := newWorkerIntegrationDB(t)
+	db := newCleanupDB(t)
 	now := time.Now().UTC()
-	failing := seedWorkerRetiredMediaGeneration(t, db, now.Add(-10*time.Hour), now.Add(-2*time.Hour))
-	following := seedWorkerRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
+	failing := seedRetiredMediaGeneration(t, db, now.Add(-10*time.Hour), now.Add(-2*time.Hour))
+	following := seedRetiredMediaGeneration(t, db, now.Add(-9*time.Hour), now.Add(-time.Hour))
 
 	var failFirst atomic.Bool
 	failFirst.Store(true)
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		prefix := r.URL.Query().Get("prefix")
 		if prefix == failing.ObjectPrefix+"/" && failFirst.Load() {
 			w.Header().Set("Content-Type", "application/xml")
@@ -272,20 +265,20 @@ func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *te
 <Name>media</Name><Prefix>%s</Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
 </ListBucketResult>`, prefix)
 	}))
-	handlers := &cleanupFixture{
+	fixture := &cleanupFixture{
 		db:       db,
 		config:   &config.Config{S3Bucket: "media"},
 		s3Client: s3Client,
 	}
 
-	err := mediaAssetCleanupForIntegration(handlers).CleanupRetiredGenerations(ctx, now)
+	err := mediaAssetCleanupForIntegration(fixture).CleanupRetiredGenerations(ctx, now)
 	require.ErrorContains(t, err, failing.ID)
-	requireWorkerMediaGenerationPresent(t, db, failing.ID)
-	requireWorkerMediaGenerationMissing(t, db, following.ID)
+	requireMediaGenerationPresent(t, db, failing.ID)
+	requireMediaGenerationMissing(t, db, following.ID)
 
 	failFirst.Store(false)
-	require.NoError(t, mediaAssetCleanupForIntegration(handlers).CleanupRetiredGenerations(ctx, now))
-	requireWorkerMediaGenerationMissing(t, db, failing.ID)
+	require.NoError(t, mediaAssetCleanupForIntegration(fixture).CleanupRetiredGenerations(ctx, now))
+	requireMediaGenerationMissing(t, db, failing.ID)
 }
 
 func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle(t *testing.T) {
@@ -301,8 +294,8 @@ func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycl
 func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	t.Helper()
 	ctx := context.Background()
-	db := newWorkerIntegrationDB(t)
-	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
+	db := newCleanupDB(t)
+	s3Client, cfg, err := filetest.NewS3FromSharedLease(ctx)
 	require.NoError(t, err)
 	now := time.Now().UTC()
 
@@ -348,7 +341,7 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	}))
 	require.NoError(t, err)
 	body := "ready asset"
-	require.NoError(t, putWorkerIntegrationObject(ctx, s3Client, cfg.S3Bucket, target.GetObjectKey(), body))
+	require.NoError(t, filetest.PutObject(ctx, s3Client, cfg.S3Bucket, target.GetObjectKey(), body))
 	digest := sha256.Sum256([]byte(body))
 	_, err = lifecycle.CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: int64(len(body)), Sha256: digest[:],
@@ -363,12 +356,13 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 		Disposition: mediaasset.DispositionInline,
 	}))
 	require.NoError(t, err)
-	require.NoError(t, putWorkerIntegrationObject(ctx, s3Client, cfg.S3Bucket, staleTarget.GetObjectKey(), "stale"))
+	require.NoError(t, filetest.PutObject(ctx, s3Client, cfg.S3Bucket, staleTarget.GetObjectKey(), "stale"))
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", stale.ID).
 		Update("created_at", now.Add(-25*time.Hour)).Error)
 
-	handlers := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
-	require.NoError(t, handlers.handlers(t).handleCleanupPublicAssets(ctx, now))
+	fixture := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
+	require.NoError(t, publicAssetCleanupForIntegration(fixture).DeletePending(ctx, now))
+	require.NoError(t, publicAssetCleanupForIntegration(fixture).DeleteExpiredUnready(ctx, now.Add(-unreadyAssetRetention)))
 	var staleCount int64
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", stale.ID).Count(&staleCount).Error)
 	require.Zero(t, staleCount, "unready cleanup must continue while a pending asset purge retries")
@@ -385,110 +379,10 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	} else {
 		require.Empty(t, purged)
 	}
-	require.Empty(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/"))
+	require.Empty(t, filetest.ListKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/"))
 }
 
-// newWorkerIntegrationS3 remains the worker-test entrypoint used by other
-// integration files in this package.
-func newWorkerIntegrationS3(t *testing.T) (*s3.Client, *config.Config) {
-	t.Helper()
-	client, cfg, err := newWorkerIntegrationS3FromSharedLease(t.Context())
-	require.NoError(t, err)
-	return client, cfg
-}
-
-func newWorkerIntegrationS3FromSharedLease(ctx context.Context) (*s3.Client, *config.Config, error) {
-	cfg, err := sharedWorkerIntegrationS3Config()
-	if err != nil {
-		return nil, nil, err
-	}
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(cfg.S3Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.S3AccessKeyID,
-			cfg.S3SecretAccessKey,
-			"",
-		)),
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load shared worker integration S3 config: %w", err)
-	}
-	client := s3.NewFromConfig(awsCfg, func(options *s3.Options) {
-		options.BaseEndpoint = aws.String(cfg.S3Endpoint)
-		options.UsePathStyle = cfg.S3ForcePathStyle
-	})
-	// Each caller gets its own bucket so prefix listings only see objects the
-	// test wrote. The MinIO container is discarded with the suite.
-	cfg.S3Bucket = "it-worker-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if _, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(cfg.S3Bucket)}); err != nil {
-		return nil, nil, fmt.Errorf("create worker integration S3 bucket %s: %w", cfg.S3Bucket, err)
-	}
-	return client, cfg, nil
-}
-
-func sharedWorkerIntegrationS3Config() (*config.Config, error) {
-	backend, err := pgtest.CurrentAppIntegrationBackendLease()
-	if err != nil {
-		return nil, fmt.Errorf("load shared worker integration backend lease: %w", err)
-	}
-	cfg := &config.Config{
-		S3Bucket:          backend.S3MediaBucket,
-		S3Region:          backend.S3Region,
-		S3Endpoint:        backend.S3Endpoint,
-		S3AccessKeyID:     backend.S3AccessKeyID,
-		S3SecretAccessKey: backend.S3SecretAccessKey,
-		S3ForcePathStyle:  backend.S3ForcePathStyle,
-	}
-	for _, field := range []struct {
-		name  string
-		value string
-	}{
-		{name: "bucket", value: cfg.S3Bucket},
-		{name: "region", value: cfg.S3Region},
-		{name: "endpoint", value: cfg.S3Endpoint},
-		{name: "access key ID", value: cfg.S3AccessKeyID},
-		{name: "secret access key", value: cfg.S3SecretAccessKey},
-	} {
-		if strings.TrimSpace(field.value) == "" {
-			return nil, fmt.Errorf("shared worker integration S3 %s is required", field.name)
-		}
-	}
-	return cfg, nil
-}
-
-func putWorkerIntegrationObject(ctx context.Context, s3Client *s3.Client, bucket, key, body string) error {
-	_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader([]byte(body)),
-	})
-	return err
-}
-
-func listWorkerIntegrationKeys(t *testing.T, ctx context.Context, s3Client *s3.Client, bucket, prefix string) []string {
-	t.Helper()
-
-	paginator := s3.NewListObjectsV2Paginator(s3Client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-
-	var keys []string
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		require.NoError(t, err)
-		for _, obj := range page.Contents {
-			if obj.Key != nil {
-				keys = append(keys, *obj.Key)
-			}
-		}
-	}
-
-	sort.Strings(keys)
-	return keys
-}
-
-func insertWorkerIntegrationFileCreatedAt(db *gorm.DB, fileID string, createdAt time.Time) error {
+func insertCleanupFileCreatedAt(db *gorm.DB, fileID string, createdAt time.Time) error {
 	digest := sha256.Sum256([]byte(fileID))
 	result := db.Exec(`
 		INSERT INTO file (id, file_name, mime_type, file_size, extension, sha256, created_at)
@@ -497,7 +391,7 @@ func insertWorkerIntegrationFileCreatedAt(db *gorm.DB, fileID string, createdAt 
 	return result.Error
 }
 
-func seedWorkerRetiredMediaGeneration(
+func seedRetiredMediaGeneration(
 	t *testing.T,
 	db *gorm.DB,
 	retiredAt time.Time,
@@ -505,7 +399,7 @@ func seedWorkerRetiredMediaGeneration(
 ) model.MediaGeneration {
 	t.Helper()
 	fileID := uuid.NewString()
-	require.NoError(t, insertWorkerIntegrationFileCreatedAt(db, fileID, retiredAt.Add(-time.Hour)))
+	require.NoError(t, insertCleanupFileCreatedAt(db, fileID, retiredAt.Add(-time.Hour)))
 	generationID := uuid.NewString()
 	objectPrefix, err := mediaauth.MediaHLSObjectPrefix(fileID, generationID)
 	require.NoError(t, err)
@@ -531,14 +425,14 @@ func seedWorkerRetiredMediaGeneration(
 	}
 }
 
-func requireWorkerMediaGenerationPresent(t *testing.T, db *gorm.DB, generationID string) {
+func requireMediaGenerationPresent(t *testing.T, db *gorm.DB, generationID string) {
 	t.Helper()
 	var count int64
 	require.NoError(t, db.Model(&model.MediaGeneration{}).Where("id = ?", generationID).Count(&count).Error)
 	require.Equal(t, int64(1), count)
 }
 
-func requireWorkerMediaGenerationMissing(t *testing.T, db *gorm.DB, generationID string) {
+func requireMediaGenerationMissing(t *testing.T, db *gorm.DB, generationID string) {
 	t.Helper()
 	var count int64
 	require.NoError(t, db.Model(&model.MediaGeneration{}).Where("id = ?", generationID).Count(&count).Error)

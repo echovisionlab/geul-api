@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -62,7 +64,7 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 		releaseDeleteOnce.Do(func() { close(releaseDelete) })
 	}
 	t.Cleanup(releaseBlockedDelete)
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		deleteStarted <- struct{}{}
 		<-releaseDelete
 		w.WriteHeader(http.StatusNoContent)
