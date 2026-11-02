@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -105,7 +106,7 @@ type Read struct {
 	Revision      string
 	Localization  publiccontent.Selection
 	OgAsset       *mediaasset.Reference
-	FeaturedImage *commonv1.MediaDelivery
+	FeaturedImage *fileref.Delivery
 	BlockMedia    []*contentv1.ContentBlockMediaItem
 }
 

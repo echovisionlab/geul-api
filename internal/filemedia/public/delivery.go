@@ -1,7 +1,7 @@
 package public
 
 import (
-	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/mediaauth"
 )
@@ -42,8 +42,8 @@ type DownloadResult struct {
 	Access   *DownloadAccess
 	Download *mediaauth.Reference
 }
-type HLSReference = domain.HLSReference
-type Delivery = domain.Delivery
+type HLSReference = fileref.HLSReference
+type Delivery = fileref.Delivery
 type ContentMediaItem struct {
 	FileID               string
 	Selector             *ContentBlockFileSelector

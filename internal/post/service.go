@@ -9,12 +9,15 @@ import (
 	"strings"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -306,7 +309,7 @@ type postListPage struct {
 	offset      int32
 	readyOg     map[string]*mediaasset.Reference
 	authors     map[string][]*memberref.Summary
-	featured    map[string]*commonv1.MediaDelivery
+	featured    map[string]*fileref.Delivery
 	authorities map[string]PostAuthority
 	// contents are the hydrated content projections of posts, by index; a
 	// metadata-only list leaves them unset.

@@ -5,16 +5,16 @@ import (
 	"errors"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/proto"
 )
 
-func publicDisplayOnlyDelivery(delivery *commonv1.MediaDelivery) *commonv1.MediaDelivery {
+func publicDisplayOnlyDelivery(delivery *fileref.Delivery) *fileref.Delivery {
 	if delivery == nil {
 		return nil
 	}
-	result := proto.Clone(delivery).(*commonv1.MediaDelivery)
+	result := delivery.Clone()
 	result.Inline = nil
 	result.Download = nil
 	return result
@@ -23,8 +23,8 @@ func publicDisplayOnlyDelivery(delivery *commonv1.MediaDelivery) *commonv1.Media
 func (s *Service) loadPostFeaturedImageDeliveries(
 	ctx context.Context,
 	posts []post.Post,
-) (map[string]*commonv1.MediaDelivery, error) {
-	result := make(map[string]*commonv1.MediaDelivery, len(posts))
+) (map[string]*fileref.Delivery, error) {
+	result := make(map[string]*fileref.Delivery, len(posts))
 	fileIDs := make([]string, 0, len(posts))
 	postIDsByFileID := make(map[string][]string, len(posts))
 	for i := range posts {
@@ -46,7 +46,7 @@ func (s *Service) loadPostFeaturedImageDeliveries(
 	if s.files == nil {
 		return nil, errors.New("Post media resolver is not configured")
 	}
-	deliveries, err := s.files.ResolvePublicDisplayMedia(ctx, fileIDs)
+	deliveries, err := s.files.ResolveDisplayMedia(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -3,9 +3,9 @@ package post
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/memberref"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 )
 
 // FileService is the Post-owned File capability. Singular private delivery
@@ -13,8 +13,8 @@ import (
 // summary projection is limited to immutable public display assets.
 type FileService interface {
 	DeleteFileByID(context.Context, string) error
-	ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
-	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+	ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*fileref.Delivery, error)
+	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 }
 
 // MemberSummaryLoader supplies Member-owned manage projections after Post has

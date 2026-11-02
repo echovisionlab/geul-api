@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	filepublicpostgres "github.com/echovisionlab/geul-api/internal/filemedia/public/postgres"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -67,17 +69,17 @@ func TestResolvePublicDisplayMediaNeverFallsBackToPrivateOriginalUnit(t *testing
 	fileID, assetID := seedMediaDeliveryTestAsset(t, db, "image")
 	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "must-not-be-used"})
 
-	ready, err := svc.ResolvePublicDisplayMedia(t.Context(), []string{"", fileID, fileID})
+	ready, err := svc.ResolveDisplayMedia(t.Context(), []string{"", fileID, fileID})
 	require.NoError(t, err)
 	require.Contains(t, ready, fileID)
-	require.Equal(t, assetID, ready[fileID].GetAsset().GetAssetId())
-	require.Equal(t, ready[fileID].GetAsset(), ready[fileID].GetThumbnail())
-	require.Nil(t, ready[fileID].GetInline())
-	require.Nil(t, ready[fileID].GetDownload())
+	require.Equal(t, assetID, optional.Value(optional.Value(ready[fileID]).Asset).AssetID)
+	require.Equal(t, optional.Value(ready[fileID]).Asset, optional.Value(ready[fileID]).Thumbnail)
+	require.Nil(t, optional.Value(ready[fileID]).Inline)
+	require.Nil(t, optional.Value(ready[fileID]).Download)
 
 	require.NoError(t, db.Table("public_asset").Where("id = ?", assetID).
 		Updates(map[string]any{"status": model.PublicAssetStatusFailed, "ready_at": nil}).Error)
-	unavailable, err := svc.ResolvePublicDisplayMedia(t.Context(), []string{fileID})
+	unavailable, err := svc.ResolveDisplayMedia(t.Context(), []string{fileID})
 	require.NoError(t, err)
 	require.NotContains(t, unavailable, fileID)
 }

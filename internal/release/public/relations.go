@@ -3,11 +3,11 @@ package public
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/release"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // loadReleaseArtists gets actual artists for every Release in one relation query.
@@ -259,7 +259,7 @@ func (s *Service) loadReleaseTracks(
 
 type releaseTrackMediaSources struct {
 	originalFiles     map[string]MediaFile
-	playbackRefs      map[string]*commonv1.HlsMediaRef
+	playbackRefs      map[string]*fileref.HLSReference
 	waveformRefs      map[string]*mediaasset.Reference
 	spectrogramRefs   map[string]*mediaasset.Reference
 	downloadByTrackID map[string]TrackDownloadAuthorization

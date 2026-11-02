@@ -4,19 +4,18 @@ import (
 	"context"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	publicpage "github.com/echovisionlab/geul-api/internal/page/public"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 type PublicFiles interface {
 	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
-	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 	ResolveOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
 
@@ -40,12 +39,12 @@ func (a *PublicMedia) HydrateAuthorizedContentBlockMedia(
 func (a *PublicMedia) ResolvePageFeaturedImageDelivery(
 	ctx context.Context,
 	fileID *string,
-) (*commonv1.MediaDelivery, error) {
+) (*fileref.Delivery, error) {
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil, nil
 	}
 	fileIDValue := strings.TrimSpace(*fileID)
-	deliveries, err := a.files.ResolvePublicDisplayMedia(ctx, []string{fileIDValue})
+	deliveries, err := a.files.ResolveDisplayMedia(ctx, []string{fileIDValue})
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +52,7 @@ func (a *PublicMedia) ResolvePageFeaturedImageDelivery(
 	if delivery == nil {
 		return nil, nil
 	}
-	result := proto.Clone(delivery).(*commonv1.MediaDelivery)
+	result := delivery.Clone()
 	result.Inline = nil
 	result.Download = nil
 	return result, nil

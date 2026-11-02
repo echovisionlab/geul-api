@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -61,7 +64,7 @@ func featuredImageMutation(
 // FeaturedImageResult is the delivery of a Page's new featured image and the
 // OG generation it started.
 type FeaturedImageResult struct {
-	Delivery          *commonv1.MediaDelivery
+	Delivery          *fileref.Delivery
 	OgGenerationRunID *string
 }
 

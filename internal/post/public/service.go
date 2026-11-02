@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -164,7 +166,7 @@ type PostView struct {
 	Authors       []*memberref.Summary
 	SeriesTitle   string
 	BlockMedia    []*contentv1.ContentBlockMediaItem
-	FeaturedImage *commonv1.MediaDelivery
+	FeaturedImage *fileref.Delivery
 }
 
 // Summary is a public Post in a list, without its content.
@@ -172,7 +174,7 @@ type Summary struct {
 	Post          post.Post
 	Localization  LocalizedContentSelection
 	Authors       []*memberref.Summary
-	FeaturedImage *commonv1.MediaDelivery
+	FeaturedImage *fileref.Delivery
 }
 
 // SummaryPage is one page of public Posts.
@@ -700,7 +702,7 @@ func (s *Service) buildPostView(
 		return PostView{}, err
 	}
 	if locked.FeaturedImageFileID != nil {
-		featured, featuredErr := s.files.ResolvePublicDisplayMedia(ctx, []string{*locked.FeaturedImageFileID})
+		featured, featuredErr := s.files.ResolveDisplayMedia(ctx, []string{*locked.FeaturedImageFileID})
 		if featuredErr != nil {
 			return PostView{}, featuredErr
 		}

@@ -12,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/release"
@@ -212,11 +215,11 @@ func (releaseListTestMedia) TrackSpectrograms(context.Context, *gorm.DB, []strin
 	return map[string]*mediaasset.Reference{}, nil
 }
 
-func (releaseListTestMedia) TrackHLS(context.Context, *gorm.DB, []string) (map[string]*commonv1.HlsMediaRef, error) {
-	return map[string]*commonv1.HlsMediaRef{}, nil
+func (releaseListTestMedia) TrackHLS(context.Context, *gorm.DB, []string) (map[string]*fileref.HLSReference, error) {
+	return map[string]*fileref.HLSReference{}, nil
 }
 
-func (releaseListTestMedia) DownloadRef(public.MediaFile) (*commonv1.ExpiringMediaRef, error) {
+func (releaseListTestMedia) DownloadRef(public.MediaFile) (*mediaauth.Reference, error) {
 	return nil, nil
 }
 

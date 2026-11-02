@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
@@ -18,8 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/post/public/publictest"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -27,8 +27,8 @@ import (
 
 type fakeFiles struct{}
 
-func (fakeFiles) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+func (fakeFiles) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }
 func (fakeFiles) ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
 	return nil, nil

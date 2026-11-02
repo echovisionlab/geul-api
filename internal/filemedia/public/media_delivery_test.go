@@ -4,9 +4,12 @@ import (
 	"testing"
 	"time"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -57,7 +60,7 @@ func TestCanonicalExpiringMediaRefsUsePurposePolicyUnit(t *testing.T) {
 	fileID := uuid.NewString()
 	before := time.Now().UTC()
 	downloadTTL := 3 * time.Minute
-	download, err := mediaauth.ExpiringFileRef(
+	download, err := mediaauth.ExpiringReference(
 		"https://media.example.com",
 		"media-secret",
 		fileID,
@@ -68,9 +71,9 @@ func TestCanonicalExpiringMediaRefsUsePurposePolicyUnit(t *testing.T) {
 		downloadTTL,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD, download.GetPurpose())
-	assert.Contains(t, download.GetUrl(), "/media/")
-	assert.WithinDuration(t, before.Add(downloadTTL), download.GetExpiresAt().AsTime(), 2*time.Second)
+	assert.Equal(t, mediaauth.PurposeDownload, optional.Value(download).Purpose)
+	assert.Contains(t, optional.Value(download).URL, "/media/")
+	assert.WithinDuration(t, before.Add(downloadTTL), optional.Value(download).ExpiresAt, 2*time.Second)
 
 	generationID := uuid.NewString()
 	playback, err := ExportBuildPublicHLSRef(
@@ -78,8 +81,8 @@ func TestCanonicalExpiringMediaRefsUsePurposePolicyUnit(t *testing.T) {
 		ReadyGeneration{FileID: fileID, GenerationID: generationID, ManifestName: "master.m3u8"},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, generationID, playback.GetGenerationId())
-	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", playback.GetUrl())
+	assert.Equal(t, generationID, optional.Value(playback).GenerationID)
+	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", optional.Value(playback).URL)
 	assert.Equal(t, commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED, mediaauth.DeliveryPurpose(mediaauth.Purpose("unknown")))
 	assert.Equal(t, "/asset/id/image.webp", ExportJoinPublicCDNPath("", "/asset/id/image.webp"))
 	assert.Equal(t, "https://cdn.example.com/asset/id/image.webp", ExportJoinPublicCDNPath("cdn.example.com/", "asset/id/image.webp"))

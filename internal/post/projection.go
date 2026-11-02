@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
@@ -217,7 +218,7 @@ func postViewWithProjection(
 	content postContent,
 	ogAsset *mediaasset.Reference,
 	authors []*memberref.Summary,
-	featuredImage *commonv1.MediaDelivery,
+	featuredImage *fileref.Delivery,
 	authority PostAuthority,
 ) (View, error) {
 	if err := stored.DocumentLayout.validateStored(); err != nil {

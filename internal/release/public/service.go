@@ -9,12 +9,15 @@ import (
 	"strings"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 
@@ -179,8 +182,8 @@ type Track struct {
 // TrackMedia is the delivery of a Track's original audio.
 type TrackMedia struct {
 	Source      MediaFile
-	Playback    *commonv1.HlsMediaRef
-	Download    *commonv1.ExpiringMediaRef
+	Playback    *fileref.HLSReference
+	Download    *mediaauth.Reference
 	Waveform    *mediaasset.Reference
 	Spectrogram *mediaasset.Reference
 }

@@ -14,44 +14,56 @@ import (
 	"testing"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"connectrpc.com/connect"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/page"
-	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
+
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
-
-	// These tests keep what only the whole stack shows: SpiceDB relationship
-	// semantics and the cascades of a real deletion, the identity fence over
-	// real Kratos rows, and the lock order of a collaboration bootstrap against
-	// an account's session deletion. Every other Page scenario runs on the fake
-	// Store, and the page tables on the Store contract.
-	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
+
+// These tests keep what only the whole stack shows: SpiceDB relationship
+// semantics and the cascades of a real deletion, the identity fence over
+// real Kratos rows, and the lock order of a collaboration bootstrap against
+// an account's session deletion. Every other Page scenario runs on the fake
+// Store, and the page tables on the Store contract.
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -365,11 +377,11 @@ func (passthroughHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Conte
 
 type stackFeaturedImages struct{}
 
-func (stackFeaturedImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, _ string, fileID string) (*commonv1.MediaDelivery, error) {
+func (stackFeaturedImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, _ string, fileID string) (*fileref.Delivery, error) {
 	if fileID == "" {
 		return nil, nil
 	}
-	return &commonv1.MediaDelivery{FileId: fileID}, nil
+	return &fileref.Delivery{FileID: fileID}, nil
 }
 
 // adminFileReuse lets the administrator attach any File.

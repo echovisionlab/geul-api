@@ -6,11 +6,12 @@ import (
 	"context"
 	"testing"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -36,9 +37,9 @@ func postAuditedSystemRequestContext(t *testing.T) context.Context {
 type postAuditFiles struct{}
 
 func (postAuditFiles) DeleteFileByID(context.Context, string) error { return nil }
-func (postAuditFiles) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error) {
+func (postAuditFiles) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*fileref.Delivery, error) {
 	return nil, nil
 }
-func (postAuditFiles) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+func (postAuditFiles) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -164,7 +164,7 @@ type View struct {
 	BlockMedia    []*contentv1.ContentBlockMediaItem
 	OgAsset       *mediaasset.Reference
 	Authors       []*memberref.Summary
-	FeaturedImage *commonv1.MediaDelivery
+	FeaturedImage *fileref.Delivery
 	Actions       []Action
 }
 
@@ -220,7 +220,7 @@ type Lifecycle struct {
 
 // FeaturedImage is the outcome of setting a Post's featured image.
 type FeaturedImage struct {
-	Delivery *commonv1.MediaDelivery
+	Delivery *fileref.Delivery
 	// OgRunID is the OG generation the change started, when it started one.
 	OgRunID *string
 }

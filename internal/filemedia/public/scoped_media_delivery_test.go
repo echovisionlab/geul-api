@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -34,9 +36,9 @@ func ExportProjectScopedMediaURLPublishesReadyDerivativesForDrafts(t *testing.T)
 			testReadyPublicAssetRow(imageAssetID, imageID, "image", "png", "image/png"),
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "https://cdn.example.com/asset/"+imageAssetID+"/image.png", got.GetAsset().GetUrl())
-		assert.Equal(t, got.GetAsset(), got.GetThumbnail())
-		assert.Nil(t, got.GetInline())
+		assert.Equal(t, "https://cdn.example.com/asset/"+imageAssetID+"/image.png", optional.Value(optional.Value(got).Asset).URL)
+		assert.Equal(t, optional.Value(got).Asset, optional.Value(got).Thumbnail)
+		assert.Nil(t, optional.Value(got).Inline)
 		assert.Nil(t, got.DurationSeconds, "unknown durations must remain absent")
 	})
 
@@ -71,11 +73,11 @@ func ExportProjectScopedMediaURLPublishesReadyDerivativesForDrafts(t *testing.T)
 			ReadyAsset{},
 		)
 		require.NoError(t, err)
-		assert.Equal(t, "https://media.example.com/media/"+audioID+"/hls/"+hlsID+"/master.m3u8", got.GetPlayback().GetUrl())
-		assert.Equal(t, hlsID, got.GetPlayback().GetGenerationId())
-		assert.EqualValues(t, 123, got.GetDurationSeconds())
-		assert.Equal(t, "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp", got.GetSpectrogram().GetUrl())
-		assert.Equal(t, "https://media.example.com/asset/"+waveformID+"/waveform.json", got.GetWaveform().GetUrl())
+		assert.Equal(t, "https://media.example.com/media/"+audioID+"/hls/"+hlsID+"/master.m3u8", optional.Value(optional.Value(got).Playback).URL)
+		assert.Equal(t, hlsID, optional.Value(optional.Value(got).Playback).GenerationID)
+		assert.EqualValues(t, 123, optional.Value(optional.Value(got).DurationSeconds))
+		assert.Equal(t, "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp", optional.Value(optional.Value(got).Spectrogram).URL)
+		assert.Equal(t, "https://media.example.com/asset/"+waveformID+"/waveform.json", optional.Value(optional.Value(got).Waveform).URL)
 	})
 }
 
@@ -94,10 +96,10 @@ func ExportProjectScopedMediaURLKeepsPrivateOriginalInline(t *testing.T) {
 		ReadyAsset{},
 	)
 	require.NoError(t, err)
-	require.NotNil(t, got.GetInline())
-	assert.Contains(t, got.GetInline().GetUrl(), "/media/")
-	assert.WithinDuration(t, before.Add(5*time.Minute), got.GetInline().GetExpiresAt().AsTime(), 2*time.Second)
-	assert.Nil(t, got.GetDownload())
+	require.NotNil(t, optional.Value(got).Inline)
+	assert.Contains(t, optional.Value(optional.Value(got).Inline).URL, "/media/")
+	assert.WithinDuration(t, before.Add(5*time.Minute), optional.Value(optional.Value(got).Inline).ExpiresAt, 2*time.Second)
+	assert.Nil(t, optional.Value(got).Download)
 }
 
 func ExportProjectScopedMediaURLRejectsInvalidAuthority(t *testing.T) {

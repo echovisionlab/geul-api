@@ -1,6 +1,7 @@
 package public
 
 import (
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/post"
@@ -100,7 +101,7 @@ func postMessage(view PostView) *openv1.GetPostResponse {
 	if p.SeriesOrder != nil {
 		message.SeriesOrder = p.SeriesOrder
 	}
-	message.FeaturedImageDelivery = view.FeaturedImage
+	message.FeaturedImageDelivery = fileref.DeliveryProto(view.FeaturedImage)
 	return &openv1.GetPostResponse{Post: message, BlockMedia: view.BlockMedia}
 }
 
@@ -142,7 +143,7 @@ func summaryMessage(listed Summary) *openv1.PostSummary {
 	if p.SeriesOrder != nil {
 		summary.SeriesOrder = p.SeriesOrder
 	}
-	summary.FeaturedImageDelivery = listed.FeaturedImage
+	summary.FeaturedImageDelivery = fileref.DeliveryProto(listed.FeaturedImage)
 	summary.AuthorMembers = memberref.ReferenceMessages(listed.Authors)
 	for _, category := range p.Categories {
 		slug := category.Slug

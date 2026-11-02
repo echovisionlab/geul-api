@@ -8,15 +8,24 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
+
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -134,7 +143,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 			ScheduledAt: &moment, ScheduledTimeZone: &zone, PublishedAt: &moment, CreatedAt: moment, UpdatedAt: moment,
 		},
 		Actions:  []postdomain.Action{postdomain.ActionEdit, postdomain.ActionCancelSchedule},
-		Document: &contentv1.RichTextDocument{}, FeaturedImage: &commonv1.MediaDelivery{FileId: managementWorkID},
+		Document: &contentv1.RichTextDocument{}, FeaturedImage: &fileref.Delivery{FileID: managementWorkID},
 	}}
 	published := stamp.AsTime()
 	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
@@ -151,7 +160,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 			PublishedAt: &published, CreatedAt: published, UpdatedAt: published,
 		}, Title: "Source Page", Summary: &summary},
 		Revision: "actual-source-page-revision", Document: &contentv1.PageDocument{},
-		FeaturedImage: &commonv1.MediaDelivery{FileId: managementWorkID},
+		FeaturedImage: &fileref.Delivery{FileID: managementWorkID},
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, pages)
 	if err != nil {

@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -111,15 +112,15 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*mediaa
 	}, nil
 }
 
-func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*commonv1.HlsMediaRef, error) {
+func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*fileref.HLSReference, error) {
 	url, err := mediaauth.PublicHLSURL(mediaDomain, row.FileID, row.GenerationID, row.ManifestName)
 	if err != nil {
 		return nil, err
 	}
-	return &commonv1.HlsMediaRef{
-		FileId:       row.FileID,
-		GenerationId: row.GenerationID,
-		Url:          url,
+	return &fileref.HLSReference{
+		FileID:       row.FileID,
+		GenerationID: row.GenerationID,
+		URL:          url,
 	}, nil
 }
 

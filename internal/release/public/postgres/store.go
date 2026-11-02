@@ -9,7 +9,10 @@ import (
 	"strings"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -23,8 +26,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/release/public"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -34,7 +35,7 @@ type Media interface {
 	ReadySourceAssets(ctx context.Context, db *gorm.DB, fileIDs []string, kinds ...string) (map[string]*mediaasset.Reference, error)
 	TrackWaveforms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*mediaasset.Reference, error)
 	TrackSpectrograms(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*mediaasset.Reference, error)
-	TrackHLS(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*commonv1.HlsMediaRef, error)
+	TrackHLS(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]*fileref.HLSReference, error)
 }
 
 // Ports are the adapters the public Store reads through.
@@ -460,7 +461,7 @@ func (s store) TrackSpectrograms(ctx context.Context, fileIDs []string) (map[str
 	return s.ports.Media.TrackSpectrograms(ctx, s.tx, fileIDs)
 }
 
-func (s store) TrackHLS(ctx context.Context, fileIDs []string) (map[string]*commonv1.HlsMediaRef, error) {
+func (s store) TrackHLS(ctx context.Context, fileIDs []string) (map[string]*fileref.HLSReference, error) {
 	return s.ports.Media.TrackHLS(ctx, s.tx, fileIDs)
 }
 

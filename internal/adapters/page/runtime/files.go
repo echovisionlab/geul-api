@@ -3,10 +3,11 @@ package runtime
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // ManageFiles is the shared File capability used by Page after authorization.
@@ -28,9 +29,9 @@ func (a *Files) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*fileref.Delivery, error) {
 	value, err := a.files.ResolveAuthorizedPageFeaturedImage(ctx, pageID, expectedFileID)
-	return filemediadomain.DeliveryMessage(value), err
+	return value, err
 }
 
 var _ pagedomain.FileDeliveryResolver = (*Files)(nil)

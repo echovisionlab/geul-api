@@ -1,7 +1,10 @@
-package domain
+// Package fileref contains media delivery values shared by domain ports.
+package fileref
 
 import (
 	"strconv"
+
+	"github.com/echovisionlab/geul-api/internal/optional"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -49,7 +52,7 @@ func (d *Delivery) Clone() *Delivery {
 		return nil
 	}
 	result := *d
-	result.ProcessingPercentage = clonePointer(d.ProcessingPercentage)
+	result.ProcessingPercentage = optional.Clone(d.ProcessingPercentage)
 	if d.FileName != nil {
 		v := *d.FileName
 		result.FileName = &v

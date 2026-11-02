@@ -60,6 +60,7 @@ var guardedPackageRoots = []string{
 	"internal/form",
 	"internal/favicon",
 	"internal/filemedia",
+	"internal/fileref",
 	"internal/identityread",
 	"internal/label",
 	"internal/legal",

@@ -13,14 +13,14 @@
 6 internal/legal generated contracts
 2 internal/legal/public generated contracts
 1 internal/member gorm
-9 internal/page generated contracts
+7 internal/page generated contracts
 2 internal/page/public generated contracts
-15 internal/post generated contracts
-4 internal/post/public generated contracts
+13 internal/post generated contracts
+3 internal/post/public generated contracts
 7 internal/programevent generated contracts
 3 internal/programevent/public generated contracts
 8 internal/release generated contracts
-4 internal/release/public generated contracts
+1 internal/release/public generated contracts
 5 internal/translation generated contracts
 1 internal/translation gorm
 2 internal/translation model

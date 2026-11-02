@@ -2,13 +2,13 @@ package filemedia
 
 import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func DeliveryMessage(value *Delivery) *commonv1.MediaDelivery { return filepublic.DeliveryProto(value) }
+func DeliveryMessage(value *Delivery) *commonv1.MediaDelivery { return fileref.DeliveryProto(value) }
 func MediaDeliveryResultMessage(value *MediaDeliveryResult) *managev1.GetMediaDeliveryResponse {
 	if value == nil {
 		return nil

@@ -7,17 +7,18 @@ import (
 	"log/slog"
 	"strings"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
@@ -50,7 +51,7 @@ func newView(page Page, source *SourceMetadata) View {
 type Detail struct {
 	View
 	OgAsset       *mediaasset.Reference
-	FeaturedImage *commonv1.MediaDelivery
+	FeaturedImage *fileref.Delivery
 	Document      *contentv1.PageDocument
 	Revision      string
 	BlockMedia    []*contentv1.ContentBlockMediaItem
@@ -207,7 +208,7 @@ func (s *Service) readyManageOgAssetRef(ctx context.Context, candidateIDs ...*st
 
 // featuredImageDelivery delivers the Page's featured image, which must
 // still be fileID.
-func (s *Service) featuredImageDelivery(ctx context.Context, pageID string, fileID *string) (*commonv1.MediaDelivery, error) {
+func (s *Service) featuredImageDelivery(ctx context.Context, pageID string, fileID *string) (*fileref.Delivery, error) {
 	expectedFileID := ""
 	if fileID != nil {
 		expectedFileID = strings.TrimSpace(*fileID)

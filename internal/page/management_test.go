@@ -126,7 +126,7 @@ func TestGetPageMasksAPageTheCallerMayNotView(t *testing.T) {
 	detail, err := h.service.GetPage(viewer.context(t), page.GetPageQuery{ID: stored.ID})
 	require.NoError(t, err)
 	require.Equal(t, "Hidden", detail.Title)
-	require.Equal(t, *stored.FeaturedImageFileID, detail.FeaturedImage.FileId)
+	require.Equal(t, *stored.FeaturedImageFileID, detail.FeaturedImage.FileID)
 
 	view, err := policyv1.Page.View(stored.ID)
 	require.NoError(t, err)
@@ -429,7 +429,7 @@ func TestFeaturedImageChangesRequestEveryLocaleOGImage(t *testing.T) {
 
 	set, err := h.service.SetPageFeaturedImage(admin.context(t), page.SetPageFeaturedImageCommand{PageID: stored.ID, FileID: fileID})
 	require.NoError(t, err)
-	require.Equal(t, fileID, set.Delivery.FileId)
+	require.Equal(t, fileID, set.Delivery.FileID)
 	require.Equal(t, "run-1", *set.OgGenerationRunID)
 	updated, _ := h.store.Page(stored.ID)
 	require.Equal(t, fileID, *updated.FeaturedImageFileID)

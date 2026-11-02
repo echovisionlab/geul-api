@@ -3,8 +3,9 @@ package public
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 var (
@@ -20,14 +21,14 @@ func ExportResolvedOGAssetRef(ctx context.Context, store Store, cdn string, sour
 	ref, err := resolvedOgAssetRef(ctx, store, cdn, source, localized)
 	return ref, err
 }
-func ExportBuildPublicHLSRef(domain string, row ReadyGeneration) (*commonv1.HlsMediaRef, error) {
+func ExportBuildPublicHLSRef(domain string, row ReadyGeneration) (*fileref.HLSReference, error) {
 	ref, err := buildPublicHLSRef(domain, row)
-	return hlsReferenceProto(ref), err
+	return ref, err
 }
 
 type TestMediaAccess struct{ DirectDraft bool }
 
-func ExportProjectScopedMediaURL(cdn, domain, secret string, access TestMediaAccess, file MediaFile, derivatives map[string]Derivative, assets map[string]ReadyAsset, generations map[string]ReadyGeneration, asset ReadyAsset) (*commonv1.MediaDelivery, error) {
+func ExportProjectScopedMediaURL(cdn, domain, secret string, access TestMediaAccess, file MediaFile, derivatives map[string]Derivative, assets map[string]ReadyAsset, generations map[string]ReadyGeneration, asset ReadyAsset) (*fileref.Delivery, error) {
 	result, err := projectScopedMediaURL(cdn, domain, secret, resolvedMediaAccess{directDraft: access.DirectDraft}, file, derivatives, assets, generations, asset)
-	return DeliveryProto(result), err
+	return result, err
 }

@@ -5,13 +5,13 @@ import (
 	"errors"
 	"testing"
 
-	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -25,7 +25,7 @@ func TestFilesDelegatesPostOwnedFileOperations(t *testing.T) {
 	require.ErrorIs(t, adapter.DeleteFileByID(t.Context(), "file-1"), wantErr)
 	_, err := adapter.ResolveAuthorizedPostFeaturedImage(t.Context(), "post-1", "file-2")
 	require.ErrorIs(t, err, wantErr)
-	_, err = adapter.ResolvePublicDisplayMedia(t.Context(), []string{"file-2", "file-3"})
+	_, err = adapter.ResolveDisplayMedia(t.Context(), []string{"file-2", "file-3"})
 	require.ErrorIs(t, err, wantErr)
 	require.Equal(t, "file-1", fake.deletedID)
 	require.Equal(t, "post-1", fake.postID)
@@ -53,11 +53,11 @@ func TestPublicFilesLoadsExactAuthorizedReferencesBeforeHydration(t *testing.T) 
 }
 
 func TestPublicFilesDelegatesPublicDisplayMedia(t *testing.T) {
-	want := map[string]*commonv1.MediaDelivery{"file-1": {FileId: "file-1"}}
+	want := map[string]*fileref.Delivery{"file-1": {FileID: "file-1"}}
 	fake := &recordingPublicFiles{deliveries: want}
 
 	got, err := NewPublicFiles(newPostFilesAdapterDB(t), fake).
-		ResolvePublicDisplayMedia(t.Context(), []string{"file-1"})
+		ResolveDisplayMedia(t.Context(), []string{"file-1"})
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 	require.Equal(t, []string{"file-1"}, fake.resolvedIDs)
@@ -90,24 +90,24 @@ type recordingDisplayFiles struct {
 	err         error
 }
 
-func (f *recordingDisplayFiles) ResolvePublicDisplayMedia(
+func (f *recordingDisplayFiles) ResolveDisplayMedia(
 	_ context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	f.resolvedIDs = append([]string(nil), fileIDs...)
 	return nil, f.err
 }
 
 type recordingPublicFiles struct {
 	resolvedIDs []string
-	deliveries  map[string]*commonv1.MediaDelivery
+	deliveries  map[string]*fileref.Delivery
 	hydrated    []*contentv1.ContentBlockMediaItem
 }
 
-func (f *recordingPublicFiles) ResolvePublicDisplayMedia(
+func (f *recordingPublicFiles) ResolveDisplayMedia(
 	_ context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	f.resolvedIDs = append([]string(nil), fileIDs...)
 	return f.deliveries, nil
 }

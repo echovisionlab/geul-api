@@ -4,10 +4,13 @@ import (
 	"context"
 	"testing"
 
-	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
-	optional "github.com/echovisionlab/geul-api/internal/optional"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
+	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
+
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
@@ -26,18 +29,18 @@ func (f *pagePublicFilesFixture) HydrateAuthorizedContentBlockMedia(
 	return items, nil
 }
 
-func (f *pagePublicFilesFixture) ResolvePublicDisplayMedia(
+func (f *pagePublicFilesFixture) ResolveDisplayMedia(
 	_ context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*fileref.Delivery, error) {
 	f.displayIDs = append([]string(nil), fileIDs...)
-	result := make(map[string]*commonv1.MediaDelivery, len(fileIDs))
+	result := make(map[string]*fileref.Delivery, len(fileIDs))
 	for _, fileID := range fileIDs {
-		asset := &commonv1.AssetRef{AssetId: "asset-" + fileID}
-		result[fileID] = &commonv1.MediaDelivery{
-			FileId: fileID, Asset: asset, Thumbnail: asset,
-			Inline:   &commonv1.ExpiringMediaRef{Url: "private-inline"},
-			Download: &commonv1.ExpiringMediaRef{Url: "private-download"},
+		asset := &mediaasset.Reference{AssetID: "asset-" + fileID}
+		result[fileID] = &fileref.Delivery{
+			FileID: fileID, Asset: asset, Thumbnail: asset,
+			Inline:   &mediaauth.Reference{URL: "private-inline"},
+			Download: &mediaauth.Reference{URL: "private-download"},
 		}
 	}
 	return result, nil
@@ -60,11 +63,11 @@ func TestPublicMediaResolvesExactPageFeaturedFile(t *testing.T) {
 
 	delivery, err := adapter.ResolvePageFeaturedImageDelivery(t.Context(), &fileID)
 	require.NoError(t, err)
-	require.Equal(t, "file-1", delivery.GetFileId())
-	require.Equal(t, "asset-file-1", delivery.GetAsset().GetAssetId())
-	require.Equal(t, delivery.GetAsset(), delivery.GetThumbnail())
-	require.Nil(t, delivery.GetInline())
-	require.Nil(t, delivery.GetDownload())
+	require.Equal(t, "file-1", optional.Value(delivery).FileID)
+	require.Equal(t, "asset-file-1", optional.Value(optional.Value(delivery).Asset).AssetID)
+	require.Equal(t, optional.Value(delivery).Asset, optional.Value(delivery).Thumbnail)
+	require.Nil(t, optional.Value(delivery).Inline)
+	require.Nil(t, optional.Value(delivery).Download)
 	require.Equal(t, []string{"file-1"}, fixture.displayIDs)
 }
 

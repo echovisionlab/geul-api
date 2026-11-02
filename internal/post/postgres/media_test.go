@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"

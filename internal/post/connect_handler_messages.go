@@ -1,6 +1,7 @@
 package post
 
 import (
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -93,7 +94,7 @@ func PostMessage(view View) *managev1.Post {
 		}
 	}
 	message.AuthorMembers = memberref.ReferenceMessages(view.Authors)
-	message.FeaturedImageDelivery = view.FeaturedImage
+	message.FeaturedImageDelivery = fileref.DeliveryProto(view.FeaturedImage)
 	message.AllowedActions = postActionMessages(view.Actions)
 	return message
 }
@@ -238,7 +239,7 @@ func myPostsMessage(page PostPage) *managev1.ListMyPostsResponse {
 
 // FeaturedImageMessage renders the outcome of SetPostFeaturedImage.
 func FeaturedImageMessage(featured FeaturedImage) *managev1.SetPostFeaturedImageResponse {
-	return &managev1.SetPostFeaturedImageResponse{ImageDelivery: featured.Delivery, OgGenerationRunId: featured.OgRunID}
+	return &managev1.SetPostFeaturedImageResponse{ImageDelivery: fileref.DeliveryProto(featured.Delivery), OgGenerationRunId: featured.OgRunID}
 }
 
 // FeaturedImageDeletedMessage renders the outcome of DeletePostFeaturedImage:

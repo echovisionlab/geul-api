@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
@@ -21,8 +23,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/post/posttest"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -187,7 +187,7 @@ func (m *members) LoadMemberSummaries(_ context.Context, memberIDs []string) (ma
 // records the Files it deletes.
 type files struct {
 	mu         sync.Mutex
-	deliveries map[string]*commonv1.MediaDelivery
+	deliveries map[string]*fileref.Delivery
 	deleted    []string
 	// resolved are the Post and File of every authorized featured image
 	// resolution.
@@ -195,12 +195,12 @@ type files struct {
 	err      error
 }
 
-func newFiles() *files { return &files{deliveries: map[string]*commonv1.MediaDelivery{}} }
+func newFiles() *files { return &files{deliveries: map[string]*fileref.Delivery{}} }
 
-func (f *files) put(fileID string) *commonv1.MediaDelivery {
+func (f *files) put(fileID string) *fileref.Delivery {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delivery := &commonv1.MediaDelivery{FileId: fileID}
+	delivery := &fileref.Delivery{FileID: fileID}
 	f.deliveries[fileID] = delivery
 	return delivery
 }
@@ -212,7 +212,7 @@ func (f *files) DeleteFileByID(_ context.Context, fileID string) error {
 	return f.err
 }
 
-func (f *files) ResolveAuthorizedPostFeaturedImage(_ context.Context, postID, fileID string) (*commonv1.MediaDelivery, error) {
+func (f *files) ResolveAuthorizedPostFeaturedImage(_ context.Context, postID, fileID string) (*fileref.Delivery, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resolved = append(f.resolved, [2]string{postID, fileID})
@@ -222,13 +222,13 @@ func (f *files) ResolveAuthorizedPostFeaturedImage(_ context.Context, postID, fi
 	return f.deliveries[fileID], nil
 }
 
-func (f *files) ResolvePublicDisplayMedia(_ context.Context, fileIDs []string) (map[string]*commonv1.MediaDelivery, error) {
+func (f *files) ResolveDisplayMedia(_ context.Context, fileIDs []string) (map[string]*fileref.Delivery, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
-	deliveries := map[string]*commonv1.MediaDelivery{}
+	deliveries := map[string]*fileref.Delivery{}
 	for _, fileID := range fileIDs {
 		if delivery, ok := f.deliveries[fileID]; ok {
 			deliveries[fileID] = delivery
