@@ -29,7 +29,9 @@ func New(totals admin.DashboardStats) (*Store, *mutationtest.UnitOfWork[admin.St
 
 // Savepoint implements mutationtest.Savepointer; the dashboard writes
 // nothing to restore.
-func (s *Store) Savepoint() func() { return func() {} }
+func (s *Store) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 func (s *Store) count(pick func(admin.DashboardStats) int64) (int64, error) {
 	s.mu.Lock()

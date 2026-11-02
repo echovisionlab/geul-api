@@ -20,6 +20,10 @@ type PolicyOwners interface {
 type PolicySignals interface {
 	PublishPolicyChange(context.Context, *gorm.DB, domain.PolicyChangeSignal) error
 }
+type PolicySegments interface {
+	InsertTrack(context.Context, *gorm.DB, string, []string, time.Time) error
+	InsertAttachment(context.Context, *gorm.DB, string, string, []string, time.Time) error
+}
 
 func (s *store) ResolveDownloadPolicyRelation(ctx context.Context, selector domain.PolicySelector, lock bool) (domain.PolicyRelation, error) {
 	var row struct {
@@ -60,6 +64,9 @@ func (s *store) DownloadPolicySegmentIDs(ctx context.Context, selector domain.Po
 	return ids, err
 }
 func (s *store) SetDownloadPolicy(ctx context.Context, selector domain.PolicySelector, audience mediaasset.FileDownloadAudience, ids []string, now time.Time) error {
+	if len(ids) > 0 && s.ports.PolicySegments == nil {
+		return fmt.Errorf("File download policy segment writers are required")
+	}
 	if selector.OwnerKind == "track" {
 		if err := s.tx.WithContext(ctx).Model(&model.Track{}).Where("id = ?", selector.EntityID).Update("download_audience", string(audience)).Error; err != nil {
 			return err
@@ -70,11 +77,7 @@ func (s *store) SetDownloadPolicy(ctx context.Context, selector domain.PolicySel
 		if len(ids) == 0 {
 			return nil
 		}
-		rows := make([]model.TrackDownloadAudienceSegment, 0, len(ids))
-		for _, id := range ids {
-			rows = append(rows, model.TrackDownloadAudienceSegment{TrackID: selector.EntityID, AudienceSegmentID: id, CreatedAt: now})
-		}
-		return s.tx.WithContext(ctx).Create(&rows).Error
+		return s.ports.PolicySegments.InsertTrack(ctx, s.tx, selector.EntityID, ids, now)
 	}
 	if err := s.tx.WithContext(ctx).Table("content_block_attachment").Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath).Update("download_audience", string(audience)).Error; err != nil {
 		return err
@@ -85,11 +88,7 @@ func (s *store) SetDownloadPolicy(ctx context.Context, selector domain.PolicySel
 	if len(ids) == 0 {
 		return nil
 	}
-	rows := make([]model.ContentBlockAttachmentDownloadAudienceSegment, 0, len(ids))
-	for _, id := range ids {
-		rows = append(rows, model.ContentBlockAttachmentDownloadAudienceSegment{BlockID: *selector.BlockID, ReferencePath: *selector.ReferencePath, AudienceSegmentID: id, CreatedAt: now})
-	}
-	return s.tx.WithContext(ctx).Create(&rows).Error
+	return s.ports.PolicySegments.InsertAttachment(ctx, s.tx, *selector.BlockID, *selector.ReferencePath, ids, now)
 }
 func (s *store) ActivePolicySegments(ctx context.Context, ids []string) ([]domain.PolicySegment, error) {
 	if s.ports.PolicyAudiences == nil {

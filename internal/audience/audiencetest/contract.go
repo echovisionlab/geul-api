@@ -81,8 +81,10 @@ func (f fakeFixtures) TrackPolicy(_ *testing.T, segmentIDs ...string) audience.D
 		Audience: "restricted", SegmentIDs: segmentIDs,
 	})
 }
-func (f fakeFixtures) CampaignOf(_ *testing.T, id string) Campaign       { return f.store.CampaignOf(id) }
-func (f fakeFixtures) DeliveryRunOf(_ *testing.T, id string) DeliveryRun { return f.store.DeliveryRunOf(id) }
+func (f fakeFixtures) CampaignOf(_ *testing.T, id string) Campaign { return f.store.CampaignOf(id) }
+func (f fakeFixtures) DeliveryRunOf(_ *testing.T, id string) DeliveryRun {
+	return f.store.DeliveryRunOf(id)
+}
 
 // insert stores a segment of segmentType with config through the Store.
 func insert(t *testing.T, h Harness, name string, segmentType audience.SegmentType, config audience.Config) audience.Segment {
@@ -488,11 +490,17 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		name := "Renamed by the first writer"
 		var seen audience.Segment
 		err := mutationtest.RequireSecondWaits(t, h.Harness,
-			func(ctx context.Context, store audience.Store) error { _, err := store.LockSegment(ctx, segment.ID); return err },
+			func(ctx context.Context, store audience.Store) error {
+				_, err := store.LockSegment(ctx, segment.ID)
+				return err
+			},
 			func(ctx context.Context, store audience.Store) error {
 				return store.UpdateSegment(ctx, segment.ID, audience.SegmentChange{Name: &name, UpdatedAt: time.Now().UTC()})
 			},
-			func(ctx context.Context, store audience.Store) (err error) { seen, err = store.LockSegment(ctx, segment.ID); return err },
+			func(ctx context.Context, store audience.Store) (err error) {
+				seen, err = store.LockSegment(ctx, segment.ID)
+				return err
+			},
 		)
 		require.NoError(t, err)
 		require.Equal(t, name, seen.Name)
@@ -502,7 +510,10 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		campaign := h.Campaign(t, segment.ID, CampaignScheduled)
 		var seen audience.CampaignUsage
 		err := mutationtest.RequireSecondWaits(t, h.Harness,
-			func(ctx context.Context, store audience.Store) error { _, err := store.LockCampaignUsage(ctx, segment.ID); return err },
+			func(ctx context.Context, store audience.Store) error {
+				_, err := store.LockCampaignUsage(ctx, segment.ID)
+				return err
+			},
 			func(ctx context.Context, store audience.Store) error {
 				_, err := store.ReleaseScheduledCampaigns(ctx, segment.ID, time.Now().UTC())
 				return err
@@ -521,9 +532,17 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		h.AttachmentPolicy(t, segment.ID)
 		h.TrackPolicy(t, segment.ID)
 		err := mutationtest.RequireSecondWaits(t, h.Harness,
-			func(ctx context.Context, store audience.Store) error { _, err := store.LockDownloadPolicies(ctx, segment.ID); return err },
-			func(ctx context.Context, store audience.Store) error { return store.DetachDownloadPolicies(ctx, segment.ID) },
-			func(ctx context.Context, store audience.Store) error { _, err := store.LockDownloadPolicies(ctx, segment.ID); return err },
+			func(ctx context.Context, store audience.Store) error {
+				_, err := store.LockDownloadPolicies(ctx, segment.ID)
+				return err
+			},
+			func(ctx context.Context, store audience.Store) error {
+				return store.DetachDownloadPolicies(ctx, segment.ID)
+			},
+			func(ctx context.Context, store audience.Store) error {
+				_, err := store.LockDownloadPolicies(ctx, segment.ID)
+				return err
+			},
 		)
 		require.NoError(t, err)
 	},

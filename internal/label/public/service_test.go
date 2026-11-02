@@ -33,7 +33,9 @@ type fakeStore struct {
 	locked   func(label.Label) label.Label
 }
 
-func (s *fakeStore) Savepoint() func() { return func() {} }
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 func (s *fakeStore) ListPublishedLabels(_ context.Context, page label.ListPage) ([]label.Label, int64, error) {
 	var listed []label.Label

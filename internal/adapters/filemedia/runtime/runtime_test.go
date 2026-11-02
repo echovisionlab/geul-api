@@ -25,6 +25,7 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type recordingDeletionAuthorization struct{ calls int }
@@ -32,6 +33,61 @@ type recordingDeletionAuthorization struct{ calls int }
 func (a *recordingDeletionAuthorization) DeleteAndVerify(context.Context, policyv1.Resource) (func(context.Context) error, time.Time, error) {
 	a.calls++
 	return func(context.Context) error { return nil }, time.Now(), nil
+}
+
+type recordingMeshDeletionPublisher struct {
+	Publisher
+	events []*managev1.FileDeleteEvent
+}
+
+func (p *recordingMeshDeletionPublisher) PublishFileDeleteWithExecutor(ctx context.Context, executor eventpkg.DBTX, event *managev1.FileDeleteEvent) error {
+	var pending bool
+	if err := executor.QueryRowContext(ctx, "SELECT delete_requested_at IS NOT NULL FROM file WHERE id = ?", event.GetFileId()).Scan(&pending); err != nil {
+		return err
+	}
+	if !pending {
+		return fmt.Errorf("File deletion was published before its intent")
+	}
+	p.events = append(p.events, event)
+	return nil
+}
+
+func TestMeshCleanupUsesAttachmentOwnersBeforeRequestingDeletion(t *testing.T) {
+	for _, referenced := range []bool{false, true} {
+		name := "unreferenced output"
+		if referenced {
+			name = "Post attachment"
+		}
+		t.Run(name, func(t *testing.T) {
+			db := newRuntimeFileDeleteTestDB(t)
+			file := model.File{ID: uuid.NewString(), FileName: "output.glb", MimeType: "model/gltf-binary", FileSize: 1, Extension: "glb", SHA256: make([]byte, 32), CreatedAt: time.Now().UTC()}
+			require.NoError(t, db.Create(&file).Error)
+			if referenced {
+				require.NoError(t, db.Exec("INSERT INTO post (id, featured_image_file_id) VALUES (?, ?)", uuid.NewString(), file.ID).Error)
+			}
+			publisher := &recordingMeshDeletionPublisher{}
+			runtime := New(db, publisher, nil, nil, nil, "", nil)
+			deleter := meshOptimizationFileDeleter{runtime: runtime}
+
+			err := deleter.DeleteFileByID(t.Context(), file.ID)
+			if referenced {
+				require.ErrorIs(t, err, filemedia.ErrFileStillReferenced)
+				require.Empty(t, publisher.events)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, publisher.events, 1)
+				require.Equal(t, file.ID, publisher.events[0].GetFileId())
+				require.Equal(t, "media/"+file.ID+".glb", publisher.events[0].GetOriginal().GetObjectKey())
+			}
+			var retained model.File
+			require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
+			if referenced {
+				require.Nil(t, retained.DeleteRequestedAt)
+			} else {
+				require.NotNil(t, retained.DeleteRequestedAt)
+			}
+		})
+	}
 }
 
 func TestHandleFileDeleteKeepsFileAndAuthorizationUntilEveryObjectIsDeleted(t *testing.T) {

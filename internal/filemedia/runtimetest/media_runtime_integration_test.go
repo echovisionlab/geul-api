@@ -23,6 +23,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -82,6 +83,24 @@ func TestRuntimeEditorFileUploadIsIndependentAndFileScoped(t *testing.T) {
 
 func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 	t.Parallel()
+	fixture := newRuntimeTrackAudioFixture(t)
+	t.Run("deny initiate without track edit permission", fixture.denyInitiate)
+	t.Run("initiate upload then abort and clear track resume candidate", fixture.abortUpload)
+	t.Run("unstarted presigned parts keep confirmed parts resumable", fixture.resumePresignedParts)
+	t.Run("unprepared track completion rejects before storage completion", fixture.rejectUnpreparedCompletion)
+}
+
+type runtimeTrackAudioFixture struct {
+	stack         *runtimetest.RuntimeStack
+	manager       *orytest.OryUser
+	outsider      *orytest.OryUser
+	fileClient    managev1connect.FileServiceClient
+	trackID       string
+	fixtureBytes  []byte
+	audioMimeType string
+}
+
+func newRuntimeTrackAudioFixture(t *testing.T) *runtimeTrackAudioFixture {
 	stack := runtimetest.SetupRuntimeStack(t)
 	stack.BackendReadTimeoutSec = 1
 	stack.StartBackend(t)
@@ -120,301 +139,396 @@ func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 	require.NoError(t, err)
 	audioMimeType := "audio/mpeg"
 
-	t.Run("deny initiate without track edit permission", func(t *testing.T) {
-		req := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:   trackID,
-			EntityType: runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:   int64(len(fixtureBytes)),
-			MimeType:   audioMimeType,
-			FileName:   runtimeTestFileName("track-deny.mp3"),
-		})
-		setAuthHeaders(req.Header(), outsider)
+	return &runtimeTrackAudioFixture{
+		stack: stack, manager: manager, outsider: outsider, fileClient: fileClient,
+		trackID: trackID, fixtureBytes: fixtureBytes, audioMimeType: audioMimeType,
+	}
+}
 
-		_, err := fileClient.InitiateMultipartUpload(context.Background(), req)
-		require.Error(t, err)
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+func (f *runtimeTrackAudioFixture) denyInitiate(t *testing.T) {
+	outsider := f.outsider
+	fileClient := f.fileClient
+	trackID := f.trackID
+	fixtureBytes := f.fixtureBytes
+	audioMimeType := f.audioMimeType
+
+	req := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:   trackID,
+		EntityType: runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileSize:   int64(len(fixtureBytes)),
+		MimeType:   audioMimeType,
+		FileName:   runtimeTestFileName("track-deny.mp3"),
 	})
+	setAuthHeaders(req.Header(), outsider)
 
-	t.Run("initiate upload then abort and clear track resume candidate", func(t *testing.T) {
-		fileName := runtimeTestFileName("track-abort.mp3")
-		fileLastModified := time.Now().UnixMilli()
+	_, err := fileClient.InitiateMultipartUpload(context.Background(), req)
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+}
 
-		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:         int64(len(fixtureBytes)),
-			MimeType:         audioMimeType,
-			FileName:         fileName,
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(initReq.Header(), manager)
+func (f *runtimeTrackAudioFixture) abortUpload(t *testing.T) {
+	stack := f.stack
+	manager := f.manager
+	fileClient := f.fileClient
+	trackID := f.trackID
+	fixtureBytes := f.fixtureBytes
+	audioMimeType := f.audioMimeType
 
-		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
-		require.NoError(t, err)
+	fileName := runtimeTestFileName("track-abort.mp3")
+	fileLastModified := time.Now().UnixMilli()
 
-		uploadPartResp := uploadMultipartPart(
+	initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileSize:         int64(len(fixtureBytes)),
+		MimeType:         audioMimeType,
+		FileName:         fileName,
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(initReq.Header(), manager)
+
+	initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+	require.NoError(t, err)
+
+	uploadPartResp := uploadMultipartPart(
+		t,
+		stack.BackendURL,
+		manager,
+		initResp.Msg.FileId,
+		initResp.Msg.UploadId,
+		1,
+		fixtureBytes,
+	)
+	require.NotEmpty(t, uploadPartResp.ETag)
+
+	candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileName:         &fileName,
+		FileSize:         runtimePtr(int64(len(fixtureBytes))),
+		MimeType:         runtimePtr(audioMimeType),
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(candidateReq.Header(), manager)
+
+	candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+	require.NoError(t, err)
+	require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
+	require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
+	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
+
+	abortReq := connect.NewRequest(&managev1.AbortMultipartUploadRequest{
+		FileId:   initResp.Msg.FileId,
+		UploadId: initResp.Msg.UploadId,
+	})
+	setAuthHeaders(abortReq.Header(), manager)
+
+	abortResp, err := fileClient.AbortMultipartUpload(context.Background(), abortReq)
+	require.NoError(t, err)
+	require.True(t, abortResp.Msg.Success)
+
+	candidateReq = connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileName:         &fileName,
+		FileSize:         runtimePtr(int64(len(fixtureBytes))),
+		MimeType:         runtimePtr(audioMimeType),
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(candidateReq.Header(), manager)
+
+	candidateResp, err = fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+	require.NoError(t, err)
+	require.Nil(t, candidateResp.Msg.UploadId)
+}
+
+type runtimeTrackAudioResume struct {
+	fixture                 *runtimeTrackAudioFixture
+	fileName                string
+	fileLastModified        int64
+	resumeCorrelationID     string
+	completionCorrelationID string
+	fullPart                []byte
+	lastPart                []byte
+	fileSize                int64
+	initResp                *connect.Response[managev1.InitiateMultipartUploadResponse]
+	uploadPartResp          uploadPartResponse
+}
+
+func (f *runtimeTrackAudioFixture) resumePresignedParts(t *testing.T) {
+	resume := f.startInterruptedUpload(t)
+	resume.findAndResume(t)
+	resume.uploadRemainingParts(t)
+	resume.rejectCompletion(t)
+}
+
+func (f *runtimeTrackAudioFixture) startInterruptedUpload(t *testing.T) *runtimeTrackAudioResume {
+	stack := f.stack
+	manager := f.manager
+	fileClient := f.fileClient
+	trackID := f.trackID
+	fixtureBytes := f.fixtureBytes
+	audioMimeType := f.audioMimeType
+
+	fileName := runtimeTestFileName("track-interrupt.mp3")
+	fileLastModified := time.Now().UnixMilli()
+	interruptionCorrelationID := uuid.NewString()
+	resumeCorrelationID := uuid.NewString()
+	completionCorrelationID := uuid.NewString()
+	failedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+	fullPart := make([]byte, chunkSize)
+	copy(fullPart, fixtureBytes)
+	lastPart := fixtureBytes
+	fileSize := int64((chunkSize * 9) + len(lastPart))
+
+	initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileSize:         fileSize,
+		MimeType:         audioMimeType,
+		FileName:         fileName,
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(initReq.Header(), manager)
+
+	initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+	require.NoError(t, err)
+
+	uploadPartResp := uploadMultipartPartWithCorrelation(
+		t,
+		stack.BackendURL,
+		manager,
+		initResp.Msg.FileId,
+		initResp.Msg.UploadId,
+		1,
+		fullPart,
+		resumeCorrelationID,
+	)
+	require.NotEmpty(t, uploadPartResp.ETag)
+
+	for _, partNumber := range []int{2, 3, 4, 5, 6} {
+		presigned := requestMultipartPartPresign(
 			t,
 			stack.BackendURL,
 			manager,
 			initResp.Msg.FileId,
 			initResp.Msg.UploadId,
-			1,
-			fixtureBytes,
+			partNumber,
+			interruptionCorrelationID,
 		)
-		require.NotEmpty(t, uploadPartResp.ETag)
+		require.NotEmpty(t, presigned.URL)
+	}
 
-		candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileName:         &fileName,
-			FileSize:         runtimePtr(int64(len(fixtureBytes))),
-			MimeType:         runtimePtr(audioMimeType),
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(candidateReq.Header(), manager)
-
-		candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
-		require.NoError(t, err)
-		require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
-		require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
-		require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
-
-		abortReq := connect.NewRequest(&managev1.AbortMultipartUploadRequest{
-			FileId:   initResp.Msg.FileId,
-			UploadId: initResp.Msg.UploadId,
-		})
-		setAuthHeaders(abortReq.Header(), manager)
-
-		abortResp, err := fileClient.AbortMultipartUpload(context.Background(), abortReq)
-		require.NoError(t, err)
-		require.True(t, abortResp.Msg.Success)
-
-		candidateReq = connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileName:         &fileName,
-			FileSize:         runtimePtr(int64(len(fixtureBytes))),
-			MimeType:         runtimePtr(audioMimeType),
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(candidateReq.Header(), manager)
-
-		candidateResp, err = fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
-		require.NoError(t, err)
-		require.Nil(t, candidateResp.Msg.UploadId)
+	require.Eventually(t, func() bool {
+		return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
+	}, 5*time.Second, 200*time.Millisecond)
+	require.Equal(t, int64(1), countUploadParts(t, stack.DB, initResp.Msg.UploadId))
+	requireNoFileIngestFailedEvent(t, failedReceiver, 2*time.Second, func(event *managev1.FileIngestFailedEvent) bool {
+		return event.CorrelationId == interruptionCorrelationID && event.GetIdentity().GetFileId() == initResp.Msg.FileId
 	})
 
-	t.Run("unstarted presigned parts keep confirmed parts resumable", func(t *testing.T) {
-		fileName := runtimeTestFileName("track-interrupt.mp3")
-		fileLastModified := time.Now().UnixMilli()
-		interruptionCorrelationID := uuid.NewString()
-		resumeCorrelationID := uuid.NewString()
-		completionCorrelationID := uuid.NewString()
-		failedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
-		fullPart := make([]byte, chunkSize)
-		copy(fullPart, fixtureBytes)
-		lastPart := fixtureBytes
-		fileSize := int64((chunkSize * 9) + len(lastPart))
+	return &runtimeTrackAudioResume{
+		fixture:                 f,
+		fileName:                fileName,
+		fileLastModified:        fileLastModified,
+		resumeCorrelationID:     resumeCorrelationID,
+		completionCorrelationID: completionCorrelationID,
+		fullPart:                fullPart,
+		lastPart:                lastPart,
+		fileSize:                fileSize,
+		initResp:                initResp,
+		uploadPartResp:          uploadPartResp,
+	}
+}
 
-		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:         fileSize,
-			MimeType:         audioMimeType,
-			FileName:         fileName,
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(initReq.Header(), manager)
+func (r *runtimeTrackAudioResume) findAndResume(t *testing.T) {
+	manager := r.fixture.manager
+	fileClient := r.fixture.fileClient
+	trackID := r.fixture.trackID
+	audioMimeType := r.fixture.audioMimeType
+	fileName := r.fileName
+	fileLastModified := r.fileLastModified
+	fileSize := r.fileSize
+	initResp := r.initResp
+	uploadPartResp := r.uploadPartResp
 
-		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
-		require.NoError(t, err)
+	candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileName:         &fileName,
+		FileSize:         runtimePtr(fileSize),
+		MimeType:         runtimePtr(audioMimeType),
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(candidateReq.Header(), manager)
 
-		uploadPartResp := uploadMultipartPartWithCorrelation(
-			t,
-			stack.BackendURL,
-			manager,
-			initResp.Msg.FileId,
-			initResp.Msg.UploadId,
-			1,
-			fullPart,
-			resumeCorrelationID,
-		)
-		require.NotEmpty(t, uploadPartResp.ETag)
+	candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+	require.NoError(t, err)
+	require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
+	require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
+	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
 
-		for _, partNumber := range []int{2, 3, 4, 5, 6} {
-			presigned := requestMultipartPartPresign(
-				t,
-				stack.BackendURL,
-				manager,
-				initResp.Msg.FileId,
-				initResp.Msg.UploadId,
-				partNumber,
-				interruptionCorrelationID,
-			)
-			require.NotEmpty(t, presigned.URL)
-		}
+	resumeReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileSize:         fileSize,
+		MimeType:         audioMimeType,
+		FileName:         fileName,
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(resumeReq.Header(), manager)
+	resumeResp, err := fileClient.InitiateMultipartUpload(context.Background(), resumeReq)
+	require.NoError(t, err)
+	require.True(t, resumeResp.Msg.GetResumed())
+	require.Equal(t, initResp.Msg.GetUploadId(), resumeResp.Msg.GetUploadId())
+	require.Equal(t, initResp.Msg.GetFileId(), resumeResp.Msg.GetFileId())
+	require.Equal(t, []*managev1.UploadPartInfo{{PartNumber: 1, Etag: uploadPartResp.ETag}}, resumeResp.Msg.GetUploadedParts())
 
-		require.Eventually(t, func() bool {
-			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
-		}, 5*time.Second, 200*time.Millisecond)
-		require.Equal(t, int64(1), countUploadParts(t, stack.DB, initResp.Msg.UploadId))
-		requireNoFileIngestFailedEvent(t, failedReceiver, 2*time.Second, func(event *managev1.FileIngestFailedEvent) bool {
-			return event.CorrelationId == interruptionCorrelationID && event.GetIdentity().GetFileId() == initResp.Msg.FileId
-		})
+	uploadedParts := resumeResp.Msg.GetUploadedParts()
+	require.Len(t, uploadedParts, 1)
+	require.Equal(t, int32(1), uploadedParts[0].GetPartNumber())
+	require.Equal(t, uploadPartResp.ETag, uploadedParts[0].GetEtag())
+}
 
-		candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileName:         &fileName,
-			FileSize:         runtimePtr(fileSize),
-			MimeType:         runtimePtr(audioMimeType),
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(candidateReq.Header(), manager)
+func (r *runtimeTrackAudioResume) uploadRemainingParts(t *testing.T) {
+	stack := r.fixture.stack
+	manager := r.fixture.manager
+	resumeCorrelationID := r.resumeCorrelationID
+	fullPart := r.fullPart
+	lastPart := r.lastPart
+	fileSize := r.fileSize
+	initResp := r.initResp
 
-		candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
-		require.NoError(t, err)
-		require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
-		require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
-		require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
-
-		resumeReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:         fileSize,
-			MimeType:         audioMimeType,
-			FileName:         fileName,
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(resumeReq.Header(), manager)
-		resumeResp, err := fileClient.InitiateMultipartUpload(context.Background(), resumeReq)
-		require.NoError(t, err)
-		require.True(t, resumeResp.Msg.GetResumed())
-		require.Equal(t, initResp.Msg.GetUploadId(), resumeResp.Msg.GetUploadId())
-		require.Equal(t, initResp.Msg.GetFileId(), resumeResp.Msg.GetFileId())
-		require.Equal(t, []*managev1.UploadPartInfo{{PartNumber: 1, Etag: uploadPartResp.ETag}}, resumeResp.Msg.GetUploadedParts())
-
-		uploadedParts := resumeResp.Msg.GetUploadedParts()
-		require.Len(t, uploadedParts, 1)
-		require.Equal(t, int32(1), uploadedParts[0].GetPartNumber())
-		require.Equal(t, uploadPartResp.ETag, uploadedParts[0].GetEtag())
-
-		uploadReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
-		for partNumber := 2; partNumber <= 9; partNumber++ {
-			part := uploadMultipartPartWithCorrelation(
-				t,
-				stack.BackendURL,
-				manager,
-				initResp.Msg.FileId,
-				initResp.Msg.UploadId,
-				partNumber,
-				fullPart,
-				resumeCorrelationID,
-			)
-			require.NotEmpty(t, part.ETag)
-		}
+	uploadReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+	for partNumber := 2; partNumber <= 9; partNumber++ {
 		part := uploadMultipartPartWithCorrelation(
 			t,
 			stack.BackendURL,
 			manager,
 			initResp.Msg.FileId,
 			initResp.Msg.UploadId,
-			10,
-			lastPart,
+			partNumber,
+			fullPart,
 			resumeCorrelationID,
 		)
 		require.NotEmpty(t, part.ETag)
+	}
+	part := uploadMultipartPartWithCorrelation(
+		t,
+		stack.BackendURL,
+		manager,
+		initResp.Msg.FileId,
+		initResp.Msg.UploadId,
+		10,
+		lastPart,
+		resumeCorrelationID,
+	)
+	require.NotEmpty(t, part.ETag)
 
-		uploadEvent := waitForFileIngestUploadEvent(t, uploadReceiver, 10*time.Second, func(event *managev1.FileIngestUploadEvent) bool {
-			identity := event.GetIdentity()
-			return event.CorrelationId == resumeCorrelationID &&
-				identity.GetUploadId() == initResp.Msg.UploadId &&
-				identity.GetFileId() == initResp.Msg.FileId &&
-				event.GetProgress().GetPercentage() == 100
-		})
-		require.Equal(t, int32(100), uploadEvent.GetProgress().GetPercentage())
-		require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesTotal())
-		require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesCompleted())
-
-		uploadedParts = loadUploadPartInfosForTest(t, stack.DB, initResp.Msg.UploadId)
-		require.Len(t, uploadedParts, 10)
-		for index, uploadedPart := range uploadedParts {
-			require.Equal(t, int32(index+1), uploadedPart.PartNumber)
-			require.NotEmpty(t, uploadedPart.Etag)
-		}
-
-		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-			FileId: initResp.Msg.FileId, UploadId: initResp.Msg.UploadId, CorrelationId: runtimePtr(completionCorrelationID),
-		})
-		setAuthHeaders(completeReq.Header(), manager)
-		_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-		require.Contains(t, err.Error(), "clientMediaBundleRequired")
-		require.EqualValues(t, 0, countFilesByID(t, stack.DB, initResp.Msg.FileId))
-		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, model.UploadSessionStatusUploading)
-		var untouchedTrack model.Track
-		require.NoError(t, stack.DB.First(&untouchedTrack, "id = ?", trackID).Error)
-		require.Nil(t, untouchedTrack.AudioOriginalFileID)
-
+	uploadEvent := waitForFileIngestUploadEvent(t, uploadReceiver, 10*time.Second, func(event *managev1.FileIngestUploadEvent) bool {
+		identity := event.GetIdentity()
+		return event.CorrelationId == resumeCorrelationID &&
+			identity.GetUploadId() == initResp.Msg.UploadId &&
+			identity.GetFileId() == initResp.Msg.FileId &&
+			event.GetProgress().GetPercentage() == 100
 	})
+	require.Equal(t, int32(100), uploadEvent.GetProgress().GetPercentage())
+	require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesTotal())
+	require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesCompleted())
 
-	t.Run("unprepared track completion rejects before storage completion", func(t *testing.T) {
-		fileName := runtimeTestFileName("track-bad-complete.mp3")
-		fileLastModified := time.Now().UnixMilli()
+	uploadedParts := loadUploadPartInfosForTest(t, stack.DB, initResp.Msg.UploadId)
+	require.Len(t, uploadedParts, 10)
+	for index, uploadedPart := range uploadedParts {
+		require.Equal(t, int32(index+1), uploadedPart.PartNumber)
+		require.NotEmpty(t, uploadedPart.Etag)
+	}
+}
 
-		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:         trackID,
-			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:         int64(len(fixtureBytes)),
-			MimeType:         audioMimeType,
-			FileName:         fileName,
-			FileLastModified: &fileLastModified,
-		})
-		setAuthHeaders(initReq.Header(), manager)
+func (r *runtimeTrackAudioResume) rejectCompletion(t *testing.T) {
+	stack := r.fixture.stack
+	manager := r.fixture.manager
+	fileClient := r.fixture.fileClient
+	trackID := r.fixture.trackID
+	completionCorrelationID := r.completionCorrelationID
+	initResp := r.initResp
 
-		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
-		require.NoError(t, err)
-
-		part := uploadMultipartPart(
-			t,
-			stack.BackendURL,
-			manager,
-			initResp.Msg.FileId,
-			initResp.Msg.UploadId,
-			1,
-			fixtureBytes,
-		)
-		require.NotEmpty(t, part.ETag)
-
-		abortMultipartInStorage(t, stack, runtimeMediaObjectKey(t, initResp.Msg.FileId, initResp.Msg.Extension), initResp.Msg.UploadId)
-
-		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-			FileId:        initResp.Msg.FileId,
-			UploadId:      initResp.Msg.UploadId,
-			CorrelationId: runtimePtr(uuid.NewString()),
-		})
-		setAuthHeaders(completeReq.Header(), manager)
-
-		_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-		require.Contains(t, err.Error(), "clientMediaBundleRequired")
-
-		require.Eventually(t, func() bool {
-			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
-		}, 5*time.Second, 200*time.Millisecond)
-		require.Equal(t, int64(0), countFilesByID(t, stack.DB, initResp.Msg.FileId))
-
-		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, model.UploadSessionStatusUploading)
+	completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+		FileId: initResp.Msg.FileId, UploadId: initResp.Msg.UploadId, CorrelationId: runtimePtr(completionCorrelationID),
 	})
+	setAuthHeaders(completeReq.Header(), manager)
+	_, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "clientMediaBundleRequired")
+	require.EqualValues(t, 0, countFilesByID(t, stack.DB, initResp.Msg.FileId))
+	requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, model.UploadSessionStatusUploading)
+	var untouchedTrack model.Track
+	require.NoError(t, stack.DB.First(&untouchedTrack, "id = ?", trackID).Error)
+	require.Nil(t, untouchedTrack.AudioOriginalFileID)
 
+}
+
+func (f *runtimeTrackAudioFixture) rejectUnpreparedCompletion(t *testing.T) {
+	stack := f.stack
+	manager := f.manager
+	fileClient := f.fileClient
+	trackID := f.trackID
+	fixtureBytes := f.fixtureBytes
+	audioMimeType := f.audioMimeType
+
+	fileName := runtimeTestFileName("track-bad-complete.mp3")
+	fileLastModified := time.Now().UnixMilli()
+
+	initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+		FileSize:         int64(len(fixtureBytes)),
+		MimeType:         audioMimeType,
+		FileName:         fileName,
+		FileLastModified: &fileLastModified,
+	})
+	setAuthHeaders(initReq.Header(), manager)
+
+	initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+	require.NoError(t, err)
+
+	part := uploadMultipartPart(
+		t,
+		stack.BackendURL,
+		manager,
+		initResp.Msg.FileId,
+		initResp.Msg.UploadId,
+		1,
+		fixtureBytes,
+	)
+	require.NotEmpty(t, part.ETag)
+
+	abortMultipartInStorage(t, stack, runtimeMediaObjectKey(t, initResp.Msg.FileId, initResp.Msg.Extension), initResp.Msg.UploadId)
+
+	completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+		FileId:        initResp.Msg.FileId,
+		UploadId:      initResp.Msg.UploadId,
+		CorrelationId: runtimePtr(uuid.NewString()),
+	})
+	setAuthHeaders(completeReq.Header(), manager)
+
+	_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "clientMediaBundleRequired")
+
+	require.Eventually(t, func() bool {
+		return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
+	}, 5*time.Second, 200*time.Millisecond)
+	require.Equal(t, int64(0), countFilesByID(t, stack.DB, initResp.Msg.FileId))
+
+	requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, model.UploadSessionStatusUploading)
 }
 
 func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {

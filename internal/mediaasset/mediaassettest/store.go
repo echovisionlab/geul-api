@@ -4,7 +4,6 @@ package mediaassettest
 import (
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -37,29 +36,30 @@ func (s *Store) PutAsset(asset mediaasset.Asset)       { s.assets[asset.ID] = cl
 func (s *Store) PutGeneration(generation mediaasset.Generation) {
 	s.generations[generation.ID] = cloneGeneration(generation)
 }
-func (s *Store) Savepoint() func() {
-	assets := make(map[string]mediaasset.Asset, len(s.assets))
-	for id, asset := range s.assets {
-		assets[id] = cloneAsset(asset)
-	}
-	bindings := make(map[bindingKey]mediaasset.AssetBinding, len(s.bindings))
-	for key, binding := range s.bindings {
-		bindings[key] = cloneBinding(binding)
-	}
-	generations := make(map[string]mediaasset.Generation, len(s.generations))
-	for id, generation := range s.generations {
-		generations[id] = cloneGeneration(generation)
-	}
-	files := maps.Clone(s.files)
-	generationReferences := maps.Clone(s.GenerationReferences)
-	ogAssetReferences := maps.Clone(s.OGAssetReferences)
-	return func() {
-		s.assets = assets
-		s.bindings = bindings
-		s.generations = generations
-		s.files = files
-		s.GenerationReferences = generationReferences
-		s.OGAssetReferences = ogAssetReferences
+func (s *Store) Savepoint() mutationtest.Checkpoint {
+	assets := mutationtest.ClonePersisted(s.assets)
+	bindings := mutationtest.ClonePersisted(s.bindings)
+	generations := mutationtest.ClonePersisted(s.generations)
+	files := mutationtest.ClonePersisted(s.files)
+	generationReferences := mutationtest.ClonePersisted(s.GenerationReferences)
+	oGAssetReferences := mutationtest.ClonePersisted(s.OGAssetReferences)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"assets":               assets,
+			"bindings":             bindings,
+			"generations":          generations,
+			"files":                files,
+			"GenerationReferences": generationReferences,
+			"OGAssetReferences":    oGAssetReferences,
+		},
+		Restore: func() {
+			s.assets = assets
+			s.bindings = bindings
+			s.generations = generations
+			s.files = files
+			s.GenerationReferences = generationReferences
+			s.OGAssetReferences = oGAssetReferences
+		},
 	}
 }
 func (s *Store) LockAttachableFiles(_ context.Context, ids []string) error {

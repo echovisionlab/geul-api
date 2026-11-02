@@ -65,7 +65,9 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-func (s *fakeStore) Savepoint() func() { return func() {} }
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 func (s *fakeStore) call(method string) error {
 	s.mu.Lock()

@@ -24,4 +24,3 @@ func TestApplyLocalizedPageFieldsDoesNotUseLegacyBodyProjection(t *testing.T) {
 	assert.Equal(t, localizedTitle, page.Title)
 	assert.Same(t, document, page.Document)
 }
-

@@ -163,42 +163,9 @@ func requestBulk(
 		return err
 	}
 
-	featuredAssets, err := loadBulkOgFeaturedAssets(ctx, store, prepared)
+	generations, err := buildBulkOgGenerations(ctx, store, plan, prepared, targets, now)
 	if err != nil {
 		return err
-	}
-
-	generations := make([]NewGeneration, len(prepared))
-	for i, item := range prepared {
-		assetID := uuid.NewString()
-		objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
-		if err != nil {
-			return err
-		}
-		resolvedTitle, err := store.ResolvePublicText(ctx, item.request.Title)
-		if err != nil {
-			return err
-		}
-		output := Output{AssetID: assetID, ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp"}
-		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
-			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
-			Locale:        item.locale,
-			FeaturedImage: featuredAssets[stringValue(optionalString(item.request.FeaturedImageFileID))],
-			Output:        ogOutputSnapshot(output),
-		})
-		if err != nil {
-			return err
-		}
-		generations[i] = NewGeneration{
-			Generation: Generation{
-				ID: assetID, RunID: plan.RunID, TargetID: targets[item.targetKey].ID,
-				Status: StatusQueued, EntitySnapshot: snapshotJSON,
-				DeadlineAt: now.Add(defaultOgGenerationDeadline),
-				CreatedAt:  now, UpdatedAt: now,
-			},
-			Output: output,
-		}
-		plan.GenerationIDs[item.originalIndex] = assetID
 	}
 	if err := store.InsertGenerations(ctx, generations); err != nil {
 		return err
@@ -246,6 +213,53 @@ func requestBulk(
 		}
 	}
 	return nil
+}
+
+func buildBulkOgGenerations(
+	ctx context.Context,
+	store Store,
+	plan *Plan,
+	prepared []preparedBulkOgRequest,
+	targets map[string]GenerationTarget,
+	now time.Time,
+) ([]NewGeneration, error) {
+	featuredAssets, err := loadBulkOgFeaturedAssets(ctx, store, prepared)
+	if err != nil {
+		return nil, err
+	}
+	generations := make([]NewGeneration, len(prepared))
+	for i, item := range prepared {
+		assetID := uuid.NewString()
+		objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
+		if err != nil {
+			return nil, err
+		}
+		resolvedTitle, err := store.ResolvePublicText(ctx, item.request.Title)
+		if err != nil {
+			return nil, err
+		}
+		output := Output{AssetID: assetID, ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp"}
+		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
+			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
+			Locale:        item.locale,
+			FeaturedImage: featuredAssets[stringValue(optionalString(item.request.FeaturedImageFileID))],
+			Output:        ogOutputSnapshot(output),
+		})
+		if err != nil {
+			return nil, err
+		}
+		generations[i] = NewGeneration{
+			Generation: Generation{
+				ID: assetID, RunID: plan.RunID, TargetID: targets[item.targetKey].ID,
+				Status: StatusQueued, EntitySnapshot: snapshotJSON,
+				DeadlineAt: now.Add(defaultOgGenerationDeadline),
+				CreatedAt:  now, UpdatedAt: now,
+			},
+			Output: output,
+		}
+		plan.GenerationIDs[item.originalIndex] = assetID
+	}
+	return generations, nil
 }
 
 func reloadCanonicalBulkOgRequests(

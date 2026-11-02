@@ -7,7 +7,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -102,32 +101,53 @@ func New() (*Store, *mutationtest.UnitOfWork[series.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	saved := s.state.clone()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		saved.failures = s.state.failures
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"series":       saved.series,
+			"translations": saved.translations,
+			"documents":    saved.documents,
+			"managers":     saved.managers,
+			"members":      saved.members,
+			"occupied":     saved.occupied,
+			"posts":        saved.posts,
+			"files":        saved.files,
+			"images":       saved.images,
+			"featured":     saved.featured,
+			"ogReleased":   saved.ogReleased,
+			"ogRequests":   saved.ogRequests,
+			"menu":         saved.menu,
+			"signals":      saved.signals,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			saved.failures = s.state.failures
+			s.state = saved
+		},
 	}
 }
 
 func (st state) clone() state {
-	posts := make(map[string]Post, len(st.posts))
-	for id, post := range st.posts {
-		post.SeriesID = clonePointer(post.SeriesID)
-		post.SeriesOrder = clonePointer(post.SeriesOrder)
-		posts[id] = post
-	}
-	return state{
-		series: maps.Clone(st.series), translations: maps.Clone(st.translations), documents: maps.Clone(st.documents),
-		managers: maps.Clone(st.managers), members: maps.Clone(st.members), occupied: maps.Clone(st.occupied),
-		posts: posts, files: maps.Clone(st.files), images: maps.Clone(st.images), featured: maps.Clone(st.featured),
-		ogReleased: maps.Clone(st.ogReleased), ogRequests: slices.Clone(st.ogRequests), menu: slices.Clone(st.menu),
-		signals: slices.Clone(st.signals), contributors: maps.Clone(st.contributors), failures: st.failures, runs: st.runs,
-	}
+	clone := st
+	clone.series = mutationtest.ClonePersisted(st.series)
+	clone.translations = mutationtest.ClonePersisted(st.translations)
+	clone.documents = mutationtest.ClonePersisted(st.documents)
+	clone.managers = mutationtest.ClonePersisted(st.managers)
+	clone.members = mutationtest.ClonePersisted(st.members)
+	clone.occupied = mutationtest.ClonePersisted(st.occupied)
+	clone.posts = mutationtest.ClonePersisted(st.posts)
+	clone.files = mutationtest.ClonePersisted(st.files)
+	clone.images = mutationtest.ClonePersisted(st.images)
+	clone.featured = mutationtest.ClonePersisted(st.featured)
+	clone.ogReleased = mutationtest.ClonePersisted(st.ogReleased)
+	clone.ogRequests = mutationtest.ClonePersisted(st.ogRequests)
+	clone.menu = mutationtest.ClonePersisted(st.menu)
+	clone.signals = mutationtest.ClonePersisted(st.signals)
+	return clone
 }
 
 func clonePointer[T any](value *T) *T {

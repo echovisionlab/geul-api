@@ -38,7 +38,9 @@ type fakeStore struct {
 	locked    func(artist.Artist) artist.Artist
 }
 
-func (s *fakeStore) Savepoint() func() { return func() {} }
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 func (s *fakeStore) ListPublishedArtists(context.Context, artistpublic.ListPage) ([]artist.Artist, int64, error) {
 	var listed []artist.Artist

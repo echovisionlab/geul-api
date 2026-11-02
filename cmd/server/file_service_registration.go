@@ -1,6 +1,7 @@
 package main
 
 import (
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	filepublicpostgres "github.com/echovisionlab/geul-api/internal/filemedia/public/postgres"
 
@@ -41,7 +42,7 @@ func (r serviceRegistration) newFiles(downloadTTL time.Duration, legalRuntime *l
 	fileTrackAttachment := filemediaadapter.NewTrackAttachment(deps.telemetryWriter)
 	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: deps.spicedbClient})
 
-	fileMediaPorts := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(deps.transcodeTracker, deps.servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(deps.transcodeTracker, deps.servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(deps.servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(deps.servicePublisher)}
+	fileMediaPorts := filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(deps.transcodeTracker, deps.servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(deps.transcodeTracker, deps.servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(deps.servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySegments: filemediapolicy.Segments{}, PolicySignals: filemediaqueue.Policy(deps.servicePublisher)}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		IngestLocks:        filemediapostgres.NewIngestLocks(deps.db, fileMediaPorts),
 		FaviconCommits:     filemediapostgres.NewFaviconCommits(deps.db, fileMediaPorts),

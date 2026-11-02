@@ -98,29 +98,35 @@ func (s *Store) JobUnits() *mutationtest.UnitOfWork[application.JobStore] {
 // FakeDomains is the fake owning-domain registry, for a test to configure.
 func (s *Store) FakeDomains() *Domains { return s.domains }
 
-// Savepoint captures the Store and returns the function that restores it.
-func (s *Store) Savepoint() func() {
+// Savepoint captures the persisted fields and the rollback of the Store.
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	jobs, providers := maps.Clone(s.jobs), maps.Clone(s.providers)
-	var settings *translation.RuntimeSettings
-	if s.settings != nil {
-		copied := *s.settings
-		settings = &copied
-	}
-	entities := make(map[string]*Entity, len(s.entities))
-	for key, entity := range s.entities {
-		copied := *entity
-		copied.Entries = maps.Clone(entity.Entries)
-		copied.BlockLocales = slices.Clone(entity.BlockLocales)
-		entities[key] = &copied
-	}
-	enqueued, signals := slices.Clone(s.enqueued), slices.Clone(s.signals)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.jobs, s.providers, s.settings, s.entities = jobs, providers, settings, entities
-		s.enqueued, s.signals = enqueued, signals
+	jobs := mutationtest.ClonePersisted(s.jobs)
+	providers := mutationtest.ClonePersisted(s.providers)
+	settings := mutationtest.ClonePersisted(s.settings)
+	entities := mutationtest.ClonePersisted(s.entities)
+	enqueued := mutationtest.ClonePersisted(s.enqueued)
+	signals := mutationtest.ClonePersisted(s.signals)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"jobs":      jobs,
+			"providers": providers,
+			"settings":  settings,
+			"entities":  entities,
+			"enqueued":  enqueued,
+			"signals":   signals,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.jobs = jobs
+			s.providers = providers
+			s.settings = settings
+			s.entities = entities
+			s.enqueued = enqueued
+			s.signals = signals
+		},
 	}
 }
 

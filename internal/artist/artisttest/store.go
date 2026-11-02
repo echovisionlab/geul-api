@@ -91,19 +91,30 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.artists = maps.Clone(s.artists)
-	clone.participants = maps.Clone(s.participants)
-	clone.locales = maps.Clone(s.locales)
-	clone.localeOgAssets = maps.Clone(s.localeOgAssets)
-	clone.documents = maps.Clone(s.documents)
-	clone.routes = maps.Clone(s.routes)
-	clone.labelLinks = maps.Clone(s.labelLinks)
-	clone.images = maps.Clone(s.images)
-	clone.updates = slices.Clone(s.updates)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.ogCancels = slices.Clone(s.ogCancels)
-	clone.shareLinks = slices.Clone(s.shareLinks)
-	clone.releasedImages = slices.Clone(s.releasedImages)
+	clone.artists = mutationtest.ClonePersisted(s.artists)
+	clone.participants = mutationtest.ClonePersisted(s.participants)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.localeOgAssets = mutationtest.ClonePersisted(s.localeOgAssets)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.routes = mutationtest.ClonePersisted(s.routes)
+	clone.labelLinks = mutationtest.ClonePersisted(s.labelLinks)
+	clone.labels = mutationtest.ClonePersisted(s.labels)
+	clone.draftLabels = mutationtest.ClonePersisted(s.draftLabels)
+	clone.images = mutationtest.ClonePersisted(s.images)
+	clone.relations = mutationtest.ClonePersisted(s.relations)
+	clone.releaseCounts = mutationtest.ClonePersisted(s.releaseCounts)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.ogCancels = mutationtest.ClonePersisted(s.ogCancels)
+	clone.shareLinks = mutationtest.ClonePersisted(s.shareLinks)
+	clone.releasedImages = mutationtest.ClonePersisted(s.releasedImages)
+	clone.identities = mutationtest.ClonePersisted(s.identities)
+	clone.members = mutationtest.ClonePersisted(s.members)
+	clone.sessions = mutationtest.ClonePersisted(s.sessions)
+	clone.revokedRoom = mutationtest.ClonePersisted(s.revokedRoom)
+	clone.readyAssets = mutationtest.ClonePersisted(s.readyAssets)
+	clone.readyImages = mutationtest.ClonePersisted(s.readyImages)
+	clone.contentResults = slices.Clone(s.contentResults)
 	return clone
 }
 
@@ -144,14 +155,41 @@ func New() (*Store, *mutationtest.UnitOfWork[artist.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"artists":        saved.artists,
+			"participants":   saved.participants,
+			"locales":        saved.locales,
+			"localeOgAssets": saved.localeOgAssets,
+			"documents":      saved.documents,
+			"routes":         saved.routes,
+			"labelLinks":     saved.labelLinks,
+			"labels":         saved.labels,
+			"draftLabels":    saved.draftLabels,
+			"images":         saved.images,
+			"relations":      saved.relations,
+			"releaseCounts":  saved.releaseCounts,
+			"updates":        saved.updates,
+			"ogRequests":     saved.ogRequests,
+			"ogCancels":      saved.ogCancels,
+			"shareLinks":     saved.shareLinks,
+			"releasedImages": saved.releasedImages,
+			"identities":     saved.identities,
+			"members":        saved.members,
+			"sessions":       saved.sessions,
+			"revokedRoom":    saved.revokedRoom,
+			"readyAssets":    saved.readyAssets,
+			"readyImages":    saved.readyImages,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

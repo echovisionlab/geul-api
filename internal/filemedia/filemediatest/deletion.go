@@ -2,8 +2,9 @@ package filemediatest
 
 import (
 	"context"
-	"maps"
 	"slices"
+
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -22,9 +23,16 @@ type DeletionStore struct {
 func NewDeletionStore() *DeletionStore {
 	return &DeletionStore{Files: make(map[string]filemedia.File), References: make(map[string][]string), Generations: make(map[string][]mediaasset.Generation), Transcodes: make(map[string][2]int64), MeshResults: make(map[string]int64)}
 }
-func (s *DeletionStore) Savepoint() func() {
-	files := maps.Clone(s.Files)
-	return func() { s.Files = files }
+func (s *DeletionStore) Savepoint() mutationtest.Checkpoint {
+	files := mutationtest.ClonePersisted(s.Files)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"Files": files,
+		},
+		Restore: func() {
+			s.Files = files
+		},
+	}
 }
 func (s *DeletionStore) LockDeletionFile(_ context.Context, id string) (filemedia.File, error) {
 	row, ok := s.Files[id]

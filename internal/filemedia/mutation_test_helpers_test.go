@@ -3,6 +3,8 @@ package filemedia
 import (
 	"context"
 
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
+
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	"gorm.io/gorm"
@@ -98,6 +100,8 @@ func testFilePorts(s *Service) filemediapostgres.Ports {
 	ports.MeshJobs = filemediaqueue.Mesh(transcoder, s.asyncPublisher)
 	ports.IngestTranscodes = filemediaqueue.Transcodes(transcoder, s.asyncPublisher)
 	ports.DeletionQueue = filemediaqueue.Async(s.asyncPublisher)
+	ports.AttachmentReferences = filereferences.Attachments{}
+	ports.PolicySegments = filemediapolicy.Segments{}
 	ports.PolicySignals = filemediaqueue.Policy(s.asyncPublisher)
 	return ports
 }

@@ -174,33 +174,42 @@ func inlineEntriesDecodeForTest(data []byte) bool {
 	if json.Unmarshal(data, &root) != nil {
 		return false
 	}
-	var valid func(value any) bool
-	valid = func(value any) bool {
-		switch typed := value.(type) {
-		case map[string]any:
-			for key, child := range typed {
-				if entries, ok := child.([]any); ok && key == "content" {
-					for _, entry := range entries {
-						encoded, err := json.Marshal(entry)
-						if err != nil || protojson.Unmarshal(encoded, &contentv1.RichTextInline{}) != nil {
-							return false
-						}
-					}
-				}
-				if !valid(child) {
-					return false
-				}
+	return inlineValueDecodesForTest(root)
+}
+
+func inlineValueDecodesForTest(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "content" && !inlineContentEntriesDecodeForTest(child) {
+				return false
 			}
-		case []any:
-			for _, child := range typed {
-				if !valid(child) {
-					return false
-				}
+			if !inlineValueDecodesForTest(child) {
+				return false
 			}
 		}
+	case []any:
+		for _, child := range typed {
+			if !inlineValueDecodesForTest(child) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func inlineContentEntriesDecodeForTest(value any) bool {
+	entries, ok := value.([]any)
+	if !ok {
 		return true
 	}
-	return valid(root)
+	for _, entry := range entries {
+		encoded, err := json.Marshal(entry)
+		if err != nil || protojson.Unmarshal(encoded, &contentv1.RichTextInline{}) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func assertGoldenJSON(t *testing.T, path string, value any) {

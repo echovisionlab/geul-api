@@ -65,20 +65,24 @@ type publicServiceRegistration struct {
 }
 
 func (r publicServiceRegistration) register() error {
+	if err := r.registerContent(); err != nil {
+		return err
+	}
+	if err := r.registerDirectory(); err != nil {
+		return err
+	}
+	return r.registerProgramAndLinks()
+}
+
+func (r publicServiceRegistration) registerContent() error {
 	deps := r.dependencies
-	mux := deps.mux
-	cfg := deps.cfg
-	db := deps.db
+	mux, cfg, db := deps.mux, deps.cfg, deps.db
 	spicedbClient := deps.spicedbClient
-	passwordHasher := deps.passwordHasher
-	telemetryWriter := deps.telemetryWriter
 	contentBlockStore := deps.contentBlockStore
 	publicHandlerOpts := r.handlerOptions
 	publicFileService := r.fileService
-	postShareLinks := r.postShareLinks
-	postMembers := r.postMembers
+	postShareLinks, postMembers := r.postShareLinks, r.postMembers
 	workRuntime := r.workRuntime
-	legalRuntime := r.legalRuntime
 	// Public API services (no auth required - exposed via Oathkeeper public rules)
 	manifestService, err := publicsitesettings.NewService(publicsitesettings.Deps{
 		Projection: sitesettingsadapter.NewPublicProjection(
@@ -152,6 +156,17 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicWorkPath, publicWorkHandler)
 	slog.Info("Registered public service", "path", publicWorkPath)
 
+	return nil
+}
+
+func (r publicServiceRegistration) registerDirectory() error {
+	deps := r.dependencies
+	mux, cfg, db := deps.mux, deps.cfg, deps.db
+	spicedbClient := deps.spicedbClient
+	passwordHasher, telemetryWriter := deps.passwordHasher, deps.telemetryWriter
+	contentBlockStore := deps.contentBlockStore
+	publicHandlerOpts := r.handlerOptions
+	legalRuntime := r.legalRuntime
 	publicReferenceCatalogUnits, err := referencecatalogpublicpostgres.NewUnits(db, referencecatalogadapter.NewPublicAssets(cfg.CDNURL))
 	if err != nil {
 		return fmt.Errorf("initialize public reference catalog store: %w", err)
@@ -249,6 +264,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicMapThemePath, publicMapThemeHandler)
 	slog.Info("Registered public service", "path", publicMapThemePath)
 
+	return nil
+}
+
+func (r publicServiceRegistration) registerProgramAndLinks() error {
+	deps := r.dependencies
+	mux, cfg, db := deps.mux, deps.cfg, deps.db
+	contentBlockStore := deps.contentBlockStore
+	publicHandlerOpts := r.handlerOptions
+	publicFileService := r.fileService
 	publicProgramEventUnits, err := programeventpublicpostgres.NewUnits(db, contentBlockStore)
 	if err != nil {
 		return fmt.Errorf("initialize public program event store: %w", err)

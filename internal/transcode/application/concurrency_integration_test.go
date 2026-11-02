@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -430,5 +431,5 @@ func seedWorkerAllocatedMediaGeneration(
 }
 
 func newWorkerTranscodeIntegrationHandlers(db *gorm.DB) *application.Handlers {
-	return application.New(applicationpostgres.NewUnits(db), nil, nil)
+	return application.New(applicationpostgres.NewUnits(db, filemediaadapter.DerivativeResults{}), nil, nil)
 }

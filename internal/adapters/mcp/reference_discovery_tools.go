@@ -109,23 +109,9 @@ type referenceSearchArguments struct {
 }
 
 func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, _ string, call toolCall[referenceSearchArguments]) (mcpserver.ToolResult, error) {
-	var input referenceSearchArguments
-	if err := call.Decode(&input); err != nil {
+	input, maximum, err := decodeReferenceSearchArguments(call)
+	if err != nil {
 		return executionError(err)
-	}
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Query == "" {
-		return executionError(errors.New("query is required"))
-	}
-	if input.Limit == 0 {
-		input.Limit = 20
-	}
-	maximum := int32(100)
-	if input.ReferenceType == "client" || input.ReferenceType == "map_place" {
-		maximum = 50
-	}
-	if input.Limit < 1 || input.Limit > maximum {
-		return executionError(fmt.Errorf("limit must be between 1 and %d for %s references", maximum, input.ReferenceType))
 	}
 	items := make([]map[string]any, 0)
 	var hasMore any
@@ -196,6 +182,28 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, _ st
 		return mcpserver.ToolResult{}, fmt.Errorf("encode reference search: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+func decodeReferenceSearchArguments(call toolCall[referenceSearchArguments]) (referenceSearchArguments, int32, error) {
+	var input referenceSearchArguments
+	if err := call.Decode(&input); err != nil {
+		return referenceSearchArguments{}, 0, err
+	}
+	input.Query = strings.TrimSpace(input.Query)
+	if input.Query == "" {
+		return referenceSearchArguments{}, 0, errors.New("query is required")
+	}
+	if input.Limit == 0 {
+		input.Limit = 20
+	}
+	maximum := int32(100)
+	if input.ReferenceType == "client" || input.ReferenceType == "map_place" {
+		maximum = 50
+	}
+	if input.Limit < 1 || input.Limit > maximum {
+		return referenceSearchArguments{}, 0, fmt.Errorf("limit must be between 1 and %d for %s references", maximum, input.ReferenceType)
+	}
+	return input, maximum, nil
 }
 
 func quickSearchHasMore(count int, limit, maximum int32) any {

@@ -27,39 +27,47 @@ func TestDomainPackagesDependOnPortsRatchet(t *testing.T) {
 		if !inPipelineDomain(file.pkg) || isStoreAdapter(file.pkg) {
 			continue
 		}
-		categories := map[string]bool{}
-		for _, imported := range file.imports {
-			switch {
-			case imported == "gorm.io/gorm" || strings.HasPrefix(imported, "gorm.io/"):
-				categories["gorm"] = true
-			case imported == "github.com/lib/pq" || strings.HasPrefix(imported, "github.com/jackc/pgx"):
-				categories["sql driver"] = true
-			case imported == modulePath+"/internal/model":
-				categories["model"] = true
-			case strings.HasPrefix(imported, contractsImport) && hasTransportContractReferences(file, imported):
-				categories["generated contracts"] = true
-			}
-		}
-		for category := range categories {
+		for category := range domainDependencyCategories(file) {
 			observed[file.pkg+" "+category]++
 		}
-		ast.Inspect(file.syntax, func(node ast.Node) bool {
-			switch node := node.(type) {
-			case *ast.SelectorExpr:
-				if file.importedAs(node, modulePath+"/internal/auth", "SpiceDBClient") {
-					observed[file.pkg+" spicedb client"]++
-				}
-			case *ast.BasicLit:
-				if node.Kind == token.STRING {
-					if value, err := strconv.Unquote(node.Value); err == nil && strings.Contains(value, "kratos.") {
-						observed[file.pkg+" kratos tables"]++
-					}
-				}
-			}
-			return true
-		})
+		inspectDomainAuthorityReferences(file, observed)
 	}
 	requireRatchet(t, "domain_port_dependencies", observed)
+}
+
+func domainDependencyCategories(file productionFile) map[string]bool {
+	categories := map[string]bool{}
+	for _, imported := range file.imports {
+		switch {
+		case imported == "gorm.io/gorm" || strings.HasPrefix(imported, "gorm.io/"):
+			categories["gorm"] = true
+		case imported == "github.com/lib/pq" || strings.HasPrefix(imported, "github.com/jackc/pgx"):
+			categories["sql driver"] = true
+		case imported == modulePath+"/internal/model":
+			categories["model"] = true
+		case strings.HasPrefix(imported, contractsImport) && hasTransportContractReferences(file, imported):
+			categories["generated contracts"] = true
+		}
+	}
+	return categories
+}
+
+func inspectDomainAuthorityReferences(file productionFile, observed map[string]int) {
+	ast.Inspect(file.syntax, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.SelectorExpr:
+			if file.importedAs(node, modulePath+"/internal/auth", "SpiceDBClient") {
+				observed[file.pkg+" spicedb client"]++
+			}
+		case *ast.BasicLit:
+			if node.Kind == token.STRING {
+				if value, err := strconv.Unquote(node.Value); err == nil && strings.Contains(value, "kratos.") {
+					observed[file.pkg+" kratos tables"]++
+				}
+			}
+		}
+		return true
+	})
 }
 
 // isStoreAdapter reports whether pkg is a domain's PostgreSQL Store package.

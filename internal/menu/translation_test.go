@@ -96,7 +96,7 @@ func TestProviderTranslationCreatesTheTargetLocaleAndAuditsTheRequester(t *testi
 		Candidate: providerCandidate(t, plan, map[string]translation.UnitResult{
 			"item:home:label": {UnitID: "item:home:label", TranslatedText: "홈"}, "item:about:label": {UnitID: "item:about:label", TranslatedText: "about"},
 		}),
-		Now:       time.Now(),
+		Now: time.Now(),
 	}
 
 	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))

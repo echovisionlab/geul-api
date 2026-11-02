@@ -42,15 +42,15 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.templates = maps.Clone(s.templates)
-	clone.layouts = maps.Clone(s.layouts)
-	clone.layoutTranslations = maps.Clone(s.layoutTranslations)
-	clone.deliveryRuns = maps.Clone(s.deliveryRuns)
-	clone.layoutReferences = maps.Clone(s.layoutReferences)
-	clone.frozen = maps.Clone(s.frozen)
-	clone.detached = slices.Clone(s.detached)
-	clone.members = maps.Clone(s.members)
-	clone.sessions = maps.Clone(s.sessions)
+	clone.templates = mutationtest.ClonePersisted(s.templates)
+	clone.layouts = mutationtest.ClonePersisted(s.layouts)
+	clone.layoutTranslations = mutationtest.ClonePersisted(s.layoutTranslations)
+	clone.deliveryRuns = mutationtest.ClonePersisted(s.deliveryRuns)
+	clone.layoutReferences = mutationtest.ClonePersisted(s.layoutReferences)
+	clone.frozen = mutationtest.ClonePersisted(s.frozen)
+	clone.detached = mutationtest.ClonePersisted(s.detached)
+	clone.members = mutationtest.ClonePersisted(s.members)
+	clone.sessions = mutationtest.ClonePersisted(s.sessions)
 	return clone
 }
 
@@ -94,16 +94,30 @@ func New() (*Store, *mutationtest.UnitOfWork[emailauthoring.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() (rollback func()) {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	content := s.Store.Savepoint()
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() {
-		content()
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"templates":          saved.templates,
+			"layouts":            saved.layouts,
+			"layoutTranslations": saved.layoutTranslations,
+			"deliveryRuns":       saved.deliveryRuns,
+			"layoutReferences":   saved.layoutReferences,
+			"frozen":             saved.frozen,
+			"detached":           saved.detached,
+			"members":            saved.members,
+			"sessions":           saved.sessions,
+			"content":            content.State,
+		},
+		Restore: func() {
+			content.Restore()
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

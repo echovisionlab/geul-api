@@ -19,7 +19,7 @@ func (s *store) PublishContentUpdate(ctx context.Context, update work.ContentUpd
 			update.WorkID, change.Locale, change.DocumentRevision, change.TargetRevision,
 			change.Changed, change.LocaleDeleted, change.ContributorID)
 	}
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Signals), contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders a Work's content.updated signal; nil when the

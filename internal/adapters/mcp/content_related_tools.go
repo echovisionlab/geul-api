@@ -440,23 +440,9 @@ type documentVersionsArguments struct {
 }
 
 func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, _ string, call toolCall[documentVersionsArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+	input, err := decodeDocumentVersionsArguments(call)
+	if err != nil {
 		return executionError(err)
-	}
-	var input documentVersionsArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if _, supplied := arguments["limit"]; !supplied {
-		input.Limit = 20
-	}
-	if input.Limit < 1 || input.Limit > 100 {
-		return executionError(errors.New("limit must be between 1 and 100, or omitted for the default"))
-	}
-	if input.Offset < 0 {
-		return executionError(errors.New("offset must be nonnegative"))
 	}
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit, Offset: input.Offset}
 	versions := make([]map[string]any, 0)
@@ -511,6 +497,28 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, _ st
 		}
 	}
 	return contentResult(output)
+}
+
+func decodeDocumentVersionsArguments(call toolCall[documentVersionsArguments]) (documentVersionsArguments, error) {
+	arguments := call.Arguments
+
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return documentVersionsArguments{}, err
+	}
+	var input documentVersionsArguments
+	if err := call.Decode(&input); err != nil {
+		return documentVersionsArguments{}, err
+	}
+	if _, supplied := arguments["limit"]; !supplied {
+		input.Limit = 20
+	}
+	if input.Limit < 1 || input.Limit > 100 {
+		return documentVersionsArguments{}, errors.New("limit must be between 1 and 100, or omitted for the default")
+	}
+	if input.Offset < 0 {
+		return documentVersionsArguments{}, errors.New("offset must be nonnegative")
+	}
+	return input, nil
 }
 
 func versionOutput(id string, version int32, title string, summary *string, hash, sourceLocale string, createdAt *timestamppb.Timestamp, contributors []*managev1.VersionContributor) map[string]any {

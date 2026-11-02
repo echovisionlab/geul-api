@@ -39,7 +39,9 @@ func (p *publisher) PublishWaveformGenerate(_ context.Context, event *managev1.W
 	return nil
 }
 
-type tracker struct{ completed []*managev1.TranscodeCompleteEvent }
+type tracker struct {
+	completed []*managev1.TranscodeCompleteEvent
+}
 
 func (*tracker) HandleTranscodeProgress(context.Context, *managev1.TranscodeProgressEvent) error {
 	return nil

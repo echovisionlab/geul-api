@@ -33,7 +33,7 @@ func TestUpdateSegmentAuditsTheChangedFieldsOnly(t *testing.T) {
 
 	unchanged, err := h.service.UpdateSegment(h.admin, audience.UpdateSegmentCommand{
 		ID: segment.ID, Name: pointer("After"),
-		Config: &audience.SegmentConfigInput{},
+		Config:   &audience.SegmentConfigInput{},
 		Observed: &audience.ObservedSegment{SegmentType: audience.SegmentMembersByFilter, Config: &audience.SegmentConfigInput{}},
 	})
 	require.NoError(t, err)

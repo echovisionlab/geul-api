@@ -18,7 +18,7 @@ type fileUsageRow struct {
 }
 
 // fileUsageUnionSQL is the read projection for product references. Deletion
-// authority remains fileAttachmentReferenceRegistry; this projection only
+// authority remains the AttachmentReferences port; this projection only
 // supplies File Manager usage details and preflight summaries.
 const fileUsageUnionSQL = `
 SELECT file_id, 'artist' AS domain, artist_id::text AS entity_id, 'editor' AS reference_path, NULL::text AS block_id, NULL::text AS block_type, NULL::text AS label FROM artist_file

@@ -25,43 +25,8 @@ func sameUploadPointer(a, b *string) bool {
 func (s *LibraryStore) uploadSelections(f domain.UploadSearch, candidate bool) []domain.UploadSession {
 	rows := []domain.UploadSession{}
 	for _, r := range s.UploadSessions {
-		if r.UploadType != f.UploadType {
+		if !uploadSelectionEligible(r, f) || candidate && !uploadCandidateMatches(r, f) {
 			continue
-		}
-		eligible := r.Status == domain.UploadSessionStatusFinalizing || ((r.Status == domain.UploadSessionStatusInitiated || r.Status == domain.UploadSessionStatusUploading) && !r.LastActivityAt.Before(f.ActiveAfter) && r.ChunkSize == f.ChunkSize)
-		if !eligible {
-			continue
-		}
-		if independentUpload(f.UploadType) {
-			if r.EntityID != "" {
-				continue
-			}
-		} else if r.EntityID != f.EntityID {
-			continue
-		}
-		if f.EntityType != nil && (r.EntityType == nil || *r.EntityType != *f.EntityType) {
-			continue
-		}
-		if !sameUploadPointer(r.ExpectedFileID, f.ExpectedCurrentFileID) {
-			continue
-		}
-		if f.Mode == domain.UploadTargetEditorFile || f.Mode == domain.UploadTargetTrackProjection || (f.Mode == domain.UploadTargetGeneral && f.UploadType == "UPLOAD_TYPE_GENERAL_FILE") {
-			if r.SlotID != nil {
-				continue
-			}
-		} else if f.SlotID != "" && (r.SlotID == nil || *r.SlotID != f.SlotID) {
-			continue
-		}
-		if candidate {
-			if f.FileID != "" && r.FileID != f.FileID || f.UploadID != "" && r.UploadID != f.UploadID || f.FileName != "" && r.FileName != f.FileName || f.MimeType != "" && r.RequestedMime != f.MimeType {
-				continue
-			}
-			if f.FileSize != nil && *f.FileSize > 0 && r.FileSize != *f.FileSize {
-				continue
-			}
-			if f.FileLastModified != nil && (r.FileLastModified == nil || *r.FileLastModified != *f.FileLastModified) {
-				continue
-			}
 		}
 		rows = append(rows, cloneUpload(r))
 	}
@@ -78,6 +43,44 @@ func (s *LibraryStore) uploadSelections(f domain.UploadSearch, candidate bool) [
 		return cmp.Compare(a.UploadID, b.UploadID)
 	})
 	return rows
+}
+
+func uploadSelectionEligible(r domain.UploadSession, f domain.UploadSearch) bool {
+	if r.UploadType != f.UploadType {
+		return false
+	}
+	eligible := r.Status == domain.UploadSessionStatusFinalizing || ((r.Status == domain.UploadSessionStatusInitiated || r.Status == domain.UploadSessionStatusUploading) && !r.LastActivityAt.Before(f.ActiveAfter) && r.ChunkSize == f.ChunkSize)
+	if !eligible {
+		return false
+	}
+	if independentUpload(f.UploadType) {
+		if r.EntityID != "" {
+			return false
+		}
+	} else if r.EntityID != f.EntityID {
+		return false
+	}
+	if f.EntityType != nil && (r.EntityType == nil || *r.EntityType != *f.EntityType) {
+		return false
+	}
+	return sameUploadPointer(r.ExpectedFileID, f.ExpectedCurrentFileID) && uploadSlotMatches(r, f)
+}
+
+func uploadSlotMatches(r domain.UploadSession, f domain.UploadSearch) bool {
+	if f.Mode == domain.UploadTargetEditorFile || f.Mode == domain.UploadTargetTrackProjection || (f.Mode == domain.UploadTargetGeneral && f.UploadType == "UPLOAD_TYPE_GENERAL_FILE") {
+		return r.SlotID == nil
+	}
+	return f.SlotID == "" || r.SlotID != nil && *r.SlotID == f.SlotID
+}
+
+func uploadCandidateMatches(r domain.UploadSession, f domain.UploadSearch) bool {
+	if f.FileID != "" && r.FileID != f.FileID || f.UploadID != "" && r.UploadID != f.UploadID || f.FileName != "" && r.FileName != f.FileName || f.MimeType != "" && r.RequestedMime != f.MimeType {
+		return false
+	}
+	if f.FileSize != nil && *f.FileSize > 0 && r.FileSize != *f.FileSize {
+		return false
+	}
+	return f.FileLastModified == nil || r.FileLastModified != nil && *r.FileLastModified == *f.FileLastModified
 }
 func (s *LibraryStore) ActiveSurfaceUploads(_ context.Context, f domain.UploadSearch) ([]domain.UploadSession, error) {
 	if independentUpload(f.UploadType) || f.Mode == domain.UploadTargetUnknown || (f.Mode == domain.UploadTargetGeneral && f.SlotID == "") {

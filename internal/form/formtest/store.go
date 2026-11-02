@@ -83,16 +83,23 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.forms = maps.Clone(s.forms)
-	clone.locales = maps.Clone(s.locales)
-	clone.submissions = maps.Clone(s.submissions)
-	clone.documents = maps.Clone(s.documents)
-	clone.updates = slices.Clone(s.updates)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.ogCancels = slices.Clone(s.ogCancels)
-	clone.shareDeletes = slices.Clone(s.shareDeletes)
-	clone.released = slices.Clone(s.released)
-	clone.bindings = slices.Clone(s.bindings)
+	clone.forms = mutationtest.ClonePersisted(s.forms)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.submissions = mutationtest.ClonePersisted(s.submissions)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.routes = mutationtest.ClonePersisted(s.routes)
+	clone.files = mutationtest.ClonePersisted(s.files)
+	clone.images = mutationtest.ClonePersisted(s.images)
+	clone.readyAssets = mutationtest.ClonePersisted(s.readyAssets)
+	clone.preferred = mutationtest.ClonePersisted(s.preferred)
+	clone.shareLinks = mutationtest.ClonePersisted(s.shareLinks)
+	clone.dispositions = mutationtest.ClonePersisted(s.dispositions)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.ogCancels = mutationtest.ClonePersisted(s.ogCancels)
+	clone.shareDeletes = mutationtest.ClonePersisted(s.shareDeletes)
+	clone.released = mutationtest.ClonePersisted(s.released)
+	clone.bindings = mutationtest.ClonePersisted(s.bindings)
 	clone.lockedFiles = slices.Clone(s.lockedFiles)
 	clone.lockedRoutes = slices.Clone(s.lockedRoutes)
 	clone.contributions = slices.Clone(s.contributions)
@@ -150,14 +157,35 @@ func NewPublic() (*Store, *mutationtest.UnitOfWork[public.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"forms":        saved.forms,
+			"locales":      saved.locales,
+			"submissions":  saved.submissions,
+			"documents":    saved.documents,
+			"routes":       saved.routes,
+			"files":        saved.files,
+			"images":       saved.images,
+			"readyAssets":  saved.readyAssets,
+			"preferred":    saved.preferred,
+			"shareLinks":   saved.shareLinks,
+			"dispositions": saved.dispositions,
+			"updates":      saved.updates,
+			"ogRequests":   saved.ogRequests,
+			"ogCancels":    saved.ogCancels,
+			"shareDeletes": saved.shareDeletes,
+			"released":     saved.released,
+			"bindings":     saved.bindings,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

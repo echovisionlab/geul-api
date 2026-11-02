@@ -10,10 +10,13 @@ linters:
     - durationcheck
     - errcheck
     - errorlint
+    - funlen
+    - gocognit
     - govet
     - ineffassign
     - makezero
     - nilerr
+    - nestif
     - noctx
     - rowserrcheck
     - sqlclosecheck
@@ -22,6 +25,13 @@ linters:
     - unused
     - wastedassign
   settings:
+    funlen:
+      lines: 120
+      statements: 80
+    gocognit:
+      min-complexity: 30
+    nestif:
+      min-complexity: 6
     errorlint:
       errorf: false
       asserts: true
@@ -54,6 +64,11 @@ linters:
           - noctx
           - unparam
 
+formatters:
+  enable:
+    - gofmt
+
 issues:
+  new-from-merge-base: origin/main
   max-issues-per-linter: 0
   max-same-issues: 0

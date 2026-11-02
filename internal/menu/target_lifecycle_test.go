@@ -51,4 +51,3 @@ func TestMenuTargetRewriteUpdatesAndRemovesNestedReferences(t *testing.T) {
 	require.Len(t, pruned, 2)
 	require.Empty(t, pruned[1].Children)
 }
-

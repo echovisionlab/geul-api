@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -58,7 +61,7 @@ func New(
 	return &Runtime{
 		db:        db,
 		publisher: publisher,
-		transcode: transcodeapplication.New(applicationpostgres.NewUnits(db), publisher, jobs),
+		transcode: transcodeapplication.New(applicationpostgres.NewUnits(db, filemediaadapter.DerivativeResults{}), publisher, jobs),
 		spiceDB:   spiceDB,
 		s3Client:  s3Client,
 		bucket:    strings.TrimSpace(bucket),
@@ -73,7 +76,7 @@ func (r *Runtime) HandleFileDelete(
 	if err := filemediaapplication.ValidateDeleteEvent(event); err != nil {
 		return fmt.Errorf("%w: %v", filemediaapplication.ErrInvalidFileDeleteTarget, err)
 	}
-	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(r.db), r.fileAuth)
+	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(r.db, filereferences.Attachments{}), r.fileAuth)
 	target := filemediaapplication.DeletionTargetFromProto(event)
 	exists, err := deletion.ValidatePending(ctx, target)
 	if err != nil || !exists {
@@ -225,5 +228,5 @@ func (d meshOptimizationFileDeleter) DeleteFileByID(ctx context.Context, fileID 
 	if d.runtime == nil || d.runtime.publisher == nil || fileID == "" {
 		return nil
 	}
-	return filemedia.RequestFileDeletion(ctx, filemediapostgres.NewUnits(d.runtime.db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Publisher(d.runtime.publisher)}), fileID)
+	return filemedia.RequestFileDeletion(ctx, filemediapostgres.NewUnits(d.runtime.db, filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, DeletionQueue: filemediaqueue.Publisher(d.runtime.publisher)}), fileID)
 }

@@ -28,10 +28,11 @@ import (
 func (r serviceRegistration) registerReferenceCatalog() (*referencecatalog.Service, error) {
 	deps := r.dependencies
 	referenceCatalogUnits, err := referencecatalogpostgres.NewUnits(deps.db, referencecatalogpostgres.Ports{
-		Assets:      referencecatalogadapter.NewAssets(deps.cfg.CDNURL),
-		Members:     referencecatalogadapter.NewMemberSummaries(deps.cfg.CDNURL),
-		MenuTargets: referencecatalogmenuadapter.NewTargets(deps.telemetryWriter),
-		ClientWorks: workadapter.ClientWorks{},
+		DeletionReferences: referencecatalogadapter.DeletionReferences{},
+		Assets:             referencecatalogadapter.NewAssets(deps.cfg.CDNURL),
+		Members:            referencecatalogadapter.NewMemberSummaries(deps.cfg.CDNURL),
+		MenuTargets:        referencecatalogmenuadapter.NewTargets(deps.telemetryWriter),
+		ClientWorks:        workadapter.ClientWorks{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize reference catalog store: %w", err)

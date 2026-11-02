@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -75,18 +74,40 @@ func NewStore() *Store {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	files, assets, bindings := maps.Clone(s.files), maps.Clone(s.assets), maps.Clone(s.bindings)
-	generations, derivatives, tracks := maps.Clone(s.generations), maps.Clone(s.derivatives), maps.Clone(s.tracks)
-	jobs, waveforms := maps.Clone(s.jobs), maps.Clone(s.waveforms)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.files, s.assets, s.bindings = files, assets, bindings
-		s.generations, s.derivatives, s.tracks = generations, derivatives, tracks
-		s.jobs, s.waveforms = jobs, waveforms
+	files := mutationtest.ClonePersisted(s.files)
+	assets := mutationtest.ClonePersisted(s.assets)
+	bindings := mutationtest.ClonePersisted(s.bindings)
+	generations := mutationtest.ClonePersisted(s.generations)
+	derivatives := mutationtest.ClonePersisted(s.derivatives)
+	tracks := mutationtest.ClonePersisted(s.tracks)
+	jobs := mutationtest.ClonePersisted(s.jobs)
+	waveforms := mutationtest.ClonePersisted(s.waveforms)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"files":       files,
+			"assets":      assets,
+			"bindings":    bindings,
+			"generations": generations,
+			"derivatives": derivatives,
+			"tracks":      tracks,
+			"jobs":        jobs,
+			"waveforms":   waveforms,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.files = files
+			s.assets = assets
+			s.bindings = bindings
+			s.generations = generations
+			s.derivatives = derivatives
+			s.tracks = tracks
+			s.jobs = jobs
+			s.waveforms = waveforms
+		},
 	}
 }
 

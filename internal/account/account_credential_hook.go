@@ -123,6 +123,12 @@ func (s *AccountCredentialHookLifecycle) Complete(
 	if err := validateAccountCredentialHookInput(input, true, true); err != nil {
 		return err
 	}
+	return s.units.Fenced(ctx, input.IdentityID, func(ctx context.Context, steps Steps) error {
+		return s.complete(ctx, steps, input)
+	})
+}
+
+func (s *AccountCredentialHookLifecycle) complete(ctx context.Context, steps Steps, input AccountCredentialHookInput) error {
 	committed, err := loadIdentityAuthenticationCredentials(ctx, s.identity, input.IdentityID)
 	if err != nil {
 		return err
@@ -154,8 +160,7 @@ func (s *AccountCredentialHookLifecycle) Complete(
 
 	// One transaction locks the pair, converges the Member email projection
 	// and appends the audit record that makes a replay idempotent.
-	if err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
-		store := tx.Store()
+	if err := steps.Step(ctx, func(store Store) error {
 		if err := store.LockActivePairForCredentialMutation(ctx, memberID, input.IdentityID); err != nil {
 			return err
 		}
@@ -180,7 +185,7 @@ func (s *AccountCredentialHookLifecycle) Complete(
 	return PublishAccountSecurityEventEmail(
 		ctx,
 		s.publisher,
-		s.read,
+		steps.Step,
 		s.identity,
 		input.IdentityID,
 		transition.event,

@@ -133,3 +133,20 @@ func TestAccountCredentialPreHookRejectsUnrecoverableAndUnbackedPrimary(t *testi
 	require.Empty(t, f.kratos.Writes())
 	require.Empty(t, f.audit.Records())
 }
+
+func TestAccountCredentialCompletionHoldsTheIdentityFenceBeforeReadingCommittedCredentials(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, authztest.AllowAll())
+	_, identityID := f.seedPair("")
+	f.kratos.OnCall("GetIdentityWithIncludeCredential", func() {
+		require.Equal(t, []string{identityID}, f.units.FencedIdentities())
+	})
+	code := f.kratos.Identity(identityID).Credentials["code"]
+	require.NoError(t, credentialHook(f).Complete(t.Context(), account.AccountCredentialHookInput{
+		AuditID: uuid.NewString(), FlowID: "settings-fenced", IdentityID: identityID, Kind: account.AccountCredentialOIDC,
+		PreviousCredentials:     map[string]auth.Credential{"code": code, "oidc": googleCredential("")},
+		Credentials:             map[string]auth.Credential{"code": code},
+		PreviousSnapshotPresent: true, CredentialSnapshotPresent: true,
+	}))
+	require.Equal(t, []string{identityID}, f.units.FencedIdentities())
+}

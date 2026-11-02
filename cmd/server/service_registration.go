@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,13 +26,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 type serviceRegistrationDependencies struct {
@@ -80,32 +75,25 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	mux := deps.mux
-	cfg := deps.cfg
-	db := deps.db
-	workerPublisher := deps.workerPublisher
-	spicedbClient := deps.spicedbClient
-	telemetryWriter := deps.telemetryWriter
-	ogDeps := deps.og
 
 	// Register Connect services
 	// FileService first (needed by other services for file deletion)
-	downloadTTL := time.Duration(cfg.MediaDownloadTTLSec) * time.Second
+	downloadTTL := time.Duration(deps.cfg.MediaDownloadTTLSec) * time.Second
 	publicFileService, err := r.newPublicFiles(downloadTTL)
 	if err != nil {
 		return registeredServices{}, err
 	}
-	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
-	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
+	legalRuntime := legaladapter.NewOGRuntime(deps.cfg.CDNURL, deps.og.planner)
+	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(deps.db, deps.spicedbClient, deps.workerPublisher, deps.telemetryWriter, legalRuntime)
 	fileService, err := r.newFiles(downloadTTL, legalRuntime)
 	if err != nil {
 		return registeredServices{}, err
 	}
 
 	fileContentMedia := filemediacontent.New(fileService)
-	formAssets := formadapter.NewAssets(cfg.CDNURL)
-	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
-	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
+	formAssets := formadapter.NewAssets(deps.cfg.CDNURL)
+	pageRuntime := pageadapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher)
+	workRuntime := workadapter.NewRuntime(deps.db, deps.cfg.CDNURL, deps.og.refresher)
 	r.registerFileRoutes(fileService)
 
 	collaborationRuntime := r.registerCollaboration()
@@ -124,142 +112,35 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 
 	r.registerUploadRoutes(fileService)
 
-	music := musicServiceRegistration{
-		dependencies: deps, files: fileService, checkpoints: collaborationRuntime.Checkpoints,
-		manageOptions: r.manageOptions, internalOptions: r.internalOptions, publicOptions: r.publicOptions,
-		internalTrust: r.internalTrust, downloadTTL: downloadTTL,
-	}
-	artistService, err := music.registerArtist()
+	music, err := r.registerMusicApplications(fileService, collaborationRuntime, downloadTTL)
 	if err != nil {
 		return registeredServices{}, err
 	}
-	labelService, err := music.registerLabel()
-	if err != nil {
-		return registeredServices{}, err
-	}
-	releaseService, err := music.registerRelease()
-	if err != nil {
-		return registeredServices{}, err
-	}
-	referenceCatalog, err := r.registerReferenceCatalog()
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	music.registerTaxonomy(referenceCatalog)
 
 	if err := r.registerAI(); err != nil {
 		return registeredServices{}, err
 	}
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
-	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
+	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, deps.telemetryWriter)
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize translation domain registry: %w", err)
 	}
-	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(accountComposition.members), r.manageOptions...)
-	mux.Handle(memberPath, memberHandler)
-	slog.Info("Registered service", "path", memberPath)
-	accountPath, accountHandler := managev1connect.NewAccountServiceHandler(accountHooks.account, r.manageOptions...)
-	mux.Handle(accountPath, accountHandler)
-	slog.Info("Registered service", "path", accountPath)
+	r.registerAccountRoutes(accountComposition, accountHooks)
 
-	workService, err := r.registerWork(fileContentMedia, workRuntime, collaborationRuntime)
+	content := contentApplicationRegistration{
+		registration: r, publicFiles: publicFileService, files: fileService, media: fileContentMedia,
+		workRuntime: workRuntime, pageRuntime: pageRuntime, collaboration: collaborationRuntime,
+		formAssets: formAssets, references: music.references, legalRuntime: legalRuntime,
+		campaignDelivery: campaignDeliveryDispatcher, emailAuthoringReferences: emailAuthoringReferences,
+	}
+	contentDocuments, err := content.registerDocuments()
 	if err != nil {
 		return registeredServices{}, err
 	}
 
-	// Phase 2: CMS Services
-	postComposition, err := r.registerPost(publicFileService, fileService, fileContentMedia)
+	contentSupport, err := content.registerSupport(contentDocuments.post)
 	if err != nil {
-		return registeredServices{}, err
-	}
-
-	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), r.manageOptions...)
-	mux.Handle(categoryPath, categoryHandler)
-	slog.Info("Registered service", "path", categoryPath)
-
-	programEventService, err := r.registerProgramEvent(fileContentMedia, collaborationRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	tagPath, tagHandler := managev1connect.NewTagServiceHandler(referencecatalog.NewTagConnectHandler(referenceCatalog), r.manageOptions...)
-	mux.Handle(tagPath, tagHandler)
-	slog.Info("Registered service", "path", tagPath)
-
-	pageService, err := r.registerPage(fileService, fileContentMedia, pageRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	menuService, err := r.registerMenu(collaborationRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	formService, err := r.registerForm(formAssets)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	// Phase 3: Reference Data Services
-	seriesService, err := r.registerSeries(collaborationRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	clientPath, clientHandler := managev1connect.NewClientServiceHandler(referencecatalog.NewClientConnectHandler(referenceCatalog), r.manageOptions...)
-	mux.Handle(clientPath, clientHandler)
-	slog.Info("Registered service", "path", clientPath)
-
-	legalUnits, legalPolicyService, err := r.registerLegal(legalRuntime, campaignDeliveryDispatcher, collaborationRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(referencecatalog.NewMapPlaceConnectHandler(referenceCatalog), r.manageOptions...)
-	mux.Handle(mapPlacePath, mapPlaceHandler)
-	slog.Info("Registered service", "path", mapPlacePath)
-
-	mapThemeService, err := r.registerMapTheme()
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	emailAuthoringUnits, err := r.registerEmailAuthoring(collaborationRuntime, emailAuthoringReferences)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	mailAdapterService, err := r.registerEmailDelivery()
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	if err := r.registerComments(postComposition.members, postComposition.units); err != nil {
-		return registeredServices{}, err
-	}
-
-	campaignUnits, err := r.registerCampaign(collaborationRuntime)
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	if err := r.registerAudience(); err != nil {
-		return registeredServices{}, err
-	}
-
-	siteSettingService, err := r.registerSiteSettings()
-	if err != nil {
-		return registeredServices{}, err
-	}
-
-	if err := r.registerAdmin(); err != nil {
-		return registeredServices{}, err
-	}
-
-	if err := r.registerShareLinks(); err != nil {
 		return registeredServices{}, err
 	}
 
@@ -268,86 +149,34 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		handlerOptions:              r.internalOptions,
 		internalTrust:               r.internalTrust,
 		accountEmailChangeLifecycle: accountHooks.emailChanges,
-		programEvents:               programEventService,
-		emailAuthoringUnits:         emailAuthoringUnits,
-		campaignUnits:               campaignUnits,
-		legalUnits:                  legalUnits,
-		mapThemes:                   mapThemeService,
+		programEvents:               contentDocuments.programEvent,
+		emailAuthoringUnits:         contentSupport.emailAuthoringUnits,
+		campaignUnits:               contentSupport.campaignUnits,
+		legalUnits:                  contentSupport.legalUnits,
+		mapThemes:                   contentSupport.mapTheme,
 	}).register()
 	if err != nil {
 		return registeredServices{}, err
 	}
-	internalEmailAuthoringService := internalServices.emailAuthoring
-	internalCampaignService := internalServices.campaign
-	legalAIDocumentService := internalServices.legalDocuments
 	translationService, err := (translationServiceRegistration{
 		dependencies:             deps,
 		handlerOptions:           r.manageOptions,
 		domainRegistry:           translationRegistry,
 		emailAuthoringReferences: emailAuthoringReferences,
-		legalDocuments:           legalAIDocumentService,
-		seriesService:            seriesService,
+		legalDocuments:           internalServices.legalDocuments,
+		seriesService:            contentSupport.series,
 		fileService:              fileService,
 	}).register()
 	if err != nil {
 		return registeredServices{}, err
 	}
-	if err := r.registerAIDocuments(aiDocumentApplications{
-		post:           postComposition.service,
-		page:           pageService,
-		work:           workService,
-		programEvent:   programEventService,
-		release:        releaseService,
-		artist:         artistService,
-		label:          labelService,
-		menu:           menuService,
-		emailAuthoring: internalEmailAuthoringService,
-		campaign:       internalCampaignService,
-		form:           formService,
-		legal:          legalAIDocumentService,
-		series:         seriesService,
-	}, contentMCPApplications{
-		legalPolicies: legalPolicyService,
-		categories:    referenceCatalog,
-		tags:          referenceCatalog,
-		clients:       referenceCatalog,
-		mapPlaces:     referenceCatalog,
-		members:       accountComposition.members,
-		artists:       artistService,
-		files:         fileService,
-		eventTypes:    programEventService,
-		eventSeries:   programEventService,
-		labels:        labelService,
-		genres:        referenceCatalog,
-		styles:        referenceCatalog,
-		formats:       referenceCatalog,
-		forms:         formService,
-		postSeries:    seriesService,
-		tracks:        releaseService,
-		mapThemes:     mapThemeService,
-		menus:         menuService,
-		menuSettings:  siteSettingService,
-		siteSettings:  siteSettingService,
-		mailAdapters:  mailAdapterService,
-	}, translationService, fileService); err != nil {
+	if err := content.registerAIDocumentApplications(music, contentDocuments, contentSupport, internalServices, translationService, accountComposition.members); err != nil {
 		return registeredServices{}, err
 	}
 
-	internalOgService := og.NewInternalConnectHandler(og.NewLifecycle(ogDeps.units))
-	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, r.internalOptions...)
-	mux.Handle(internalOgPath, r.internalTrust.og(internalOgHandler))
-	slog.Info("Registered internal service", "path", internalOgPath)
-	if err := (publicServiceRegistration{
-		dependencies:   deps,
-		handlerOptions: r.publicOptions,
-		fileService:    publicFileService,
-		postShareLinks: postComposition.shareLinks,
-		postMembers:    postComposition.members,
-		workRuntime:    workRuntime,
-		legalRuntime:   legalRuntime,
-		formAssets:     formAssets,
-		accounts:       accountComposition.account,
-	}).register(); err != nil {
+	r.registerInternalOGRoutes()
+
+	if err := content.registerPublic(accountComposition, contentDocuments.post); err != nil {
 		return registeredServices{}, err
 	}
 
@@ -358,4 +187,25 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		mcpAuthorAdmissionHandler:   accountHooks.mcpAdmission,
 		oathkeeperPATHandler:        accountHooks.oathkeeper,
 	}, nil
+}
+
+func (r serviceRegistration) registerSiteAndAdministration() (*sitesettings.Service, error) {
+	if err := r.registerAudience(); err != nil {
+		return nil, err
+	}
+
+	siteSettingService, err := r.registerSiteSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := r.registerAdmin(); err != nil {
+		return nil, err
+	}
+
+	if err := r.registerShareLinks(); err != nil {
+		return nil, err
+	}
+
+	return siteSettingService, nil
 }

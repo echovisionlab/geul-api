@@ -4,7 +4,6 @@ package favicontest
 import (
 	"cmp"
 	"context"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -36,14 +35,25 @@ func New() (*Store, *mutationtest.UnitOfWork[favicon.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	assets, bindings, deletions := maps.Clone(s.assets), maps.Clone(s.bindings), len(s.deletions)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.assets, s.bindings, s.deletions = assets, bindings, s.deletions[:deletions]
+	assets := mutationtest.ClonePersisted(s.assets)
+	bindings := mutationtest.ClonePersisted(s.bindings)
+	deletions := mutationtest.ClonePersisted(s.deletions)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"assets":    assets,
+			"bindings":  bindings,
+			"deletions": deletions,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.assets = assets
+			s.bindings = bindings
+			s.deletions = deletions
+		},
 	}
 }
 

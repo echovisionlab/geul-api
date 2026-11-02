@@ -101,23 +101,31 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.works = maps.Clone(s.works)
-	clone.locales = maps.Clone(s.locales)
-	clone.localeOgAssets = maps.Clone(s.localeOgAssets)
-	clone.groups = maps.Clone(s.groups)
-	clone.credits = maps.Clone(s.credits)
-	clone.clients = maps.Clone(s.clients)
-	clone.workClients = maps.Clone(s.workClients)
-	clone.versions = maps.Clone(s.versions)
-	clone.documents = maps.Clone(s.documents)
-	clone.routes = maps.Clone(s.routes)
-	clone.members = maps.Clone(s.members)
-	clone.files = maps.Clone(s.files)
-	clone.updates = slices.Clone(s.updates)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.ogCancels = slices.Clone(s.ogCancels)
-	clone.shareLinkDeletes = slices.Clone(s.shareLinkDeletes)
-	clone.bindings = maps.Clone(s.bindings)
+	clone.works = mutationtest.ClonePersisted(s.works)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.localeOgAssets = mutationtest.ClonePersisted(s.localeOgAssets)
+	clone.groups = mutationtest.ClonePersisted(s.groups)
+	clone.credits = mutationtest.ClonePersisted(s.credits)
+	clone.clients = mutationtest.ClonePersisted(s.clients)
+	clone.workClients = mutationtest.ClonePersisted(s.workClients)
+	clone.versions = mutationtest.ClonePersisted(s.versions)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.routes = mutationtest.ClonePersisted(s.routes)
+	clone.members = mutationtest.ClonePersisted(s.members)
+	clone.mapPlaces = mutationtest.ClonePersisted(s.mapPlaces)
+	clone.files = mutationtest.ClonePersisted(s.files)
+	clone.readyAssets = mutationtest.ClonePersisted(s.readyAssets)
+	clone.fileAssets = mutationtest.ClonePersisted(s.fileAssets)
+	clone.artists = mutationtest.ClonePersisted(s.artists)
+	clone.artistMembers = mutationtest.ClonePersisted(s.artistMembers)
+	clone.sessions = mutationtest.ClonePersisted(s.sessions)
+	clone.revokedRoom = mutationtest.ClonePersisted(s.revokedRoom)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.ogCancels = mutationtest.ClonePersisted(s.ogCancels)
+	clone.shareLinkDeletes = mutationtest.ClonePersisted(s.shareLinkDeletes)
+	clone.bindings = mutationtest.ClonePersisted(s.bindings)
+	clone.contentResults = slices.Clone(s.contentResults)
 	clone.lockedSessions = slices.Clone(s.lockedSessions)
 	return clone
 }
@@ -161,14 +169,42 @@ func New() (*Store, *mutationtest.UnitOfWork[work.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"works":            saved.works,
+			"locales":          saved.locales,
+			"localeOgAssets":   saved.localeOgAssets,
+			"groups":           saved.groups,
+			"credits":          saved.credits,
+			"clients":          saved.clients,
+			"workClients":      saved.workClients,
+			"versions":         saved.versions,
+			"documents":        saved.documents,
+			"routes":           saved.routes,
+			"members":          saved.members,
+			"mapPlaces":        saved.mapPlaces,
+			"files":            saved.files,
+			"readyAssets":      saved.readyAssets,
+			"fileAssets":       saved.fileAssets,
+			"artists":          saved.artists,
+			"artistMembers":    saved.artistMembers,
+			"sessions":         saved.sessions,
+			"revokedRoom":      saved.revokedRoom,
+			"updates":          saved.updates,
+			"ogRequests":       saved.ogRequests,
+			"ogCancels":        saved.ogCancels,
+			"shareLinkDeletes": saved.shareLinkDeletes,
+			"bindings":         saved.bindings,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 
@@ -646,40 +682,39 @@ func matchesAdminFilters(value work.Work, title string, filters []*commonv1.Filt
 		if filter == nil {
 			continue
 		}
-		switch filter.GetField() {
-		case "has_slug":
-			has := value.Slug != nil && *value.Slug != ""
-			if (filter.GetValue() == "true" && !has) || (filter.GetValue() == "false" && has) {
-				return false, nil
-			}
-		case "has_featured_image":
-			has := value.FeaturedImageFileID != nil
-			if (filter.GetValue() == "true" && !has) || (filter.GetValue() == "false" && has) {
-				return false, nil
-			}
-		case "search":
-			if filter.GetOp() != commonv1.FilterOp_FILTER_OP_ILIKE {
-				return false, fmt.Errorf("fake Work store does not take the search filter %s", filter.GetOp())
-			}
-			if !strings.Contains(strings.ToLower(title), strings.ToLower(filter.GetValue())) {
-				return false, nil
-			}
-		case "status", "type", "map_place_id":
-			if filter.GetOp() != commonv1.FilterOp_FILTER_OP_EQ {
-				return false, fmt.Errorf("fake Work store does not take the %s filter %s", filter.GetField(), filter.GetOp())
-			}
-			column := map[string]string{"status": string(value.Status), "type": value.Type}[filter.GetField()]
-			if filter.GetField() == "map_place_id" && value.MapPlaceID != nil {
-				column = *value.MapPlaceID
-			}
-			if column != filter.GetValue() {
-				return false, nil
-			}
-		default:
-			return false, fmt.Errorf("fake Work store does not take the %q filter", filter.GetField())
+		matches, err := matchesAdminFilter(value, title, filter)
+		if err != nil || !matches {
+			return false, err
 		}
 	}
 	return true, nil
+}
+
+func matchesAdminFilter(value work.Work, title string, filter *commonv1.FilterSpec) (bool, error) {
+	switch filter.GetField() {
+	case "has_slug":
+		has := value.Slug != nil && *value.Slug != ""
+		return (filter.GetValue() != "true" || has) && (filter.GetValue() != "false" || !has), nil
+	case "has_featured_image":
+		has := value.FeaturedImageFileID != nil
+		return (filter.GetValue() != "true" || has) && (filter.GetValue() != "false" || !has), nil
+	case "search":
+		if filter.GetOp() != commonv1.FilterOp_FILTER_OP_ILIKE {
+			return false, fmt.Errorf("fake Work store does not take the search filter %s", filter.GetOp())
+		}
+		return strings.Contains(strings.ToLower(title), strings.ToLower(filter.GetValue())), nil
+	case "status", "type", "map_place_id":
+		if filter.GetOp() != commonv1.FilterOp_FILTER_OP_EQ {
+			return false, fmt.Errorf("fake Work store does not take the %s filter %s", filter.GetField(), filter.GetOp())
+		}
+		column := map[string]string{"status": string(value.Status), "type": value.Type}[filter.GetField()]
+		if filter.GetField() == "map_place_id" && value.MapPlaceID != nil {
+			column = *value.MapPlaceID
+		}
+		return column == filter.GetValue(), nil
+	default:
+		return false, fmt.Errorf("fake Work store does not take the %q filter", filter.GetField())
+	}
 }
 
 func pageOf[T any](values []T, limit, offset int32) []T {

@@ -105,7 +105,7 @@ func TestPublishWorkContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return contentsignal.PublishInTransaction(context.Background(), tx, &mq.Publisher{}, event)
+		return contentsignal.PublishInTransaction(context.Background(), tx, ownerSignalPublisher(&mq.Publisher{}), event)
 	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -121,7 +121,7 @@ func TestPublishWorkContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	mock.ExpectQuery("SELECT document.revision FROM work AS owner").WithArgs("work-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
 	mock.ExpectRollback()
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return contentsignal.PublishInTransaction(context.Background(), tx, failingWorkSignalPublisher{err: failure}, event)
+		return contentsignal.PublishInTransaction(context.Background(), tx, ownerSignalPublisher(failingWorkSignalPublisher{err: failure}), event)
 	})
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
 
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
@@ -130,7 +132,7 @@ func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *t
 	})
 
 	authorizationCalled := make(chan struct{}, 1)
-	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(db), signalingFileAuthorizationDeletion{
+	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(db, filereferences.Attachments{}), signalingFileAuthorizationDeletion{
 		called: authorizationCalled,
 	})
 	finalized := make(chan error, 1)

@@ -283,13 +283,21 @@ reads through `s.units.Read`. A domain that needs `ReadLocked` or
 `mutationtest.UnitOfWork` with the same isolation, rather than opening a
 transaction itself.
 
-`mutationtest.UnitOfWork` serializes transactions like one connection, rolls
-the fake back through its `Savepoint() (rollback func())` when a
-transaction fails, keeps `authzmutation.Execute`'s write-once contract, and
-records the steps `Run` took (`Steps()`: `StepAuthorizationLock`,
-`StepSubjects`, `StepLock`, `StepAccess`, `StepChange`, `StepAudit`,
-`StepOutbox`, `StepRelationships`, then `StepCommit` or `StepRollback`), so
-a use-case test asserts order and rollback without PostgreSQL.
+`mutationtest.UnitOfWork` serializes transactions like one connection and
+restores failed transactions through `Savepoint() mutationtest.Checkpoint`.
+Each fake selects its persisted `State` and `Restore` operation explicitly;
+locks, failure injection and call observations stay outside the comparison.
+`Read` compares independent snapshots, rejects persisted changes and restores
+the checkpoint. `ReadLocked` and `ReadCurrent` allow successful writes and
+restore on callback error or panic. State comparison cannot enforce SQL CHECK
+constraints or statement-level read-only restrictions; actual PostgreSQL
+contracts cover those rules.
+
+The fake keeps `authzmutation.Execute`'s write-once contract and records the
+steps `Run` took (`Steps()`: `StepAuthorizationLock`, `StepSubjects`,
+`StepLock`, `StepAccess`, `StepChange`, `StepAudit`, `StepOutbox`,
+`StepRelationships`, then `StepCommit` or `StepRollback`), so a use-case test
+asserts order and rollback without PostgreSQL.
 
 `Runner`, `Spec` and `NewRunner` are the store-less form of the same
 pipeline for domains that have not moved: their closures receive the gorm
@@ -629,6 +637,12 @@ env -u API_TIMEOUT_MS GOWORK=off go test ./internal/architecture -run <Test> -up
 | `TestGeneratedStatusNameConversionRatchet` | `generated_status_name_conversions` | `.String()` on a generated `*_STATUS_*` value and `*Status_value` lookups, per package | 33 packages, 391 conversions |
 | `TestAuditWriterNilGuardRatchet` | `audit_writer_nil_guards` | `== nil` / `!= nil` on an audit writer, per package | 27 packages, 169 guards |
 | `TestDomainPackagesDependOnPortsRatchet` | `domain_port_dependencies` | per domain package (Store adapters under `<domain>/postgres` excluded): files importing gorm, a SQL driver, `internal/model`, or generated contracts outside `connect_handler*.go` (policy descriptors allowed); references to `auth.SpiceDBClient` and `kratos.*` | 399 gorm, 343 model, 359 contracts, 12 driver files; 133 SpiceDB client and 2 Kratos references |
+
+The table check resolves source-known variables, true type aliases and finite
+registries within lexical scope. Mutable registry escapes and unproven targets
+remain unknown; direct literal and model calls are collected independently of
+inferred control flow. Owner query ports use the caller's transaction and
+preserve the existing query count and snapshot.
 
 `TestTableOwnersCoverEveryModelTable` fails when a model's table has no owner.
 `pipelineDomains` in `use_case_ratchet_test.go` lists the migrated domains.

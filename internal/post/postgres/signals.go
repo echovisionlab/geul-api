@@ -12,7 +12,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update post.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Signals), contentUpdatedEvent(update))
 }
 
 type contentUpdatedFieldSpec struct {

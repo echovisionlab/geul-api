@@ -189,54 +189,62 @@ func pageLocaleSetLeaves(target core.FieldTarget, value core.Value) []core.Field
 
 func (c *PageCodec) pageLocaleValueTargetExists(ctx context.Context, document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
 	if _, _, exists := findPageNode(document, string(target.Block)); exists {
-		if target.Field != pageSectionLocaleField {
-			return false
-		}
-		path := target.Path
-		sectionProps := len(path) == 2 && path[0].Field == "props" && path[1].Field != ""
-		unitProps := len(path) == 4 && path[0].Field == "units" && path[1].Item != "" && path[2].Field == "props" && path[3].Field != ""
-		if !sectionProps && !unitProps {
-			return false
-		}
-		locale, exists := findPageLocaleSection(document, string(target.Block))
-		if !exists {
-			return false
-		}
-		_, message, err := c.localeSectionMessage(locale.ProtoReflect())
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to resolve Page locale section; treating the target as shared", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
-			return false
-		}
-		container, field, err := pageResolvePath(message, path, false)
-		return err == nil && container != nil && field != nil && !field.IsList() && field.Kind() != protoreflect.MessageKind
+		return c.pageSectionLocaleValueTargetExists(ctx, document, target)
 	}
 	if target.Field == richTextTableLocaleField {
 		path := target.Path
 		if len(path) != 5 || path[0].Field != "rows" || path[1].Item == "" || path[2].Field != "cells" || path[3].Item == "" || path[4].Field != "content" {
 			return false
 		}
-		// Shared table edits can remove a cell while its locale still exists.
-		// Such an orphan must not restore an earlier explicit empty write.
-		for _, section := range document.GetBase().GetNodes() {
-			for _, node := range section.GetSection().GetRichText().GetBlocks().GetNodes() {
-				if node.GetBlock().GetId() != string(target.Block) {
+		return pageRichTextTableCellExists(document, string(target.Block), string(path[1].Item), string(path[3].Item))
+	}
+	return len(target.Path) == 0 && c.pageRichTextFieldIsLocale(ctx, document, target)
+}
+
+func (c *PageCodec) pageSectionLocaleValueTargetExists(ctx context.Context, document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
+	if target.Field != pageSectionLocaleField {
+		return false
+	}
+	path := target.Path
+	sectionProps := len(path) == 2 && path[0].Field == "props" && path[1].Field != ""
+	unitProps := len(path) == 4 && path[0].Field == "units" && path[1].Item != "" && path[2].Field == "props" && path[3].Field != ""
+	if !sectionProps && !unitProps {
+		return false
+	}
+	locale, exists := findPageLocaleSection(document, string(target.Block))
+	if !exists {
+		return false
+	}
+	_, message, err := c.localeSectionMessage(locale.ProtoReflect())
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to resolve Page locale section; treating the target as shared", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
+		return false
+	}
+	container, field, err := pageResolvePath(message, path, false)
+	return err == nil && container != nil && field != nil && !field.IsList() && field.Kind() != protoreflect.MessageKind
+}
+
+func pageRichTextTableCellExists(document *contentv1.LocalizedPageDocument, blockID, rowID, cellID string) bool {
+	// Shared table edits can remove a cell while its locale still exists.
+	// Such an orphan must not restore an earlier explicit empty write.
+	for _, section := range document.GetBase().GetNodes() {
+		for _, node := range section.GetSection().GetRichText().GetBlocks().GetNodes() {
+			if node.GetBlock().GetId() != blockID {
+				continue
+			}
+			for _, row := range node.GetBlock().GetTable().GetContent().GetRows() {
+				if row.GetId() != rowID {
 					continue
 				}
-				for _, row := range node.GetBlock().GetTable().GetContent().GetRows() {
-					if row.GetId() != string(path[1].Item) {
-						continue
-					}
-					for _, cell := range row.GetCells() {
-						if cell.GetId() == string(path[3].Item) {
-							return true
-						}
+				for _, cell := range row.GetCells() {
+					if cell.GetId() == cellID {
+						return true
 					}
 				}
 			}
 		}
-		return false
 	}
-	return len(target.Path) == 0 && c.pageRichTextFieldIsLocale(ctx, document, target)
+	return false
 }
 
 func pageAffectedLocaleValues(affected map[string]core.FieldTarget) []*managev1.AIDocumentFieldTarget {
@@ -336,24 +344,8 @@ func pageDocumentRichTextBlockExists(document *contentv1.LocalizedPageDocument, 
 }
 
 func (c *PageCodec) applyPageOperation(ctx context.Context, document *contentv1.LocalizedPageDocument, role core.LocaleRole, operation core.Operation, deleted map[string]struct{}) error {
-	if role != core.LocaleRoleSource {
-		switch operation.Kind {
-		case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock, core.OperationReplaceBlockKind:
-			return errors.New("target Page locale cannot alter document topology")
-		case core.OperationAttachFile, core.OperationDetachFile:
-			return errors.New("target Page locale cannot alter shared Files")
-		case core.OperationSetField, core.OperationUnsetField:
-			var target core.FieldTarget
-			if operation.SetField != nil {
-				target = operation.SetField.Target
-			} else {
-				target = operation.UnsetField.Target
-			}
-			_, _, pageSection := findPageNode(document, string(target.Block))
-			if (pageSection && target.Field != pageSectionLocaleField) || (!pageSection && !c.pageRichTextFieldIsLocale(ctx, document, target)) {
-				return errors.New("target Page locale accepts only locale scalar fields")
-			}
-		}
+	if err := c.validatePageLocaleOperation(ctx, document, role, operation); err != nil {
+		return err
 	}
 	switch operation.Kind {
 	case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock:
@@ -409,6 +401,29 @@ func (c *PageCodec) applyPageOperation(ctx context.Context, document *contentv1.
 	default:
 		return fmt.Errorf("unsupported Page operation %q", operation.Kind)
 	}
+}
+
+func (c *PageCodec) validatePageLocaleOperation(ctx context.Context, document *contentv1.LocalizedPageDocument, role core.LocaleRole, operation core.Operation) error {
+	if role != core.LocaleRoleSource {
+		switch operation.Kind {
+		case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock, core.OperationReplaceBlockKind:
+			return errors.New("target Page locale cannot alter document topology")
+		case core.OperationAttachFile, core.OperationDetachFile:
+			return errors.New("target Page locale cannot alter shared Files")
+		case core.OperationSetField, core.OperationUnsetField:
+			var target core.FieldTarget
+			if operation.SetField != nil {
+				target = operation.SetField.Target
+			} else {
+				target = operation.UnsetField.Target
+			}
+			_, _, pageSection := findPageNode(document, string(target.Block))
+			if (pageSection && target.Field != pageSectionLocaleField) || (!pageSection && !c.pageRichTextFieldIsLocale(ctx, document, target)) {
+				return errors.New("target Page locale accepts only locale scalar fields")
+			}
+		}
+	}
+	return nil
 }
 
 func pageOperationBlock(operation core.Operation) core.BlockID {

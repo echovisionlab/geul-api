@@ -10,7 +10,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update release.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Publisher, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, ownerSignalPublisher(s.ports.Publisher), contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders a Release's content.updated signal.

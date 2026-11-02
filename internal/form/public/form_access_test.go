@@ -14,16 +14,19 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
+type formAccessPolicyCase struct {
+	name string
+	ctx  context.Context
+	form func() *form.Form
+	opts formAccessOptions
+	want AccessReason
+}
+
 func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	requireAuth := true
 	allowDuplicates := true
-	passwordHash := "$2a$04$WLWqfbCrZp4bLVMi.3wxKODz/gfg0vR7.KYku23QsAFjH85NcIF0i"
-	futureOpen := now.Add(time.Hour)
-	pastClose := now.Add(-time.Hour)
-	currentOpen := now.Add(-time.Hour)
-	currentClose := now.Add(time.Hour)
 
 	baseForm := func() *form.Form {
 		return &form.Form{
@@ -46,13 +49,23 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 	authorCtx := userContext(policyv1.Platform.IsAuthor)
 	malformedRoleCtx := userContext(nil)
 
-	cases := []struct {
-		name string
-		ctx  context.Context
-		form func() *form.Form
-		opts formAccessOptions
-		want AccessReason
-	}{
+	cases := formAccessVisibilityCases(baseForm)
+	cases = append(cases, formAccessAuthenticationCases(baseForm, &requireAuth, adminCtx, authorCtx, malformedRoleCtx)...)
+	cases = append(cases, formAccessAvailabilityCases(baseForm, now)...)
+
+	service := &Service{spiceDB: checker}
+	reads := noSubmissions{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, err := service.evaluateFormAccess(tc.ctx, reads, tc.form(), tc.opts)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, reason)
+		})
+	}
+}
+
+func formAccessVisibilityCases(baseForm func() *form.Form) []formAccessPolicyCase {
+	return []formAccessPolicyCase{
 		{
 			name: "draft without preview token",
 			ctx:  context.Background(),
@@ -86,12 +99,17 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 			opts: formAccessOptions{context: ContextURL},
 			want: ReasonNotPublic,
 		},
+	}
+}
+
+func formAccessAuthenticationCases(baseForm func() *form.Form, requireAuth *bool, adminCtx, authorCtx, malformedRoleCtx context.Context) []formAccessPolicyCase {
+	return []formAccessPolicyCase{
 		{
 			name: "required auth blocks anonymous",
 			ctx:  context.Background(),
 			form: func() *form.Form {
 				found := baseForm()
-				found.RequireAuth = &requireAuth
+				found.RequireAuth = requireAuth
 				return found
 			},
 			want: ReasonAuthRequired,
@@ -111,7 +129,7 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 			ctx:  authorCtx,
 			form: func() *form.Form {
 				found := baseForm()
-				found.RequireAuth = &requireAuth
+				found.RequireAuth = requireAuth
 				found.AllowedRoles = []string{policyv1.Role.Admin().ID()}
 				return found
 			},
@@ -132,12 +150,22 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 			ctx:  adminCtx,
 			form: func() *form.Form {
 				found := baseForm()
-				found.RequireAuth = &requireAuth
+				found.RequireAuth = requireAuth
 				found.AllowedRoles = []string{policyv1.Role.Admin().ID()}
 				return found
 			},
 			want: ReasonAllowed,
 		},
+	}
+}
+
+func formAccessAvailabilityCases(baseForm func() *form.Form, now time.Time) []formAccessPolicyCase {
+	passwordHash := "$2a$04$WLWqfbCrZp4bLVMi.3wxKODz/gfg0vR7.KYku23QsAFjH85NcIF0i"
+	futureOpen := now.Add(time.Hour)
+	pastClose := now.Add(-time.Hour)
+	currentOpen := now.Add(-time.Hour)
+	currentClose := now.Add(time.Hour)
+	return []formAccessPolicyCase{
 		{
 			name: "future open window",
 			ctx:  context.Background(),
@@ -180,16 +208,6 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 			opts: formAccessOptions{enforcePassword: true},
 			want: ReasonPasswordRequired,
 		},
-	}
-
-	service := &Service{spiceDB: checker}
-	reads := noSubmissions{}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			reason, err := service.evaluateFormAccess(tc.ctx, reads, tc.form(), tc.opts)
-			require.NoError(t, err)
-			require.Equal(t, tc.want, reason)
-		})
 	}
 }
 

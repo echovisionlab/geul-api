@@ -109,15 +109,17 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.versions = maps.Clone(s.versions)
-	clone.translations = maps.Clone(s.translations)
-	clone.documents = maps.Clone(s.documents)
-	clone.runs = slices.Clone(s.runs)
-	clone.previews = maps.Clone(s.previews)
-	clone.linkDeletes = slices.Clone(s.linkDeletes)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.released = slices.Clone(s.released)
-	clone.updates = slices.Clone(s.updates)
+	clone.versions = mutationtest.ClonePersisted(s.versions)
+	clone.translations = mutationtest.ClonePersisted(s.translations)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.runs = mutationtest.ClonePersisted(s.runs)
+	clone.previews = mutationtest.ClonePersisted(s.previews)
+	clone.linkDeletes = mutationtest.ClonePersisted(s.linkDeletes)
+	clone.sessions = mutationtest.ClonePersisted(s.sessions)
+	clone.preferred = mutationtest.ClonePersisted(s.preferred)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.released = mutationtest.ClonePersisted(s.released)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
 	clone.activations = slices.Clone(s.activations)
 	clone.contributions = slices.Clone(s.contributions)
 	return clone
@@ -157,14 +159,29 @@ func New() (*Store, *mutationtest.UnitOfWork[legal.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"versions":     saved.versions,
+			"translations": saved.translations,
+			"documents":    saved.documents,
+			"runs":         saved.runs,
+			"previews":     saved.previews,
+			"linkDeletes":  saved.linkDeletes,
+			"sessions":     saved.sessions,
+			"preferred":    saved.preferred,
+			"ogRequests":   saved.ogRequests,
+			"released":     saved.released,
+			"updates":      saved.updates,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

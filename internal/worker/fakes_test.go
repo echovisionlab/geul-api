@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -279,12 +278,21 @@ func newFakeJobs() *fakeJobs {
 	return &fakeJobs{calls: &calls{}, published: map[string]bool{}, activations: map[string]bool{}, due: true}
 }
 
-func (f *fakeJobs) Savepoint() func() {
-	published := maps.Clone(f.published)
-	activations := maps.Clone(f.activations)
-	ogRequests := slices.Clone(f.ogRequests)
-	return func() {
-		f.published, f.activations, f.ogRequests = published, activations, ogRequests
+func (f *fakeJobs) Savepoint() mutationtest.Checkpoint {
+	published := mutationtest.ClonePersisted(f.published)
+	activations := mutationtest.ClonePersisted(f.activations)
+	ogRequests := mutationtest.ClonePersisted(f.ogRequests)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"published":   published,
+			"activations": activations,
+			"ogRequests":  ogRequests,
+		},
+		Restore: func() {
+			f.published = published
+			f.activations = activations
+			f.ogRequests = ogRequests
+		},
 	}
 }
 

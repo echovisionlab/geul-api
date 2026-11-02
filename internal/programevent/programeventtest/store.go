@@ -10,7 +10,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -76,22 +75,19 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.events = maps.Clone(s.events)
-	clone.locales = maps.Clone(s.locales)
-	clone.media = maps.Clone(s.media)
-	clone.credits = maps.Clone(s.credits)
-	clone.relations = make(map[relationKey][]programevent.Relation, len(s.relations))
-	for key, rows := range s.relations {
-		clone.relations[key] = slices.Clone(rows)
-	}
-	clone.series = maps.Clone(s.series)
-	clone.types = maps.Clone(s.types)
-	clone.typeLocales = maps.Clone(s.typeLocales)
-	clone.documents = maps.Clone(s.documents)
-	clone.bindings = maps.Clone(s.bindings)
-	clone.routes = maps.Clone(s.routes)
-	clone.members = maps.Clone(s.members)
-	clone.updates = slices.Clone(s.updates)
+	clone.events = mutationtest.ClonePersisted(s.events)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.media = mutationtest.ClonePersisted(s.media)
+	clone.credits = mutationtest.ClonePersisted(s.credits)
+	clone.relations = mutationtest.ClonePersisted(s.relations)
+	clone.series = mutationtest.ClonePersisted(s.series)
+	clone.types = mutationtest.ClonePersisted(s.types)
+	clone.typeLocales = mutationtest.ClonePersisted(s.typeLocales)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.bindings = mutationtest.ClonePersisted(s.bindings)
+	clone.routes = mutationtest.ClonePersisted(s.routes)
+	clone.members = mutationtest.ClonePersisted(s.members)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
 	clone.lockedFiles = slices.Clone(s.lockedFiles)
 	return clone
 }
@@ -165,14 +161,31 @@ func New() (*Store, *mutationtest.UnitOfWork[programevent.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"events":      saved.events,
+			"locales":     saved.locales,
+			"media":       saved.media,
+			"credits":     saved.credits,
+			"relations":   saved.relations,
+			"series":      saved.series,
+			"types":       saved.types,
+			"typeLocales": saved.typeLocales,
+			"documents":   saved.documents,
+			"bindings":    saved.bindings,
+			"routes":      saved.routes,
+			"members":     saved.members,
+			"updates":     saved.updates,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

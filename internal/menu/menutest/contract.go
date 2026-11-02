@@ -291,11 +291,17 @@ var storeContract = map[string]func(t *testing.T, h mutationtest.Harness[menu.St
 		renamed := created.root.Name + " renamed"
 		var seen menu.Root
 		err := mutationtest.RequireSecondWaits(t, h,
-			func(ctx context.Context, store menu.Store) error { _, err := store.LockMenu(ctx, created.root.ID); return err },
+			func(ctx context.Context, store menu.Store) error {
+				_, err := store.LockMenu(ctx, created.root.ID)
+				return err
+			},
 			func(ctx context.Context, store menu.Store) error {
 				return store.UpdateMenu(ctx, created.root.ID, menu.RootChange{Name: &renamed, UpdatedAt: time.Now().UTC()})
 			},
-			func(ctx context.Context, store menu.Store) (err error) { seen, err = store.LockMenu(ctx, created.root.ID); return err },
+			func(ctx context.Context, store menu.Store) (err error) {
+				seen, err = store.LockMenu(ctx, created.root.ID)
+				return err
+			},
 		)
 		require.NoError(t, err)
 		require.Equal(t, renamed, seen.Name, "the second writer reads the first writer's commit")
@@ -304,7 +310,10 @@ var storeContract = map[string]func(t *testing.T, h mutationtest.Harness[menu.St
 		created := seedContractMenu(t, h, "Rewrite "+uuid.NewString()[:8])
 		var seen []menu.Root
 		err := mutationtest.RequireSecondWaits(t, h,
-			func(ctx context.Context, store menu.Store) error { _, err := store.LockMenu(ctx, created.root.ID); return err },
+			func(ctx context.Context, store menu.Store) error {
+				_, err := store.LockMenu(ctx, created.root.ID)
+				return err
+			},
 			func(ctx context.Context, store menu.Store) error {
 				return store.UpdateMenu(ctx, created.root.ID, menu.RootChange{ItemsJSON: []byte(`[]`), UpdatedAt: time.Now().UTC()})
 			},
@@ -339,11 +348,17 @@ var storeContract = map[string]func(t *testing.T, h mutationtest.Harness[menu.St
 		seedContractLocale(t, h, contractLocale(created.root.ID, "en", map[string]string{"home": "Home"}))
 		var seen menu.LocaleValues
 		err := mutationtest.RequireSecondWaits(t, h,
-			func(ctx context.Context, store menu.Store) error { _, err := store.LockLocale(ctx, created.root.ID, "en"); return err },
+			func(ctx context.Context, store menu.Store) error {
+				_, err := store.LockLocale(ctx, created.root.ID, "en")
+				return err
+			},
 			func(ctx context.Context, store menu.Store) error {
 				return store.UpdateLocale(ctx, contractLocale(created.root.ID, "en", map[string]string{"home": "Start"}))
 			},
-			func(ctx context.Context, store menu.Store) (err error) { seen, err = store.LockLocale(ctx, created.root.ID, "en"); return err },
+			func(ctx context.Context, store menu.Store) (err error) {
+				seen, err = store.LockLocale(ctx, created.root.ID, "en")
+				return err
+			},
 		)
 		require.NoError(t, err)
 		require.Equal(t, map[string]string{"home": "Start"}, seen.Labels)

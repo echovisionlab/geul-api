@@ -77,15 +77,37 @@ func New() (*Store, *mutationtest.UnitOfWork[member.Store]) {
 var _ member.Store = (*Store)(nil)
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	saved := s.state.clone()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		saved.failures = s.state.failures
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"members":          saved.members,
+			"identities":       saved.identities,
+			"pendingDeletions": saved.pendingDeletions,
+			"tags":             saved.tags,
+			"mappings":         saved.mappings,
+			"segmentTags":      saved.segmentTags,
+			"newsletter":       saved.newsletter,
+			"consents":         saved.consents,
+			"assets":           saved.assets,
+			"assetStatus":      saved.assetStatus,
+			"bindings":         saved.bindings,
+			"avatarSources":    saved.avatarSources,
+			"tokens":           saved.tokens,
+			"anchors":          saved.anchors,
+			"bootstrap":        saved.bootstrap,
+			"deliveries":       saved.deliveries,
+			"welcome":          saved.welcome,
+			"deletionRequests": saved.deletionRequests,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			saved.failures = s.state.failures
+			s.state = saved
+		},
 	}
 }
 
@@ -96,23 +118,26 @@ func cloneMember(value member.Member) member.Member {
 }
 
 func (st state) clone() state {
-	members := make(map[string]member.Member, len(st.members))
-	for id, value := range st.members {
-		members[id] = cloneMember(value)
-	}
-	mappings := make(map[string]map[string]bool, len(st.mappings))
-	for id, tags := range st.mappings {
-		mappings[id] = maps.Clone(tags)
-	}
-	return state{
-		members: members, identities: maps.Clone(st.identities), pendingDeletions: maps.Clone(st.pendingDeletions),
-		tags: maps.Clone(st.tags), mappings: mappings, segmentTags: maps.Clone(st.segmentTags),
-		newsletter: maps.Clone(st.newsletter), consents: slices.Clone(st.consents), assets: maps.Clone(st.assets),
-		assetStatus: maps.Clone(st.assetStatus), bindings: maps.Clone(st.bindings), avatarSources: maps.Clone(st.avatarSources),
-		tokens: maps.Clone(st.tokens), anchors: maps.Clone(st.anchors), bootstrap: maps.Clone(st.bootstrap),
-		deliveries: maps.Clone(st.deliveries), welcome: slices.Clone(st.welcome),
-		deletionRequests: slices.Clone(st.deletionRequests), failures: st.failures,
-	}
+	clone := st
+	clone.members = mutationtest.ClonePersisted(st.members)
+	clone.identities = mutationtest.ClonePersisted(st.identities)
+	clone.pendingDeletions = mutationtest.ClonePersisted(st.pendingDeletions)
+	clone.tags = mutationtest.ClonePersisted(st.tags)
+	clone.mappings = mutationtest.ClonePersisted(st.mappings)
+	clone.segmentTags = mutationtest.ClonePersisted(st.segmentTags)
+	clone.newsletter = mutationtest.ClonePersisted(st.newsletter)
+	clone.consents = mutationtest.ClonePersisted(st.consents)
+	clone.assets = mutationtest.ClonePersisted(st.assets)
+	clone.assetStatus = mutationtest.ClonePersisted(st.assetStatus)
+	clone.bindings = mutationtest.ClonePersisted(st.bindings)
+	clone.avatarSources = mutationtest.ClonePersisted(st.avatarSources)
+	clone.tokens = mutationtest.ClonePersisted(st.tokens)
+	clone.anchors = mutationtest.ClonePersisted(st.anchors)
+	clone.bootstrap = mutationtest.ClonePersisted(st.bootstrap)
+	clone.deliveries = mutationtest.ClonePersisted(st.deliveries)
+	clone.welcome = mutationtest.ClonePersisted(st.welcome)
+	clone.deletionRequests = mutationtest.ClonePersisted(st.deletionRequests)
+	return clone
 }
 
 // Fail makes every later call of the named Store method answer err.

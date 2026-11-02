@@ -187,7 +187,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		fileID := h.SeedFile(t)
 		at := stamp().Add(time.Second)
 		hidden := false
-		layout := page.DocumentLayout{ContentHeight: page.ContentHeightViewport, PageChrome: page.PlacementPinned, Footer: page.PlacementFlow}
+		layout := page.DocumentLayout{ContentHeight: page.ContentHeightViewport, PageChrome: page.PlacementPinned, Footer: page.PlacementFlow, HideTableOfContents: true}
 		transact(t, h, func(ctx context.Context, store page.Store) error {
 			require.NoError(t, store.UpdateSettings(ctx, value.ID, page.SettingsChange{
 				SetSlug: true, ShowTitle: &hidden, AccessPolicy: json.RawMessage(`{"mode":"PAGE_ACCESS_MODE_AUTHENTICATED"}`),

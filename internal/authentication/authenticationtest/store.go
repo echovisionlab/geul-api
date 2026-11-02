@@ -88,19 +88,28 @@ func (s *Store) Issuances() []authentication.Issuance {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	members, identities, issuances := maps.Clone(s.members), maps.Clone(s.identities), maps.Clone(s.issuances)
-	var claim *firstAdmin
-	if s.firstAdmin != nil {
-		copied := *s.firstAdmin
-		claim = &copied
-	}
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.members, s.identities, s.issuances, s.firstAdmin = members, identities, issuances, claim
+	members := mutationtest.ClonePersisted(s.members)
+	identities := mutationtest.ClonePersisted(s.identities)
+	firstAdmin := mutationtest.ClonePersisted(s.firstAdmin)
+	issuances := mutationtest.ClonePersisted(s.issuances)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"members":    members,
+			"identities": identities,
+			"firstAdmin": firstAdmin,
+			"issuances":  issuances,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.members = members
+			s.identities = identities
+			s.firstAdmin = firstAdmin
+			s.issuances = issuances
+		},
 	}
 }
 

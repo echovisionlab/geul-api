@@ -109,7 +109,9 @@ func TestUpdateReleaseLocaleMetadataRejectionsLeaveStateUnchanged(t *testing.T) 
 		message string
 	}{
 		{"no metadata value", func(*intrav1.UpdateReleaseLocaleMetadataRequest) {}, connect.CodeInvalidArgument, "update: at least one metadata value is required"},
-		{"non-canonical locale", func(r *intrav1.UpdateReleaseLocaleMetadataRequest) { r.Locale, r.Title = "english", proto.String("Title") }, connect.CodeInvalidArgument, "locale: must be an exact canonical locale"},
+		{"non-canonical locale", func(r *intrav1.UpdateReleaseLocaleMetadataRequest) {
+			r.Locale, r.Title = "english", proto.String("Title")
+		}, connect.CodeInvalidArgument, "locale: must be an exact canonical locale"},
 		{"expected revision is not a UUID", func(r *intrav1.UpdateReleaseLocaleMetadataRequest) {
 			r.ExpectedRevision, r.Title = "not-a-uuid", proto.String("Title")
 		}, connect.CodeInvalidArgument, "expected_revision: must be a UUID"},

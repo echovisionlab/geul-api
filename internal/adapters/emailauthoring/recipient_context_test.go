@@ -8,12 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type templateContextAllowedCase struct {
+	name string
+	job  *managev1.SendEmailEvent
+	want bool
+}
+
 func TestTemplateContextAllowed(t *testing.T) {
-	tests := []struct {
-		name string
-		job  *managev1.SendEmailEvent
-		want bool
-	}{
+	tests := []templateContextAllowedCase{
 		{
 			name: "campaign allows newsletter subscription",
 			job: &managev1.SendEmailEvent{
@@ -70,6 +72,43 @@ func TestTemplateContextAllowed(t *testing.T) {
 			},
 			want: true,
 		},
+	}
+	tests = append(tests, authenticationTemplateContextCases()...)
+	tests = append(tests, []templateContextAllowedCase{
+		{
+			name: "direct template only allows test send",
+			job: &managev1.SendEmailEvent{
+				TemplateType:     email.DirectTemplateType("template-1"),
+				RecipientContext: email.TestEmailContext("admin-1"),
+			},
+			want: true,
+		},
+		{
+			name: "unknown template rejects account current context",
+			job: &managev1.SendEmailEvent{
+				TemplateType:     "custom",
+				RecipientContext: email.AccountSelectedPrimaryEmailContext("identity-1"),
+			},
+			want: false,
+		},
+		{
+			name: "missing context rejects",
+			job: &managev1.SendEmailEvent{
+				TemplateType: email.EventWelcome.String(),
+			},
+			want: false,
+		},
+	}...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, TemplateContextAllowed(tt.job))
+		})
+	}
+}
+
+func authenticationTemplateContextCases() []templateContextAllowedCase {
+	return []templateContextAllowedCase{
 		{
 			name: "account verification only allows verification context",
 			job: &managev1.SendEmailEvent{
@@ -115,34 +154,5 @@ func TestTemplateContextAllowed(t *testing.T) {
 			},
 			want: false,
 		},
-		{
-			name: "direct template only allows test send",
-			job: &managev1.SendEmailEvent{
-				TemplateType:     email.DirectTemplateType("template-1"),
-				RecipientContext: email.TestEmailContext("admin-1"),
-			},
-			want: true,
-		},
-		{
-			name: "unknown template rejects account current context",
-			job: &managev1.SendEmailEvent{
-				TemplateType:     "custom",
-				RecipientContext: email.AccountSelectedPrimaryEmailContext("identity-1"),
-			},
-			want: false,
-		},
-		{
-			name: "missing context rejects",
-			job: &managev1.SendEmailEvent{
-				TemplateType: email.EventWelcome.String(),
-			},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, TemplateContextAllowed(tt.job))
-		})
 	}
 }

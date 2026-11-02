@@ -54,14 +54,22 @@ func NewStore() *Store {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	links, targets := maps.Clone(s.links), maps.Clone(s.targets)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.links, s.targets = links, targets
+	links := mutationtest.ClonePersisted(s.links)
+	targets := mutationtest.ClonePersisted(s.targets)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"links":   links,
+			"targets": targets,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.links = links
+			s.targets = targets
+		},
 	}
 }
 

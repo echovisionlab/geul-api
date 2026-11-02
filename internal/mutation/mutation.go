@@ -166,42 +166,7 @@ func Run[R, S any](ctx context.Context, runner *StoreRunner[S], spec StoreSpec[R
 		defer cancel()
 	}
 	work := func(tx Tx[S]) error {
-		if len(subjects) != 0 {
-			tx.observe(StepSubjects)
-		}
-		for _, subject := range subjects {
-			if err := runner.authority.fence.Lock(tx.db, subject); err != nil {
-				return fmt.Errorf("lock identity state: %w", err)
-			}
-		}
-		if spec.Lock != nil {
-			tx.observe(StepLock)
-			if err := spec.Lock(ctx, tx.store); err != nil {
-				return err
-			}
-		}
-		tx.observe(StepAccess)
-		if err := spec.Access.authorize(ctx, tx.db, tx.store, runner.authority); err != nil {
-			return err
-		}
-		tx.observe(StepChange)
-		var err error
-		if result, err = spec.Change(ctx, tx.store); err != nil {
-			return err
-		}
-		tx.observe(StepAudit)
-		audit := spec.Audit(result)
-		if spec.Access.system && !audit.systemOnly() {
-			return errors.New("system mutation requires a system audit")
-		}
-		if err := runner.appendAudit(ctx, tx.db, audit); err != nil {
-			return err
-		}
-		if spec.Outbox != nil {
-			tx.observe(StepOutbox)
-			return spec.Outbox(ctx, tx.store, result)
-		}
-		return nil
+		return spec.runSteps(ctx, runner, tx, subjects, &result)
 	}
 	if spec.Relationships != nil {
 		err = runner.units.RelationshipTransaction(ctx, runner.authority.checker, func(tx Tx[S], write authzmutation.WriteRelationships) error {
@@ -223,6 +188,45 @@ func Run[R, S any](ctx context.Context, runner *StoreRunner[S], spec StoreSpec[R
 		return zero, err
 	}
 	return result, nil
+}
+
+func (spec StoreSpec[R, S]) runSteps(ctx context.Context, runner *StoreRunner[S], tx Tx[S], subjects []string, result *R) error {
+	if len(subjects) != 0 {
+		tx.observe(StepSubjects)
+	}
+	for _, subject := range subjects {
+		if err := runner.authority.fence.Lock(tx.db, subject); err != nil {
+			return fmt.Errorf("lock identity state: %w", err)
+		}
+	}
+	if spec.Lock != nil {
+		tx.observe(StepLock)
+		if err := spec.Lock(ctx, tx.store); err != nil {
+			return err
+		}
+	}
+	tx.observe(StepAccess)
+	if err := spec.Access.authorize(ctx, tx.db, tx.store, runner.authority); err != nil {
+		return err
+	}
+	tx.observe(StepChange)
+	var err error
+	if *result, err = spec.Change(ctx, tx.store); err != nil {
+		return err
+	}
+	tx.observe(StepAudit)
+	audit := spec.Audit(*result)
+	if spec.Access.system && !audit.systemOnly() {
+		return errors.New("system mutation requires a system audit")
+	}
+	if err := runner.appendAudit(ctx, tx.db, audit); err != nil {
+		return err
+	}
+	if spec.Outbox != nil {
+		tx.observe(StepOutbox)
+		return spec.Outbox(ctx, tx.store, *result)
+	}
+	return nil
 }
 
 // lockOrder sorts and deduplicates subjects so concurrent mutations lock

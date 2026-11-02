@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	filereferences "github.com/echovisionlab/geul-api/internal/adapters/filereferences"
+
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -22,7 +24,7 @@ func TestPostgresDeletionStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunDeletionContract(t, func(t *testing.T) filemediatest.DeletionHarness {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
-		return filemediatest.DeletionHarness{Harness: mutationtest.PostgresHarness(db, NewDeletionUnits(db)), SeedFile: func(t *testing.T, f filemedia.File) {
+		return filemediatest.DeletionHarness{Harness: mutationtest.PostgresHarness(db, NewDeletionUnits(db, filereferences.Attachments{})), SeedFile: func(t *testing.T, f filemedia.File) {
 			row := model.File{ID: f.ID, FileName: f.FileName, MimeType: f.MimeType, FileSize: f.FileSize, Extension: f.Extension, CreatedAt: f.CreatedAt, DeleteRequestedAt: f.DeleteRequestedAt}
 			hash := sha256.Sum256([]byte(f.ID))
 			row.SHA256 = hash[:]

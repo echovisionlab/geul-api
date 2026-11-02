@@ -67,7 +67,9 @@ func newFakeStore() *fakeStore {
 
 // Savepoint implements mutationtest.Savepointer; the reads write nothing to
 // roll back.
-func (s *fakeStore) Savepoint() func() { return func() {} }
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 // put stores a Work and its source title.
 func (s *fakeStore) put(status workdomain.Status, title string) public.Work {

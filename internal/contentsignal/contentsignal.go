@@ -48,7 +48,7 @@ func PublishInTransaction(
 			event.Origin = &origin
 		}
 	}
-	if err := completeRevision(ctx, tx, event); err != nil {
+	if err := completeRevision(ctx, tx, publisher, event); err != nil {
 		return err
 	}
 	if err := Validate(event); err != nil {
@@ -129,41 +129,22 @@ func Validate(event *managev1.ContentUpdatedEvent) error {
 
 // Metadata and media writers retain the document token even when they do not
 // advance it. The caller already owns the resource lock.
-func completeRevision(ctx context.Context, tx *gorm.DB, event *managev1.ContentUpdatedEvent) error {
+func completeRevision(ctx context.Context, tx *gorm.DB, publisher Publisher, event *managev1.ContentUpdatedEvent) error {
 	if event.DocumentRevision != nil {
 		return nil
-	}
-	tables := map[managev1.ContentEntityType]string{
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST:           "post",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE:           "page",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK:           "work",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST:         "artist",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_LABEL:          "label",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE:        "release",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_FORM:           "form",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT:  "program_event",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST_SERIES:    "series",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU:           "menu",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_TEMPLATE: "email_template",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_LAYOUT:   "email_layout",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_CAMPAIGN:       "campaign",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PRIVACY:        "privacy_history",
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_TERMS:          "terms_history",
-	}
-	table, ok := tables[event.EntityType]
-	if !ok {
-		return errors.New("unknown content.updated entity")
 	}
 	if _, err := TransactionExecutor(tx); err != nil {
 		return err
 	}
-	var row struct{ Revision string }
-	if err := tx.WithContext(ctx).Table(table+" AS owner").
-		Select("document.revision").Joins("JOIN content_document AS document ON document.id = owner.content_document_id").
-		Where("owner.id = ?", event.EntityId).Take(&row).Error; err != nil {
+	reader, ok := publisher.(RevisionReader)
+	if !ok {
+		return errors.New("content.updated document revision reader is required")
+	}
+	revision, err := reader.DocumentRevision(ctx, tx, event.EntityType, event.EntityId)
+	if err != nil {
 		return err
 	}
-	event.DocumentRevision = &row.Revision
+	event.DocumentRevision = &revision
 	return nil
 }
 

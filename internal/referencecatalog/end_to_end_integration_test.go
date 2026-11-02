@@ -70,10 +70,11 @@ func newEndToEnd(t *testing.T) endToEnd {
 func (e endToEnd) service(t *testing.T, audit domainaudit.Appender) *referencecatalog.Service {
 	t.Helper()
 	units, err := referencecatalogpostgres.NewUnits(e.db, referencecatalogpostgres.Ports{
-		Assets:      referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		Members:     referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		MenuTargets: referencecatalogmenuadapter.NewTargets(audit),
-		ClientWorks: workadapter.ClientWorks{},
+		DeletionReferences: referencecatalogadapter.DeletionReferences{},
+		Assets:             referencecatalogadapter.NewAssets("https://cdn.example.com"),
+		Members:            referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
+		MenuTargets:        referencecatalogmenuadapter.NewTargets(audit),
+		ClientWorks:        workadapter.ClientWorks{},
 	})
 	require.NoError(t, err)
 	service, err := referencecatalog.NewService(referencecatalog.Deps{

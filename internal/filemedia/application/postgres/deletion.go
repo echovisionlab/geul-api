@@ -18,21 +18,22 @@ import (
 
 type deletionUnits struct {
 	mutation.UnitOfWork[application.DeletionStore]
-	db *gorm.DB
+	db         *gorm.DB
+	references filemediapostgres.AttachmentReferences
 }
 
-func NewDeletionUnits(db *gorm.DB) application.DeletionUnits {
-	if db == nil {
-		panic("file deletion units: db is required")
+func NewDeletionUnits(db *gorm.DB, references filemediapostgres.AttachmentReferences) application.DeletionUnits {
+	if db == nil || references == nil {
+		panic("file deletion units: database and attachment reference owners are required")
 	}
-	return deletionUnits{UnitOfWork: mutation.Postgres(db, func(tx *gorm.DB) application.DeletionStore { return &store{tx: tx} }), db: db}
+	return deletionUnits{UnitOfWork: mutation.Postgres(db, func(tx *gorm.DB) application.DeletionStore { return &store{tx: tx, references: references} }), db: db, references: references}
 }
 func (u deletionUnits) Compensated(ctx context.Context, work func(application.DeletionStore, application.RegisterCompensation) error) error {
 	return executeCompensatedTransaction(ctx, u.db, func(tx *gorm.DB, register registerTransactionCompensation) error {
 		if err := authzmutation.LockTransaction(tx); err != nil {
 			return err
 		}
-		return work(&store{tx: tx}, register)
+		return work(&store{tx: tx, references: u.references}, register)
 	})
 }
 func (s *store) LockDeletionFile(ctx context.Context, id string) (filemedia.File, error) {
@@ -44,7 +45,7 @@ func (s *store) LockDeletionFile(ctx context.Context, id string) (filemedia.File
 	return file(row), err
 }
 func (s *store) ActiveFileReferenceNames(ctx context.Context, id string) ([]string, error) {
-	return filemediapostgres.ActiveFileReferenceNames(ctx, s.tx, id)
+	return filemediapostgres.ActiveFileReferenceNames(ctx, s.tx, s.references, id)
 }
 func (s *store) PendingTranscodeResultCounts(ctx context.Context, id string) (int64, int64, error) {
 	return transcodepostgres.PendingResultCounts(ctx, s.tx, id)

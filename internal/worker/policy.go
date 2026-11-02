@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -92,32 +93,7 @@ func (h *Handlers) handleUnbanExpired(ctx context.Context, now time.Time) error 
 		}
 
 		for _, identity := range identities {
-			if identity.MetadataAdmin == nil {
-				continue
-			}
-			banned, ok := identity.MetadataAdmin["banned"].(bool)
-			if !ok || !banned {
-				continue
-			}
-			expiresStr, ok := identity.MetadataAdmin["ban_expires"].(string)
-			if !ok || expiresStr == "" {
-				continue // permanent ban, no expiry
-			}
-			expires, err := time.Parse(time.RFC3339, expiresStr)
-			if err != nil {
-				slog.WarnContext(ctx, "Skipping timed ban with invalid ban_expires", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
-				continue
-			}
-			if expires.After(now) {
-				continue // not yet expired
-			}
-
-			cleared, err := h.timedBans.ClearExpiredTimedBan(ctx, identity.ID, now)
-			if err != nil {
-				slog.ErrorContext(ctx, "Expired timed ban clear failed", append(failurecause.Args(err), "user_id", identity.ID)...)
-				continue
-			}
-			if cleared {
+			if h.clearExpiredTimedBan(ctx, identity, now) {
 				unbannedCount++
 			}
 		}
@@ -132,4 +108,32 @@ func (h *Handlers) handleUnbanExpired(ctx context.Context, now time.Time) error 
 		slog.InfoContext(ctx, "Unbanned expired users", "count", unbannedCount)
 	}
 	return nil
+}
+
+func (h *Handlers) clearExpiredTimedBan(ctx context.Context, identity *auth.Identity, now time.Time) bool {
+	if identity.MetadataAdmin == nil {
+		return false
+	}
+	banned, ok := identity.MetadataAdmin["banned"].(bool)
+	if !ok || !banned {
+		return false
+	}
+	expiresStr, ok := identity.MetadataAdmin["ban_expires"].(string)
+	if !ok || expiresStr == "" {
+		return false // permanent ban, no expiry
+	}
+	expires, err := time.Parse(time.RFC3339, expiresStr)
+	if err != nil {
+		slog.WarnContext(ctx, "Skipping timed ban with invalid ban_expires", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
+		return false
+	}
+	if expires.After(now) {
+		return false // not yet expired
+	}
+	cleared, err := h.timedBans.ClearExpiredTimedBan(ctx, identity.ID, now)
+	if err != nil {
+		slog.ErrorContext(ctx, "Expired timed ban clear failed", append(failurecause.Args(err), "user_id", identity.ID)...)
+		return false
+	}
+	return cleared
 }

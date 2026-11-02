@@ -1,6 +1,5 @@
 package release
 
-
 // RelationOrderIntent moves ItemID before NextItemID, otherwise after
 // PreviousItemID, otherwise to the end.
 type RelationOrderIntent struct {

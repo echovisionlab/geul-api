@@ -50,11 +50,17 @@ type ClientWorks interface {
 
 // Ports are the other domains' adapters a catalog transaction calls with the
 // transaction itself; all are required.
+type DeletionReferences interface {
+	MapPlaceInUse(context.Context, *gorm.DB, string) (bool, error)
+	ClientInUse(context.Context, *gorm.DB, string) (bool, error)
+}
+
 type Ports struct {
-	Assets      Assets
-	Members     Members
-	MenuTargets MenuTargets
-	ClientWorks ClientWorks
+	DeletionReferences DeletionReferences
+	Assets             Assets
+	Members            Members
+	MenuTargets        MenuTargets
+	ClientWorks        ClientWorks
 }
 
 // NewUnits returns the production unit of work of the Reference Catalog use
@@ -63,7 +69,7 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[referencecatalog.St
 	var missing []string
 	for name, absent := range map[string]bool{
 		"database": db == nil, "Assets": ports.Assets == nil, "Members": ports.Members == nil,
-		"MenuTargets": ports.MenuTargets == nil, "ClientWorks": ports.ClientWorks == nil,
+		"MenuTargets": ports.MenuTargets == nil, "ClientWorks": ports.ClientWorks == nil, "DeletionReferences": ports.DeletionReferences == nil,
 	} {
 		if absent {
 			missing = append(missing, name)

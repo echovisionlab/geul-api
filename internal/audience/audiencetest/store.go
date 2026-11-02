@@ -5,7 +5,6 @@ package audiencetest
 import (
 	"cmp"
 	"context"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -77,21 +76,34 @@ func New() (*Store, *mutationtest.UnitOfWork[audience.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	segments := make(map[string]audience.Segment, len(s.segments))
-	for id, segment := range s.segments {
-		segments[id] = cloneSegment(segment)
-	}
-	tags, members := maps.Clone(s.tags), maps.Clone(s.members)
-	campaigns, runs := maps.Clone(s.campaigns), maps.Clone(s.runs)
-	policies := clonePolicies(s.policies)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.segments, s.tags, s.members = segments, tags, members
-		s.campaigns, s.runs, s.policies = campaigns, runs, policies
+	segments := mutationtest.ClonePersisted(s.segments)
+	tags := mutationtest.ClonePersisted(s.tags)
+	members := mutationtest.ClonePersisted(s.members)
+	campaigns := mutationtest.ClonePersisted(s.campaigns)
+	runs := mutationtest.ClonePersisted(s.runs)
+	policies := mutationtest.ClonePersisted(s.policies)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"segments":  segments,
+			"tags":      tags,
+			"members":   members,
+			"campaigns": campaigns,
+			"runs":      runs,
+			"policies":  policies,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.segments = segments
+			s.tags = tags
+			s.members = members
+			s.campaigns = campaigns
+			s.runs = runs
+			s.policies = policies
+		},
 	}
 }
 
