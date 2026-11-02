@@ -212,7 +212,7 @@ func (s *Store) InsertPost(_ context.Context, stored *post.Post) error {
 	}
 	stored.ID = uuid.NewString()
 	stored.ConfigurationRevision = uuid.NewString()
-	stored.CreatedAt = s.now()
+	stored.CreatedAt = s.now().UTC().Truncate(time.Microsecond)
 	stored.UpdatedAt = stored.CreatedAt
 	saved := *stored
 	saved.Title, saved.Summary, saved.Categories, saved.Tags = "", nil, nil, nil
