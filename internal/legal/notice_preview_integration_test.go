@@ -85,6 +85,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	)
 	require.NoError(t, err)
 	effectiveAt := now.Add(6 * 24 * time.Hour)
+	scheduleStartedAt := time.Now().UTC().Truncate(time.Microsecond)
 	_, err = service.ScheduleTerms(
 		ctx,
 		connect.NewRequest(&managev1.ScheduleTermsRequest{
@@ -93,6 +94,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 			EffectiveFrom:    timestamppb.New(effectiveAt),
 		}),
 	)
+	scheduleFinishedAt := time.Now().UTC()
 	require.NoError(t, err)
 
 	var run model.CampaignDeliveryRun
@@ -101,7 +103,8 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		draft.Msg.Id,
 		email.EventTermsUpdate.String(),
 	).Take(&run).Error)
-	require.WithinDuration(t, now, run.ScheduledAt, time.Second)
+	require.False(t, run.ScheduledAt.Before(scheduleStartedAt), "notice dispatch precedes its schedule command")
+	require.False(t, run.ScheduledAt.After(scheduleFinishedAt), "notice dispatch is deferred beyond its schedule command")
 	data, err := campaign.CampaignDeliveryRunTemplateData(campaignpostgres.DeliveryRunFromRow(run))
 	require.NoError(t, err)
 	require.Equal(t, "September contributor terms", data["policy_title"])
