@@ -1,9 +1,11 @@
 //go:build integration
 
-package postgres_test
+package mapthemepostgres_test
 
 import (
 	"testing"
+
+	mapthemeadapter "github.com/echovisionlab/geul-api/internal/adapters/maptheme"
 
 	"github.com/google/uuid"
 
@@ -19,7 +21,7 @@ func TestPostgresStoreKeepsTheMapThemeStoreContractIntegration(t *testing.T) {
 	mapthemetest.RunStoreContract(t, func(t *testing.T) mapthemetest.Harness {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		return mapthemetest.Harness{
-			Harness: mutationtest.PostgresHarness(db, mapthemepostgres.NewUnits(db)),
+			Harness: mutationtest.PostgresHarness(db, mapthemepostgres.NewUnits(db, mapthemepostgres.Ports{SiteSettings: mapthemeadapter.SiteSettings{}})),
 			SeedContributor: func(t *testing.T) (string, string) {
 				identityID := uuid.NewString()
 				return orytest.SeedPostIntegrationIdentity(t, db, identityID, "Map Theme contributor"), identityID

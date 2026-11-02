@@ -82,7 +82,8 @@ func defaultThemeID(t *testing.T, h Harness) string {
 func setDefault(t *testing.T, h Harness, id string) {
 	t.Helper()
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, store maptheme.Store) error {
-		return store.SetDefaultThemeID(ctx, id)
+		_, err := store.SetDefaultThemeID(ctx, id)
+		return err
 	}))
 }
 
@@ -147,7 +148,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"an inserted theme reads back at revision one with its stored snapshot": func(t *testing.T, h Harness) {
 		snapshot := Snapshot("Contract insert")
-		snapshot.Settings.CalloutScale = 1.1 // Not exactly representable in the float32 column.
+		snapshot.Settings.CalloutScale = 1.1     // Not exactly representable in the float32 column.
 		snapshot.Settings.ShowAreaLabels = false // The column defaults to true.
 		snapshot.LightVariant.BuildingStrokeEnabled = false
 
@@ -251,7 +252,8 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"a missing theme cannot become the site default": func(t *testing.T, h Harness) {
 		original := defaultThemeID(t, h)
 		err := mutationtest.Transact(t, h.Harness, func(ctx context.Context, store maptheme.Store) error {
-			return store.SetDefaultThemeID(ctx, uuid.NewString())
+			_, err := store.SetDefaultThemeID(ctx, uuid.NewString())
+			return err
 		})
 		require.Error(t, err)
 		require.Equal(t, original, defaultThemeID(t, h))
@@ -268,7 +270,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			if err := store.UpdateSnapshot(ctx, replacement.ID, 1, Snapshot("Contract rolled back update")); err != nil {
 				return err
 			}
-			if err := store.SetDefaultThemeID(ctx, replacement.ID); err != nil {
+			if _, err := store.SetDefaultThemeID(ctx, replacement.ID); err != nil {
 				return err
 			}
 			return failed
@@ -312,7 +314,8 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 				return err
 			},
 			func(ctx context.Context, store maptheme.Store) error {
-				return store.SetDefaultThemeID(ctx, replacement.ID)
+				_, err := store.SetDefaultThemeID(ctx, replacement.ID)
+				return err
 			},
 			func(ctx context.Context, store maptheme.Store) (err error) {
 				seen, err = store.LockDefaultThemeID(ctx)
@@ -334,7 +337,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 				return err
 			},
 			func(ctx context.Context, store maptheme.Store) error {
-				if err := store.SetDefaultThemeID(ctx, second.ID); err != nil {
+				if _, err := store.SetDefaultThemeID(ctx, second.ID); err != nil {
 					return err
 				}
 				return store.DeleteTheme(ctx, first.ID)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	mapthemeadapter "github.com/echovisionlab/geul-api/internal/adapters/maptheme"
+
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
@@ -82,7 +84,7 @@ func (r serviceRegistration) registerLegal(legalRuntime *legaladapter.Runtime, c
 func (r serviceRegistration) registerMapTheme() (*maptheme.Service, error) {
 	deps := r.dependencies
 	mapThemeService, err := maptheme.NewService(maptheme.Deps{
-		Units: mapthemepostgres.NewUnits(deps.db), SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Units: mapthemepostgres.NewUnits(deps.db, mapthemepostgres.Ports{SiteSettings: mapthemeadapter.SiteSettings{}}), SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize map theme service: %w", err)

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mapthemeadapter "github.com/echovisionlab/geul-api/internal/adapters/maptheme"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -81,7 +83,7 @@ func newEndToEnd(t *testing.T) endToEnd {
 func (e endToEnd) handlers(t *testing.T, audit domainaudit.Appender) (*maptheme.ConnectHandler, *maptheme.InternalConnectHandler) {
 	t.Helper()
 	service, err := maptheme.NewService(maptheme.Deps{
-		Units: mapthemepostgres.NewUnits(e.db), SpiceDB: e.spiceDB, Fence: identitystate.PostgresFence{}, Audit: audit,
+		Units: mapthemepostgres.NewUnits(e.db, mapthemepostgres.Ports{SiteSettings: mapthemeadapter.SiteSettings{}}), SpiceDB: e.spiceDB, Fence: identitystate.PostgresFence{}, Audit: audit,
 	})
 	require.NoError(t, err)
 	return maptheme.NewConnectHandler(service), maptheme.NewInternalConnectHandler(service)

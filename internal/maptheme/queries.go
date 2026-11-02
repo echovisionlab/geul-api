@@ -240,7 +240,7 @@ func (s *Service) SetDefaultMapTheme(ctx context.Context, command SetDefaultMapT
 		return "", domainerr.InvalidField("theme_id", err.Error())
 	}
 	var currentDefaultID string
-	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[mutation.Audit, Store]{
 		Lock: func(ctx context.Context, store Store) (err error) {
 			if currentDefaultID, err = store.LockDefaultThemeID(ctx); err != nil {
 				return err
@@ -249,20 +249,13 @@ func (s *Service) SetDefaultMapTheme(ctx context.Context, command SetDefaultMapT
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, store Store) (bool, error) {
+		Change: func(ctx context.Context, store Store) (mutation.Audit, error) {
 			if currentDefaultID == themeID {
-				return false, nil
+				return mutation.Unchanged(), nil
 			}
-			return true, store.SetDefaultThemeID(ctx, themeID)
+			return store.SetDefaultThemeID(ctx, themeID)
 		},
-		Audit: func(changed bool) mutation.Audit {
-			if !changed {
-				return mutation.Unchanged()
-			}
-			return mutation.RequestAudit(sharedtelemetry.AuditSiteSettingsUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewSiteSettingsUpdatedAuditRecord(metadata, []string{"default_map_theme_id"})
-			})
-		},
+		Audit: func(audit mutation.Audit) mutation.Audit { return audit },
 	})
 	if err != nil {
 		return "", err

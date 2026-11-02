@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	mapthemeadapter "github.com/echovisionlab/geul-api/internal/adapters/maptheme"
+
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
 
@@ -239,7 +241,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
 	slog.Info("Registered public service", "path", publicMapPlacePath)
 
-	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{Units: mapthemepostgres.NewUnits(db)})
+	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{Units: mapthemepostgres.NewUnits(db, mapthemepostgres.Ports{SiteSettings: mapthemeadapter.SiteSettings{}})})
 	if err != nil {
 		return fmt.Errorf("initialize public map theme service: %w", err)
 	}

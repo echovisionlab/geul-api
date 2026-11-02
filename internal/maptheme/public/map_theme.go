@@ -17,7 +17,7 @@ type Reads interface {
 
 // Deps are the collaborators of the public Map Theme reads.
 type Deps struct {
-	Units Reads // mapthemepostgres.NewUnits(db)
+	Units Reads // mapthemepostgres.NewUnits(db, ports)
 }
 
 // Service holds the public Map Theme reads.

@@ -11,6 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -155,14 +158,16 @@ func (s *Store) LockDefaultThemeID(context.Context) (string, error) {
 
 // SetDefaultThemeID implements maptheme.Store; like the foreign key, the
 // theme must exist.
-func (s *Store) SetDefaultThemeID(_ context.Context, themeID string) error {
+func (s *Store) SetDefaultThemeID(_ context.Context, themeID string) (mutation.Audit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.themes[themeID]; !ok {
-		return errors.New("default map theme does not exist")
+		return mutation.Audit{}, errors.New("default map theme does not exist")
 	}
 	s.defaultID = themeID
-	return nil
+	return mutation.RequestAudit(sharedtelemetry.AuditSiteSettingsUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewSiteSettingsUpdatedAuditRecord(metadata, []string{"default_map_theme_id"})
+	}), nil
 }
 
 // Themes implements maptheme.Store.

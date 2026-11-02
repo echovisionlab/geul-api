@@ -12,7 +12,6 @@
 1 internal/adapters/emaildelivery -> newsletter_subscription
 2 internal/adapters/entityparticipant -> member
 1 internal/adapters/memberpat -> kratos.identities
-1 internal/adapters/menu -> site_settings
 1 internal/adapters/post -> public_asset
 1 internal/adapters/programevent -> public_asset
 1 internal/adapters/release -> artist
