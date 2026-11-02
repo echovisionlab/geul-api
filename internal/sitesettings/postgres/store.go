@@ -13,15 +13,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/favicon"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // Assets is the shared File and public asset lifecycle of the File
@@ -82,12 +79,6 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[sitesettings.Store]
 		return nil, err
 	}
 	return mutation.Postgres(db, func(tx *gorm.DB) sitesettings.Store { return store{tx: tx, ports: ports} }), nil
-}
-
-// AppendAudit records the Site Settings change of changedKeys in tx, a
-// transaction a collaborating domain such as Menu opened.
-func AppendAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, changedKeys []string) error {
-	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditSiteSettingsUpdated, sitesettings.AuditRecord(changedKeys))
 }
 
 type store struct {

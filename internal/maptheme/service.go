@@ -15,7 +15,7 @@ import (
 
 // Deps are the collaborators of the Map Theme use cases; all are required.
 type Deps struct {
-	Units   mutation.UnitOfWork[Store] // mapthemepostgres.NewUnits(db)
+	Units   mutation.UnitOfWork[Store] // mapthemepostgres.NewUnits(db, ports)
 	SpiceDB Authorizer
 	Fence   identitystate.Fence // identitystate.PostgresFence{}
 	Audit   domainaudit.Appender

@@ -1,15 +1,13 @@
-// Package postgres is the PostgreSQL Store of the Map Theme use cases: the
-// map_theme rows, the site default it reads and sets in site_settings, and
+// Package mapthemepostgres is the PostgreSQL Store of the Map Theme use cases: the
+// map_theme rows, the Site Settings default-theme port, and
 // the contributor locks of a collaboration save.
-package postgres
+package mapthemepostgres
 
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,13 +22,29 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
+// SiteSettings provides default-theme reads and writes in the Map Theme transaction.
+type SiteSettings interface {
+	DefaultThemeID(context.Context, *gorm.DB) (string, error)
+	LockDefaultThemeID(context.Context, *gorm.DB) (string, error)
+	SetDefaultThemeID(context.Context, *gorm.DB, string) (mutation.Audit, error)
+}
+
+type Ports struct {
+	SiteSettings SiteSettings
+}
+
 // NewUnits is the production unit of work of the Map Theme use cases.
-func NewUnits(db *gorm.DB) mutation.UnitOfWork[maptheme.Store] {
-	return mutation.Postgres(db, func(tx *gorm.DB) maptheme.Store { return store{tx: tx} })
+func NewUnits(db *gorm.DB, ports Ports) mutation.UnitOfWork[maptheme.Store] {
+	return mutation.Postgres(db, func(tx *gorm.DB) maptheme.Store {
+		return store{tx: tx, ports: ports}
+	})
 }
 
 // store is the Map Theme Store bound to one transaction.
-type store struct{ tx *gorm.DB }
+type store struct {
+	tx    *gorm.DB
+	ports Ports
+}
 
 // defaultThemeError is a delete the site default's foreign key refused.
 type defaultThemeError struct{ error } // the *pgconn.PgError
@@ -54,30 +68,15 @@ func notFound(err error) error {
 }
 
 func (s store) DefaultThemeID(ctx context.Context) (string, error) {
-	var settings model.SiteSettings
-	if err := s.tx.WithContext(ctx).Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error; err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(settings.DefaultMapThemeID) == "" {
-		return "", fmt.Errorf("site settings default map theme is empty")
-	}
-	return settings.DefaultMapThemeID, nil
+	return s.ports.SiteSettings.DefaultThemeID(ctx, s.tx)
 }
 
-func (s store) LockDefaultThemeID(context.Context) (string, error) {
-	var settings model.SiteSettings
-	if err := s.tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = 1").Error; err != nil {
-		return "", err
-	}
-	return settings.DefaultMapThemeID, nil
+func (s store) LockDefaultThemeID(ctx context.Context) (string, error) {
+	return s.ports.SiteSettings.LockDefaultThemeID(ctx, s.tx)
 }
 
-func (s store) SetDefaultThemeID(_ context.Context, themeID string) error {
-	settings := model.SiteSettings{ID: 1}
-	return s.tx.Model(settings).Updates(structured.Fields{
-		"default_map_theme_id": themeID,
-		"updated_at":           time.Now(),
-	}).Error
+func (s store) SetDefaultThemeID(ctx context.Context, themeID string) (mutation.Audit, error) {
+	return s.ports.SiteSettings.SetDefaultThemeID(ctx, s.tx, themeID)
 }
 
 func (s store) Themes(context.Context) ([]maptheme.Theme, error) {

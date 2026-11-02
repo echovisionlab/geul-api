@@ -57,8 +57,8 @@ type Store interface {
 	// LockDefaultThemeID locks the site settings for update and reads the
 	// default theme.
 	LockDefaultThemeID(ctx context.Context) (string, error)
-	// SetDefaultThemeID makes themeID the site default.
-	SetDefaultThemeID(ctx context.Context, themeID string) error
+	// SetDefaultThemeID makes themeID the site default and returns its settings audit.
+	SetDefaultThemeID(ctx context.Context, themeID string) (mutation.Audit, error)
 	// Themes lists every theme by name, then ID.
 	Themes(ctx context.Context) ([]Theme, error)
 	// ThemesByID reads those of ids that exist, in no particular order.
