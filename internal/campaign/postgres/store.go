@@ -12,8 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	emailcontentpostgres "github.com/echovisionlab/geul-api/internal/emailcontent/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -99,7 +97,7 @@ func (s *store) WrapWithLayout(ctx context.Context, id, locale, html string, dat
 	return s.ports.EmailRendering.WrapWithLayout(ctx, s.tx, id, locale, html, data)
 }
 func (s *store) CheckTestSendReadiness(ctx context.Context, recipient string) error {
-	return email.CheckTestSendReadiness(ctx, emailpostgres.NewStore(s.tx), recipient)
+	return s.ports.EmailRendering.CheckTestSendReadiness(ctx, s.tx, recipient)
 }
 func (s *store) Enqueue(ctx context.Context, queue, id string, message proto.Message) error {
 	executor, err := contentsignal.TransactionExecutor(s.tx)

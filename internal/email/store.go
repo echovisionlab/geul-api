@@ -9,13 +9,14 @@ import (
 // ErrTemplateNotFound answers a template lookup that matched no row.
 var ErrTemplateNotFound = errors.New("email template not found")
 
-// Store reads and writes what the email plumbing renders and sends from:
-// the stored templates and layouts with their locale rows, the active mail
-// adapters and the active suppressions. Email Authoring and Email Delivery
-// own those tables; Store is the plumbing's view of them. It is bound to one
-// transaction or to the pool (emailpostgres.Bind) and never opens a
-// transaction.
+// Store combines the owner-provided rendering and delivery views.
 type Store interface {
+	AuthoringStore
+	DeliveryStore
+}
+
+// AuthoringStore reads and writes template and layout content owned by Email Authoring.
+type AuthoringStore interface {
 	// ActiveTemplateByEventKey returns the active template of eventKey, or
 	// ErrTemplateNotFound.
 	ActiveTemplateByEventKey(ctx context.Context, eventKey string) (Template, error)
@@ -58,15 +59,21 @@ type Store interface {
 	UpdateLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string) error
 	// InsertLayoutEntry inserts the row unless the locale already has one.
 	InsertLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string, now time.Time) error
+}
 
+// DeliveryStore reads provider and suppression state owned by Email Delivery.
+type DeliveryStore interface {
+	ReadinessStore
+	AdapterStore
+}
+
+// ReadinessStore checks whether a test recipient can be sent mail.
+type ReadinessStore interface {
 	// ActiveSuppressionCount counts the unreleased suppressions of the
 	// lower-cased address.
 	ActiveSuppressionCount(ctx context.Context, address string) (int64, error)
 	// ActiveMailAdapterCount counts the active mail adapters.
 	ActiveMailAdapterCount(ctx context.Context) (int64, error)
-	// ActiveMailAdapters returns the active mail adapters by priority, then
-	// creation.
-	ActiveMailAdapters(ctx context.Context) ([]MailAdapter, error)
 }
 
 // TemplateContent is one locale row of a template.

@@ -6,7 +6,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	emailauthoringdomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -27,7 +26,7 @@ func (*Runtime) ResolveLocalizedTemplate(
 	template model.EmailTemplate,
 	locale string,
 ) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.NewStore(db), emailpostgres.TemplateFromRow(template), locale)
+	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailauthoringpostgres.NewRenderingStore(db), emailauthoringpostgres.TemplateFromRow(template), locale)
 	template.Subject, template.ContentHTML = resolved.Subject, resolved.ContentHTML
 	return template, err
 }
@@ -51,3 +50,7 @@ var (
 	_ emailauthoringpostgres.Rendering      = (*Runtime)(nil)
 	_ emailauthoringdomain.LocaleNormalizer = (*Runtime)(nil)
 )
+
+func (*Runtime) CheckTestSendReadiness(ctx context.Context, db *gorm.DB, recipient string) error {
+	return email.CheckTestSendReadiness(ctx, emaildeliverypostgres.NewDeliveryReadStore(db), recipient)
+}

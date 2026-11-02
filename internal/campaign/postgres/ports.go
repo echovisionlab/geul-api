@@ -31,6 +31,7 @@ type CampaignEmailAuthoringPort interface {
 	) ([]campaigndomain.CampaignLayoutLocaleSnapshot, error)
 }
 type CampaignEmailRenderingPort interface {
+	CheckTestSendReadiness(context.Context, *gorm.DB, string) error
 	BuildRenderData(
 		context.Context,
 		*gorm.DB,

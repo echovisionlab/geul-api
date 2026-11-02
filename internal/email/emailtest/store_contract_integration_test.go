@@ -1,6 +1,6 @@
 //go:build integration
 
-package emailpostgres_test
+package emailtest_test
 
 import (
 	"testing"
@@ -12,7 +12,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/email/emailtest"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
@@ -24,7 +25,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	emailtest.RunStoreContract(t, func(t *testing.T) emailtest.Harness {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return emailtest.Harness{
-			Harness:             mutationtest.PostgresHarness(db, mutation.Postgres(db, emailpostgres.NewStore)),
+			Harness:             mutationtest.PostgresHarness(db, mutation.Postgres(db, newStore)),
 			SeedTemplate:        func(t *testing.T, template email.Template) string { return seedTemplate(t, db, template) },
 			SeedTemplateContent: func(t *testing.T, id string, content email.TemplateContent) { seedTemplateContent(t, db, id, content) },
 			SeedLayout:          func(t *testing.T, sourceLocale string) string { return seedLayout(t, db, sourceLocale) },
@@ -38,7 +39,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 			},
 			SeedMailAdapter: func(t *testing.T, adapter email.MailAdapter) string {
 				adapter.ID = uuid.NewString()
-				row := emailpostgres.MailAdapterRow(adapter)
+				row := emaildeliverypostgres.MailAdapterRow(adapter)
 				require.NoError(t, db.Create(&row).Error)
 				// gorm skips a false IsActive in favor of the column default.
 				require.NoError(t, db.Model(&model.MailAdapter{}).Where("id = ?", adapter.ID).Update("is_active", adapter.IsActive).Error)
@@ -64,7 +65,7 @@ func seedTemplate(t *testing.T, db *gorm.DB, template email.Template) string {
 	template.ContentDocumentID = &contentDocumentID
 	template.Key = "template-" + template.ID
 	template.Name = "Template " + template.ID
-	row := emailpostgres.TemplateRow(template)
+	row := emailauthoringpostgres.TemplateRow(template)
 	row.Variables = model.EmailTemplateVariables{}
 	require.NoError(t, db.Create(&row).Error)
 	// gorm skips a false IsActive in favor of the column default.
@@ -88,4 +89,13 @@ func seedLayout(t *testing.T, db *gorm.DB, sourceLocale string) string {
 		Key: "layout-" + id, Name: "Layout " + id,
 	}).Error)
 	return id
+}
+
+type ownerStores struct {
+	email.AuthoringStore
+	email.DeliveryStore
+}
+
+func newStore(db *gorm.DB) email.Store {
+	return ownerStores{emailauthoringpostgres.NewRenderingStore(db), emaildeliverypostgres.NewDeliveryReadStore(db)}
 }

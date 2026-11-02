@@ -16,7 +16,7 @@ var (
 // CheckTestSendReadiness reports, before a test email is queued, the facts
 // that would make the worker drop or hold it. A queued test otherwise looks
 // successful to the administrator even when nothing is sent.
-func CheckTestSendReadiness(ctx context.Context, store Store, recipient string) error {
+func CheckTestSendReadiness(ctx context.Context, store ReadinessStore, recipient string) error {
 	if normalized := NormalizeAddressForDelivery(recipient); normalized != "" {
 		suppressed, err := store.ActiveSuppressionCount(ctx, normalized)
 		if err != nil {

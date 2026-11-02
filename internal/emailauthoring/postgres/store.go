@@ -16,8 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	emailcontentpostgres "github.com/echovisionlab/geul-api/internal/emailcontent/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -47,6 +45,7 @@ type Members interface {
 // Rendering is the delivery runtime of previews and test sends
 // (emailauthoringadapter.Runtime).
 type Rendering interface {
+	CheckTestSendReadiness(context.Context, *gorm.DB, string) error
 	ResolveLocalizedTemplate(context.Context, *gorm.DB, model.EmailTemplate, string) (model.EmailTemplate, error)
 	BuildEmailRenderData(context.Context, *gorm.DB, string, string, string, map[string]string) map[string]string
 }
@@ -196,5 +195,5 @@ func (s *store) EmailRenderData(ctx context.Context, cdnDomain, siteOrigin, loca
 }
 
 func (s *store) CheckTestSendReadiness(ctx context.Context, recipient string) error {
-	return email.CheckTestSendReadiness(ctx, emailpostgres.NewStore(s.tx), recipient)
+	return s.ports.Rendering.CheckTestSendReadiness(ctx, s.tx, recipient)
 }

@@ -1,7 +1,4 @@
-// Package emailpostgres is the PostgreSQL Store of the email plumbing: the
-// template, layout, mail adapter and suppression rows it renders and sends
-// from, which Email Authoring and Email Delivery own.
-package emailpostgres
+package emailauthoringpostgres
 
 import (
 	"context"
@@ -24,14 +21,14 @@ func LayoutTranslationEntrySelectSQL() string {
 		NULL::uuid AS og_asset_id FROM email_layout_translation`
 }
 
-// NewStore returns the Store over db, a transaction or the pool.
-func NewStore(db *gorm.DB) email.Store {
-	return store{db: db}
+// NewRenderingStore binds template and layout rendering to db.
+func NewRenderingStore(db *gorm.DB) email.AuthoringStore {
+	return renderingStore{db: db}
 }
 
-type store struct{ db *gorm.DB }
+type renderingStore struct{ db *gorm.DB }
 
-var _ email.Store = store{}
+var _ email.AuthoringStore = renderingStore{}
 
 // templateNotFoundError keeps the driver's not-found error readable and in
 // the chain while it answers email.ErrTemplateNotFound.
@@ -47,7 +44,7 @@ func templateLookup(template model.EmailTemplate, err error) (email.Template, er
 	return TemplateFromRow(template), err
 }
 
-func (s store) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (email.Template, error) {
+func (s renderingStore) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (email.Template, error) {
 	var template model.EmailTemplate
 	err := s.db.WithContext(ctx).
 		Where("event_key = ?", eventKey).
@@ -56,14 +53,14 @@ func (s store) ActiveTemplateByEventKey(ctx context.Context, eventKey string) (e
 	return templateLookup(template, err)
 }
 
-func (s store) TemplateByID(ctx context.Context, templateID string) (email.Template, error) {
+func (s renderingStore) TemplateByID(ctx context.Context, templateID string) (email.Template, error) {
 	var template model.EmailTemplate
 	err := s.db.WithContext(ctx).First(&template, "id = ?", templateID).Error
 	return templateLookup(template, err)
 }
 
 // sourceLocale reads the source_locale column of the table's row id.
-func (s store) sourceLocale(ctx context.Context, table, id string) (string, bool, error) {
+func (s renderingStore) sourceLocale(ctx context.Context, table, id string) (string, bool, error) {
 	var row struct {
 		SourceLocale string `gorm:"column:source_locale"`
 	}
@@ -81,7 +78,7 @@ func (s store) sourceLocale(ctx context.Context, table, id string) (string, bool
 	return row.SourceLocale, true, nil
 }
 
-func (s store) TemplateSourceLocale(ctx context.Context, templateID string) (string, bool, error) {
+func (s renderingStore) TemplateSourceLocale(ctx context.Context, templateID string) (string, bool, error) {
 	return s.sourceLocale(ctx, "email_template", templateID)
 }
 
@@ -95,7 +92,7 @@ func (row templateContentRow) content() email.TemplateContent {
 	return email.TemplateContent{Locale: row.Locale, Subject: row.Subject, ContentHTML: row.ContentHTML}
 }
 
-func (s store) TemplateContent(ctx context.Context, templateID, locale string) (*email.TemplateContent, error) {
+func (s renderingStore) TemplateContent(ctx context.Context, templateID, locale string) (*email.TemplateContent, error) {
 	var row templateContentRow
 	if err := s.db.WithContext(ctx).
 		Table("email_template_translation").
@@ -112,7 +109,7 @@ func (s store) TemplateContent(ctx context.Context, templateID, locale string) (
 	return &content, nil
 }
 
-func (s store) TemplateTranslations(ctx context.Context, templateID string, locales []string) ([]email.TemplateContent, error) {
+func (s renderingStore) TemplateTranslations(ctx context.Context, templateID string, locales []string) ([]email.TemplateContent, error) {
 	var rows []templateContentRow
 	if err := s.db.WithContext(ctx).Table("email_template_translation").
 		Select("locale, subject, content_html").
@@ -127,11 +124,11 @@ func (s store) TemplateTranslations(ctx context.Context, templateID string, loca
 	return contents, nil
 }
 
-func (s store) LayoutSourceLocale(ctx context.Context, layoutID string) (string, bool, error) {
+func (s renderingStore) LayoutSourceLocale(ctx context.Context, layoutID string) (string, bool, error) {
 	return s.sourceLocale(ctx, "email_layout", layoutID)
 }
 
-func (s store) LayoutContent(ctx context.Context, layoutID, locale string) (*string, error) {
+func (s renderingStore) LayoutContent(ctx context.Context, layoutID, locale string) (*string, error) {
 	var row struct {
 		HTMLContent *string `gorm:"column:html_content"`
 	}
@@ -166,7 +163,7 @@ func layoutContents(rows []layoutContentRow) []email.LayoutContent {
 	return contents
 }
 
-func (s store) LayoutTranslations(ctx context.Context, layoutID string, locales []string) ([]email.LayoutContent, error) {
+func (s renderingStore) LayoutTranslations(ctx context.Context, layoutID string, locales []string) ([]email.LayoutContent, error) {
 	var rows []layoutContentRow
 	if err := s.db.WithContext(ctx).Table("email_layout_translation").
 		Select("entity_id, locale, html_content").
@@ -177,7 +174,7 @@ func (s store) LayoutTranslations(ctx context.Context, layoutID string, locales 
 	return layoutContents(rows), nil
 }
 
-func (s store) SourceLayouts(ctx context.Context, layoutIDs []string) ([]email.LayoutContent, error) {
+func (s renderingStore) SourceLayouts(ctx context.Context, layoutIDs []string) ([]email.LayoutContent, error) {
 	var rows []layoutContentRow
 	if err := s.db.WithContext(ctx).
 		Table("email_layout_translation AS layout").
@@ -190,7 +187,7 @@ func (s store) SourceLayouts(ctx context.Context, layoutIDs []string) ([]email.L
 	return layoutContents(rows), nil
 }
 
-func (s store) LayoutLocales(ctx context.Context, layoutID string) ([]email.LayoutContent, error) {
+func (s renderingStore) LayoutLocales(ctx context.Context, layoutID string) ([]email.LayoutContent, error) {
 	var rows []layoutContentRow
 	if err := s.db.WithContext(ctx).
 		Table("email_layout_translation AS entry").
@@ -224,7 +221,7 @@ func (row layoutEntryRow) entry() email.LayoutEntry {
 	}
 }
 
-func (s store) LayoutEntry(ctx context.Context, layoutID, locale string) (*email.LayoutEntry, error) {
+func (s renderingStore) LayoutEntry(ctx context.Context, layoutID, locale string) (*email.LayoutEntry, error) {
 	var row layoutEntryRow
 	result := s.db.WithContext(ctx).Raw(
 		`SELECT locale, html_content, content_text, updated_at
@@ -244,7 +241,7 @@ func (s store) LayoutEntry(ctx context.Context, layoutID, locale string) (*email
 	return &entry, nil
 }
 
-func (s store) LayoutTargets(ctx context.Context, layoutID, sourceLocale string) ([]email.LayoutEntry, error) {
+func (s renderingStore) LayoutTargets(ctx context.Context, layoutID, sourceLocale string) ([]email.LayoutEntry, error) {
 	var rows []layoutEntryRow
 	if err := s.db.WithContext(ctx).Table("email_layout_translation").
 		Select("locale, html_content, content_text, updated_at").
@@ -259,7 +256,7 @@ func (s store) LayoutTargets(ctx context.Context, layoutID, sourceLocale string)
 	return entries, nil
 }
 
-func (s store) UpsertLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string, now time.Time) error {
+func (s renderingStore) UpsertLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string, now time.Time) error {
 	return s.db.WithContext(ctx).Exec(
 		`INSERT INTO email_layout_translation (
 			entity_id, locale, html_content, content_text,
@@ -278,7 +275,7 @@ func (s store) UpsertLayoutEntry(ctx context.Context, layoutID, locale string, h
 	).Error
 }
 
-func (s store) UpdateLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string) error {
+func (s renderingStore) UpdateLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string) error {
 	return s.db.WithContext(ctx).Exec(
 		`UPDATE email_layout_translation
 		 SET html_content = ?, content_text = ?
@@ -290,7 +287,7 @@ func (s store) UpdateLayoutEntry(ctx context.Context, layoutID, locale string, h
 	).Error
 }
 
-func (s store) InsertLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string, now time.Time) error {
+func (s renderingStore) InsertLayoutEntry(ctx context.Context, layoutID, locale string, html, text *string, now time.Time) error {
 	return s.db.WithContext(ctx).Exec(`
 		INSERT INTO email_layout_translation (
 			entity_id, locale, html_content, content_text, created_at, updated_at
@@ -298,36 +295,4 @@ func (s store) InsertLayoutEntry(ctx context.Context, layoutID, locale string, h
 		ON CONFLICT (entity_id, locale) DO NOTHING`,
 		layoutID, locale, html, text, now, now,
 	).Error
-}
-
-func (s store) ActiveSuppressionCount(ctx context.Context, address string) (int64, error) {
-	var suppressed int64
-	err := s.db.WithContext(ctx).Model(&model.EmailSuppression{}).
-		Where("LOWER(email) = ? AND released_at IS NULL", address).
-		Count(&suppressed).Error
-	return suppressed, err
-}
-
-func (s store) ActiveMailAdapterCount(ctx context.Context) (int64, error) {
-	var active int64
-	err := s.db.WithContext(ctx).Model(&model.MailAdapter{}).
-		Where("is_active = ?", true).
-		Count(&active).Error
-	return active, err
-}
-
-func (s store) ActiveMailAdapters(ctx context.Context) ([]email.MailAdapter, error) {
-	var adapters []model.MailAdapter
-	err := s.db.WithContext(ctx).
-		Where("is_active = ?", true).
-		Order("priority ASC, created_at ASC").
-		Find(&adapters).Error
-	if err != nil {
-		return nil, err
-	}
-	result := make([]email.MailAdapter, len(adapters))
-	for i, adapter := range adapters {
-		result[i] = MailAdapterFromRow(adapter)
-	}
-	return result, nil
 }

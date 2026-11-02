@@ -35,7 +35,7 @@ func defaultEmailLocalizationPolicy() emailLocalizationPolicy {
 	return emailLocalizationPolicy{}
 }
 
-func loadEmailLocalizationPolicy(context.Context, Store) emailLocalizationPolicy {
+func loadEmailLocalizationPolicy(context.Context, AuthoringStore) emailLocalizationPolicy {
 	return defaultEmailLocalizationPolicy()
 }
 
@@ -43,7 +43,7 @@ func loadEmailLocalizationPolicy(context.Context, Store) emailLocalizationPolicy
 // source email template when an exact or fallback locale variant exists.
 func ResolveLocalizedEmailTemplate(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	source Template,
 	requestedLocale string,
 ) (Template, string, error) {
@@ -80,13 +80,13 @@ func ResolveLocalizedEmailTemplate(
 	return localized, displayedLocale, nil
 }
 
-func loadCanonicalEmailTemplateSourceLocale(ctx context.Context, store Store, templateID string) string {
+func loadCanonicalEmailTemplateSourceLocale(ctx context.Context, store AuthoringStore, templateID string) string {
 	return loadEmailSourceLocale(ctx, store, "email_template", templateID)
 }
 
 func applyCanonicalEmailTemplateSourceContent(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	source Template,
 	sourceLocale string,
 ) (Template, error) {
@@ -125,7 +125,7 @@ func applyCanonicalEmailTemplateSourceRow(
 
 func loadExactCanonicalEmailTemplateSourceRow(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	templateID string,
 	locale string,
 ) (*canonicalEmailTemplateSourceRow, error) {
@@ -145,7 +145,7 @@ func loadExactCanonicalEmailTemplateSourceRow(
 // an email layout and returns the HTML content that should be rendered.
 func ResolveLocalizedEmailLayoutHTML(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	requestedLocale string,
 ) (string, string, error) {
@@ -193,7 +193,7 @@ func ResolveLocalizedEmailLayoutHTML(
 	return localizedHTML, displayedLocale, nil
 }
 
-func loadCanonicalEmailLayoutSourceLocale(ctx context.Context, store Store, layoutID string) string {
+func loadCanonicalEmailLayoutSourceLocale(ctx context.Context, store AuthoringStore, layoutID string) string {
 	locale, found, err := loadLayoutSourceLocaleFlag(ctx, store, layoutID)
 	if err == nil && found {
 		if normalized := normalizeEmailLocale(locale); normalized != "" {
@@ -208,7 +208,7 @@ func loadCanonicalEmailLayoutSourceLocale(ctx context.Context, store Store, layo
 
 func loadCanonicalEmailLayoutSourceHTML(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	sourceLocale string,
 ) (string, error) {
@@ -233,7 +233,7 @@ func loadCanonicalEmailLayoutSourceHTML(
 
 func loadExactCanonicalEmailLayoutSourceRow(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 ) (*canonicalEmailLayoutSourceRow, error) {
@@ -257,7 +257,7 @@ func normalizeEmailLocale(locale string) string {
 	return *normalized
 }
 
-func loadEmailSourceLocale(ctx context.Context, store Store, entityType, entityID string) string {
+func loadEmailSourceLocale(ctx context.Context, store AuthoringStore, entityType, entityID string) string {
 	var (
 		sourceLocale string
 		found        bool
@@ -283,7 +283,7 @@ func loadEmailSourceLocale(ctx context.Context, store Store, entityType, entityI
 
 func loadEmailTemplateTranslationRows(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	templateID string,
 	requestedLocale string,
 	sourceLocale string,
@@ -306,7 +306,7 @@ func loadEmailTemplateTranslationRows(
 
 func loadEmailLayoutTranslationRows(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	requestedLocale string,
 	sourceLocale string,

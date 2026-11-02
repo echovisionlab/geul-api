@@ -15,7 +15,7 @@ import (
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
@@ -71,7 +71,7 @@ func (EmailAuthoring) LoadLayoutSnapshot(
 	db *gorm.DB,
 	layoutID string,
 ) ([]campaigndomain.CampaignLayoutLocaleSnapshot, error) {
-	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.NewStore(db), layoutID)
+	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailauthoringpostgres.NewRenderingStore(db), layoutID)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (EmailRendering) WrapWithLayout(
 	data map[string]string,
 ) (string, error) {
 	wrapped, _, err := email.WrapWithLayoutForLocaleStrict(
-		ctx, emailpostgres.NewStore(db), layoutID, requestedLocale, content, data,
+		ctx, emailauthoringpostgres.NewRenderingStore(db), layoutID, requestedLocale, content, data,
 	)
 	return wrapped, err
 }
@@ -166,7 +166,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 	layoutLocale := ""
 	if localized.LayoutID != nil {
 		html, layoutLocale, err = email.WrapWithLayoutForLocaleStrict(
-			ctx, emailpostgres.NewStore(db), *localized.LayoutID, requestedLocale, html, data,
+			ctx, emailauthoringpostgres.NewRenderingStore(db), *localized.LayoutID, requestedLocale, html, data,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("render Campaign email layout: %w", err)
@@ -207,3 +207,7 @@ func stringValue(value *string) string {
 
 var _ campaignpostgres.CampaignEmailAuthoringPort = EmailAuthoring{}
 var _ campaignpostgres.CampaignEmailRenderingPort = EmailRendering{}
+
+func (EmailRendering) CheckTestSendReadiness(ctx context.Context, db *gorm.DB, recipient string) error {
+	return email.CheckTestSendReadiness(ctx, emaildeliverypostgres.NewDeliveryReadStore(db), recipient)
+}

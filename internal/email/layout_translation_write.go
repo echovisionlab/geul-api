@@ -13,7 +13,7 @@ import (
 // UpsertLayoutTranslationEntry persists one Email Layout locale entry.
 func UpsertLayoutTranslationEntry(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	input translation.EntryWrite,
@@ -33,7 +33,7 @@ func UpsertLayoutTranslationEntry(
 // makes it the only source-locale row.
 func SaveLayoutSourceLocaleDocument(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	document LayoutTranslationDocument,
@@ -64,7 +64,7 @@ func SaveLayoutSourceLocaleDocument(
 // an absent row receives one complete explicit-empty value wrapper.
 func PrepareLayoutSourceLocaleSwitch(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	currentSourceLocale string,
 	requestedLocale string,
@@ -114,7 +114,7 @@ func PrepareLayoutSourceLocaleSwitch(
 
 func normalizeLayoutTargetRepresentations(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	sourceLocale string,
 	canonicalSource string,
@@ -150,7 +150,7 @@ func normalizeLayoutTargetRepresentations(
 // never calls this function; explicit target creation does.
 func SeedLayoutTranslationEntryFromSource(
 	ctx context.Context,
-	store Store,
+	store AuthoringStore,
 	layoutID string,
 	locale string,
 	sourceLocale string,
