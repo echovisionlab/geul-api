@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
@@ -87,11 +88,7 @@ func Resolve(
 	acceptLanguage string,
 	settingsReader translation.RuntimeSettingsReader,
 ) (Selection, error) {
-	settings, err := settingsReader.RuntimeSettings(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
-		settings = translation.DefaultRuntimeSettings()
-	}
+	settings := loadRuntimePolicy(ctx, db, spec, settingsReader)
 	return ResolveWithPolicy(ctx, db, spec, entityID, acceptLanguage, settings)
 }
 
@@ -148,11 +145,7 @@ func ResolveBatch(
 	acceptLanguage string,
 	settingsReader translation.RuntimeSettingsReader,
 ) (map[string]Selection, error) {
-	settings, err := settingsReader.RuntimeSettings(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
-		settings = translation.DefaultRuntimeSettings()
-	}
+	settings := loadRuntimePolicy(ctx, db, spec, settingsReader)
 	return ResolveBatchWithPolicy(ctx, db, spec, entityIDs, acceptLanguage, settings)
 }
 
@@ -532,4 +525,21 @@ func ToProtoLocalizationInfo(selection Selection) *openv1.LocalizationInfo {
 		SourceLocale: selection.SourceLocale, IsFallback: selection.IsFallback, IsOriginal: selection.IsOriginal,
 		FallbackReason: selection.FallbackReason, AvailableLocales: selection.AvailableLocales,
 	}
+}
+
+func loadRuntimePolicy(ctx context.Context, db *gorm.DB, spec Spec, reader translation.RuntimeSettingsReader) translation.RuntimeSettings {
+	var settings translation.RuntimeSettings
+	var err error
+	if _, inTransaction := db.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+		settings, err = mutation.BestEffortRead(ctx, db, func(*gorm.DB) (translation.RuntimeSettings, error) {
+			return reader.RuntimeSettings(ctx)
+		})
+	} else {
+		settings, err = reader.RuntimeSettings(ctx)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
+		return translation.DefaultRuntimeSettings()
+	}
+	return settings
 }
