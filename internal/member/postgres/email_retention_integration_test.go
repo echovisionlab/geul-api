@@ -39,7 +39,7 @@ func TestRegistrationEmailReuseHoldChecksEveryDeletedMemberCandidateIntegration(
 	now := time.Now().UTC()
 	insertDeletedMemberEmailFixture(t, db, now.Add(-6*24*time.Hour), []string{"primary@example.test", "secondary@example.test"})
 
-	blocked, err := member.RegistrationEmailReuseBlocked(t.Context(), db, "SECONDARY@example.test")
+	blocked, err := member.RegistrationEmailReuseBlocked(t.Context(), memberpostgres.NewStore(db), "SECONDARY@example.test")
 	require.NoError(t, err)
 	require.True(t, blocked)
 	held, err := memberpostgres.NewStore(db).EmailReuseHeld(t.Context(), "secondary@example.test")
@@ -47,7 +47,7 @@ func TestRegistrationEmailReuseHoldChecksEveryDeletedMemberCandidateIntegration(
 	require.True(t, held)
 
 	insertDeletedMemberEmailFixture(t, db, now.Add(-8*24*time.Hour), []string{"expired@example.test"})
-	blocked, err = member.RegistrationEmailReuseBlocked(t.Context(), db, "expired@example.test")
+	blocked, err = member.RegistrationEmailReuseBlocked(t.Context(), memberpostgres.NewStore(db), "expired@example.test")
 	require.NoError(t, err)
 	require.False(t, blocked)
 }
@@ -65,7 +65,7 @@ func TestPublicEmailCodeRegistrationBlocksCurrentProviderOnlyCandidateIntegratio
 
 	// The SSO/provisioning hold remains provider-string agnostic; provider
 	// subjects may independently assert the same address.
-	blocked, err = member.RegistrationEmailReuseBlocked(t.Context(), db, email)
+	blocked, err = member.RegistrationEmailReuseBlocked(t.Context(), memberpostgres.NewStore(db), email)
 	require.NoError(t, err)
 	require.False(t, blocked)
 }
