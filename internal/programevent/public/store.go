@@ -5,11 +5,11 @@ import (
 	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
 
@@ -73,7 +73,7 @@ type Store interface {
 	// ContentSnapshot reads the event's content document; MediaReferences
 	// its active File usages.
 	ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
-	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error)
 	// ContentFileMIMEType reads the MIME type of the active File a Block
 	// reference names, and reports whether exactly one exists.
 	ContentFileMIMEType(ctx context.Context, blockID uuid.UUID, referencePath string, fileID uuid.UUID) (string, bool, error)

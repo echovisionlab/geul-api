@@ -5,7 +5,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/work"
@@ -53,7 +55,7 @@ func (s *store) UnavailableAttachmentKinds(ctx context.Context, document *conten
 	return s.ports.Runtime.LoadUnavailableVersionAttachmentKinds(ctx, s.tx, document)
 }
 
-func (s *store) HydrateBlockMedia(ctx context.Context, workID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) HydrateBlockMedia(ctx context.Context, workID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return s.ports.Media.HydrateAuthorizedWorkBlockMediaWithDB(ctx, s.tx, workID, documentID, principal, items)
 }
 

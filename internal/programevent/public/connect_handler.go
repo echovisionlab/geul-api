@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -50,7 +52,7 @@ func (h *ConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.Ge
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(&openv1.GetProgramEventResponse{Event: eventMessage(event.Event), BlockMedia: event.BlockMedia}), nil
+	return connect.NewResponse(&openv1.GetProgramEventResponse{Event: eventMessage(event.Event), BlockMedia: fileref.BlockMediaItemsProto(event.BlockMedia)}), nil
 }
 
 func (h *ConnectHandler) List(ctx context.Context, req *connect.Request[openv1.ListProgramEventsRequest]) (*connect.Response[openv1.ListProgramEventsResponse], error) {

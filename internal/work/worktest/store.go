@@ -20,7 +20,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -44,7 +46,7 @@ type Document struct {
 	SourceLocale string
 	Blocks       []contentblock.BaseBlock
 	Locales      map[string]bool
-	Media        []*contentv1.ContentBlockMediaItem
+	Media        []*fileref.BlockMediaItem
 }
 
 // Member is a Member row the Store reads: its nickname, preferred locale,
@@ -1770,7 +1772,7 @@ func (s *Store) UnavailableAttachmentKinds(context.Context, *contentv1.Localized
 }
 
 // HydrateBlockMedia implements work.Store by returning the items unchanged.
-func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	if err := s.fail("HydrateBlockMedia"); err != nil {
 		return nil, err
 	}

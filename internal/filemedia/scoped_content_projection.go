@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
 )
 
 // HydrateAuthorizedPageBlockMedia adds private editor delivery while
@@ -18,9 +18,9 @@ func (s *Service) HydrateAuthorizedPageBlockMedia(
 	pageID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateScopedContentMediaMessage(
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
+	return s.hydrateScopedContentMedia(
 		ctx, joined, scopedContentOwnerPage, pageID, documentID, principal, items,
 	)
 }
@@ -29,9 +29,9 @@ func (s *Service) HydrateAuthorizedPageBlockMedia(
 // Post holds its owner, principal, document, and exact attachment witnesses.
 func (s *Service) HydrateAuthorizedPostBlockMedia(
 	ctx context.Context, joined Joined, postID string, documentID uuid.UUID,
-	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateScopedContentMediaMessage(ctx, joined, scopedContentOwnerPost, postID, documentID, principal, items)
+	principal *auth.UserInfo, items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
+	return s.hydrateScopedContentMedia(ctx, joined, scopedContentOwnerPost, postID, documentID, principal, items)
 }
 
 // HydrateAuthorizedWorkBlockMedia adds private editor delivery while
@@ -42,9 +42,9 @@ func (s *Service) HydrateAuthorizedWorkBlockMedia(
 	workID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateScopedContentMediaMessage(
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
+	return s.hydrateScopedContentMedia(
 		ctx, joined, scopedContentOwnerWork, workID, documentID, principal, items,
 	)
 }
@@ -57,36 +57,36 @@ func (s *Service) HydrateAuthorizedProgramEventBlockMedia(
 	eventID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateScopedContentMediaMessage(
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
+	return s.hydrateScopedContentMedia(
 		ctx, joined, scopedContentOwnerProgramEvent, eventID, documentID, principal, items,
 	)
 }
 
-func (s *Service) hydrateScopedContentMediaMessage(ctx context.Context, joined Joined, owner scopedContentOwner, ownerID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Service) hydrateScopedContentMedia(ctx context.Context, joined Joined, owner scopedContentOwner, ownerID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	values := make([]*ScopedContentMediaItem, 0, len(items))
-	originals := make([]*contentv1.ContentBlockMediaItem, 0, len(items))
+	originals := make([]*fileref.BlockMediaItem, 0, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		values = append(values, &ScopedContentMediaItem{FileID: item.GetAttachment().GetActiveFileId(), BlockID: item.GetSelector().GetBlockId(), ReferencePath: item.GetSelector().GetReferencePath()})
+		values = append(values, &ScopedContentMediaItem{FileID: optional.Value(item).Attachment.ActiveFileID(), BlockID: optional.Value(optional.Value(item).Selector).BlockID, ReferencePath: optional.Value(optional.Value(item).Selector).ReferencePath})
 		originals = append(originals, item)
 	}
 	values, err := s.hydrateAuthorizedContentBlockMedia(ctx, joined, owner, ownerID, documentID, principal, values)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*contentv1.ContentBlockMediaItem, 0, len(values))
+	result := make([]*fileref.BlockMediaItem, 0, len(values))
 	for i, value := range values {
-		item := proto.Clone(originals[i]).(*contentv1.ContentBlockMediaItem)
-		item.Delivery = DeliveryMessage(value.Delivery)
-		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE
-		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE
+		item := originals[i].Clone()
+		item.Delivery = value.Delivery
+		item.DownloadAvailability = fileref.DownloadUnavailable
+		item.DownloadAction = fileref.NoDownload
 		if value.DownloadAllowed {
-			item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
-			item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
+			item.DownloadAvailability = fileref.DownloadAvailable
+			item.DownloadAction = fileref.Download
 		}
 		result = append(result, item)
 	}

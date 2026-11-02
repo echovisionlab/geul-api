@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -573,7 +575,7 @@ type unusedFileReuse struct {
 
 type passthroughMedia struct{}
 
-func (passthroughMedia) HydrateAuthorizedContentBlockMedia(_ context.Context, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (passthroughMedia) HydrateAuthorizedContentBlockMedia(_ context.Context, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

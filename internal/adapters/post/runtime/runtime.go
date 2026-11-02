@@ -3,15 +3,21 @@ package runtime
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
+
 	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -40,7 +46,7 @@ func (ContentBlockMedia) LoadContentBlockMediaReferences(
 	ctx context.Context,
 	db *gorm.DB,
 	documentID uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return contentblock.LoadMediaReferences(ctx, db, documentID)
 }
 

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"connectrpc.com/connect"
@@ -153,7 +155,7 @@ func workMessage(ctx context.Context, w View) *managev1.Work {
 		Document:     w.Document,
 		Revision:     w.Revision,
 		SourceLocale: w.SourceLocale,
-		BlockMedia:   w.BlockMedia,
+		BlockMedia:   fileref.BlockMediaItemsProto(w.BlockMedia),
 	}
 	if w.Slug != nil {
 		work.Slug = w.Slug
@@ -528,7 +530,7 @@ func (h *InternalConnectHandler) LoadWorkBlockDocument(ctx context.Context, req 
 			Document:            room.Document,
 			DocumentRevision:    room.DocumentRevision,
 			SourceMetadata:      roomMetadataMessage(room.SourceMetadata),
-			BlockMedia:          room.BlockMedia,
+			BlockMedia:          fileref.BlockMediaItemsProto(room.BlockMedia),
 			Locale:              room.Locale,
 			LocaleExists:        room.LocaleExists,
 			TargetRevision:      room.TargetRevision,

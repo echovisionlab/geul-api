@@ -261,7 +261,7 @@ func PageMessage(detail Detail) (*managev1.Page, error) {
 		FeaturedImageDelivery: fileref.DeliveryProto(detail.FeaturedImage),
 		Document:              detail.Document,
 		Revision:              detail.Revision,
-		BlockMedia:            detail.BlockMedia,
+		BlockMedia:            fileref.BlockMediaItemsProto(detail.BlockMedia),
 		Slug:                  p.Slug,
 		Summary:               detail.Summary,
 	}
@@ -378,7 +378,7 @@ func editorDocumentMessage(document EditorDocument) (*managev1.GetPageEditorDocu
 	return &managev1.GetPageEditorDocumentResponse{
 		Document: room.Document, DocumentRevision: room.DocumentRevision, Locale: room.Locale,
 		LocaleExists: room.LocaleExists, TargetRevision: room.TargetRevision, SourceLocale: room.SourceMetadata.Locale,
-		BlockMedia: room.BlockMedia, Editable: true, DocumentLayout: documentLayout,
+		BlockMedia: fileref.BlockMediaItemsProto(room.BlockMedia), Editable: true, DocumentLayout: documentLayout,
 		Title: document.Title, Summary: document.Summary,
 	}, nil
 }
@@ -393,7 +393,7 @@ func roomDocumentMessage(room RoomDocument) (*intrav1.LoadPageBlockDocumentRespo
 		SourceMetadata: &intrav1.PageLocaleMetadata{Locale: room.SourceMetadata.Locale, Title: room.SourceMetadata.Title, Summary: room.SourceMetadata.Summary},
 		Locale:         room.Locale, LocaleExists: room.LocaleExists,
 		DocumentLayout:      documentLayout,
-		BlockMedia:          room.BlockMedia,
+		BlockMedia:          fileref.BlockMediaItemsProto(room.BlockMedia),
 		TargetRevision:      room.TargetRevision,
 		PresentLocaleValues: room.PresentLocaleValues,
 	}

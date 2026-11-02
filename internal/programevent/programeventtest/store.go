@@ -19,6 +19,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -29,8 +31,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
 
@@ -132,7 +132,7 @@ type Store struct {
 	// ContentFiles are the MIME types of active Block File references.
 	ContentFiles map[contentFileKey]string
 	// BlockMedia are the active File usages of a document.
-	BlockMedia map[uuid.UUID][]*contentv1.ContentBlockMediaItem
+	BlockMedia map[uuid.UUID][]*fileref.BlockMediaItem
 	// Hydrated records each principal HydrateBlockMedia served.
 	Hydrated []*auth.UserInfo
 	// Site is the site settings documents render.
@@ -2009,7 +2009,7 @@ func (s *Store) InlineImageAsset(_ context.Context, fileID string) (*mediaasset.
 
 // HydrateBlockMedia implements programevent.Store; the fake marks each item
 // served by recording the principal.
-func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	if err := s.enter("HydrateBlockMedia"); err != nil {
 		return nil, err
 	}

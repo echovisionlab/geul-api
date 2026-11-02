@@ -5,15 +5,15 @@ import (
 	"errors"
 	"testing"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"github.com/google/uuid"
 )
 
 func TestFilesDelegatesPostOwnedFileOperations(t *testing.T) {
@@ -46,9 +46,9 @@ func TestPublicFilesLoadsExactAuthorizedReferencesBeforeHydration(t *testing.T) 
 	items, err := NewPublicFiles(db, fake).ResolveAuthorizedContentBlockMedia(t.Context(), documentID)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	require.Equal(t, blockID.String(), items[0].GetSelector().GetBlockId())
-	require.Equal(t, "primary", items[0].GetSelector().GetReferencePath())
-	require.Equal(t, fileID, items[0].GetAttachment().GetActiveFileId())
+	require.Equal(t, blockID.String(), optional.Value(optional.Value(items[0]).Selector).BlockID)
+	require.Equal(t, "primary", optional.Value(optional.Value(items[0]).Selector).ReferencePath)
+	require.Equal(t, fileID, optional.Value(items[0]).Attachment.ActiveFileID())
 	require.Equal(t, items, fake.hydrated)
 }
 
@@ -101,7 +101,7 @@ func (f *recordingDisplayFiles) ResolveDisplayMedia(
 type recordingPublicFiles struct {
 	resolvedIDs []string
 	deliveries  map[string]*fileref.Delivery
-	hydrated    []*contentv1.ContentBlockMediaItem
+	hydrated    []*fileref.BlockMediaItem
 }
 
 func (f *recordingPublicFiles) ResolveDisplayMedia(
@@ -114,8 +114,8 @@ func (f *recordingPublicFiles) ResolveDisplayMedia(
 
 func (f *recordingPublicFiles) HydrateAuthorizedContentBlockMedia(
 	_ context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	f.hydrated = items
 	return items, nil
 }

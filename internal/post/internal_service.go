@@ -9,18 +9,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -86,7 +90,7 @@ type RoomDocument struct {
 	SourceMetadata      LocaleMetadata
 	CategoryIDs         []string
 	TagIDs              []string
-	BlockMedia          []*contentv1.ContentBlockMediaItem
+	BlockMedia          []*fileref.BlockMediaItem
 	Locale              string
 	LocaleExists        bool
 	LocaleMetadata      *LocaleMetadata
@@ -142,7 +146,7 @@ type postRoomState struct {
 	targetRevision *string
 	categoryIDs    []string
 	tagIDs         []string
-	mediaItems     []*contentv1.ContentBlockMediaItem
+	mediaItems     []*fileref.BlockMediaItem
 }
 
 // loadPostBlockDocument reads the room in store; documentOf resolves its

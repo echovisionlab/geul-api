@@ -107,7 +107,7 @@ type Read struct {
 	Localization  publiccontent.Selection
 	OgAsset       *mediaasset.Reference
 	FeaturedImage *fileref.Delivery
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 }
 
 // GetPage reads the public projection of a Page.
@@ -222,7 +222,7 @@ type pageReadResult struct {
 	localization       publiccontent.Selection
 	snapshot           contentblock.Snapshot
 	document           *contentv1.LocalizedPageDocument
-	blockMedia         []*contentv1.ContentBlockMediaItem
+	blockMedia         []*fileref.BlockMediaItem
 }
 
 func (s *Service) loadPageRead(

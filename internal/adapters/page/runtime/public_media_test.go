@@ -12,7 +12,6 @@ import (
 
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,8 +23,8 @@ type pagePublicFilesFixture struct {
 
 func (f *pagePublicFilesFixture) HydrateAuthorizedContentBlockMedia(
 	_ context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

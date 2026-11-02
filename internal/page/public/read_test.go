@@ -21,8 +21,6 @@ import (
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -64,7 +62,7 @@ type media struct {
 	authorization mediaasset.ContentDownloadOwnerAuthorization
 }
 
-func (m *media) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (m *media) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	m.authorization, _ = mediaasset.ContentDownloadOwnerAuthorizationFromContext(ctx)
 	return items, nil
 }

@@ -3,13 +3,12 @@ package workpostgres
 import (
 	"context"
 
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	"github.com/echovisionlab/geul-api/internal/work"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // domainFence runs the Work's fence over the transaction the content store
@@ -38,7 +37,7 @@ func (s *store) ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourc
 	return s.ports.ContentBlocks.LoadSnapshot(ctx, s.tx, documentID, sourceLocale)
 }
 
-func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return contentblock.LoadMediaReferences(ctx, s.tx, documentID)
 }
 

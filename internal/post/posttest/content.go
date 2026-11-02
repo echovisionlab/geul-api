@@ -6,6 +6,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/post"
@@ -357,7 +359,7 @@ func (s *Store) ReadyOgAssets(_ context.Context, assetIDs []string) (map[string]
 	return ready, nil
 }
 
-func (s *Store) BlockMedia(_ context.Context, _ string, documentID uuid.UUID, _ *auth.UserInfo) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) BlockMedia(_ context.Context, _ string, documentID uuid.UUID, _ *auth.UserInfo) ([]*fileref.BlockMediaItem, error) {
 	if err := s.fail("BlockMedia"); err != nil {
 		return nil, err
 	}

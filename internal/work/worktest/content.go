@@ -6,14 +6,14 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	"github.com/echovisionlab/geul-api/internal/work"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/google/uuid"
+
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
@@ -90,7 +90,7 @@ func (s *Store) ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourc
 }
 
 // MediaReferences implements work.Store.
-func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	if err := s.fail("MediaReferences"); err != nil {
 		return nil, err
 	}

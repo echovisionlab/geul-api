@@ -3,6 +3,8 @@ package programevent
 import (
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 
@@ -215,7 +217,7 @@ type EventView struct {
 	Media            []Media
 	Document         *contentv1.RichTextDocument
 	DocumentRevision string
-	BlockMedia       []*contentv1.ContentBlockMediaItem
+	BlockMedia       []*fileref.BlockMediaItem
 }
 
 // EventSummary is an event in the administrator list, with its primary

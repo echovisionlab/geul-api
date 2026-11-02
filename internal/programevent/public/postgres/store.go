@@ -8,22 +8,23 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/programevent/public"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // NewUnits returns the read snapshots of the public Program Event reads
@@ -537,7 +538,7 @@ func (s *store) ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourc
 	return s.contentBlocks.LoadSnapshotInTransaction(ctx, s.tx, documentID, sourceLocale)
 }
 
-func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *store) MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return contentblock.LoadMediaReferences(ctx, s.tx, documentID)
 }
 

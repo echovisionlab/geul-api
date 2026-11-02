@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/optional"
+
 	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	"connectrpc.com/connect"
@@ -51,7 +53,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	hydrated, err := svc.HydrateAuthorizedContentBlockMedia(ownerContext, items)
 	require.NoError(t, err)
 	for _, item := range hydrated {
-		require.Nil(t, item.GetDelivery(), "old public owner witness must not issue inline or download media after audience changes")
+		require.Nil(t, optional.Value(item).Delivery, "old public owner witness must not issue inline or download media after audience changes")
 	}
 	require.NoError(t, db.Exec(`UPDATE page SET access_policy='{}'::jsonb WHERE id=?::uuid`, pageID).Error)
 	reopened, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)

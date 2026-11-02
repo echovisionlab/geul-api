@@ -65,7 +65,7 @@ func (mediaLoader) LoadContentBlockMediaReferences(
 	context.Context,
 	*gorm.DB,
 	uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 
@@ -75,8 +75,8 @@ type MediaHydrator struct{}
 
 func (MediaHydrator) HydrateAuthorizedPostBlockMediaWithDB(
 	_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*fileref.BlockMediaItem,
+) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

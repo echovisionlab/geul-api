@@ -18,6 +18,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/post"
@@ -88,7 +90,7 @@ type state struct {
 	files         map[string]bool
 	routes        map[string]bool
 	readyAssets   map[string]*mediaasset.Reference
-	blockMedia    map[uuid.UUID][]*contentv1.ContentBlockMediaItem
+	blockMedia    map[uuid.UUID][]*fileref.BlockMediaItem
 	sessions      map[string]*auth.UserInfo
 	updates       []post.ContentUpdate
 	ogRequests    []OGRequest
@@ -149,7 +151,7 @@ func NewStore() *Store {
 		relations: map[relationKey]time.Time{}, members: map[string]Member{}, comments: map[string]post.Comment{},
 		versions: map[string][]post.StoredVersion{}, documents: map[uuid.UUID]Document{},
 		mapPlaces: map[string]bool{}, files: map[string]bool{}, routes: map[string]bool{},
-		readyAssets: map[string]*mediaasset.Reference{}, blockMedia: map[uuid.UUID][]*contentv1.ContentBlockMediaItem{},
+		readyAssets: map[string]*mediaasset.Reference{}, blockMedia: map[uuid.UUID][]*fileref.BlockMediaItem{},
 		sessions: map[string]*auth.UserInfo{}, unavailable: map[uuid.UUID]contentv1.MissingAttachmentMediaKind{},
 	}}
 }
@@ -317,7 +319,7 @@ func (s *Store) PutSession(sessionID string, principal *auth.UserInfo) {
 }
 
 // PutBlockMedia stores the File attachments of a content document.
-func (s *Store) PutBlockMedia(documentID uuid.UUID, items []*contentv1.ContentBlockMediaItem) {
+func (s *Store) PutBlockMedia(documentID uuid.UUID, items []*fileref.BlockMediaItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.blockMedia[documentID] = items

@@ -15,14 +15,14 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	"gorm.io/gorm"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // Media is the shared File and public asset lifecycle of event media and
@@ -43,8 +43,8 @@ type Files interface {
 		string,
 		uuid.UUID,
 		*auth.UserInfo,
-		[]*contentv1.ContentBlockMediaItem,
-	) ([]*contentv1.ContentBlockMediaItem, error)
+		[]*fileref.BlockMediaItem,
+	) ([]*fileref.BlockMediaItem, error)
 }
 
 // Members is the Member-owned surface Program Event reads.

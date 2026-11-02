@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -35,7 +36,7 @@ import (
 // ContentBlockMediaHydrator is the public Work media boundary. Public File
 // delivery owns its separate share/public policy evaluation.
 type ContentBlockMediaHydrator interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 }
 
 // MediaResolver is the Work public-read projection supplied by its runtime
@@ -187,7 +188,7 @@ type Detail struct {
 	CreditGroups  []workdomain.CreditGroup
 	Credits       []Credit
 	Clients       []Client
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 }
 
 func isPublicWorkStatus(status workdomain.Status) bool {

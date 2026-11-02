@@ -13,7 +13,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
@@ -60,8 +62,8 @@ type ContentBlockMediaHydrator interface {
 		string,
 		uuid.UUID,
 		*auth.UserInfo,
-		[]*contentv1.ContentBlockMediaItem,
-	) ([]*contentv1.ContentBlockMediaItem, error)
+		[]*fileref.BlockMediaItem,
+	) ([]*fileref.BlockMediaItem, error)
 }
 
 // Members reads the Member and user tag rows Page authorization and

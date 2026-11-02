@@ -8,7 +8,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
@@ -306,7 +308,7 @@ type ContentDocuments interface {
 	LockedContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
 	ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
 	// MediaReferences lists the File references of the document's Blocks.
-	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error)
 	// LocaleOwnershipConflict is the conflict of a room whose source locale
 	// moved (contentblock.LocaleOwnershipConflict).
 	LocaleOwnershipConflict(ctx context.Context, documentID uuid.UUID, message string) error
@@ -357,7 +359,7 @@ type WorkMedia interface {
 	UnavailableAttachmentKinds(ctx context.Context, document *contentv1.LocalizedRichTextDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
 	// HydrateBlockMedia adds the editor delivery of block media the
 	// principal may read.
-	HydrateBlockMedia(ctx context.Context, workID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateBlockMedia(ctx context.Context, workID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 	// RequestOG starts the Work's current OG generation for locale and
 	// returns its run ID, empty when none started; CancelOG cancels it and
 	// releases its image.

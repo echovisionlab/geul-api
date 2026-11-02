@@ -8,6 +8,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -159,7 +161,7 @@ type ContentDocuments interface {
 	// ready.
 	PublicationAttachments(ctx context.Context, documentID uuid.UUID) ([]contentblock.PublicationAttachment, error)
 	// MediaReferences lists the document's Block media.
-	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error)
 }
 
 // PageMedia is the shared File, public asset and OG lifecycle of a Page.
@@ -185,7 +187,7 @@ type PageMedia interface {
 	UnavailableAttachments(ctx context.Context, document *contentv1.LocalizedPageDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
 	// HydrateBlockMedia adds the delivery principal may receive to the
 	// Page's Block media.
-	HydrateBlockMedia(ctx context.Context, pageID string, documentID uuid.UUID, principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateBlockMedia(ctx context.Context, pageID string, documentID uuid.UUID, principal *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 	// RequestOG starts the OG generation of locale, or of every locale,
 	// and returns its run ID, empty when none started; CancelOG cancels it
 	// and releases its image.

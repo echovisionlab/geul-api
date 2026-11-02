@@ -11,7 +11,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -159,7 +161,7 @@ func (s *fakeStore) Document(_ context.Context, workID string, _ uuid.UUID, loca
 	return public.Document{
 		Document:   &contentv1.LocalizedRichTextDocument{Locale: locale},
 		Revision:   "revision-" + workID,
-		BlockMedia: []*contentv1.ContentBlockMediaItem{{}},
+		BlockMedia: []*fileref.BlockMediaItem{{}},
 	}, nil
 }
 
@@ -226,7 +228,7 @@ type blockMedia struct {
 	authorizations []mediaasset.ContentDownloadOwnerAuthorization
 }
 
-func (m *blockMedia) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (m *blockMedia) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	authorization, _ := mediaasset.ContentDownloadOwnerAuthorizationFromContext(ctx)
 	m.authorizations = append(m.authorizations, authorization)
 	return items, nil

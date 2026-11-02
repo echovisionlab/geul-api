@@ -10,6 +10,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 
@@ -31,7 +33,7 @@ type View struct {
 	FeaturedImage *mediaasset.Reference
 	Revision      string
 	Document      *contentv1.RichTextDocument
-	BlockMedia    []*contentv1.ContentBlockMediaItem
+	BlockMedia    []*fileref.BlockMediaItem
 	Clients       []Client
 }
 
@@ -227,7 +229,7 @@ func (s *Service) workResponseWithReadyOg(ctx context.Context, view View, imageA
 // workContent is the content projection a manage read attaches to a Work.
 type workContent struct {
 	document   *contentv1.RichTextDocument
-	blockMedia []*contentv1.ContentBlockMediaItem
+	blockMedia []*fileref.BlockMediaItem
 	revision   string
 }
 
@@ -235,7 +237,7 @@ type workContent struct {
 // its block media into view, after the principal's fresh View check.
 func (s *Service) hydrateWorkContentProjection(ctx context.Context, view *View) error {
 	var snapshot contentblock.Snapshot
-	var mediaItems []*contentv1.ContentBlockMediaItem
+	var mediaItems []*fileref.BlockMediaItem
 	err := s.units.ReadLocked(ctx, func(store Store) error {
 		if _, err := requireLockedWorkPermission(
 			ctx, store, freshRequire(ctx, store, s.fence, s.spiceDB), view.ID, policyv1.Work.View, workAuthorizationRead,
@@ -281,7 +283,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 	workID string,
 	documentID uuid.UUID,
 	locale string,
-) (*contentv1.LocalizedRichTextDocument, string, []*contentv1.ContentBlockMediaItem, error) {
+) (*contentv1.LocalizedRichTextDocument, string, []*fileref.BlockMediaItem, error) {
 	if store == nil {
 		return nil, "", nil, errors.New("Work content projection dependencies are required")
 	}

@@ -8,12 +8,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
@@ -37,10 +37,10 @@ func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
 				attachment.FileID = uuid.NewString()
 			}
 			bound.ScopedAttachments = []filemediatest.ScopedAttachmentRecord{{OwnerKind: "page", OwnerID: owner, DocumentID: document.String(), Attachment: attachment}}
-			item := &contentv1.ContentBlockMediaItem{Selector: &contentv1.ContentBlockMediaSelector{BlockId: block, ReferencePath: "file"}, Attachment: &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: row.ID}}, Delivery: &commonv1.MediaDelivery{FileId: "stale"}}
-			item.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
-			item.Selector.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x02})
-			item.Attachment.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x03})
+			item := &fileref.BlockMediaItem{Selector: &fileref.BlockMediaSelector{BlockID: block, ReferencePath: "file"}, Attachment: &fileref.Attachment{Kind: fileref.AttachmentActive, FileID: row.ID}, Delivery: &fileref.Delivery{FileID: "stale"}}
+			item.Extensions = []byte{0xa0, 0x06, 0x01}
+			item.Selector.Extensions = []byte{0xa0, 0x06, 0x02}
+			item.Attachment.Extensions = []byte{0xa0, 0x06, 0x03}
 			if state == "wrong document" {
 				document = uuid.New()
 			}
@@ -50,9 +50,9 @@ func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
 			if state == "read failure" {
 				bound.Fail = errors.New("store read failed")
 			}
-			original := proto.Clone(item)
-			got, err := service.HydrateAuthorizedPageBlockMedia(t.Context(), filemedia.Joined{Store: bound}, owner, document, user, []*contentv1.ContentBlockMediaItem{nil, item})
-			require.True(t, proto.Equal(original, item))
+			original := item.Clone()
+			got, err := service.HydrateAuthorizedPageBlockMedia(t.Context(), filemedia.Joined{Store: bound}, owner, document, user, []*fileref.BlockMediaItem{nil, item})
+			require.Equal(t, original, item)
 			if state == "read failure" {
 				require.ErrorIs(t, err, bound.Fail)
 				require.Nil(t, got)
@@ -60,21 +60,21 @@ func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, got, 1)
-			require.Equal(t, item.ProtoReflect().GetUnknown(), got[0].ProtoReflect().GetUnknown())
+			require.Equal(t, item.Extensions, got[0].Extensions)
 			require.NotSame(t, item, got[0])
 			require.NotSame(t, item.Selector, got[0].Selector)
 			require.NotSame(t, item.Attachment, got[0].Attachment)
-			require.Equal(t, item.Selector.ProtoReflect().GetUnknown(), got[0].Selector.ProtoReflect().GetUnknown())
-			require.Equal(t, item.Attachment.ProtoReflect().GetUnknown(), got[0].Attachment.ProtoReflect().GetUnknown())
+			require.Equal(t, item.Selector.Extensions, got[0].Selector.Extensions)
+			require.Equal(t, item.Attachment.Extensions, got[0].Attachment.Extensions)
 			if state != "current" && state != "uploader" {
 				require.Nil(t, got[0].Delivery)
-				require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, got[0].DownloadAction)
+				require.Equal(t, fileref.NoDownload, got[0].DownloadAction)
 				return
 			}
-			require.Equal(t, row.ID, got[0].GetDelivery().GetFileId())
-			require.Equal(t, "owner transaction", got[0].GetDelivery().GetFileName())
-			require.NotNil(t, got[0].GetDelivery().GetInline())
-			require.Equal(t, state == "uploader", got[0].GetDelivery().GetDownload() != nil)
+			require.Equal(t, row.ID, optional.Value(got[0]).Delivery.FileID)
+			require.Equal(t, "owner transaction", optional.Value(optional.Value(got[0]).Delivery.FileName))
+			require.NotNil(t, optional.Value(got[0]).Delivery.Inline)
+			require.Equal(t, state == "uploader", optional.Value(got[0]).Delivery.Download != nil)
 		})
 	}
 }

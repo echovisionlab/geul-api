@@ -119,7 +119,7 @@ func (s *Service) postView(ctx context.Context, stored Post) (View, error) {
 // postContent is the content projection a manage read attaches to a Post.
 type postContent struct {
 	document   *contentv1.RichTextDocument
-	blockMedia []*contentv1.ContentBlockMediaItem
+	blockMedia []*fileref.BlockMediaItem
 }
 
 // hydratePostContentProjection reads the Post's source-locale document and

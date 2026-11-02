@@ -7,6 +7,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/google/uuid"
@@ -283,7 +285,7 @@ func (s *Store) PublicationAttachments(_ context.Context, documentID uuid.UUID) 
 }
 
 // MediaReferences implements page.Store.
-func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) MediaReferences(_ context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.blockMedia[documentID]), nil
@@ -370,7 +372,7 @@ func (s *Store) UnavailableAttachments(context.Context, *contentv1.LocalizedPage
 
 // HydrateBlockMedia implements page.Store; the fake delivers the media as
 // referenced.
-func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *Store) HydrateBlockMedia(_ context.Context, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

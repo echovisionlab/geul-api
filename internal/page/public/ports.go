@@ -12,8 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // DraftAccessChecker owns the authenticated Page draft-view decision.
@@ -24,7 +22,7 @@ type DraftAccessChecker interface {
 // MediaResolver is the narrow public File projection required after Page
 // visibility and exact attachment selectors have been authorized.
 type MediaResolver interface {
-	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
+	HydrateAuthorizedContentBlockMedia(context.Context, []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error)
 	ResolvePageFeaturedImageDelivery(context.Context, *string) (*fileref.Delivery, error)
 	ResolvePageOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
@@ -58,7 +56,7 @@ type Store interface {
 	// reports ready.
 	ResolveOGConsistency(ctx context.Context, pageID string, selection publiccontent.Selection, ready func(context.Context, string) (bool, error)) (publiccontent.Selection, error)
 	// MediaReferences lists the document's Block media.
-	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+	MediaReferences(ctx context.Context, documentID uuid.UUID) ([]*fileref.BlockMediaItem, error)
 	// RequireShareLink validates a draft share link of the Page; a missing,
 	// invalid or expired link answers not found.
 	RequireShareLink(ctx context.Context, token, password, pageID string) (*mediaasset.ContentDownloadShareLinkWitness, error)

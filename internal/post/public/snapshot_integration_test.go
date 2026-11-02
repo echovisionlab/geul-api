@@ -230,7 +230,7 @@ func (snapshotFileService) ResolveDisplayMedia(context.Context, []string) (map[s
 func (snapshotFileService) ResolveAuthorizedContentBlockMedia(
 	context.Context,
 	uuid.UUID,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+) ([]*fileref.BlockMediaItem, error) {
 	return nil, nil
 }
 

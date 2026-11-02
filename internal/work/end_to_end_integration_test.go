@@ -11,15 +11,17 @@ import (
 	"slices"
 	"testing"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"connectrpc.com/connect"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -27,28 +29,35 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/work"
-	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
-	// These tests keep what only the whole stack shows: the SpiceDB schema's
-	// answers for the author role and the policy edges a creation and deletion
-	// write, the File, binding and attachment rows a Work's images and Blocks
-	// hold and release, and the Work root and Member rows the policy authority
-	// locks over real Kratos rows. Every other Work scenario runs on the fake
-	// Store, and the work tables on the Store contract.
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
+
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
+
+// These tests keep what only the whole stack shows: the SpiceDB schema's
+// answers for the author role and the policy edges a creation and deletion
+// write, the File, binding and attachment rows a Work's images and Blocks
+// hold and release, and the Work root and Member rows the policy authority
+// locks over real Kratos rows. Every other Work scenario runs on the fake
+// Store, and the work tables on the Store contract.
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -328,7 +337,7 @@ func (adminFileReuse) AuthorizeFileReuse(context.Context, *gorm.DB, contentblock
 
 type passthroughHydrator struct{}
 
-func (passthroughHydrator) HydrateAuthorizedWorkBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (passthroughHydrator) HydrateAuthorizedWorkBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

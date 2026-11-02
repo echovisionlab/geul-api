@@ -46,8 +46,6 @@ import (
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -352,7 +350,7 @@ func newBlockingHydrator() *blockingHydrator {
 	return &blockingHydrator{held: make(chan struct{}), releaseC: make(chan struct{})}
 }
 
-func (h *blockingHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (h *blockingHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	close(h.held)
 	<-h.releaseC
 	return items, nil
@@ -371,7 +369,7 @@ func (h *blockingHydrator) release() { h.once.Do(func() { close(h.releaseC) }) }
 
 type passthroughHydrator struct{}
 
-func (passthroughHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (passthroughHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	return items, nil
 }
 

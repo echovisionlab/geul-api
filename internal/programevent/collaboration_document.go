@@ -4,15 +4,18 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -43,7 +46,7 @@ type RoomDocument struct {
 	Document            *contentv1.LocalizedRichTextDocument
 	DocumentRevision    string
 	SourceMetadata      *BlockLocaleMetadata
-	BlockMedia          []*contentv1.ContentBlockMediaItem
+	BlockMedia          []*fileref.BlockMediaItem
 	Locale              string
 	LocaleExists        bool
 	LocaleMetadata      *BlockLocaleMetadata
@@ -60,7 +63,7 @@ func (s *Service) LoadBlockDocument(ctx context.Context, query LoadBlockDocument
 	}
 	var localeState programEventExactLocaleState
 	var sourceMetadata *BlockLocaleMetadata
-	var blockMedia []*contentv1.ContentBlockMediaItem
+	var blockMedia []*fileref.BlockMediaItem
 	if err := s.units.ReadCurrent(ctx, func(store Store) error {
 		documentID, principal, err := requireProgramEventBlockBootstrap(ctx, store, s.spiceDB, query.EventID, query.SessionID)
 		if err != nil {
@@ -97,7 +100,7 @@ func (s *Service) LoadBlockDocument(ctx context.Context, query LoadBlockDocument
 func blockDocument(
 	localeState programEventExactLocaleState,
 	sourceMetadata *BlockLocaleMetadata,
-	blockMedia []*contentv1.ContentBlockMediaItem,
+	blockMedia []*fileref.BlockMediaItem,
 	locale string,
 ) (RoomDocument, error) {
 	document, err := materializeProgramEventExactLocaleDocument(localeState, locale)

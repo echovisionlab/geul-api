@@ -10,7 +10,9 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -47,7 +49,7 @@ type fakeStore struct {
 	clients      []public.Client
 	credits      []public.CreditRow
 	documents    map[uuid.UUID]contentblock.Snapshot
-	media        []*contentv1.ContentBlockMediaItem
+	media        []*fileref.BlockMediaItem
 	resolved     []string
 	settings     translation.RuntimeSettings
 	availableErr error
@@ -289,7 +291,7 @@ func (s *fakeStore) ContentSnapshot(_ context.Context, documentID uuid.UUID, sou
 	return snapshot, nil
 }
 
-func (s *fakeStore) MediaReferences(context.Context, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error) {
+func (s *fakeStore) MediaReferences(context.Context, uuid.UUID) ([]*fileref.BlockMediaItem, error) {
 	return s.media, s.call("MediaReferences")
 }
 
@@ -341,7 +343,7 @@ type files struct {
 	authorization mediaasset.ContentDownloadOwnerAuthorization
 }
 
-func (f *files) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+func (f *files) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []*fileref.BlockMediaItem) ([]*fileref.BlockMediaItem, error) {
 	f.authorization, _ = mediaasset.ContentDownloadOwnerAuthorizationFromContext(ctx)
 	return items, nil
 }
@@ -472,7 +474,7 @@ func TestGetProgramEventAssemblesThePublishedEvent(t *testing.T) {
 		{ID: "member-credit", MemberID: &member},
 		{ID: "unnamed-artist", ArtistID: &artist},
 	}
-	f.store.media = []*contentv1.ContentBlockMediaItem{{Selector: &contentv1.ContentBlockMediaSelector{}}}
+	f.store.media = []*fileref.BlockMediaItem{{Selector: &fileref.BlockMediaSelector{}}}
 
 	got, err := f.service.GetProgramEvent(t.Context(), public.GetProgramEventQuery{SlugOrID: " " + event.Slug + " ", AcceptLanguage: "ko"})
 

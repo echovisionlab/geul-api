@@ -10,8 +10,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
+
 	optional "github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -89,7 +91,7 @@ type EventDetail struct {
 // of its Block media.
 type PublicEvent struct {
 	Event      EventDetail
-	BlockMedia []*contentv1.ContentBlockMediaItem
+	BlockMedia []*fileref.BlockMediaItem
 }
 
 // GetProgramEvent returns a published or archived event in the locale
@@ -100,7 +102,7 @@ func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuer
 		return PublicEvent{}, domainerr.Required("slug")
 	}
 	var detail EventDetail
-	var media []*contentv1.ContentBlockMediaItem
+	var media []*fileref.BlockMediaItem
 	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
 	err := s.units.ReadCurrent(ctx, func(store Store) error {
 		_, parseErr := uuid.Parse(slugOrID)

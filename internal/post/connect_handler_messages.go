@@ -24,7 +24,7 @@ func PostMessage(view View) *managev1.Post {
 		Document:              view.Document,
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
-		BlockMedia:            view.BlockMedia,
+		BlockMedia:            fileref.BlockMediaItemsProto(view.BlockMedia),
 		Status:                postStatusToProto(p.Status),
 		CommentsEnabled:       p.CommentsEnabled,
 		DocumentLayout:        documentLayoutMessage(p.DocumentLayout),
@@ -300,7 +300,7 @@ func editorDocumentMessage(document EditorDocument) *managev1.GetPostEditorDocum
 	return &managev1.GetPostEditorDocumentResponse{
 		Document: document.Document, DocumentRevision: document.DocumentRevision, Locale: document.Locale,
 		LocaleExists: document.LocaleExists, TargetRevision: document.TargetRevision, SourceLocale: document.SourceLocale,
-		BlockMedia: document.BlockMedia, Editable: document.Editable,
+		BlockMedia: fileref.BlockMediaItemsProto(document.BlockMedia), Editable: document.Editable,
 		Title: document.Title, Summary: document.Summary,
 	}
 }
@@ -320,7 +320,7 @@ func roomDocumentMessage(room RoomDocument) *intrav1.LoadPostBlockDocumentRespon
 		},
 		CategoryIds:         room.CategoryIDs,
 		TagIds:              room.TagIDs,
-		BlockMedia:          room.BlockMedia,
+		BlockMedia:          fileref.BlockMediaItemsProto(room.BlockMedia),
 		Locale:              room.Locale,
 		LocaleExists:        room.LocaleExists,
 		LocaleMetadata:      localeMetadata,
