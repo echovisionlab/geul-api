@@ -22,13 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
 
-// MetadataAIJobs runs and recovers the metadata AI jobs
-// (*ai.MetadataJobManager).
-type MetadataAIJobs interface {
-	worker.MetadataAIJobProcessor
-	MetadataAIRecoverer
-}
-
 // Config holds the worker's infrastructure and the runtimes of the domains
 // it drives. MetadataAI, TranslationJobs and CampaignEmail may be nil.
 type Config struct {
@@ -47,7 +40,7 @@ type Config struct {
 	PublicAssets    worker.PublicAssetCleanup
 	OGCleanup       worker.OGCleanup
 	FaviconCleanup  worker.FaviconCleanup
-	MetadataAI      MetadataAIJobs                             // optional
+	MetadataAI      worker.MetadataAIJobProcessor              // optional
 	TranslationJobs worker.TranslationJobProcessor             // optional
 	CampaignEmail   emaildeliveryadapter.CampaignEmailRenderer // optional: live Campaign renders then fail
 }
@@ -94,7 +87,6 @@ func New(c Config) (worker.Deps, error) {
 		SiteOrigin:     c.Config.SiteOrigin,
 	}
 	if c.MetadataAI != nil {
-		ports.MetadataAI = c.MetadataAI
 		deps.MetadataAI = c.MetadataAI
 	}
 	if c.TranslationJobs != nil {
