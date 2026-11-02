@@ -7,37 +7,23 @@ import (
 	"strings"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"gorm.io/gorm"
 )
 
-// RegistrationEmailReuseBlocked reports whether a deleted or unlinked
-// Member still holds email. It stays on gorm for the registration reuse-hold
-// adapter of Authentication, which calls it with its pool; the Member Store
-// reads the same predicate through it.
-func RegistrationEmailReuseBlocked(ctx context.Context, db *gorm.DB, email string) (bool, error) {
-	if db == nil {
+// EmailReuseReader reads the reuse hold of a normalized email.
+type EmailReuseReader interface {
+	EmailReuseHeld(context.Context, string) (bool, error)
+}
+
+// RegistrationEmailReuseBlocked checks the Member reuse hold after normalizing email.
+func RegistrationEmailReuseBlocked(ctx context.Context, store EmailReuseReader, email string) (bool, error) {
+	if store == nil {
 		return false, fmt.Errorf("member database is required")
 	}
 	normalized, ok := NormalizeEmailInput(email)
 	if !ok {
 		return false, nil
 	}
-	var blocked bool
-	if err := db.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM member
-			WHERE account_identity_id IS NULL
-			  AND available_emails @> ARRAY[?]::text[]
-			  AND (
-				deleted_at IS NULL
-				OR deleted_at > CURRENT_TIMESTAMP - interval '7 days'
-			  )
-		)
-	`, normalized).Scan(&blocked).Error; err != nil {
-		return false, err
-	}
-	return blocked, nil
+	return store.EmailReuseHeld(ctx, normalized)
 }
 
 // NormalizeEmailInput validates and canonicalizes a registration email.

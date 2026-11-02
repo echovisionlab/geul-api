@@ -197,7 +197,7 @@ type Store interface {
 	// Member linked to it.
 	CreateRegistrationMember(ctx context.Context, member Member) (Member, error)
 	// EmailReuseHeld reports whether a deleted or unlinked Member still
-	// holds the normalized email (RegistrationEmailReuseBlocked).
+	// holds the normalized email.
 	EmailReuseHeld(ctx context.Context, email string) (bool, error)
 	// LinkedMemberExists reports whether the exact live pair is linked from
 	// the Member side.

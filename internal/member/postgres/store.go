@@ -643,7 +643,22 @@ func (s store) CreateRegistrationMember(ctx context.Context, created member.Memb
 }
 
 func (s store) EmailReuseHeld(ctx context.Context, normalizedEmail string) (bool, error) {
-	return member.RegistrationEmailReuseBlocked(ctx, s.tx, normalizedEmail)
+	var blocked bool
+	if err := s.db(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM member
+			WHERE account_identity_id IS NULL
+			  AND available_emails @> ARRAY[?]::text[]
+			  AND (
+				deleted_at IS NULL
+				OR deleted_at > CURRENT_TIMESTAMP - interval '7 days'
+			  )
+		)
+	`, normalizedEmail).Scan(&blocked).Error; err != nil {
+		return false, err
+	}
+	return blocked, nil
 }
 
 func (s store) LinkedMemberExists(ctx context.Context, memberID, identityID string) (bool, error) {

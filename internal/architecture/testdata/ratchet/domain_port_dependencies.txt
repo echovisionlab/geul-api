@@ -12,7 +12,6 @@
 1 internal/label/public generated contracts
 6 internal/legal generated contracts
 2 internal/legal/public generated contracts
-1 internal/member gorm
 7 internal/page generated contracts
 1 internal/page/public generated contracts
 13 internal/post generated contracts
