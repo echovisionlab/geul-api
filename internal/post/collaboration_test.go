@@ -198,6 +198,12 @@ func TestPostDocumentMetadataAuditsTheOriginAndOnlyChangedTaxonomies(t *testing.
 	require.Equal(t, contributor.memberID, records[0].MemberID)
 	require.Equal(t, value.ID, records[0].TargetID)
 	require.Equal(t, []string{"categories", "tags"}, records[0].ChangedFields)
+	updates := h.store.Updates()
+	require.Len(t, updates, 1)
+	require.Equal(t, post.ContentUpdate{
+		PostID: value.ID, Fields: []string{"categoryIds", "tagIds"}, DocumentRevision: saved.DocumentRevision,
+		Contributors: []string{contributor.memberID}, Source: post.SourceCollaboration, Locale: "en", DocumentStateChanged: true,
+	}, updates[0])
 
 	command.ExpectedRevision = saved.DocumentRevision
 	unchanged, err := h.service.UpdatePostDocumentMetadata(ctx, command)
@@ -205,6 +211,7 @@ func TestPostDocumentMetadataAuditsTheOriginAndOnlyChangedTaxonomies(t *testing.
 	require.False(t, unchanged.Changed)
 	require.Equal(t, saved.DocumentRevision, unchanged.DocumentRevision)
 	require.Len(t, h.audit.Records(), 1)
+	require.Len(t, h.store.Updates(), 1)
 
 	command.TagIDs = &[]string{"tag-b"}
 	saved, err = h.service.UpdatePostDocumentMetadata(ctx, command)
@@ -213,6 +220,10 @@ func TestPostDocumentMetadataAuditsTheOriginAndOnlyChangedTaxonomies(t *testing.
 	records = h.audit.Records()
 	require.Len(t, records, 2)
 	require.Equal(t, []string{"tags"}, records[1].ChangedFields)
+	updates = h.store.Updates()
+	require.Len(t, updates, 2)
+	require.Equal(t, []string{"tagIds"}, updates[1].Fields)
+	require.Equal(t, saved.DocumentRevision, updates[1].DocumentRevision)
 
 	auditFailure := errors.New("audit unavailable")
 	h.audit.Err = auditFailure
@@ -224,6 +235,7 @@ func TestPostDocumentMetadataAuditsTheOriginAndOnlyChangedTaxonomies(t *testing.
 	require.Equal(t, []string{"category-a"}, h.store.Links(post.Categories, value.ID))
 	require.Equal(t, []string{"tag-b"}, h.store.Links(post.Tags, value.ID))
 	require.Len(t, h.audit.Records(), 2)
+	require.Len(t, h.store.Updates(), 2)
 }
 
 func TestPostDocumentMetadataRequiresOneOriginMember(t *testing.T) {

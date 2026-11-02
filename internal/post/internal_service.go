@@ -615,6 +615,20 @@ func (s *Service) UpdatePostDocumentMetadata(ctx context.Context, command Update
 		effects.audits = append(effects.audits, mutation.MemberAudit(contributorMemberID, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewPostDocumentMetadataAuditRecord(metadata, command.PostID, changedFields)
 		}))
+		fields := make([]string, 0, len(changedFields))
+		for _, field := range changedFields {
+			switch field {
+			case "categories":
+				fields = append(fields, "categoryIds")
+			case "tags":
+				fields = append(fields, "tagIds")
+			}
+		}
+		effects.signal(ContentUpdate{
+			PostID: command.PostID, Fields: fields, DocumentRevision: result.DocumentRevision.String(),
+			Contributors: command.ContributorMemberIDs, Source: SourceCollaboration,
+			Locale: locale, DocumentStateChanged: true,
+		})
 		return result, nil
 	})
 	if err != nil {

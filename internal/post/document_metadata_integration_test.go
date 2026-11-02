@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
@@ -26,7 +27,11 @@ func TestPostDocumentMetadataAuditAndRevisionCommitTogetherIntegration(t *testin
 	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Post metadata contributor")
 	spiceDB := orytest.PostIntegrationSpiceDB(t)
 	orytest.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	service := postintegration.NewService(t, postintegration.Deps{DB: db, SpiceDB: spiceDB})
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	publisher, err := mq.NewPublisher(sqlDB)
+	require.NoError(t, err)
+	service := postintegration.NewService(t, postintegration.Deps{DB: db, SpiceDB: spiceDB, Signals: publisher})
 	handler := post.NewConnectHandler(service)
 	created, err := handler.CreatePost(withPostAuditedRequestContext(t, orytest.PostIntegrationContext(identityID)), connect.NewRequest(&managev1.CreatePostRequest{
 		Title: "Post metadata audit", Document: contenttest.EmptyPostDocument("en"),
@@ -41,6 +46,7 @@ func TestPostDocumentMetadataAuditAndRevisionCommitTogetherIntegration(t *testin
 	categoryID, tagID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Exec("INSERT INTO category (id, name, slug) VALUES (?, ?, ?)", categoryID, "Metadata category", "category-"+categoryID).Error)
 	require.NoError(t, db.Exec("INSERT INTO tag (id, name, slug) VALUES (?, ?, ?)", tagID, "Metadata tag", "tag-"+tagID).Error)
+	beforeEvents := len(contenttest.ContentUpdatedEvents(t, db, postID))
 	beforeAudit := len(contenttest.LoadDomainAuditRows(t, db, "post", postID))
 	command := post.UpdatePostDocumentMetadataCommand{
 		PostID: postID, Locale: "en", ExpectedRevision: revision(), ContributorMemberIDs: []string{memberID},
@@ -58,6 +64,18 @@ func TestPostDocumentMetadataAuditAndRevisionCommitTogetherIntegration(t *testin
 	require.Equal(t, string(sharedtelemetry.ActorKindMember), record.ActorKind)
 	require.Equal(t, &memberID, record.ActorMemberID)
 	require.EqualValues(t, []string{"categories", "tags"}, record.ChangedFields)
+	events := contenttest.ContentUpdatedEvents(t, db, postID)[beforeEvents:]
+	require.Len(t, events, 1)
+	event := events[0]
+	require.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, event.GetSource())
+	require.Equal(t, saved.DocumentRevision, event.GetDocumentRevision())
+	require.Equal(t, "en", event.GetLocale())
+	require.True(t, event.GetDocumentStateChanged())
+	require.Equal(t, []string{memberID}, event.GetContributorMemberIds())
+	require.Equal(t, []*managev1.ContentUpdatedField{
+		{Path: "relations.categories", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
+		{Path: "relations.tags", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_RELATION},
+	}, event.GetChangedFields())
 
 	command.ExpectedRevision = saved.DocumentRevision
 	unchanged, err := service.UpdatePostDocumentMetadata(postAuditedSystemRequestContext(t), command)
@@ -65,6 +83,7 @@ func TestPostDocumentMetadataAuditAndRevisionCommitTogetherIntegration(t *testin
 	require.False(t, unchanged.Changed)
 	require.Equal(t, saved.DocumentRevision, revision())
 	require.Len(t, contenttest.LoadDomainAuditRows(t, db, "post", postID), beforeAudit+1)
+	require.Len(t, contenttest.ContentUpdatedEvents(t, db, postID), beforeEvents+1)
 	require.NoError(t, db.Exec(`CREATE FUNCTION reject_post_metadata_audit() RETURNS trigger LANGUAGE plpgsql AS $$
  BEGIN RAISE EXCEPTION 'metadata audit rejected'; RETURN NEW; END $$`).Error)
 	require.NoError(t, db.Exec(`CREATE TRIGGER reject_post_metadata_audit BEFORE INSERT ON public.domain_audit
@@ -81,4 +100,5 @@ func TestPostDocumentMetadataAuditAndRevisionCommitTogetherIntegration(t *testin
 	require.Equal(t, []string{categoryID}, categories)
 	require.Equal(t, []string{tagID}, tags)
 	require.Len(t, contenttest.LoadDomainAuditRows(t, db, "post", postID), beforeAudit+1)
+	require.Len(t, contenttest.ContentUpdatedEvents(t, db, postID), beforeEvents+1)
 }
