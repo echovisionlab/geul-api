@@ -1,6 +1,6 @@
 //go:build integration
 
-package worker
+package ogruntime_test
 
 import (
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
@@ -21,7 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func workerOGProjections() []ogpostgres.Projection {
+func cleanupOGProjections() []ogpostgres.Projection {
 	return []ogpostgres.Projection{
 		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
 		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
@@ -30,18 +30,18 @@ func workerOGProjections() []ogpostgres.Projection {
 	}
 }
 
-func newWorkerOGPlanner(db *gorm.DB, cdnDomain string) *ogpostgres.Planner {
-	return ogpostgres.NewPlanner(cdnDomain, sitesettingsadapter.NewRenderConfig(), workerOGProjections()...)
+func newCleanupOGPlanner(db *gorm.DB, cdnDomain string) *ogpostgres.Planner {
+	return ogpostgres.NewPlanner(cdnDomain, sitesettingsadapter.NewRenderConfig(), cleanupOGProjections()...)
 }
 
-func newWorkerOGLifecycle(db *gorm.DB, cdnDomain string) *og.Lifecycle {
-	return og.NewLifecycle(newWorkerOGUnits(db, cdnDomain))
+func newCleanupOGLifecycle(db *gorm.DB, cdnDomain string) *og.Lifecycle {
+	return og.NewLifecycle(newCleanupOGUnits(db, cdnDomain))
 }
 
-func newWorkerOGUnits(db *gorm.DB, cdnDomain string) mutation.UnitOfWork[og.Store] {
+func newCleanupOGUnits(db *gorm.DB, cdnDomain string) mutation.UnitOfWork[og.Store] {
 	requests := postadapter.NewRequests()
 	units, err := ogpostgres.NewUnits(db, ogpostgres.Ports{
-		CDNDomain: cdnDomain, RenderConfig: sitesettingsadapter.NewRenderConfig(), Projections: workerOGProjections(),
+		CDNDomain: cdnDomain, RenderConfig: sitesettingsadapter.NewRenderConfig(), Projections: cleanupOGProjections(),
 		Requests: ogpostgres.NewResolver(requests), AllRequests: ogpostgres.NewCollector(requests),
 		Reconciler: ogpostgres.NoopGlobalReconciler{}, References: ogprojection.AssetReferences(),
 	})
@@ -51,7 +51,7 @@ func newWorkerOGUnits(db *gorm.DB, cdnDomain string) mutation.UnitOfWork[og.Stor
 	return units
 }
 
-func workerOGRequest(
+func cleanupOGRequest(
 	entityType managev1.OgEntityType,
 	entityID, title string,
 	locale, featuredImageFileID *string,

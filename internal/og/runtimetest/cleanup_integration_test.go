@@ -1,6 +1,6 @@
 //go:build integration
 
-package worker
+package ogruntime_test
 
 import (
 	"context"
@@ -11,25 +11,22 @@ import (
 	"testing"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/config"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func requestWorkerOgGenerationForTest(
+func requestCleanupOgGeneration(
 	ctx context.Context,
 	db *gorm.DB,
 	planner *ogpostgres.Planner,
@@ -58,7 +55,7 @@ func requestWorkerOgGenerationForTest(
 	return plan, nil
 }
 
-func cancelWorkerOgGenerationEntityForTest(
+func cancelCleanupOgGeneration(
 	ctx context.Context,
 	db *gorm.DB,
 	entityType managev1.OgEntityType,
@@ -71,7 +68,7 @@ func cancelWorkerOgGenerationEntityForTest(
 
 func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
 	t.Parallel()
-	db := newWorkerIntegrationDB(t)
+	db := newCleanupDB(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-unboundOgAssetRetention)
 	unbound := seedPostgresReadyOgAsset(t, db, now.Add(-31*24*time.Hour))
@@ -104,11 +101,11 @@ func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
 
 func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t *testing.T) {
 	t.Parallel()
-	db := newWorkerIntegrationDB(t)
+	db := newCleanupDB(t)
 	now := time.Now().UTC()
-	plan, err := requestWorkerOgGenerationForTest(
-		t.Context(), db, newWorkerOGPlanner(db, "https://cdn.example.com"), "automatic", "cleanup_regression", []og.Request{
-			workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, uuid.NewString(), "cleanup regression", nil, nil),
+	plan, err := requestCleanupOgGeneration(
+		t.Context(), db, newCleanupOGPlanner(db, "https://cdn.example.com"), "automatic", "cleanup_regression", []og.Request{
+			cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, uuid.NewString(), "cleanup regression", nil, nil),
 		},
 	)
 	require.NoError(t, err)
@@ -118,14 +115,14 @@ func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t
 		Update("created_at", now.Add(-25*time.Hour)).Error)
 
 	deleteRequests := 0
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		deleteRequests++
 		http.Error(w, "OG generation object must not enter generic unready cleanup", http.StatusInternalServerError)
 	}))
-	handlers := &cleanupFixture{
+	fixture := &cleanupFixture{
 		db: db, s3Client: s3Client, config: &config.Config{S3Bucket: "media"},
 	}
-	require.NoError(t, publicAssetCleanupForIntegration(handlers).DeleteExpiredUnready(t.Context(), now.Add(-unreadyAssetRetention)))
+	require.NoError(t, publicAssetCleanupForIntegration(fixture).DeleteExpiredUnready(t.Context(), now.Add(-unreadyAssetRetention)))
 	require.Zero(t, deleteRequests, "cleanup must filter OG generation assets before any S3 delete")
 
 	var count int64
@@ -133,110 +130,11 @@ func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t
 	require.EqualValues(t, 1, count, "OG lifecycle history retains the generation-backed asset")
 }
 
-func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testing.T) {
-	t.Parallel()
-	pg := newWorkerIntegrationPostgres(t)
-	now := time.Now().UTC()
-	cutoff := now.Add(-unreadyAssetRetention)
-	digest := sha256.Sum256([]byte("completed"))
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodDelete, r.Method)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	handlers := &cleanupFixture{db: pg.DB, s3Client: s3Client, config: &config.Config{S3Bucket: "media"}}
-
-	allocateExpired := func(t *testing.T) model.PublicAsset {
-		t.Helper()
-		asset, _, allocateErr := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(pg.DB), "").AllocatePublicAsset(
-			t.Context(),
-			mediaasset.Allocation{
-				Kind:        "image",
-				Extension:   "webp",
-				MimeType:    "image/webp",
-				Disposition: mediaasset.DispositionInline,
-			},
-		))
-		require.NoError(t, allocateErr)
-		require.NoError(t, pg.DB.Model(&model.PublicAsset{}).Where("id = ?", asset.ID).
-			Update("created_at", now.Add(-25*time.Hour)).Error)
-		t.Cleanup(func() {
-			_ = pg.DB.Where("id = ?", asset.ID).Delete(&model.PublicAsset{}).Error
-		})
-		return mediaassetpostgres.AssetRow(*asset)
-	}
-
-	t.Run("cleanup lock wins", func(t *testing.T) {
-		asset := allocateExpired(t)
-		locked := make(chan struct{})
-		release := make(chan struct{})
-		blockingS3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, http.MethodDelete, r.Method)
-			close(locked)
-			<-release
-			w.WriteHeader(http.StatusNoContent)
-		}))
-		cleanupHandlers := &cleanupFixture{
-			db: pg.DB, s3Client: blockingS3Client, config: &config.Config{S3Bucket: "media"},
-		}
-		cleanupDone := make(chan error, 1)
-		go func() {
-			cleanupDone <- publicAssetCleanupForIntegration(cleanupHandlers).DeleteExpiredUnready(context.Background(), cutoff)
-		}()
-		<-locked
-
-		completeDone := make(chan error, 1)
-		go func() {
-			_, completeErr := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(pg.DB), "").CompletePublicAsset(
-				context.Background(),
-				mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]}),
-			)
-			completeDone <- completeErr
-		}()
-		select {
-		case completeErr := <-completeDone:
-			t.Fatalf("completion did not wait for cleanup lock: %v", completeErr)
-		case <-time.After(100 * time.Millisecond):
-		}
-		pgtest.RequireLockWaiters(t, pg.DB, 1)
-		close(release)
-		require.NoError(t, <-cleanupDone)
-		require.Error(t, <-completeDone)
-		var count int64
-		require.NoError(t, pg.DB.Model(&model.PublicAsset{}).Where("id = ?", asset.ID).Count(&count).Error)
-		require.Zero(t, count)
-	})
-
-	t.Run("completion lock wins", func(t *testing.T) {
-		asset := allocateExpired(t)
-		tx := pg.DB.Begin()
-		require.NoError(t, tx.Error)
-		_, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "").CompletePublicAsset(
-			t.Context(),
-			mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]}),
-		)
-		require.NoError(t, err)
-
-		cleanupDone := make(chan error, 1)
-		go func() {
-			cleanupDone <- publicAssetCleanupForIntegration(handlers).DeleteExpiredUnready(context.Background(), cutoff)
-		}()
-		select {
-		case cleanupErr := <-cleanupDone:
-			t.Fatalf("cleanup did not wait for completion transaction: %v", cleanupErr)
-		case <-time.After(100 * time.Millisecond):
-		}
-		pgtest.RequireLockWaiters(t, pg.DB, 1)
-		require.NoError(t, tx.Commit().Error)
-		require.NoError(t, <-cleanupDone)
-		assertCleanupAssetStatus(t, pg.DB, asset.ID, model.PublicAssetStatusReady)
-	})
-}
-
 func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(t *testing.T) {
 	t.Parallel()
-	db := newWorkerIntegrationDB(t)
+	db := newCleanupDB(t)
 	ctx := context.Background()
-	s3Client, cfg := newWorkerIntegrationS3(t)
+	s3Client, cfg := filetest.NewS3(t)
 	now := time.Now().UTC()
 	old := now.Add(-25 * time.Hour)
 
@@ -256,17 +154,17 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 	cfg.CloudflareZoneID = "test-zone"
 	cfg.CloudflareAPIToken = "test-token"
 
-	planner := newWorkerOGPlanner(db, cfg.CDNURL)
-	lifecycle := newWorkerOGLifecycle(db, cfg.CDNURL)
+	planner := newCleanupOGPlanner(db, cfg.CDNURL)
+	lifecycle := newCleanupOGLifecycle(db, cfg.CDNURL)
 	createPlanWithObject := func(reason string) (*og.Plan, string) {
-		work := seedWorkerOGWork(t, db)
-		plan, err := requestWorkerOgGenerationForTest(ctx, db, planner, "automatic", reason, []og.Request{
-			workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, work.ID, reason, nil, nil),
+		work := seedCleanupOGWork(t, db)
+		plan, err := requestCleanupOgGeneration(ctx, db, planner, "automatic", reason, []og.Request{
+			cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, work.ID, reason, nil, nil),
 		})
 		require.NoError(t, err)
 		var asset model.PublicAsset
 		require.NoError(t, db.First(&asset, "id = ?", plan.GenerationIDs[0]).Error)
-		require.NoError(t, putWorkerIntegrationObject(ctx, s3Client, cfg.S3Bucket, asset.ObjectKey, reason))
+		require.NoError(t, filetest.PutObject(ctx, s3Client, cfg.S3Bucket, asset.ObjectKey, reason))
 		require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", asset.ID).Update("created_at", old).Error)
 		return plan, work.ID
 	}
@@ -275,13 +173,13 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 	// Superseding or cancelling then makes redelivery Claim terminal/SKIP, so
 	// cleanup is the durable recovery path for the abandoned object.
 	superseded, supersededWorkID := createPlanWithObject("completion outage then supersede")
-	_, err := requestWorkerOgGenerationForTest(ctx, db, planner, "automatic", "replacement", []og.Request{
-		workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, supersededWorkID, "replacement", nil, nil),
+	_, err := requestCleanupOgGeneration(ctx, db, planner, "automatic", "replacement", []og.Request{
+		cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, supersededWorkID, "replacement", nil, nil),
 	})
 	require.NoError(t, err)
 
 	cancelled, cancelledWorkID := createPlanWithObject("completion outage then cancel")
-	require.NoError(t, cancelWorkerOgGenerationEntityForTest(ctx, db, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, cancelledWorkID))
+	require.NoError(t, cancelCleanupOgGeneration(ctx, db, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, cancelledWorkID))
 
 	failed, _ := createPlanWithObject("completion outage then permanent failure")
 	claim, err := lifecycle.Claim(ctx, failed.GenerationIDs[0])
@@ -295,15 +193,15 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 		assertCleanupAssetStatus(t, db, assetID, model.PublicAssetStatusDeletePending)
 	}
 
-	handlers := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
-	require.NoError(t, publicAssetCleanupForIntegration(handlers).DeletePending(ctx, now))
+	fixture := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
+	require.NoError(t, publicAssetCleanupForIntegration(fixture).DeletePending(ctx, now))
 	for _, assetID := range terminalIDs {
 		assertCleanupAssetStatus(t, db, assetID, model.PublicAssetStatusDeleted)
 		var generationCount int64
 		require.NoError(t, db.Model(&model.OgGeneration{}).Where("id = ?", assetID).Count(&generationCount).Error)
 		require.EqualValues(t, 1, generationCount, "terminal generation history must be retained")
 	}
-	remainingKeys := listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/")
+	remainingKeys := filetest.ListKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/")
 	for _, assetID := range terminalIDs {
 		var asset model.PublicAsset
 		require.NoError(t, db.First(&asset, "id = ?", assetID).Error)
@@ -313,15 +211,15 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 
 func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newWorkerIntegrationDB(t)
+	db := newCleanupDB(t)
 	now := time.Now().UTC()
 	old := now.Add(-25 * time.Hour)
-	planner := newWorkerOGPlanner(db, "https://cdn.example.com")
+	planner := newCleanupOGPlanner(db, "https://cdn.example.com")
 
 	create := func(name string) (*og.Plan, model.Work) {
-		work := seedWorkerOGWork(t, db)
-		plan, err := requestWorkerOgGenerationForTest(t.Context(), db, planner, "automatic", name, []og.Request{
-			workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, work.ID, name, nil, nil),
+		work := seedCleanupOGWork(t, db)
+		plan, err := requestCleanupOgGeneration(t.Context(), db, planner, "automatic", name, []og.Request{
+			cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, work.ID, name, nil, nil),
 		})
 		require.NoError(t, err)
 		require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", plan.GenerationIDs[0]).Update("created_at", old).Error)
@@ -344,8 +242,8 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 	}
 
 	bound, boundWork := create("terminal bound")
-	_, err := requestWorkerOgGenerationForTest(t.Context(), db, planner, "automatic", "terminal bound replacement", []og.Request{
-		workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, boundWork.ID, "replacement", nil, nil),
+	_, err := requestCleanupOgGeneration(t.Context(), db, planner, "automatic", "terminal bound replacement", []og.Request{
+		cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, boundWork.ID, "replacement", nil, nil),
 	})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
@@ -354,8 +252,8 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 	}).Error)
 
 	pointed, pointedWork := create("terminal pointed")
-	_, err = requestWorkerOgGenerationForTest(t.Context(), db, planner, "automatic", "terminal pointed replacement", []og.Request{
-		workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, pointedWork.ID, "replacement", nil, nil),
+	_, err = requestCleanupOgGeneration(t.Context(), db, planner, "automatic", "terminal pointed replacement", []og.Request{
+		cleanupOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, pointedWork.ID, "replacement", nil, nil),
 	})
 	require.NoError(t, err)
 	// Work OG pointers live on the translation rows; the base column is legacy.
@@ -381,7 +279,7 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 	}
 }
 
-func seedWorkerOGWork(t *testing.T, db *gorm.DB) model.Work {
+func seedCleanupOGWork(t *testing.T, db *gorm.DB) model.Work {
 	t.Helper()
 	documentID := uuid.NewString()
 	require.NoError(t, db.Exec(

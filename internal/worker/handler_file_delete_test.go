@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -183,7 +182,7 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}).Error)
 	var requests []string
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodDelete:
@@ -231,7 +230,7 @@ func TestHandleFileDeleteRejectsCleanupOnlyTargetsBeforeStorage(t *testing.T) {
 	_, assetTarget := seedWorkerCleanupAsset(t, db, file.ID)
 	_, generationTarget := seedWorkerCleanupGeneration(t, db, file.ID)
 	storageCalled := false
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		storageCalled = true
 	}))
 	authorization := newInMemoryFileAuthorizationDeletion()
@@ -254,7 +253,7 @@ func TestHandleFileDeleteRejectsIncompleteFullGenerationSetBeforeStorage(t *test
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		files: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
@@ -275,7 +274,7 @@ func TestHandleFileDeleteMessageRoutesCleanupOnlyPayloadToTerminalDLQ(t *testing
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		files: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, filetest.NewS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
@@ -334,7 +333,7 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 					tt.event = &managev1.FileDeleteEvent{FileId: file.ID, Generations: []*commonv1.MediaGenerationWriteTarget{target}}
 				}
 			}
-			s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/xml")
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = fmt.Fprint(w, `<Error><Code>InternalError</Code><Message>injected failure</Message></Error>`)
@@ -355,7 +354,7 @@ func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *
 	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -393,7 +392,7 @@ func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testi
 		VALUES (?, ?, ?, NULL)
 	`, uuid.NewString(), file.ID, model.MeshOptimizationCandidateStatusCancelled).Error)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodDelete, r.Method)
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
@@ -422,7 +421,7 @@ func TestHandleFileDeleteDefersStorageUntilTranscodeWriterFinishes(t *testing.T)
 		VALUES (?, ?, ?)
 	`, eventID, file.ID, transcodestate.StatusCancelled).Error)
 	var deleteCalls int
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s3Client := filetest.NewS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -591,23 +590,4 @@ func seedWorkerCleanupGeneration(
 	return generation, &commonv1.MediaGenerationWriteTarget{
 		GenerationId: generation.ID, FileId: generation.FileID, ObjectPrefix: generation.ObjectPrefix,
 	}
-}
-
-func newFileDeleteTestS3Client(t *testing.T, handler http.Handler) *s3.Client {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	awsConfig := aws.Config{
-		Region:      "us-east-1",
-		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		HTTPClient:  server.Client(),
-		Retryer: func() aws.Retryer {
-			return aws.NopRetryer{}
-		},
-	}
-	return s3.NewFromConfig(awsConfig, func(options *s3.Options) {
-		options.BaseEndpoint = aws.String(server.URL)
-		options.UsePathStyle = true
-	})
 }
