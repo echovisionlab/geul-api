@@ -69,20 +69,45 @@ func NewStore() *Store {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	targets, generations, runs := maps.Clone(s.targets), maps.Clone(s.generations), maps.Clone(s.runs)
-	assets, bindings, pointers := maps.Clone(s.assets), maps.Clone(s.bindings), maps.Clone(s.pointers)
+	targets := mutationtest.ClonePersisted(s.targets)
+	generations := mutationtest.ClonePersisted(s.generations)
+	runs := mutationtest.ClonePersisted(s.runs)
+	assets := mutationtest.ClonePersisted(s.assets)
+	bindings := mutationtest.ClonePersisted(s.bindings)
+	pointers := mutationtest.ClonePersisted(s.pointers)
+	notifications := mutationtest.ClonePersisted(s.notifications)
+	enqueued := mutationtest.ClonePersisted(s.enqueued)
+	released := mutationtest.ClonePersisted(s.released)
 	sequence := s.sequence
-	notifications, enqueued, released := len(s.notifications), len(s.enqueued), len(s.released)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.targets, s.generations, s.runs = targets, generations, runs
-		s.assets, s.bindings, s.pointers = assets, bindings, pointers
-		s.sequence = sequence
-		s.notifications, s.enqueued, s.released = s.notifications[:notifications], s.enqueued[:enqueued], s.released[:released]
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"targets":       targets,
+			"generations":   generations,
+			"runs":          runs,
+			"assets":        assets,
+			"bindings":      bindings,
+			"pointers":      pointers,
+			"notifications": notifications,
+			"enqueued":      enqueued,
+			"released":      released,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.targets = targets
+			s.generations = generations
+			s.runs = runs
+			s.assets = assets
+			s.bindings = bindings
+			s.pointers = pointers
+			s.notifications = notifications
+			s.enqueued = enqueued
+			s.released = released
+			s.sequence = sequence
+		},
 	}
 }
 

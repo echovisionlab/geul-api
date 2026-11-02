@@ -3,7 +3,6 @@ package mutation_test
 import (
 	"context"
 	"errors"
-	"maps"
 	"sync"
 	"testing"
 
@@ -35,14 +34,19 @@ type fakeNotes struct {
 	revisions map[string]int
 }
 
-func (f *fakeNotes) Savepoint() func() {
+func (f *fakeNotes) Savepoint() mutationtest.Checkpoint {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	saved := maps.Clone(f.revisions)
-	return func() {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		f.revisions = saved
+	revisions := mutationtest.ClonePersisted(f.revisions)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"revisions": revisions,
+		},
+		Restore: func() {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.revisions = revisions
+		},
 	}
 }
 

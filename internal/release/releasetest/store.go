@@ -96,42 +96,37 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.releases = maps.Clone(s.releases)
-	clone.locales = maps.Clone(s.locales)
-	clone.notes = make(map[localeKey]map[string]string, len(s.notes))
-	for key, notes := range s.notes {
-		clone.notes[key] = maps.Clone(notes)
-	}
+	clone.releases = mutationtest.ClonePersisted(s.releases)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.notes = mutationtest.ClonePersisted(s.notes)
 	clone.artists = cloneLists(s.artists)
 	clone.labels = cloneLists(s.labels)
 	clone.formats = cloneLists(s.formats)
 	clone.credits = cloneLists(s.credits)
-	clone.references = make(map[release.ReferenceRelation]map[string][]string, len(s.references))
-	for relation, byRelease := range s.references {
-		clone.references[relation] = cloneLists(byRelease)
-	}
-	clone.tracks = maps.Clone(s.tracks)
+	clone.references = mutationtest.ClonePersisted(s.references)
+	clone.tracks = mutationtest.ClonePersisted(s.tracks)
 	clone.trackCredits = cloneLists(s.trackCredits)
 	clone.segments = cloneLists(s.segments)
-	clone.uploads = maps.Clone(s.uploads)
-	clone.documents = maps.Clone(s.documents)
-	clone.files = maps.Clone(s.files)
-	clone.artwork = maps.Clone(s.artwork)
-	clone.bindings = maps.Clone(s.bindings)
-	clone.shareLinks = maps.Clone(s.shareLinks)
-	clone.updates = slices.Clone(s.updates)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.ogCancels = slices.Clone(s.ogCancels)
+	clone.uploads = mutationtest.ClonePersisted(s.uploads)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.files = mutationtest.ClonePersisted(s.files)
+	clone.artwork = mutationtest.ClonePersisted(s.artwork)
+	clone.bindings = mutationtest.ClonePersisted(s.bindings)
+	clone.shareLinks = mutationtest.ClonePersisted(s.shareLinks)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.ogCancels = mutationtest.ClonePersisted(s.ogCancels)
 	clone.lockedFiles = slices.Clone(s.lockedFiles)
 	clone.lockedMembers = slices.Clone(s.lockedMembers)
 	clone.contentResults = slices.Clone(s.contentResults)
+	clone.defaultLocale = mutationtest.ClonePersisted(s.defaultLocale)
 	return clone
 }
 
 func cloneLists[K comparable, V any](lists map[K][]V) map[K][]V {
 	clone := make(map[K][]V, len(lists))
 	for key, list := range lists {
-		clone[key] = slices.Clone(list)
+		clone[key] = mutationtest.ClonePersisted(list)
 	}
 	return clone
 }
@@ -191,14 +186,39 @@ func New() (*Store, *mutationtest.UnitOfWork[release.Store]) {
 var _ release.Store = (*Store)(nil)
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"releases":      saved.releases,
+			"locales":       saved.locales,
+			"notes":         saved.notes,
+			"artists":       saved.artists,
+			"labels":        saved.labels,
+			"formats":       saved.formats,
+			"credits":       saved.credits,
+			"references":    saved.references,
+			"tracks":        saved.tracks,
+			"trackCredits":  saved.trackCredits,
+			"segments":      saved.segments,
+			"uploads":       saved.uploads,
+			"documents":     saved.documents,
+			"files":         saved.files,
+			"artwork":       saved.artwork,
+			"bindings":      saved.bindings,
+			"shareLinks":    saved.shareLinks,
+			"updates":       saved.updates,
+			"ogRequests":    saved.ogRequests,
+			"ogCancels":     saved.ogCancels,
+			"defaultLocale": saved.defaultLocale,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.state = saved
+		},
 	}
 }
 

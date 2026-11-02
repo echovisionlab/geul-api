@@ -321,7 +321,9 @@ type sourcePreflightStore struct {
 	access *recordingPostAccess
 }
 
-func (s *sourcePreflightStore) Savepoint() func() { return func() {} }
+func (s *sourcePreflightStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 func (s *sourcePreflightStore) RequirePolicyOwner(ctx context.Context, kind, id string, edit bool) error {
 	if kind != "post" || !edit {
 		panic("unexpected source owner permission")

@@ -30,13 +30,14 @@ type state struct {
 }
 
 func (v state) clone() state {
-	v.campaigns = maps.Clone(v.campaigns)
-	v.runs = maps.Clone(v.runs)
-	v.recipients = maps.Clone(v.recipients)
-	v.targets = maps.Clone(v.targets)
-	v.routes = slices.Clone(v.routes)
-	v.queued = slices.Clone(v.queued)
-	return v
+	clone := v
+	clone.campaigns = mutationtest.ClonePersisted(v.campaigns)
+	clone.runs = mutationtest.ClonePersisted(v.runs)
+	clone.recipients = mutationtest.ClonePersisted(v.recipients)
+	clone.targets = mutationtest.ClonePersisted(v.targets)
+	clone.routes = mutationtest.ClonePersisted(v.routes)
+	clone.queued = mutationtest.ClonePersisted(v.queued)
+	return clone
 }
 
 type Store struct {
@@ -74,12 +75,23 @@ func New() (*Store, *mutationtest.UnitOfWork[campaign.Store]) {
 	}
 	return s, mutationtest.New[campaign.Store](s)
 }
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	content := s.Store.Savepoint()
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() { content(); s.mu.Lock(); s.state = saved; s.mu.Unlock() }
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"campaigns":  saved.campaigns,
+			"runs":       saved.runs,
+			"recipients": saved.recipients,
+			"targets":    saved.targets,
+			"routes":     saved.routes,
+			"queued":     saved.queued,
+			"content":    content.State,
+		},
+		Restore: func() { content.Restore(); s.mu.Lock(); s.state = saved; s.mu.Unlock() },
+	}
 }
 func (s *Store) Fail(method string, err error) {
 	s.mu.Lock()

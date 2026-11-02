@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -87,35 +89,44 @@ func New() (*Store, *Units) {
 var _ account.Store = (*Store)(nil)
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	saved := s.state.clone()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		saved.failures, saved.hooks = s.state.failures, s.state.hooks
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"members":      saved.members,
+			"identities":   saved.identities,
+			"deletions":    saved.deletions,
+			"emailChanges": saved.emailChanges,
+			"newsletter":   saved.newsletter,
+			"anchors":      saved.anchors,
+			"identityCmds": saved.identityCmds,
+			"avatarCmds":   saved.avatarCmds,
+			"finalized":    saved.finalized,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			saved.failures, saved.hooks = s.state.failures, s.state.hooks
+			s.state = saved
+		},
 	}
 }
 
 func (st state) clone() state {
-	members := make(map[string]Member, len(st.members))
-	for id, value := range st.members {
-		value.AvailableEmails = slices.Clone(value.AvailableEmails)
-		members[id] = value
-	}
-	identities := make(map[string]Identity, len(st.identities))
-	for id, value := range st.identities {
-		value.LiveSessions = slices.Clone(value.LiveSessions)
-		identities[id] = value
-	}
-	return state{
-		members: members, identities: identities, deletions: maps.Clone(st.deletions),
-		emailChanges: maps.Clone(st.emailChanges), newsletter: maps.Clone(st.newsletter), anchors: maps.Clone(st.anchors),
-		identityCmds: slices.Clone(st.identityCmds), avatarCmds: slices.Clone(st.avatarCmds), finalized: slices.Clone(st.finalized), locked: slices.Clone(st.locked),
-		failures: st.failures, hooks: st.hooks,
-	}
+	clone := st
+	clone.members = mutationtest.ClonePersisted(st.members)
+	clone.identities = mutationtest.ClonePersisted(st.identities)
+	clone.deletions = mutationtest.ClonePersisted(st.deletions)
+	clone.emailChanges = mutationtest.ClonePersisted(st.emailChanges)
+	clone.newsletter = mutationtest.ClonePersisted(st.newsletter)
+	clone.anchors = mutationtest.ClonePersisted(st.anchors)
+	clone.identityCmds = mutationtest.ClonePersisted(st.identityCmds)
+	clone.avatarCmds = mutationtest.ClonePersisted(st.avatarCmds)
+	clone.finalized = mutationtest.ClonePersisted(st.finalized)
+	clone.locked = slices.Clone(st.locked)
+	return clone
 }
 
 // Fail makes every later call of the named Store method answer err; nil

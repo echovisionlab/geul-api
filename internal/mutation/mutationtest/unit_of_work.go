@@ -9,6 +9,7 @@ package mutationtest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -18,16 +19,26 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// Savepointer is a fake store that can undo a transaction: Savepoint
-// captures its state and returns the function that restores it.
-type Savepointer interface {
-	Savepoint() (rollback func())
+// Checkpoint holds a fake's independent persisted snapshot and its rollback.
+// State excludes locks, callbacks, failure injection and call observations.
+type Checkpoint struct {
+	State   any
+	Restore func()
 }
+
+// Savepointer captures the persisted state a read compares and a failed
+// transaction restores. Each fake selects its persisted fields explicitly.
+type Savepointer interface {
+	Savepoint() Checkpoint
+}
+
+// ErrReadOnly reports a write made inside a read-only snapshot.
+var ErrReadOnly = errors.New("mutationtest: read-only transaction changed persisted state")
 
 // UnitOfWork implements mutation.UnitOfWork over one fake store.
 type UnitOfWork[S any] struct {
 	store     S
-	savepoint func() func()
+	savepoint func() Checkpoint
 
 	mu      sync.Mutex
 	waiting atomic.Int32
@@ -82,7 +93,7 @@ func (u *UnitOfWork[S]) Transaction(_ context.Context, lockAuthorization bool, w
 	if lockAuthorization {
 		u.record(mutation.StepAuthorizationLock)
 	}
-	rollback := u.savepoint()
+	rollback := u.savepoint().Restore
 	if err := work(mutation.NewTx(u.store, nil, u.record)); err != nil {
 		rollback()
 		u.record(mutation.StepRollback)
@@ -102,7 +113,7 @@ func (u *UnitOfWork[S]) RelationshipTransaction(
 ) error {
 	defer u.begin()()
 	u.record(mutation.StepAuthorizationLock)
-	rollback := u.savepoint()
+	rollback := u.savepoint().Restore
 	var written, compensation []policyv1.RelationshipMutation
 	writes := 0
 	write := func(apply, compensate []policyv1.RelationshipMutation) error {
@@ -139,18 +150,39 @@ func (u *UnitOfWork[S]) RelationshipTransaction(
 
 // Read implements mutation.UnitOfWork.
 func (u *UnitOfWork[S]) Read(_ context.Context, read func(S) error) error {
-	defer u.begin()()
-	return read(u.store)
+	return u.read(true, read)
 }
 
 // ReadLocked implements mutation.UnitOfWork; the fake takes no lock.
 func (u *UnitOfWork[S]) ReadLocked(_ context.Context, read func(S) error) error {
-	defer u.begin()()
-	return read(u.store)
+	return u.read(false, read)
 }
 
 // ReadCurrent implements mutation.UnitOfWork; the fake takes no lock.
 func (u *UnitOfWork[S]) ReadCurrent(_ context.Context, read func(S) error) error {
+	return u.read(false, read)
+}
+
+func (u *UnitOfWork[S]) read(readOnly bool, read func(S) error) (err error) {
 	defer u.begin()()
-	return read(u.store)
+	before := u.savepoint()
+	finished := false
+	defer func() {
+		if !finished {
+			before.Restore()
+		}
+	}()
+	err = read(u.store)
+	if readOnly && !reflect.DeepEqual(before.State, u.savepoint().State) {
+		if err == nil {
+			err = ErrReadOnly
+		} else {
+			err = errors.Join(err, ErrReadOnly)
+		}
+	}
+	if err != nil {
+		before.Restore()
+	}
+	finished = true
+	return err
 }

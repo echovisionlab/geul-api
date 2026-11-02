@@ -283,13 +283,21 @@ reads through `s.units.Read`. A domain that needs `ReadLocked` or
 `mutationtest.UnitOfWork` with the same isolation, rather than opening a
 transaction itself.
 
-`mutationtest.UnitOfWork` serializes transactions like one connection, rolls
-the fake back through its `Savepoint() (rollback func())` when a
-transaction fails, keeps `authzmutation.Execute`'s write-once contract, and
-records the steps `Run` took (`Steps()`: `StepAuthorizationLock`,
-`StepSubjects`, `StepLock`, `StepAccess`, `StepChange`, `StepAudit`,
-`StepOutbox`, `StepRelationships`, then `StepCommit` or `StepRollback`), so
-a use-case test asserts order and rollback without PostgreSQL.
+`mutationtest.UnitOfWork` serializes transactions like one connection and
+restores failed transactions through `Savepoint() mutationtest.Checkpoint`.
+Each fake selects its persisted `State` and `Restore` operation explicitly;
+locks, failure injection and call observations stay outside the comparison.
+`Read` compares independent snapshots, rejects persisted changes and restores
+the checkpoint. `ReadLocked` and `ReadCurrent` allow successful writes and
+restore on callback error or panic. State comparison cannot enforce SQL CHECK
+constraints or statement-level read-only restrictions; actual PostgreSQL
+contracts cover those rules.
+
+The fake keeps `authzmutation.Execute`'s write-once contract and records the
+steps `Run` took (`Steps()`: `StepAuthorizationLock`, `StepSubjects`,
+`StepLock`, `StepAccess`, `StepChange`, `StepAudit`, `StepOutbox`,
+`StepRelationships`, then `StepCommit` or `StepRollback`), so a use-case test
+asserts order and rollback without PostgreSQL.
 
 `Runner`, `Spec` and `NewRunner` are the store-less form of the same
 pipeline for domains that have not moved: their closures receive the gorm

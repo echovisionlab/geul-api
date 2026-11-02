@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
 type PolicyRecord struct {
@@ -127,8 +128,7 @@ func (s *LibraryStore) PublishPolicyChange(_ context.Context, signal domain.Poli
 func clonePolicies(rows map[string]PolicyRecord) map[string]PolicyRecord {
 	out := maps.Clone(rows)
 	for key, row := range out {
-		row.SegmentIDs = slices.Clone(row.SegmentIDs)
-		out[key] = row
+		out[key] = mutationtest.ClonePersisted(row)
 	}
 	return out
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -59,7 +61,9 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{DownloadStore: mediaassettest.NewDownload(), Assets: map[string]AssetRecord{}, Generations: map[string]GenerationRecord{}, Files: map[string]FileRecord{}, Tracks: map[string]Track{}, OwnerRows: map[string]public.OwnerWitness{}, BlockOwners: map[string][]public.OwnerWitness{}, LinksByID: map[string]public.ShareLink{}, PageReasons: map[string]pageaccess.Reason{}, ActivePrincipals: map[string]bool{}}
 }
-func (s *Store) Savepoint() func() { return func() {} }
+func (s *Store) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 func (s *Store) ReadyAsset(_ context.Context, id string) (public.ReadyAsset, error) {
 	if s.Fail != nil {
 		return public.ReadyAsset{}, s.Fail

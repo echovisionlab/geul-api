@@ -3,7 +3,6 @@ package public_test
 import (
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -29,14 +28,22 @@ func newFakeStore() (*fakeStore, *mutationtest.UnitOfWork[public.Store]) {
 	return store, mutationtest.New[public.Store](store)
 }
 
-func (s *fakeStore) Savepoint() func() {
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	members, newsletter := maps.Clone(s.members), maps.Clone(s.newsletter)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.members, s.newsletter = members, newsletter
+	members := mutationtest.ClonePersisted(s.members)
+	newsletter := mutationtest.ClonePersisted(s.newsletter)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"members":    members,
+			"newsletter": newsletter,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.members = members
+			s.newsletter = newsletter
+		},
 	}
 }
 

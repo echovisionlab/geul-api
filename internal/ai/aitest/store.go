@@ -35,15 +35,26 @@ func New() (*Store, *mutationtest.UnitOfWork[ai.Store]) {
 	return store, mutationtest.New[ai.Store](store)
 }
 
-// Savepoint captures the Store and returns the function that restores it.
-func (s *Store) Savepoint() func() {
+// Savepoint captures the persisted fields and the rollback of the Store.
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	jobs, transport, enqueued := maps.Clone(s.jobs), maps.Clone(s.transport), slices.Clone(s.enqueued)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.jobs, s.transport, s.enqueued = jobs, transport, enqueued
+	jobs := mutationtest.ClonePersisted(s.jobs)
+	transport := mutationtest.ClonePersisted(s.transport)
+	enqueued := mutationtest.ClonePersisted(s.enqueued)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"jobs":      jobs,
+			"transport": transport,
+			"enqueued":  enqueued,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.jobs = jobs
+			s.transport = transport
+			s.enqueued = enqueued
+		},
 	}
 }
 

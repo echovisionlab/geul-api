@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -108,14 +107,22 @@ func (s *Store) Default() string {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	themes, defaultID := maps.Clone(s.themes), s.defaultID
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.themes, s.defaultID = themes, defaultID
+	themes := mutationtest.ClonePersisted(s.themes)
+	defaultID := mutationtest.ClonePersisted(s.defaultID)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"themes":    themes,
+			"defaultID": defaultID,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.themes = themes
+			s.defaultID = defaultID
+		},
 	}
 }
 

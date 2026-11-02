@@ -63,18 +63,31 @@ func New() (*Store, *mutationtest.UnitOfWork[menu.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	menus, documents := maps.Clone(s.menus), maps.Clone(s.documents)
-	locales := make(map[string]map[string]menu.LocaleValues, len(s.locales))
-	for id, rows := range s.locales {
-		locales[id] = maps.Clone(rows)
-	}
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.menus, s.documents, s.locales = menus, documents, locales
+	menus := mutationtest.ClonePersisted(s.menus)
+	documents := mutationtest.ClonePersisted(s.documents)
+	locales := mutationtest.ClonePersisted(s.locales)
+	cleared := mutationtest.ClonePersisted(s.cleared)
+	signals := mutationtest.ClonePersisted(s.signals)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"menus":     menus,
+			"documents": documents,
+			"locales":   locales,
+			"cleared":   cleared,
+			"signals":   signals,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.menus = menus
+			s.documents = documents
+			s.locales = locales
+			s.cleared = cleared
+			s.signals = signals
+		},
 	}
 }
 

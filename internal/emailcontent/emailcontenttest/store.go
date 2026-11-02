@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -46,10 +48,10 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.documents = maps.Clone(s.documents)
-	clone.locales = maps.Clone(s.locales)
-	clone.touched = maps.Clone(s.touched)
-	clone.updates = slices.Clone(s.updates)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.touched = mutationtest.ClonePersisted(s.touched)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
 	clone.results = slices.Clone(s.results)
 	return clone
 }
@@ -74,15 +76,23 @@ func New() *Store {
 	}}
 }
 
-// Savepoint snapshots the Store; the returned function restores it.
-func (s *Store) Savepoint() (rollback func()) {
+// Savepoint captures the persisted fields and the rollback of the Store.
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.state = saved
-		s.mu.Unlock()
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"documents": saved.documents,
+			"locales":   saved.locales,
+			"touched":   saved.touched,
+			"updates":   saved.updates,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			s.state = saved
+			s.mu.Unlock()
+		},
 	}
 }
 

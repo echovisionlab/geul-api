@@ -2,9 +2,9 @@ package filemediatest
 
 import (
 	"context"
-	"maps"
-	"slices"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	telemetry "github.com/echovisionlab/geul-telemetry"
@@ -75,55 +75,74 @@ func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
 	return &LibraryStore{MeshCandidateRows: map[string]domain.MeshCandidate{}, UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
-func (s *LibraryStore) Savepoint() func() {
-	meshRows := maps.Clone(s.MeshCandidateRows)
-	for id, row := range meshRows {
-		meshRows[id] = cloneMeshCandidate(row)
-	}
-	meshJobs := slices.Clone(s.MeshJobs)
-	commands := slices.Clone(s.IngestCommands)
-	originals := maps.Clone(s.TrackOriginals)
-	generations := maps.Clone(s.Generations)
-	derivatives := maps.Clone(s.Derivatives)
-	for id, rows := range derivatives {
-		derivatives[id] = slices.Clone(rows)
-	}
-	bindings := maps.Clone(s.IngestBindings)
-	for id, row := range bindings {
-		row.EntityType = cloneUploadPointer(row.EntityType)
-		bindings[id] = row
-	}
-	uploads, parts := cloneUploads(s.UploadSessions), cloneUploadParts(s.UploadPartRows)
-	assetIDs := maps.Clone(s.AssetIDs)
-	saved := maps.Clone(s.Folders)
-	files := maps.Clone(s.Files)
-	writes := s.Writes
-	policies, signals := clonePolicies(s.Policies), slices.Clone(s.PolicySignals)
-	mesh, ready := maps.Clone(s.MeshRecords), maps.Clone(s.ReadyMeshes)
+func (s *LibraryStore) Savepoint() mutationtest.Checkpoint {
 	assets := s.MediaAssets.Savepoint()
-	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
-	return func() {
-		s.MeshCandidateRows = meshRows
-		s.MeshJobs = meshJobs
-		s.IngestCommands = commands
-		s.TrackOriginals = originals
-		s.Generations = generations
-		s.Derivatives = derivatives
-		s.IngestBindings = bindings
-		s.UploadSessions = uploads
-		s.UploadPartRows = parts
-		s.AssetIDs = assetIDs
-		s.Folders = saved
-		s.Files = files
-		s.Writes = writes
-		s.Policies = policies
-		s.PolicySignals = signals
-		s.MeshRecords = mesh
-		s.ReadyMeshes = ready
-		assets()
-		s.FaviconDeletions = favicon
-		s.DeletionOutbox = outbox
-		s.Audits = audits
+	meshCandidateRows := mutationtest.ClonePersisted(s.MeshCandidateRows)
+	meshJobs := mutationtest.ClonePersisted(s.MeshJobs)
+	ingestCommands := mutationtest.ClonePersisted(s.IngestCommands)
+	trackOriginals := mutationtest.ClonePersisted(s.TrackOriginals)
+	generations := mutationtest.ClonePersisted(s.Generations)
+	derivatives := mutationtest.ClonePersisted(s.Derivatives)
+	ingestBindings := mutationtest.ClonePersisted(s.IngestBindings)
+	uploadSessions := cloneUploads(s.UploadSessions)
+	uploadPartRows := cloneUploadParts(s.UploadPartRows)
+	assetIDs := mutationtest.ClonePersisted(s.AssetIDs)
+	folders := mutationtest.ClonePersisted(s.Folders)
+	files := mutationtest.ClonePersisted(s.Files)
+	policies := clonePolicies(s.Policies)
+	policySignals := mutationtest.ClonePersisted(s.PolicySignals)
+	meshRecords := mutationtest.ClonePersisted(s.MeshRecords)
+	readyMeshes := mutationtest.ClonePersisted(s.ReadyMeshes)
+	faviconDeletions := mutationtest.ClonePersisted(s.FaviconDeletions)
+	deletionOutbox := mutationtest.ClonePersisted(s.DeletionOutbox)
+	audits := mutationtest.ClonePersisted(s.Audits)
+	writes := s.Writes
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"MeshCandidateRows": meshCandidateRows,
+			"MeshJobs":          meshJobs,
+			"IngestCommands":    ingestCommands,
+			"TrackOriginals":    trackOriginals,
+			"Generations":       generations,
+			"Derivatives":       derivatives,
+			"IngestBindings":    ingestBindings,
+			"UploadSessions":    uploadSessions,
+			"UploadPartRows":    uploadPartRows,
+			"AssetIDs":          assetIDs,
+			"Folders":           folders,
+			"Files":             files,
+			"Policies":          policies,
+			"PolicySignals":     policySignals,
+			"MeshRecords":       meshRecords,
+			"ReadyMeshes":       readyMeshes,
+			"FaviconDeletions":  faviconDeletions,
+			"DeletionOutbox":    deletionOutbox,
+			"Audits":            audits,
+			"MediaAssets":       assets.State,
+		},
+		Restore: func() {
+			assets.Restore()
+			s.MeshCandidateRows = meshCandidateRows
+			s.MeshJobs = meshJobs
+			s.IngestCommands = ingestCommands
+			s.TrackOriginals = trackOriginals
+			s.Generations = generations
+			s.Derivatives = derivatives
+			s.IngestBindings = ingestBindings
+			s.UploadSessions = uploadSessions
+			s.UploadPartRows = uploadPartRows
+			s.AssetIDs = assetIDs
+			s.Folders = folders
+			s.Files = files
+			s.Policies = policies
+			s.PolicySignals = policySignals
+			s.MeshRecords = meshRecords
+			s.ReadyMeshes = readyMeshes
+			s.FaviconDeletions = faviconDeletions
+			s.DeletionOutbox = deletionOutbox
+			s.Audits = audits
+			s.Writes = writes
+		},
 	}
 }
 func (s *LibraryStore) FolderExists(_ context.Context, id string) (bool, error) {

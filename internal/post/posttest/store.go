@@ -8,7 +8,6 @@ package posttest
 
 import (
 	"context"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -105,22 +104,29 @@ type state struct {
 
 func (s state) clone() state {
 	clone := s
-	clone.posts = maps.Clone(s.posts)
-	clone.locales = maps.Clone(s.locales)
-	clone.links = map[post.Taxonomy]map[string][]string{}
-	for taxonomy, links := range s.links {
-		clone.links[taxonomy] = maps.Clone(links)
-	}
-	clone.relations = maps.Clone(s.relations)
-	clone.comments = maps.Clone(s.comments)
-	clone.versions = maps.Clone(s.versions)
-	clone.documents = maps.Clone(s.documents)
-	clone.updates = slices.Clone(s.updates)
-	clone.ogRequests = slices.Clone(s.ogRequests)
-	clone.ogCancels = slices.Clone(s.ogCancels)
-	clone.shareLinks = slices.Clone(s.shareLinks)
+	clone.posts = mutationtest.ClonePersisted(s.posts)
+	clone.locales = mutationtest.ClonePersisted(s.locales)
+	clone.taxonomy = mutationtest.ClonePersisted(s.taxonomy)
+	clone.links = mutationtest.ClonePersisted(s.links)
+	clone.relations = mutationtest.ClonePersisted(s.relations)
+	clone.members = mutationtest.ClonePersisted(s.members)
+	clone.comments = mutationtest.ClonePersisted(s.comments)
+	clone.versions = mutationtest.ClonePersisted(s.versions)
+	clone.documents = mutationtest.ClonePersisted(s.documents)
+	clone.mapPlaces = mutationtest.ClonePersisted(s.mapPlaces)
+	clone.files = mutationtest.ClonePersisted(s.files)
+	clone.routes = mutationtest.ClonePersisted(s.routes)
+	clone.readyAssets = mutationtest.ClonePersisted(s.readyAssets)
+	clone.blockMedia = mutationtest.ClonePersisted(s.blockMedia)
+	clone.sessions = mutationtest.ClonePersisted(s.sessions)
+	clone.updates = mutationtest.ClonePersisted(s.updates)
+	clone.ogRequests = mutationtest.ClonePersisted(s.ogRequests)
+	clone.ogCancels = mutationtest.ClonePersisted(s.ogCancels)
+	clone.shareLinks = mutationtest.ClonePersisted(s.shareLinks)
 	clone.lockedFiles = slices.Clone(s.lockedFiles)
-	clone.memberAudits = slices.Clone(s.memberAudits)
+	clone.memberAudits = mutationtest.ClonePersisted(s.memberAudits)
+	clone.unavailable = mutationtest.ClonePersisted(s.unavailable)
+	clone.contentResult = slices.Clone(s.contentResult)
 	return clone
 }
 
@@ -163,14 +169,39 @@ func New() (*Store, *mutationtest.UnitOfWork[post.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"posts":        saved.posts,
+			"locales":      saved.locales,
+			"taxonomy":     saved.taxonomy,
+			"links":        saved.links,
+			"relations":    saved.relations,
+			"members":      saved.members,
+			"comments":     saved.comments,
+			"versions":     saved.versions,
+			"documents":    saved.documents,
+			"mapPlaces":    saved.mapPlaces,
+			"files":        saved.files,
+			"routes":       saved.routes,
+			"readyAssets":  saved.readyAssets,
+			"blockMedia":   saved.blockMedia,
+			"sessions":     saved.sessions,
+			"updates":      saved.updates,
+			"ogRequests":   saved.ogRequests,
+			"ogCancels":    saved.ogCancels,
+			"shareLinks":   saved.shareLinks,
+			"memberAudits": saved.memberAudits,
+			"unavailable":  saved.unavailable,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.state = saved
+		},
 	}
 }
 

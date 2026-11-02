@@ -3,8 +3,8 @@ package mutationtest_test
 import (
 	"context"
 	"errors"
-	"maps"
 	"testing"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
@@ -16,14 +16,37 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// notes is the smallest fake store: a set of names it can roll back.
-type notes struct{ names map[string]bool }
+// notes keeps persisted names and details separately from read observations.
+type notes struct {
+	names   map[string]bool
+	details *noteDetails
+	reads   int
+	hook    func()
+}
 
-func (n *notes) Savepoint() func() {
-	saved := maps.Clone(n.names)
-	return func() { n.names = saved }
+type noteDetails struct {
+	Labels  map[string][]string
+	Title   *string
+	Payload proto.Message
+}
+
+func (n *notes) Savepoint() mutationtest.Checkpoint {
+	names := mutationtest.ClonePersisted(n.names)
+	details := mutationtest.ClonePersisted(n.details)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"names":   names,
+			"details": details,
+		},
+		Restore: func() {
+			n.names = names
+			n.details = details
+		},
+	}
 }
 
 var _ mutation.UnitOfWork[*notes] = (*mutationtest.UnitOfWork[*notes])(nil)
@@ -130,6 +153,121 @@ func TestUnitOfWorkReadsHandTheStoreAndKeepTheReadError(t *testing.T) {
 			require.ErrorIs(t, read(t.Context(), func(*notes) error { return readErr }), readErr)
 		})
 	}
+}
+
+func TestReadRejectsPersistedWritesAndKeepsObservations(t *testing.T) {
+	store := &notes{names: map[string]bool{"stored": true}}
+	store.hook = func() { store.reads++ }
+	units := mutationtest.New(store)
+	require.NoError(t, units.Read(t.Context(), func(read *notes) error {
+		read.hook()
+		return nil
+	}))
+	require.Equal(t, 1, store.reads)
+	err := units.Read(t.Context(), func(read *notes) error {
+		read.hook()
+		read.names["written"] = true
+		return nil
+	})
+	require.ErrorIs(t, err, mutationtest.ErrReadOnly)
+	require.Equal(t, map[string]bool{"stored": true}, store.names)
+	require.Equal(t, 2, store.reads)
+	require.Empty(t, units.Steps())
+}
+
+func TestReadModesAllowWritesOnlyInWritableTransactions(t *testing.T) {
+	for _, name := range []string{"snapshot", "locked snapshot", "current"} {
+		t.Run(name, func(t *testing.T) {
+			store := &notes{names: map[string]bool{}}
+			units := mutationtest.New(store)
+			read := units.Read
+			if name == "locked snapshot" {
+				read = units.ReadLocked
+			}
+			if name == "current" {
+				read = units.ReadCurrent
+			}
+			err := read(t.Context(), func(store *notes) error {
+				store.names["written"] = true
+				return nil
+			})
+			if name == "snapshot" {
+				require.ErrorIs(t, err, mutationtest.ErrReadOnly)
+				require.Empty(t, store.names)
+			} else {
+				require.NoError(t, err)
+				require.True(t, store.names["written"])
+			}
+		})
+	}
+}
+
+func TestReadModesRollBackErrorsAndPanics(t *testing.T) {
+	for _, name := range []string{"snapshot", "locked snapshot", "current"} {
+		t.Run(name, func(t *testing.T) {
+			store := &notes{names: map[string]bool{"stored": true}}
+			units := mutationtest.New(store)
+			read := units.Read
+			if name == "locked snapshot" {
+				read = units.ReadLocked
+			}
+			if name == "current" {
+				read = units.ReadCurrent
+			}
+			callbackErr := errors.New("callback failed")
+			err := read(t.Context(), func(store *notes) error {
+				store.names["failed"] = true
+				return callbackErr
+			})
+			require.ErrorIs(t, err, callbackErr)
+			if name == "snapshot" {
+				require.ErrorIs(t, err, mutationtest.ErrReadOnly)
+			}
+			require.Equal(t, map[string]bool{"stored": true}, store.names)
+			panicValue := &struct{ message string }{"callback panic"}
+			require.PanicsWithValue(t, panicValue, func() {
+				_ = read(t.Context(), func(store *notes) error {
+					store.names["panicked"] = true
+					panic(panicValue)
+				})
+			})
+			require.Equal(t, map[string]bool{"stored": true}, store.names)
+			require.NoError(t, units.Read(t.Context(), func(*notes) error { return nil }))
+		})
+	}
+}
+
+func TestReadRestoresNestedValuesChangedThroughAliases(t *testing.T) {
+	title := "before"
+	store := &notes{names: map[string]bool{}, details: &noteDetails{
+		Labels: map[string][]string{"labels": {"before"}}, Title: &title,
+		Payload: structpb.NewStringValue("before"),
+	}}
+	units := mutationtest.New(store)
+	require.NoError(t, units.Read(t.Context(), func(read *notes) error {
+		_, err := proto.Marshal(read.details.Payload)
+		return err
+	}))
+	err := units.Read(t.Context(), func(read *notes) error {
+		read.details.Labels["labels"][0] = "after"
+		*read.details.Title = "after"
+		read.details.Payload.(*structpb.Value).Kind = &structpb.Value_StringValue{StringValue: "after"}
+		return nil
+	})
+	require.ErrorIs(t, err, mutationtest.ErrReadOnly)
+	require.Equal(t, "before", store.details.Labels["labels"][0])
+	require.Equal(t, "before", *store.details.Title)
+	require.True(t, proto.Equal(structpb.NewStringValue("before"), store.details.Payload))
+}
+
+func TestClonePersistedKeepsTimeAndRejectsPrivateMutableFields(t *testing.T) {
+	stamp := time.Now()
+	require.Equal(t, stamp, mutationtest.ClonePersisted(stamp))
+	type privateScalar struct{ value string }
+	require.Equal(t, privateScalar{value: "kept"}, mutationtest.ClonePersisted(privateScalar{value: "kept"}))
+	type privateSlice struct{ value []byte }
+	require.Panics(t, func() { mutationtest.ClonePersisted(privateSlice{value: []byte("mutable")}) })
+	require.Panics(t, func() { mutationtest.ClonePersisted(func() {}) })
 }
 
 func TestRunnerWithUnitsKeepsAuthorityAndAuditOnTheSelectedStore(t *testing.T) {

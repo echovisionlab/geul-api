@@ -34,7 +34,9 @@ type fakeStore struct {
 	sources    []referencecatalog.AssetSource
 }
 
-func (s *fakeStore) Savepoint() func() { return func() {} }
+func (s *fakeStore) Savepoint() mutationtest.Checkpoint {
+	return mutationtest.Checkpoint{State: struct{}{}, Restore: func() {}}
+}
 
 func (s *fakeStore) Categories(_ context.Context, page referencecatalog.ListPage) ([]publicreferencecatalog.Category, int64, error) {
 	s.pages = append(s.pages, page)

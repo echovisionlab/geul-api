@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
 func cloneUploadPointer[T any](p *T) *T {
@@ -30,14 +31,14 @@ func cloneUpload(s domain.UploadSession) domain.UploadSession {
 func cloneUploads(rows map[string]domain.UploadSession) map[string]domain.UploadSession {
 	result := maps.Clone(rows)
 	for id, r := range result {
-		result[id] = cloneUpload(r)
+		result[id] = mutationtest.ClonePersisted(r)
 	}
 	return result
 }
 func cloneUploadParts(rows map[string][]domain.UploadPart) map[string][]domain.UploadPart {
 	result := maps.Clone(rows)
 	for id, r := range result {
-		result[id] = slices.Clone(r)
+		result[id] = mutationtest.ClonePersisted(r)
 	}
 	return result
 }

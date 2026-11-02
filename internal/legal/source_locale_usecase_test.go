@@ -26,7 +26,7 @@ type lookupStore struct {
 	totalReads    *atomic.Int32
 }
 
-func (s lookupStore) Savepoint() func() {
+func (s lookupStore) Savepoint() mutationtest.Checkpoint {
 	return s.Store.(*legaltest.Store).Savepoint()
 }
 

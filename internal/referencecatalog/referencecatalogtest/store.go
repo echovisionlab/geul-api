@@ -76,20 +76,46 @@ func New() (*Store, *mutationtest.UnitOfWork[referencecatalog.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	references, usage := maps.Clone(s.references), maps.Clone(s.usage)
-	clients, works, clientUse := maps.Clone(s.clients), maps.Clone(s.works), maps.Clone(s.clientUse)
-	places, placeUse, bindings := maps.Clone(s.places), maps.Clone(s.placeUse), maps.Clone(s.bindings)
-	slugMoves, removals := slices.Clone(s.slugMoves), slices.Clone(s.removals)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.references, s.usage = references, usage
-		s.clients, s.works, s.clientUse = clients, works, clientUse
-		s.places, s.placeUse, s.bindings = places, placeUse, bindings
-		s.slugMoves, s.removals = slugMoves, removals
+	references := mutationtest.ClonePersisted(s.references)
+	usage := mutationtest.ClonePersisted(s.usage)
+	clients := mutationtest.ClonePersisted(s.clients)
+	works := mutationtest.ClonePersisted(s.works)
+	clientUse := mutationtest.ClonePersisted(s.clientUse)
+	places := mutationtest.ClonePersisted(s.places)
+	placeUse := mutationtest.ClonePersisted(s.placeUse)
+	bindings := mutationtest.ClonePersisted(s.bindings)
+	slugMoves := mutationtest.ClonePersisted(s.slugMoves)
+	removals := mutationtest.ClonePersisted(s.removals)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"references": references,
+			"usage":      usage,
+			"clients":    clients,
+			"works":      works,
+			"clientUse":  clientUse,
+			"places":     places,
+			"placeUse":   placeUse,
+			"bindings":   bindings,
+			"slugMoves":  slugMoves,
+			"removals":   removals,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.references = references
+			s.usage = usage
+			s.clients = clients
+			s.works = works
+			s.clientUse = clientUse
+			s.places = places
+			s.placeUse = placeUse
+			s.bindings = bindings
+			s.slugMoves = slugMoves
+			s.removals = removals
+		},
 	}
 }
 

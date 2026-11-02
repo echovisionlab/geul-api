@@ -5,7 +5,6 @@ package transcodetest
 import (
 	"cmp"
 	"context"
-	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -33,14 +32,22 @@ func NewStore() *Store {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	jobs, waveforms := maps.Clone(s.jobs), maps.Clone(s.waveforms)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.jobs, s.waveforms = jobs, waveforms
+	jobs := mutationtest.ClonePersisted(s.jobs)
+	waveforms := mutationtest.ClonePersisted(s.waveforms)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"jobs":      jobs,
+			"waveforms": waveforms,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.jobs = jobs
+			s.waveforms = waveforms
+		},
 	}
 }
 

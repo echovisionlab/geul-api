@@ -6,7 +6,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -36,10 +35,13 @@ type state struct {
 }
 
 func (s state) clone() state {
-	return state{
-		adapters: maps.Clone(s.adapters), suppressions: maps.Clone(s.suppressions), defaults: s.defaults,
-		recipientLocales: maps.Clone(s.recipientLocales), identityLocales: maps.Clone(s.identityLocales),
-	}
+	clone := s
+	clone.adapters = mutationtest.ClonePersisted(s.adapters)
+	clone.suppressions = mutationtest.ClonePersisted(s.suppressions)
+	clone.defaults = mutationtest.ClonePersisted(s.defaults)
+	clone.recipientLocales = mutationtest.ClonePersisted(s.recipientLocales)
+	clone.identityLocales = mutationtest.ClonePersisted(s.identityLocales)
+	return clone
 }
 
 var _ emaildelivery.Store = (*Store)(nil)
@@ -60,14 +62,23 @@ func New() (*Store, *mutationtest.UnitOfWork[emaildelivery.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	saved := s.state.clone()
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.state = saved
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"adapters":         saved.adapters,
+			"suppressions":     saved.suppressions,
+			"defaults":         saved.defaults,
+			"recipientLocales": saved.recipientLocales,
+			"identityLocales":  saved.identityLocales,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.state = saved
+		},
 	}
 }
 

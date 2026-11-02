@@ -52,23 +52,40 @@ func New() (*Store, *mutationtest.UnitOfWork[email.Store]) {
 func cloneRows[V any](rows map[string]map[string]V) map[string]map[string]V {
 	clone := make(map[string]map[string]V, len(rows))
 	for id, locales := range rows {
-		clone[id] = maps.Clone(locales)
+		clone[id] = mutationtest.ClonePersisted(locales)
 	}
 	return clone
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	templates, templateRows := maps.Clone(s.templates), cloneRows(s.templateRows)
-	layouts, layoutRows := maps.Clone(s.layouts), cloneRows(s.layoutRows)
-	suppressions, adapters := slices.Clone(s.suppressions), slices.Clone(s.adapters)
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.templates, s.templateRows, s.layouts, s.layoutRows = templates, templateRows, layouts, layoutRows
-		s.suppressions, s.adapters = suppressions, adapters
+	templates := mutationtest.ClonePersisted(s.templates)
+	templateRows := cloneRows(s.templateRows)
+	layouts := mutationtest.ClonePersisted(s.layouts)
+	layoutRows := cloneRows(s.layoutRows)
+	suppressions := mutationtest.ClonePersisted(s.suppressions)
+	adapters := mutationtest.ClonePersisted(s.adapters)
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"templates":    templates,
+			"templateRows": templateRows,
+			"layouts":      layouts,
+			"layoutRows":   layoutRows,
+			"suppressions": suppressions,
+			"adapters":     adapters,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.templates = templates
+			s.templateRows = templateRows
+			s.layouts = layouts
+			s.layoutRows = layoutRows
+			s.suppressions = suppressions
+			s.adapters = adapters
+		},
 	}
 }
 

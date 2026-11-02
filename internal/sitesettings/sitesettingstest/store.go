@@ -72,26 +72,46 @@ func New() (*Store, *mutationtest.UnitOfWork[sitesettings.Store]) {
 }
 
 // Savepoint implements mutationtest.Savepointer.
-func (s *Store) Savepoint() func() {
+func (s *Store) Savepoint() mutationtest.Checkpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	saved := s.state.clone()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.state = saved
+	ogRuns := s.ogRuns
+	files := make(map[string]map[string]sitesettings.Asset, len(saved.files))
+	for id, f := range saved.files {
+		files[id] = f.assets
+	}
+	return mutationtest.Checkpoint{
+		State: map[string]any{
+			"settings": saved.settings,
+			"loaders":  saved.loaders,
+			"files":    files,
+			"bindings": saved.bindings,
+			"pages":    saved.pages,
+			"menus":    saved.menus,
+			"ogRuns":   ogRuns,
+		},
+		Restore: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.state = saved
+			s.ogRuns = ogRuns
+		},
 	}
 }
 
 func (st state) clone() state {
-	files := make(map[string]file, len(st.files))
+	clone := st
+	clone.settings = mutationtest.ClonePersisted(st.settings)
+	clone.loaders = mutationtest.ClonePersisted(st.loaders)
+	clone.bindings = mutationtest.ClonePersisted(st.bindings)
+	clone.pages = mutationtest.ClonePersisted(st.pages)
+	clone.menus = mutationtest.ClonePersisted(st.menus)
+	clone.files = make(map[string]file, len(st.files))
 	for id, f := range st.files {
-		files[id] = file{assets: maps.Clone(f.assets), rejected: f.rejected}
+		clone.files[id] = file{assets: mutationtest.ClonePersisted(f.assets), rejected: f.rejected}
 	}
-	return state{
-		settings: st.settings.Clone(), loaders: slices.Clone(st.loaders), files: files,
-		bindings: maps.Clone(st.bindings), pages: maps.Clone(st.pages), menus: maps.Clone(st.menus),
-	}
+	return clone
 }
 
 // SeedFile stores a File with a ready asset of each kind and returns its ID.
