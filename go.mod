@@ -14,14 +14,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ses v1.42.6
 	github.com/aws/smithy-go v1.28.7
 	github.com/echovisionlab/geul-event-contracts v0.14.1
-	github.com/echovisionlab/geul-telemetry v0.2.2
+	github.com/echovisionlab/geul-telemetry v0.3.0
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/lib/pq v1.12.3
-	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/cors v1.11.1
@@ -117,6 +116,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20260802145828-341c2f0c90b5 // indirect
 	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/mattn/go-sqlite3 v1.14.52 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect

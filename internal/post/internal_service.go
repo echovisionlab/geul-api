@@ -566,6 +566,10 @@ func (s *Service) UpdatePostDocumentMetadata(ctx context.Context, command Update
 	if err != nil {
 		return RoomSave{}, err
 	}
+	contributorMemberID, err := contentblock.MutationContributor(command.ContributorMemberIDs)
+	if err != nil {
+		return RoomSave{}, err
+	}
 	documentID, err := s.contentDocumentID(ctx, command.PostID)
 	if err != nil {
 		return RoomSave{}, err
@@ -590,20 +594,28 @@ func (s *Service) UpdatePostDocumentMetadata(ctx context.Context, command Update
 			}
 			return nil
 		}),
-	}, func(ctx context.Context, store Store, _ *postEffects) (contentblock.AdvanceResult, error) {
+	}, func(ctx context.Context, store Store, effects *postEffects) (contentblock.AdvanceResult, error) {
+		var changedFields []string
 		result, err := store.AdvanceContentRevision(
 			ctx,
 			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
 			lockedContentFence(documentID, domain),
 			func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
-				changed, err := replacePostDocumentTaxonomy(ctx, store, command)
-				return contentblock.MetadataEffect{Changed: changed}, err
+				var err error
+				changedFields, err = replacePostDocumentTaxonomy(ctx, store, command)
+				return contentblock.MetadataEffect{Changed: len(changedFields) > 0}, err
 			},
 		)
 		if err != nil || !result.Changed {
 			return result, err
 		}
-		return result, store.TouchPost(ctx, command.PostID, now)
+		if err := store.TouchPost(ctx, command.PostID, now); err != nil {
+			return result, err
+		}
+		effects.audits = append(effects.audits, mutation.MemberAudit(contributorMemberID, sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewPostDocumentMetadataAuditRecord(metadata, command.PostID, changedFields)
+		}))
+		return result, nil
 	})
 	if err != nil {
 		return RoomSave{}, normalizePostContentBlockError(err)
@@ -615,21 +627,22 @@ func (s *Service) UpdatePostDocumentMetadata(ctx context.Context, command Update
 	}, nil
 }
 
-// replacePostDocumentTaxonomy replaces the Categories and Tags command
-// names and reports whether either changed.
-func replacePostDocumentTaxonomy(ctx context.Context, store Store, command UpdatePostDocumentMetadataCommand) (bool, error) {
+// replacePostDocumentTaxonomy replaces the requested Category and Tag links
+// and reports the fields that changed.
+func replacePostDocumentTaxonomy(ctx context.Context, store Store, command UpdatePostDocumentMetadataCommand) ([]string, error) {
 	currentCategories, currentTags, err := store.TaxonomyIDs(ctx, command.PostID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	changed := false
+	changed := make([]string, 0, 2)
 	for _, taxonomy := range []struct {
+		field     string
 		requested *[]string
 		current   []string
 		taxonomy  Taxonomy
 	}{
-		{command.CategoryIDs, currentCategories, Categories},
-		{command.TagIDs, currentTags, Tags},
+		{"categories", command.CategoryIDs, currentCategories, Categories},
+		{"tags", command.TagIDs, currentTags, Tags},
 	} {
 		if taxonomy.requested == nil {
 			continue
@@ -640,9 +653,9 @@ func replacePostDocumentTaxonomy(ctx context.Context, store Store, command Updat
 			continue
 		}
 		if err := replacePostTaxonomyLinks(ctx, store, taxonomy.taxonomy, command.PostID, next); err != nil {
-			return false, err
+			return nil, err
 		}
-		changed = true
+		changed = append(changed, taxonomy.field)
 	}
 	return changed, nil
 }

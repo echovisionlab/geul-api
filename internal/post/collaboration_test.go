@@ -1,6 +1,7 @@
 package post_test
 
 import (
+	"errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -172,4 +173,71 @@ func TestLoadPostBlockDocumentNeedsAnEditingSession(t *testing.T) {
 	room, err := h.service.LoadPostBlockDocument(t.Context(), post.LoadPostBlockDocumentQuery{PostID: value.ID, Locale: "en", SessionID: &sessionID})
 	require.NoError(t, err)
 	require.Equal(t, h.revision(t, value.ID).String(), room.DocumentRevision)
+}
+
+func TestPostDocumentMetadataAuditsTheOriginAndOnlyChangedTaxonomies(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	contributor := h.member(newPrincipal(), "Contributor")
+	value := h.seedPost("Audited taxonomy", contributor.memberID)
+	h.store.PutTaxonomy(post.Categories, "category-a")
+	h.store.PutTaxonomy(post.Tags, "tag-a", "tag-b")
+	ctx := collabContext(t)
+	command := post.UpdatePostDocumentMetadataCommand{
+		PostID: value.ID, Locale: "en", ExpectedRevision: h.revision(t, value.ID).String(),
+		ContributorMemberIDs: []string{contributor.memberID},
+		CategoryIDs:          &[]string{"category-a"}, TagIDs: &[]string{"tag-a"},
+	}
+	saved, err := h.service.UpdatePostDocumentMetadata(ctx, command)
+	require.NoError(t, err)
+	require.True(t, saved.Changed)
+	records := h.audit.Records()
+	require.Len(t, records, 1)
+	require.Equal(t, sharedtelemetry.AuditPostUpdated, records[0].Action)
+	require.Equal(t, sharedtelemetry.ActorKindMember, records[0].Kind)
+	require.Equal(t, contributor.memberID, records[0].MemberID)
+	require.Equal(t, value.ID, records[0].TargetID)
+	require.Equal(t, []string{"categories", "tags"}, records[0].ChangedFields)
+
+	command.ExpectedRevision = saved.DocumentRevision
+	unchanged, err := h.service.UpdatePostDocumentMetadata(ctx, command)
+	require.NoError(t, err)
+	require.False(t, unchanged.Changed)
+	require.Equal(t, saved.DocumentRevision, unchanged.DocumentRevision)
+	require.Len(t, h.audit.Records(), 1)
+
+	command.TagIDs = &[]string{"tag-b"}
+	saved, err = h.service.UpdatePostDocumentMetadata(ctx, command)
+	require.NoError(t, err)
+	require.True(t, saved.Changed)
+	records = h.audit.Records()
+	require.Len(t, records, 2)
+	require.Equal(t, []string{"tags"}, records[1].ChangedFields)
+
+	auditFailure := errors.New("audit unavailable")
+	h.audit.Err = auditFailure
+	command.ExpectedRevision = saved.DocumentRevision
+	command.CategoryIDs = &[]string{}
+	_, err = h.service.UpdatePostDocumentMetadata(ctx, command)
+	require.ErrorIs(t, err, auditFailure)
+	require.Equal(t, saved.DocumentRevision, h.revision(t, value.ID).String())
+	require.Equal(t, []string{"category-a"}, h.store.Links(post.Categories, value.ID))
+	require.Equal(t, []string{"tag-b"}, h.store.Links(post.Tags, value.ID))
+	require.Len(t, h.audit.Records(), 2)
+}
+
+func TestPostDocumentMetadataRequiresOneOriginMember(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	contributor := h.member(newPrincipal(), "Contributor")
+	value := h.seedPost("Origin required", contributor.memberID)
+	revision := h.revision(t, value.ID).String()
+	for _, members := range [][]string{nil, {contributor.memberID, newPrincipal().memberID}, {"not-a-member-uuid"}} {
+		_, err := h.service.UpdatePostDocumentMetadata(collabContext(t), post.UpdatePostDocumentMetadataCommand{
+			PostID: value.ID, Locale: "en", ExpectedRevision: revision, ContributorMemberIDs: members, CategoryIDs: &[]string{},
+		})
+		requireCode(t, err, connect.CodeInvalidArgument, "")
+		require.Equal(t, revision, h.revision(t, value.ID).String())
+		require.Empty(t, h.audit.Records())
+	}
 }
