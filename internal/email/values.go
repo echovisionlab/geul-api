@@ -2,6 +2,8 @@ package email
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -63,7 +65,7 @@ type SMTPAdapterConfig struct {
 
 func (m *MailAdapter) GetSESConfig() (*SESAdapterConfig, error) {
 	var cfg SESAdapterConfig
-	if err := json.Unmarshal(m.Config, &cfg); err != nil {
+	if err := decodeProviderConfig(m.Config, &cfg, "model.SESAdapterConfig"); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
@@ -71,8 +73,29 @@ func (m *MailAdapter) GetSESConfig() (*SESAdapterConfig, error) {
 
 func (m *MailAdapter) GetSMTPConfig() (*SMTPAdapterConfig, error) {
 	var cfg SMTPAdapterConfig
-	if err := json.Unmarshal(m.Config, &cfg); err != nil {
+	if err := decodeProviderConfig(m.Config, &cfg, "model.SMTPAdapterConfig"); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
+
+// Administrator test sends expose these decoding errors, including their stable type labels.
+func decodeProviderConfig(raw json.RawMessage, target any, typeLabel string) error {
+	err := json.Unmarshal(raw, target)
+	var mismatch *json.UnmarshalTypeError
+	if errors.As(err, &mismatch) && mismatch.Struct == "" {
+		return providerConfigDecodeError{cause: mismatch, typeLabel: typeLabel}
+	}
+	return err
+}
+
+type providerConfigDecodeError struct {
+	cause     *json.UnmarshalTypeError
+	typeLabel string
+}
+
+func (err providerConfigDecodeError) Error() string {
+	return fmt.Sprintf("json: cannot unmarshal %s into Go value of type %s", err.cause.Value, err.typeLabel)
+}
+
+func (err providerConfigDecodeError) Unwrap() error { return err.cause }

@@ -178,3 +178,23 @@ func (s *fakeSMTPServer) handle(conn net.Conn) {
 		}
 	}
 }
+
+func TestMailProvidersRetainConfigDecodeDiagnostics(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		kind   emaildelivery.AdapterType
+		config string
+		want   string
+	}{
+		{"SES root", emaildelivery.AdapterTypeSES, `[]`, "invalid SES config: json: cannot unmarshal array into Go value of type model.SESAdapterConfig"},
+		{"SMTP root", emaildelivery.AdapterTypeSMTP, `true`, "invalid SMTP config: json: cannot unmarshal bool into Go value of type model.SMTPAdapterConfig"},
+		{"SES field", emaildelivery.AdapterTypeSES, `{"region":123}`, "invalid SES config: json: cannot unmarshal number into Go struct field SESAdapterConfig.region of type string"},
+		{"SMTP field", emaildelivery.AdapterTypeSMTP, `{"port":"invalid"}`, "invalid SMTP config: json: cannot unmarshal string into Go struct field SMTPAdapterConfig.port of type int"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := emaildeliveryadapter.MailProviders{}.Open(emaildelivery.MailAdapter{Type: tc.kind, Config: []byte(tc.config)})
+			require.EqualError(t, err, tc.want)
+		})
+	}
+}
