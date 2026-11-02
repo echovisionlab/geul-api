@@ -897,6 +897,13 @@ it.
   sentinel from `Change`; Run hands it back after the rollback, and the use
   case matches it by identity so a joined rollback failure still surfaces
   (`authentication.SyncLoginRole`).
+- **System access.** Scheduled work with no Identity subject uses
+  `mutation.NewSystemStoreRunner` with `mutation.System` and `SystemAudit`
+  (or `Unchanged`). The runner rejects Identity subjects, relationship
+  batches and non-system audit records. The domain locks and checks its
+  lifecycle state before changing it. Legal seals the effective notice run
+  in `Outbox`, after its system audit; worker commits the OG target switch
+  with the activation and dispatches the sealed notice after commit.
 - **Immutable media lifecycle.** `mediaasset.Lifecycle` receives units of
   work over its Store. The owner's PostgreSQL adapter binds those units to
   its existing transaction when it allocates, completes or replaces an

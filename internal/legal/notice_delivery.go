@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -21,41 +20,6 @@ const (
 	CampaignDeliveryRunStatusSent      = "sent"
 	CampaignDeliveryRunStatusCancelled = "cancelled"
 )
-
-// ActivateDuePolicy activates the kind's scheduled version id once its
-// effective time has come, archives the active one, and seals the required
-// effective notice run in the joined transaction; the backend is the actor
-// of the audit records. It reports false, without an error, when the
-// version is gone or not due. The caller dispatches the returned run after
-// commit, so mail-provider availability is not part of this transaction.
-func ActivateDuePolicy(
-	ctx context.Context,
-	joined Joined,
-	kind PolicyKind,
-	id string,
-	eventKey string,
-	templateData map[string]string,
-	now time.Time,
-) (bool, *NoticeRun, error) {
-	descriptor, err := kind.descriptor()
-	if err != nil {
-		return false, nil, err
-	}
-	activation, activated, err := activatePolicyVersion(ctx, joined.Store, descriptor, id, false, now)
-	if err != nil || !activated {
-		return false, nil, err
-	}
-	for _, change := range activation.lifecycleChanges() {
-		if err := domainaudit.AppendSystem(ctx, nil, joined.Audit, sharedtelemetry.ServiceBackend, sharedtelemetry.AuditLegalPolicyUpdated, change.record); err != nil {
-			return false, nil, err
-		}
-	}
-	run, err := joined.Store.SealNoticeRun(ctx, kind, id, eventKey, templateData, now)
-	if err != nil {
-		return false, nil, err
-	}
-	return true, run, nil
-}
 
 // policyActivation is what activating one version changed.
 type policyActivation struct {

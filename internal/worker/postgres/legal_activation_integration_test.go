@@ -37,6 +37,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/worker"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(t *testing.T) {
@@ -156,6 +157,20 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			require.NoError(t, db.Table(testCase.table).Select("status").Where("id = ?", scheduledID).Scan(&scheduledStatus).Error)
 			require.Equal(t, testCase.archivedStatus, activeStatus)
 			require.Equal(t, testCase.activeStatus, scheduledStatus)
+			audits := loadScheduledActivationAudits(t, db, activeID, scheduledID)
+			require.Len(t, audits, 2)
+			byTarget := make(map[string]scheduledActivationAudit, len(audits))
+			for _, audit := range audits {
+				require.Equal(t, string(sharedtelemetry.ActorKindSystem), audit.ActorKind)
+				require.Equal(t, string(sharedtelemetry.ServiceBackend), audit.ActorService)
+				require.Nil(t, audit.ActorMemberID)
+				byTarget[audit.TargetID] = audit
+			}
+			require.Equal(t, string(sharedtelemetry.AuditStateActive), byTarget[activeID].PreviousState)
+			require.Equal(t, string(sharedtelemetry.AuditStateArchived), byTarget[activeID].NewState)
+			require.Equal(t, string(sharedtelemetry.AuditStateScheduled), byTarget[scheduledID].PreviousState)
+			require.Equal(t, string(sharedtelemetry.AuditStateActive), byTarget[scheduledID].NewState)
+
 			requireDeliveryRunStatus(
 				t,
 				db,
@@ -227,6 +242,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 				).
 				Count(&incomingEffectiveRuns).Error)
 			require.Equal(t, int64(1), incomingEffectiveRuns)
+			require.Len(t, loadScheduledActivationAudits(t, db, activeID, scheduledID), 2, "a repeated activation adds no audit records")
 		})
 	}
 }
@@ -288,6 +304,11 @@ func TestScheduledLegalActivationRollsBackStatusWhenOgPlanningFailsIntegration(t
 			var runCount int64
 			require.NoError(t, db.Model(&model.OgGenerationRun{}).Count(&runCount).Error)
 			require.Zero(t, runCount)
+			require.Empty(t, loadScheduledActivationAudits(t, db, activeID, scheduledID))
+			var notices int64
+			require.NoError(t, db.Model(&model.CampaignDeliveryRun{}).Where(testCase.name+"_id = ?", scheduledID).Count(&notices).Error)
+			require.Zero(t, notices)
+
 		})
 	}
 }
@@ -436,6 +457,7 @@ func TestScheduledLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegrat
 		Where("privacy_id = ?", privacyID).
 		Count(&runCount).Error)
 	require.Zero(t, runCount)
+	require.Empty(t, loadScheduledActivationAudits(t, db, privacyID))
 }
 
 func legalDeliveryVariables(
@@ -620,4 +642,23 @@ func workerOGProjections() []ogpostgres.Projection {
 		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
 		sitesettingsadapter.NewProjection(),
 	}
+}
+
+type scheduledActivationAudit struct {
+	TargetID      string
+	ActorKind     string
+	ActorService  string
+	ActorMemberID *string
+	PreviousState string
+	NewState      string
+}
+
+func loadScheduledActivationAudits(t *testing.T, db *gorm.DB, policyIDs ...string) []scheduledActivationAudit {
+	t.Helper()
+	var records []scheduledActivationAudit
+	require.NoError(t, db.Table("public.domain_audit").Select(`
+  target_id::text AS target_id, actor_kind, actor_service, actor_member_id::text AS actor_member_id,
+  attributes->>'previous_state' AS previous_state, attributes->>'new_state' AS new_state`).
+		Where("action = ? AND target_id IN ?", sharedtelemetry.AuditLegalPolicyUpdated, policyIDs).Find(&records).Error)
+	return records
 }
