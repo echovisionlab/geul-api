@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
-	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"

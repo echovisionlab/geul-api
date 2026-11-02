@@ -138,8 +138,8 @@ func TestBuildSegmentUpdatePlanAllowsScalarOnlyWithoutObserved(t *testing.T) {
 	require.Nil(t, plan.observed)
 	require.Nil(t, plan.requestedConfig)
 	current := Segment{
-		Type: SegmentMemberTags,
-		Config:      Config{MemberTagIDs: []string{"tag-id"}},
+		Type:   SegmentMemberTags,
+		Config: Config{MemberTagIDs: []string{"tag-id"}},
 	}
 	nextType, nextConfig, err := plan.nextState(current)
 	require.NoError(t, err)
@@ -182,8 +182,8 @@ func TestBuildSegmentUpdatePlanResetsObservedTypeSwitchWithoutConfig(t *testing.
 	require.Equal(t, Config{}, *plan.requestedConfig)
 
 	current := &Segment{
-		Type: observedType,
-		Config:      Config{MemberTagIDs: []string{tagID}},
+		Type:   observedType,
+		Config: Config{MemberTagIDs: []string{tagID}},
 	}
 	nextType, nextConfig, err := plan.nextState(*current)
 	require.NoError(t, err)

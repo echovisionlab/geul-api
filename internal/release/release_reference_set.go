@@ -2,7 +2,6 @@ package release
 
 import (
 	"context"
-
 )
 
 // SetReleaseCategoriesCommand applies the desired Category IDs against the

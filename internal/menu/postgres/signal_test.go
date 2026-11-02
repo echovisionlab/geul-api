@@ -18,7 +18,9 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
-type recordedEvents struct{ events []*managev1.ContentUpdatedEvent }
+type recordedEvents struct {
+	events []*managev1.ContentUpdatedEvent
+}
 
 func (r *recordedEvents) NotifyProtobufWithExecutor(_ context.Context, _ eventpkg.DBTX, signal string, message proto.Message) error {
 	if signal != eventpkg.SignalContentUpdated {

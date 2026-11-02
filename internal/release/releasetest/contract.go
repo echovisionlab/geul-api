@@ -215,7 +215,9 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"settings, status and touch store what they name": func(t *testing.T, h Harness) {
 		date := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-		inserted := insert(t, h, func(value *release.Release) { value.ReleaseDate, value.SpotifyURL = &date, text("https://spotify.test/old") })
+		inserted := insert(t, h, func(value *release.Release) {
+			value.ReleaseDate, value.SpotifyURL = &date, text("https://spotify.test/old")
+		})
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		albumType := release.TypeSingle
 		transact(t, h, func(ctx context.Context, store release.Store) error {

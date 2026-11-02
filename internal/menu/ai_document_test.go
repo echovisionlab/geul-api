@@ -125,4 +125,3 @@ func TestMenuAIDocumentTargetRevisionBindsDocumentAndExactLocaleFacts(t *testing
 }
 
 func stringTestPointer(value string) *string { return &value }
-

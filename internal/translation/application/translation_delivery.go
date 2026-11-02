@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
-
 )
 
 type translationDeliveryExecution struct {
