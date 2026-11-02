@@ -155,7 +155,9 @@ func (s *store) RequireCurrentContributor(ctx context.Context, formID, memberID 
 }
 
 func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, error) {
-	return s.ports.Members.PreferredLocale(ctx, s.tx, memberID)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (*string, error) {
+		return s.ports.Members.PreferredLocale(ctx, tx, memberID)
+	})
 }
 
 func (s *store) DeleteShareLinks(ctx context.Context, formID string) error {
@@ -163,5 +165,7 @@ func (s *store) DeleteShareLinks(ctx context.Context, formID string) error {
 }
 
 func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
+		return translation.LoadRuntimeSettings(ctx, tx)
+	})
 }

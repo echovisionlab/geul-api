@@ -10,18 +10,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
-// resolveInitialSourceLocale is the source locale of a new version: the
-// Member's preferred locale, then acceptLanguage, then the site default.
-// Each lookup reads on its own before the create transaction, so one that
-// fails leaves the next and the create intact.
-func (s *Service) resolveInitialSourceLocale(ctx context.Context, acceptLanguage string) string {
+// resolveInitialSourceLocale chooses the locale after create authorization.
+// The Store isolates optional lookups so failures can fall back in this transaction.
+func resolveInitialSourceLocale(ctx context.Context, store Store, acceptLanguage string) string {
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated {
-		var preferredLocale *string
-		err := s.units.Read(ctx, func(store Store) error {
-			var err error
-			preferredLocale, err = store.PreferredLocale(ctx, user.MemberID.String())
-			return err
-		})
+		preferredLocale, err := store.PreferredLocale(ctx, user.MemberID.String())
 		if err != nil {
 			slog.ErrorContext(ctx, "Member preferred locale load failed; inferring the source locale from the request", "domain", "legal", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		} else if preferredLocale != nil {
@@ -33,14 +26,8 @@ func (s *Service) resolveInitialSourceLocale(ctx context.Context, acceptLanguage
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	// Reading the settings stores the defaults first, which a read-only
-	// snapshot refuses.
-	var settings translation.RuntimeSettings
-	if err := s.units.ReadLocked(ctx, func(store Store) error {
-		var err error
-		settings, err = store.TranslationSettings(ctx)
-		return err
-	}); err != nil {
+	settings, err := store.TranslationSettings(ctx)
+	if err != nil {
 		slog.ErrorContext(ctx, "Translation settings load failed; using the built-in default locale", "domain", "legal", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
 		return translation.DefaultLocale
 	}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -470,5 +472,7 @@ func (s *store) InsertVersion(ctx context.Context, version *page.Version) error 
 }
 
 func (s *store) RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error) {
-	return translation.LoadRuntimeSettings(ctx, s.tx)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (translation.RuntimeSettings, error) {
+		return translation.LoadRuntimeSettings(ctx, tx)
+	})
 }

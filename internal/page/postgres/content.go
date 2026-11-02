@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
@@ -224,7 +226,9 @@ func (s *store) Nicknames(ctx context.Context, memberIDs []string) (map[string]s
 }
 
 func (s *store) PreferredLocale(ctx context.Context, memberID string) (*string, error) {
-	return s.ports.Members.PreferredLocale(ctx, s.tx, memberID)
+	return mutation.BestEffortRead(ctx, s.tx, func(tx *gorm.DB) (*string, error) {
+		return s.ports.Members.PreferredLocale(ctx, tx, memberID)
+	})
 }
 
 func (s *store) LockUserTags(ctx context.Context, tagIDs []string) ([]string, error) {
