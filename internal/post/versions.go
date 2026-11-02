@@ -145,7 +145,7 @@ func (s *Service) RestorePostVersion(ctx context.Context, command RestorePostVer
 		)
 	}
 	now := time.Now().UTC()
-	var restore VersionRestore
+	var restore versionrestore.Restore[Store]
 	_, _, err = runPostMutation(ctx, s, mutation.StoreSpec[struct{}, Store]{
 		Access: mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
 			var err error
@@ -153,7 +153,7 @@ func (s *Service) RestorePostVersion(ctx context.Context, command RestorePostVer
 			return err
 		}),
 	}, func(ctx context.Context, store Store, effects *postEffects) (struct{}, error) {
-		outcome, err := store.RestoreVersion(ctx, restore)
+		outcome, err := restore.Apply(ctx, store)
 		if err != nil || !outcome.Changed() {
 			return struct{}{}, err
 		}
@@ -182,22 +182,22 @@ func lockPostVersionRestore(
 	envelope postVersionContentSnapshot,
 	document *contentv1.LocalizedRichTextDocument,
 	now time.Time,
-) (VersionRestore, error) {
+) (versionrestore.Restore[Store], error) {
 	documentID, err := loadPostContentDocumentID(ctx, store, postID)
 	if err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
 	root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true)
 	if err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
 	if _, err := requireLockedPostActionForStatus(require, postID, root.Status, policyv1.Post.Manage); err != nil {
-		return VersionRestore{}, err
+		return versionrestore.Restore[Store]{}, err
 	}
-	return VersionRestore{
+	return versionrestore.Restore[Store]{
 		DocumentID: documentID,
 		Version:    versionrestore.Source{Locale: envelope.SourceLocale, Title: envelope.Title, Summary: envelope.Summary},
-		Fence:      postLockedDocumentFence(postID, true),
+		Store:      versionRestoreContent{store: store, fence: postLockedDocumentFence(postID, true)},
 		LoadSource: func(ctx context.Context, store Store) (versionrestore.Source, error) {
 			domain, err := loadPostContentDomainContext(ctx, store, postID)
 			if err != nil {

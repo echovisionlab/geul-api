@@ -12,7 +12,6 @@ import (
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/versionrestore"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
@@ -443,24 +442,9 @@ type PostVersions interface {
 	LockLatestVersion(ctx context.Context, postID string) (StoredVersion, bool, error)
 	// InsertVersion stores a new version and fills its ID and creation time.
 	InsertVersion(ctx context.Context, version *StoredVersion) error
-	// RestoreVersion replaces the Post's source content with the version
-	// restore describes.
-	RestoreVersion(ctx context.Context, restore VersionRestore) (versionrestore.Outcome, error)
 	// UnavailableVersionAttachments reads which File attachments of a
 	// version document can no longer be restored.
 	UnavailableVersionAttachments(ctx context.Context, document *contentv1.LocalizedRichTextDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
-}
-
-// VersionRestore is the restore of one version: versionrestore.Restore with
-// its steps on the Store.
-type VersionRestore struct {
-	DocumentID         uuid.UUID
-	Version            versionrestore.Source
-	Fence              ContentFence
-	LoadSource         func(ctx context.Context, store Store) (versionrestore.Source, error)
-	SwitchSourceLocale func(ctx context.Context, store Store, from string, revision uuid.UUID) error
-	Replacement        func(ctx context.Context, store Store, revision uuid.UUID) (contentblock.ReplaceInput, error)
-	UpdateMetadata     func(ctx context.Context, store Store) error
 }
 
 // ContentFence runs before a content mutation locks the document rows, in

@@ -85,6 +85,7 @@ var guardedPackageRoots = []string{
 	"internal/sitesettings",
 	"internal/localization",
 	"internal/translation",
+	"internal/versionrestore",
 	"internal/work",
 }
 

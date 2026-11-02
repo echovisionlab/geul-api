@@ -50,6 +50,7 @@ var pipelineDomains = []string{
 	"internal/sharelink",
 	"internal/sitesettings",
 	"internal/translation",
+	"internal/versionrestore",
 	"internal/work",
 	"internal/worker",
 }

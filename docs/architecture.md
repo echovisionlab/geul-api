@@ -881,9 +881,10 @@ it.
 - **Runtime-only tests.** A test that needs the running API process (route
   registration of several domains) lives in a runtime test package such as
   `cmd/server/runtimetest`, not in a domain package.
-- **Version restore.** Until the shared `versionrestore` takes a port,
-  a domain re-implements `Restore.Apply` over its Store (page, work, post);
-  the final wave generalizes it.
+- **Version restore.** Page, Work and Post call `Restore.Apply` in
+  `versionrestore` through its content Store port and their metadata callbacks.
+  Each domain adapter keeps the locked root fence and transaction. Production
+  and fake stores use the same flow.
 - **The catalog.** Add `./internal/<domain>/postgres` to the `db` band in
   `scripts/test/integration/catalog.go`, and remove a package whose last
   integration test is gone; the catalog drift test fails otherwise.

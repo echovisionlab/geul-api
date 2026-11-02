@@ -9,10 +9,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -74,25 +72,6 @@ func (s *store) InsertVersion(ctx context.Context, version *post.StoredVersion) 
 	}
 	*version = versionFromRow(row)
 	return nil
-}
-
-func (s *store) RestoreVersion(ctx context.Context, restore post.VersionRestore) (versionrestore.Outcome, error) {
-	return versionrestore.Restore{
-		Store: s.ports.ContentBlocks, DocumentID: restore.DocumentID, Version: restore.Version,
-		Fence: s.domainFence(restore.Fence),
-		LoadSource: func(ctx context.Context, tx *gorm.DB) (versionrestore.Source, error) {
-			return restore.LoadSource(ctx, s.with(tx))
-		},
-		SwitchSourceLocale: func(ctx context.Context, tx *gorm.DB, from string, revision uuid.UUID) error {
-			return restore.SwitchSourceLocale(ctx, s.with(tx), from, revision)
-		},
-		Replacement: func(ctx context.Context, tx *gorm.DB, revision uuid.UUID) (contentblock.ReplaceInput, error) {
-			return restore.Replacement(ctx, s.with(tx), revision)
-		},
-		UpdateMetadata: func(ctx context.Context, tx *gorm.DB) error {
-			return restore.UpdateMetadata(ctx, s.with(tx))
-		},
-	}.Apply(ctx, s.tx)
 }
 
 func (s *store) UnavailableVersionAttachments(ctx context.Context, document *contentv1.LocalizedRichTextDocument) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {

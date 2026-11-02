@@ -9,8 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
-	"github.com/echovisionlab/geul-api/internal/optional"
-	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/google/uuid"
 
@@ -306,67 +304,4 @@ func (s *Store) DeleteContentDocument(ctx context.Context, documentID uuid.UUID,
 	defer s.mu.Unlock()
 	delete(s.documents, documentID)
 	return nil
-}
-
-// RestoreVersion implements work.Store with versionrestore's flow over the
-// fake document: put the version's source locale back, replace the Blocks,
-// and restore the title and summary, advancing the revision once.
-func (s *Store) RestoreVersion(ctx context.Context, restore work.VersionRestore) (versionrestore.Outcome, error) {
-	if err := s.fail("RestoreVersion"); err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	load := func() (versionrestore.Source, Document, error) {
-		source, err := restore.LoadSource(ctx, s)
-		if err != nil {
-			return versionrestore.Source{}, Document{}, err
-		}
-		document, err := s.document(restore.DocumentID)
-		return source, document, err
-	}
-	source, current, err := load()
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	var outcome versionrestore.Outcome
-	if source.Locale != restore.Version.Locale {
-		if err := restore.SwitchSourceLocale(ctx, s, source.Locale, current.Revision); err != nil {
-			return versionrestore.Outcome{}, err
-		}
-		outcome.SourceLocaleSwitched = true
-		if source, current, err = load(); err != nil {
-			return versionrestore.Outcome{}, err
-		}
-	}
-	outcome.TitleChanged = !optional.Equal(source.Title, restore.Version.Title)
-	outcome.SummaryChanged = !optional.Equal(source.Summary, restore.Version.Summary)
-	input, err := restore.Replacement(ctx, s, current.Revision)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	replaced, err := s.ReplaceContentSnapshot(ctx, input, restore.Fence)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	outcome.ContentChanged, outcome.DocumentRevision = replaced.Changed, replaced.DocumentRevision
-	if !outcome.TitleChanged && !outcome.SummaryChanged {
-		return outcome, nil
-	}
-	if replaced.Changed {
-		return outcome, restore.UpdateMetadata(ctx, s)
-	}
-	advanced, err := s.AdvanceContentRevision(ctx,
-		contentblock.AdvanceInput{DocumentID: restore.DocumentID, ExpectedRevision: replaced.DocumentRevision},
-		restore.Fence,
-		func(ctx context.Context, store work.Store) (contentblock.MetadataEffect, error) {
-			if err := restore.UpdateMetadata(ctx, store); err != nil {
-				return contentblock.MetadataEffect{}, err
-			}
-			return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
-		},
-	)
-	if err != nil {
-		return versionrestore.Outcome{}, err
-	}
-	outcome.DocumentRevision = advanced.DocumentRevision
-	return outcome, nil
 }

@@ -10,7 +10,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -24,24 +23,29 @@ type Source struct {
 	Summary *string
 }
 
-// Restore is one version restore inside the domain's transaction, after the
-// domain locked its root and authorized the caller.
-type Restore struct {
-	Store      *contentblock.Store
+// Store reads and mutates content inside the locked, authorized domain transaction.
+type Store[S any] interface {
+	LoadSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
+	ReplaceSnapshot(ctx context.Context, input contentblock.ReplaceInput) (contentblock.Result, error)
+	AdvanceRevision(ctx context.Context, input contentblock.AdvanceInput, effect func(context.Context, S) (contentblock.MetadataEffect, error)) (contentblock.AdvanceResult, error)
+}
+
+// Restore binds the domain's metadata callbacks to its content Store.
+type Restore[S any] struct {
+	Store      Store[S]
 	DocumentID uuid.UUID
 	// Version is the source locale, title and summary the version stored.
 	Version Source
-	Fence   contentblock.DomainFence
 	// LoadSource reads the current source locale and its metadata.
-	LoadSource func(ctx context.Context, tx *gorm.DB) (Source, error)
+	LoadSource func(ctx context.Context, store S) (Source, error)
 	// SwitchSourceLocale makes Version.Locale the source locale again; from is
 	// the current source locale and revision the current shared revision.
-	SwitchSourceLocale func(ctx context.Context, tx *gorm.DB, from string, revision uuid.UUID) error
+	SwitchSourceLocale func(ctx context.Context, store S, from string, revision uuid.UUID) error
 	// Replacement builds the snapshot replacement expected at revision.
-	Replacement func(ctx context.Context, tx *gorm.DB, revision uuid.UUID) (contentblock.ReplaceInput, error)
+	Replacement func(ctx context.Context, store S, revision uuid.UUID) (contentblock.ReplaceInput, error)
 	// UpdateMetadata writes Version.Title and Version.Summary to the source
 	// locale.
-	UpdateMetadata func(ctx context.Context, tx *gorm.DB) error
+	UpdateMetadata func(ctx context.Context, store S) error
 }
 
 // Outcome says what a restore changed.
@@ -86,29 +90,29 @@ func (o Outcome) RefreshesOG() bool {
 
 // Apply runs the restore. A metadata-only restore still advances the shared
 // revision, so collaborators reload the restored title and summary.
-func (r Restore) Apply(ctx context.Context, tx *gorm.DB) (Outcome, error) {
-	source, current, err := r.loadCurrent(ctx, tx)
+func (r Restore[S]) Apply(ctx context.Context, store S) (Outcome, error) {
+	source, current, err := r.loadCurrent(ctx, store)
 	if err != nil {
 		return Outcome{}, err
 	}
 	var outcome Outcome
 	if source.Locale != r.Version.Locale {
-		if err := r.SwitchSourceLocale(ctx, tx, source.Locale, current.Document.Revision); err != nil {
+		if err := r.SwitchSourceLocale(ctx, store, source.Locale, current.Document.Revision); err != nil {
 			return Outcome{}, err
 		}
 		outcome.SourceLocaleSwitched = true
-		if source, current, err = r.loadCurrent(ctx, tx); err != nil {
+		if source, current, err = r.loadCurrent(ctx, store); err != nil {
 			return Outcome{}, err
 		}
 	}
 	outcome.TitleChanged = !optional.Equal(source.Title, r.Version.Title)
 	outcome.SummaryChanged = !optional.Equal(source.Summary, r.Version.Summary)
 
-	input, err := r.Replacement(ctx, tx, current.Document.Revision)
+	input, err := r.Replacement(ctx, store, current.Document.Revision)
 	if err != nil {
 		return Outcome{}, err
 	}
-	replaced, err := r.Store.ReplaceSnapshot(ctx, tx, input, r.Fence)
+	replaced, err := r.Store.ReplaceSnapshot(ctx, input)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -117,14 +121,13 @@ func (r Restore) Apply(ctx context.Context, tx *gorm.DB) (Outcome, error) {
 		return outcome, nil
 	}
 	if replaced.Changed {
-		return outcome, r.UpdateMetadata(ctx, tx)
+		return outcome, r.UpdateMetadata(ctx, store)
 	}
 	advanced, err := r.Store.AdvanceRevision(
-		ctx, tx,
+		ctx,
 		contentblock.AdvanceInput{DocumentID: r.DocumentID, ExpectedRevision: replaced.DocumentRevision},
-		r.Fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			if err := r.UpdateMetadata(ctx, tx); err != nil {
+		func(ctx context.Context, store S) (contentblock.MetadataEffect, error) {
+			if err := r.UpdateMetadata(ctx, store); err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
 			return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
@@ -137,12 +140,12 @@ func (r Restore) Apply(ctx context.Context, tx *gorm.DB) (Outcome, error) {
 	return outcome, nil
 }
 
-func (r Restore) loadCurrent(ctx context.Context, tx *gorm.DB) (Source, contentblock.Snapshot, error) {
-	source, err := r.LoadSource(ctx, tx)
+func (r Restore[S]) loadCurrent(ctx context.Context, store S) (Source, contentblock.Snapshot, error) {
+	source, err := r.LoadSource(ctx, store)
 	if err != nil {
 		return Source{}, contentblock.Snapshot{}, err
 	}
-	snapshot, err := r.Store.LoadSnapshotInTransaction(ctx, tx, r.DocumentID, source.Locale)
+	snapshot, err := r.Store.LoadSnapshot(ctx, r.DocumentID, source.Locale)
 	if err != nil {
 		return Source{}, contentblock.Snapshot{}, err
 	}
