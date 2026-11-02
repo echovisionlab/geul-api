@@ -47,26 +47,6 @@ func (c MailAdapterConfig) Value() (driver.Value, error) {
 	return []byte(c.RawMessage), nil
 }
 
-// SESAdapterConfig contains AWS SES adapter configuration
-type SESAdapterConfig struct {
-	Region          string `json:"region"`
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
-	FromEmail       string `json:"from_email"`
-	FromName        string `json:"from_name,omitempty"`
-}
-
-// SMTPAdapterConfig contains SMTP adapter configuration
-type SMTPAdapterConfig struct {
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Secure    bool   `json:"secure"`
-	User      string `json:"user"`
-	Password  string `json:"password"`
-	FromEmail string `json:"from_email"`
-	FromName  string `json:"from_name,omitempty"`
-}
-
 // MailAdapter represents a mail adapter configuration
 type MailAdapter struct {
 	ID        string            `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
@@ -82,32 +62,4 @@ type MailAdapter struct {
 // TableName returns the table name for MailAdapter
 func (MailAdapter) TableName() string {
 	return "mail_adapter"
-}
-
-// GetSESConfig unmarshals config as SES configuration
-func (m *MailAdapter) GetSESConfig() (*SESAdapterConfig, error) {
-	var cfg SESAdapterConfig
-	if err := json.Unmarshal(m.Config.RawMessage, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-// GetSMTPConfig unmarshals config as SMTP configuration
-func (m *MailAdapter) GetSMTPConfig() (*SMTPAdapterConfig, error) {
-	var cfg SMTPAdapterConfig
-	if err := json.Unmarshal(m.Config.RawMessage, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-// SetConfig marshals and sets the config
-func (m *MailAdapter) SetConfig(cfg structured.Value) error {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	m.Config.RawMessage = data
-	return nil
 }

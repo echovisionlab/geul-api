@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
@@ -19,12 +18,12 @@ import (
 // SQL. It takes no lock.
 type Store struct {
 	mu           sync.Mutex
-	templates    map[string]model.EmailTemplate
+	templates    map[string]email.Template
 	templateRows map[string]map[string]email.TemplateContent
 	layouts      map[string]string // layout ID: source locale
 	layoutRows   map[string]map[string]email.LayoutEntry
 	suppressions []suppression
-	adapters     []model.MailAdapter
+	adapters     []email.MailAdapter
 }
 
 type suppression struct {
@@ -37,7 +36,7 @@ var _ email.Store = (*Store)(nil)
 // NewStore returns an empty Store.
 func NewStore() *Store {
 	return &Store{
-		templates:    map[string]model.EmailTemplate{},
+		templates:    map[string]email.Template{},
 		templateRows: map[string]map[string]email.TemplateContent{},
 		layouts:      map[string]string{},
 		layoutRows:   map[string]map[string]email.LayoutEntry{},
@@ -74,7 +73,7 @@ func (s *Store) Savepoint() func() {
 }
 
 // SeedTemplate stores a template.
-func (s *Store) SeedTemplate(template model.EmailTemplate) {
+func (s *Store) SeedTemplate(template email.Template) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.templates[template.ID] = template
@@ -105,7 +104,7 @@ func (s *Store) SeedSuppression(address string, released bool) {
 }
 
 // SeedMailAdapter stores a mail adapter.
-func (s *Store) SeedMailAdapter(adapter model.MailAdapter) {
+func (s *Store) SeedMailAdapter(adapter email.MailAdapter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.adapters = append(s.adapters, adapter)
@@ -118,7 +117,7 @@ func (s *Store) LayoutRows(layoutID string) map[string]email.LayoutEntry {
 	return maps.Clone(s.layoutRows[layoutID])
 }
 
-func (s *Store) template(templateID string, match func(model.EmailTemplate) bool) (model.EmailTemplate, error) {
+func (s *Store) template(templateID string, match func(email.Template) bool) (email.Template, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids := slices.Sorted(maps.Keys(s.templates))
@@ -127,17 +126,17 @@ func (s *Store) template(templateID string, match func(model.EmailTemplate) bool
 			return template, nil
 		}
 	}
-	return model.EmailTemplate{}, email.ErrTemplateNotFound
+	return email.Template{}, email.ErrTemplateNotFound
 }
 
-func (s *Store) ActiveTemplateByEventKey(_ context.Context, eventKey string) (model.EmailTemplate, error) {
-	return s.template("", func(template model.EmailTemplate) bool {
+func (s *Store) ActiveTemplateByEventKey(_ context.Context, eventKey string) (email.Template, error) {
+	return s.template("", func(template email.Template) bool {
 		return template.IsActive && template.EventKey != nil && *template.EventKey == eventKey
 	})
 }
 
-func (s *Store) TemplateByID(_ context.Context, templateID string) (model.EmailTemplate, error) {
-	return s.template(templateID, func(model.EmailTemplate) bool { return true })
+func (s *Store) TemplateByID(_ context.Context, templateID string) (email.Template, error) {
+	return s.template(templateID, func(email.Template) bool { return true })
 }
 
 func (s *Store) TemplateSourceLocale(_ context.Context, templateID string) (string, bool, error) {
@@ -321,16 +320,16 @@ func (s *Store) ActiveMailAdapterCount(ctx context.Context) (int64, error) {
 	return int64(len(adapters)), err
 }
 
-func (s *Store) ActiveMailAdapters(context.Context) ([]model.MailAdapter, error) {
+func (s *Store) ActiveMailAdapters(context.Context) ([]email.MailAdapter, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var active []model.MailAdapter
+	var active []email.MailAdapter
 	for _, adapter := range s.adapters {
 		if adapter.IsActive {
 			active = append(active, adapter)
 		}
 	}
-	slices.SortStableFunc(active, func(a, b model.MailAdapter) int {
+	slices.SortStableFunc(active, func(a, b email.MailAdapter) int {
 		if a.Priority != b.Priority {
 			return a.Priority - b.Priority
 		}

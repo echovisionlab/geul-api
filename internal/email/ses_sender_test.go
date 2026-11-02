@@ -12,8 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type stubSESEmailClient struct {
@@ -32,7 +30,7 @@ func (c *stubSESEmailClient) SendEmail(
 }
 
 func TestNewSESAdapterDoesNotProbeSES(t *testing.T) {
-	adapter, err := NewSESAdapter("ses-test", "SES test", &model.SESAdapterConfig{
+	adapter, err := NewSESAdapter("ses-test", "SES test", &SESAdapterConfig{
 		Region:          "us-east-1",
 		AccessKeyID:     "test-access-key",
 		SecretAccessKey: "test-secret-key",
@@ -66,7 +64,7 @@ func TestNewSESAdapterFormatsSourceAddress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			adapter, err := NewSESAdapter("ses-test", "SES test", &model.SESAdapterConfig{
+			adapter, err := NewSESAdapter("ses-test", "SES test", &SESAdapterConfig{
 				Region:          "us-east-1",
 				AccessKeyID:     "test-access-key",
 				SecretAccessKey: "test-secret-key",

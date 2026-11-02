@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
@@ -64,7 +63,7 @@ func TestDraftTemplateAndDurableDeliveryShareEmailPresentation(t *testing.T) {
 	db := templateRows("Hello {{recipient_name}}", body.HTML, layout)
 	template, err := RenderTemplateForLocale(t.Context(), db, DirectTemplateType("template-1"), "en", map[string]string{"recipient_name": "A & B"})
 	require.NoError(t, err)
-	campaign, err := RenderCampaignSnapshotForLocale(model.JSONFields{
+	campaign, err := RenderCampaignSnapshotForLocale(structured.Fields{
 		"source_locale": "en", "subject": "Hello {{recipient_name}}", "content_html": body.HTML,
 		"layout_source_locale": "en", "layout_translations": []structured.Fields{{"locale": "en", "html_content": selectedLayout}},
 	}, "en", map[string]string{"recipient_name": "A & B"})

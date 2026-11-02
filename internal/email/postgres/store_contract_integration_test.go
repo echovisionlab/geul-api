@@ -25,7 +25,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return emailtest.Harness{
 			Harness:             mutationtest.PostgresHarness(db, mutation.Postgres(db, emailpostgres.NewStore)),
-			SeedTemplate:        func(t *testing.T, template model.EmailTemplate) string { return seedTemplate(t, db, template) },
+			SeedTemplate:        func(t *testing.T, template email.Template) string { return seedTemplate(t, db, template) },
 			SeedTemplateContent: func(t *testing.T, id string, content email.TemplateContent) { seedTemplateContent(t, db, id, content) },
 			SeedLayout:          func(t *testing.T, sourceLocale string) string { return seedLayout(t, db, sourceLocale) },
 			SeedSuppression: func(t *testing.T, address string, released bool) {
@@ -36,9 +36,10 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 				}
 				require.NoError(t, db.Create(&suppression).Error)
 			},
-			SeedMailAdapter: func(t *testing.T, adapter model.MailAdapter) string {
+			SeedMailAdapter: func(t *testing.T, adapter email.MailAdapter) string {
 				adapter.ID = uuid.NewString()
-				require.NoError(t, db.Create(&adapter).Error)
+				row := emailpostgres.MailAdapterRow(adapter)
+				require.NoError(t, db.Create(&row).Error)
 				// gorm skips a false IsActive in favor of the column default.
 				require.NoError(t, db.Model(&model.MailAdapter{}).Where("id = ?", adapter.ID).Update("is_active", adapter.IsActive).Error)
 				return adapter.ID
@@ -56,15 +57,16 @@ func seedContentDocument(t *testing.T, db *gorm.DB, profile string) string {
 	return id
 }
 
-func seedTemplate(t *testing.T, db *gorm.DB, template model.EmailTemplate) string {
+func seedTemplate(t *testing.T, db *gorm.DB, template email.Template) string {
 	t.Helper()
 	contentDocumentID := seedContentDocument(t, db, "email")
 	template.ID = uuid.NewString()
 	template.ContentDocumentID = &contentDocumentID
 	template.Key = "template-" + template.ID
 	template.Name = "Template " + template.ID
-	template.Variables = model.EmailTemplateVariables{}
-	require.NoError(t, db.Create(&template).Error)
+	row := emailpostgres.TemplateRow(template)
+	row.Variables = model.EmailTemplateVariables{}
+	require.NoError(t, db.Create(&row).Error)
 	// gorm skips a false IsActive in favor of the column default.
 	require.NoError(t, db.Model(&model.EmailTemplate{}).Where("id = ?", template.ID).Update("is_active", template.IsActive).Error)
 	return template.ID

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -55,7 +54,7 @@ const (
 )
 
 // NewSMTPAdapter creates a new SMTPAdapter from configuration.
-func NewSMTPAdapter(id, name string, cfg *model.SMTPAdapterConfig) (*SMTPAdapter, error) {
+func NewSMTPAdapter(id, name string, cfg *SMTPAdapterConfig) (*SMTPAdapter, error) {
 	// Validate required fields
 	if cfg.Host == "" {
 		return nil, fmt.Errorf("SMTP host is required")
@@ -113,8 +112,8 @@ func (a *SMTPAdapter) ID() string { return a.id }
 func (a *SMTPAdapter) Name() string { return a.name }
 
 // Type returns the adapter type.
-func (a *SMTPAdapter) Type() model.MailAdapterType {
-	return model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String())
+func (a *SMTPAdapter) Type() MailAdapterType {
+	return MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String())
 }
 
 // Close retires the adapter and closes every idle pooled connection. Active

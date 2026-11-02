@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/email/emailtest"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -41,7 +40,7 @@ func TestRenderTemplateForLocaleOverlaysTheTemplateAndLayoutLocale(t *testing.T)
 	require.NoError(t, store.UpsertLayoutEntry(t.Context(), layoutID, "ko", targetLayout, nil, time.Now()))
 
 	templateID := uuid.NewString()
-	store.SeedTemplate(model.EmailTemplate{ID: templateID, IsActive: true, SourceLocale: "en", LayoutID: &layoutID})
+	store.SeedTemplate(email.Template{ID: templateID, IsActive: true, SourceLocale: "en", LayoutID: &layoutID})
 	seedTemplateContent(store, templateID, "en", "Welcome {{recipient_email}}", "<p>Hello {{recipient_email}}</p>")
 	seedTemplateContent(store, templateID, "ko", "환영합니다 {{recipient_email}}", "<p>안녕하세요 {{recipient_email}}</p>")
 

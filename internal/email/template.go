@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -107,7 +106,7 @@ func renderTemplateByID(
 func renderStoredTemplate(
 	ctx context.Context,
 	store Store,
-	tmpl model.EmailTemplate,
+	tmpl Template,
 	requestedLocale string,
 	data map[string]string,
 ) (result *RenderedEmail, renderErr error) {
@@ -187,7 +186,7 @@ func renderStoredTemplate(
 // even if the campaign or email layout is edited while recipients are still
 // being fanned out or sent.
 func RenderCampaignSnapshotForLocale(
-	snapshot model.JSONFields,
+	snapshot structured.Fields,
 	requestedLocale string,
 	data map[string]string,
 ) (*RenderedEmail, error) {
@@ -234,7 +233,7 @@ type campaignSnapshotLayout struct {
 	HTMLContent string
 }
 
-func selectCampaignSnapshotContent(snapshot model.JSONFields, requestedLocale string) (campaignSnapshotContent, string) {
+func selectCampaignSnapshotContent(snapshot structured.Fields, requestedLocale string) (campaignSnapshotContent, string) {
 	sourceLocale := normalizeEmailLocale(stringFromStructuredValue(snapshot["source_locale"]))
 	base := campaignSnapshotContent{
 		Locale:      sourceLocale,
@@ -249,7 +248,7 @@ func selectCampaignSnapshotContent(snapshot model.JSONFields, requestedLocale st
 	return *selected, selected.Locale
 }
 
-func selectCampaignSnapshotLayout(snapshot model.JSONFields, requestedLocale string) (string, string) {
+func selectCampaignSnapshotLayout(snapshot structured.Fields, requestedLocale string) (string, string) {
 	sourceLocale := normalizeEmailLocale(stringFromStructuredValue(snapshot["layout_source_locale"]))
 	rows := campaignSnapshotLayoutRows(snapshot["layout_translations"])
 	selected := selectCampaignSnapshotLayoutRow(rows, requestedLocale, sourceLocale)
