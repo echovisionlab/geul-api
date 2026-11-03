@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.0](https://github.com/echovisionlab/geul-api/compare/v4.2.1...v4.3.0) (2026-11-03)
+
+
+### Features
+
+* **mcp:** Email Layout wrapper markup tools and Form password attempt budget ([#217](https://github.com/echovisionlab/geul-api/issues/217)) ([1d6a6a9](https://github.com/echovisionlab/geul-api/commit/1d6a6a99c48c8dd7e863a58aa8e92cc6ad7ce651))
+
 ## [4.2.1](https://github.com/echovisionlab/geul-api/compare/v4.2.0...v4.2.1) (2026-11-03)
 
 ### Bug Fixes
