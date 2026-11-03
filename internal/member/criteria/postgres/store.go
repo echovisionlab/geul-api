@@ -41,19 +41,28 @@ type CampaignUsage interface {
 	ReleaseCriteriaForArchive(ctx context.Context, tx *gorm.DB, criteriaID string, now time.Time) (draftedCampaignIDs []string, err error)
 }
 
+// SignInAppUsage counts the sign-in apps that admit Members through each
+// criteria. OAuth App owns those rows (internal/adapters/oauthapp).
+type SignInAppUsage interface {
+	// CountSignInApps counts the sign-in apps of each criteria; a criteria
+	// no app uses is absent.
+	CountSignInApps(ctx context.Context, db *gorm.DB, criteriaIDs []string) (map[string]int32, error)
+}
+
 // NewUnits returns the production unit of work of the Criteria use cases:
 // each transaction binds a Store over it that reaches campaigns through
-// campaigns (campaign.CriteriaUsage).
-func NewUnits(db *gorm.DB, campaigns CampaignUsage) mutation.UnitOfWork[membercriteria.Store] {
+// campaigns (campaign.CriteriaUsage) and sign-in apps through signInApps.
+func NewUnits(db *gorm.DB, campaigns CampaignUsage, signInApps SignInAppUsage) mutation.UnitOfWork[membercriteria.Store] {
 	return mutation.Postgres(db, func(tx *gorm.DB) membercriteria.Store {
-		return store{tx: tx, campaigns: campaigns}
+		return store{tx: tx, campaigns: campaigns, signInApps: signInApps}
 	})
 }
 
 // store implements membercriteria.Store over one gorm transaction.
 type store struct {
-	tx        *gorm.DB
-	campaigns CampaignUsage
+	tx         *gorm.DB
+	campaigns  CampaignUsage
+	signInApps SignInAppUsage
 }
 
 func (s store) Criteria(ctx context.Context, id string) (membercriteria.Criteria, error) {

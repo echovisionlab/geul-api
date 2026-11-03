@@ -54,6 +54,9 @@ type References struct {
 	Campaigns        int32
 	DeliveryRuns     int32
 	DownloadPolicies int32
+	// SignInApps admit Members through the criteria; an archived criteria
+	// admits nobody until it is restored.
+	SignInApps int32
 }
 
 // CriteriaView is a criteria as the use cases return it: with what targets

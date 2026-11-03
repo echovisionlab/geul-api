@@ -26,6 +26,8 @@ var tableOwners = map[string]string{
 	"artist_owner":                                      "internal/artist",
 	"artist_translation":                                "internal/artist",
 	"member_criteria":                                   "internal/member/criteria",
+	"oauth_sign_in_app":                                 "internal/oauthapp",
+	"oauth_sign_in_app_member_criteria":                 "internal/oauthapp",
 	"member_criteria_excluded_member":                   "internal/member/criteria",
 	"member_criteria_role":                              "internal/member/criteria",
 	"member_criteria_tag":                               "internal/member/criteria",

@@ -298,6 +298,21 @@ Credentials are preserved server-side under the row lock and never accepted or
 returned by these tools. Sender changes retain admin provider verification and
 may send a verification email to the sender address.
 
+`oauth_app_*` tools manage sign-in apps: OAuth clients an Admin registers in
+Hydra to sign people in with their site account. They call the same
+`OAuthAppService` use cases as the admin UI, with its fresh administrator
+permission, audit and Hydra Admin writes. An app gets only the
+`authorization_code` grant, so every sign-in asks the login app, which asks
+`AuthorizeOAuthSignIn` whether the app's access admits the Member: nobody,
+active Admins, every active Member, or Members matched by Member criteria. The
+criteria use the rule restricted downloads use (`internal/criteriamatch`);
+`member_criteria_list` resolves their IDs. Updates, deletes and secret
+rotations take the revision from `oauth_app_get`, and a client secret appears
+only in the result that issued it. `oauth_connected_tool_list` and
+`oauth_connected_tool_disconnect` list and remove the AI tools that connected
+themselves through the MCP OAuth facade. The API reaches the private Hydra
+Admin API at `HYDRA_ADMIN_URL`.
+
 `document_catalog` reads an authorized document's supported kinds, typed fields,
 relations, and File ownership; domain defaults and constraints remain with the
 owning compiler.

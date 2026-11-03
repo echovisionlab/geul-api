@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 
+	oauthappadapter "github.com/echovisionlab/geul-api/internal/adapters/oauthapp"
+
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
 	"github.com/stretchr/testify/require"
@@ -48,7 +50,7 @@ func (noRecipients) Count(context.Context, membercriteria.Criteria) (int64, erro
 func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *membercriteria.Service {
 	t.Helper()
 	service, err := membercriteria.NewService(membercriteria.Deps{
-		Units: criteriapostgres.NewUnits(db, campaignpostgres.CriteriaUsage{}), SpiceDB: spiceDB,
+		Units: criteriapostgres.NewUnits(db, campaignpostgres.CriteriaUsage{}, oauthappadapter.SignInAppUsage{}), SpiceDB: spiceDB,
 		Fence: identitystate.PostgresFence{}, Audit: writer, RecipientCounter: noRecipients{},
 	})
 	require.NoError(t, err)

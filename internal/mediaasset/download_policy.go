@@ -6,19 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/criteriamatch"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/google/uuid"
 )
 
 type FileDownloadAccess string
@@ -496,12 +492,10 @@ func evaluateFileDownloadAccessBatchAt(
 		if !exists {
 			continue
 		}
-		matchesByCriteriaID[criteriaID] = restrictedFileDownloadMemberMatchesCriteria(
-			memberFacts,
-			&criteria,
-			existingTagIDs,
-			memberTagIDs,
-			permissions,
+		matchesByCriteriaID[criteriaID] = criteriamatch.Matches(
+			criteriamatch.Member{ID: memberFacts.MemberID, CreatedAt: memberFacts.CreatedAt},
+			matchCriteria(criteria),
+			criteriamatch.Facts{ExistingTagIDs: existingTagIDs, MemberTagIDs: memberTagIDs, Roles: permissions},
 		)
 	}
 	for _, association := range associations {
@@ -541,32 +535,45 @@ func fileDownloadAccessDecisions(sources map[string]FileDownloadSource, eligible
 	return result, restrictedPolicyKeys, nil
 }
 
-// loadRestrictedFileDownloadCriteriaSet loads the live Member criteria a restricted
-// policy names, with their configuration.
+func (access FileDownloadAccess) Valid() bool {
+	switch access {
+	case FileDownloadAccessDisabled,
+		FileDownloadAccessPublic,
+		FileDownloadAccessAuthenticated,
+		FileDownloadAccessRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// matchCriteria is the criteria as the shared Member criteria rule reads it.
+func matchCriteria(criteria DownloadCriteria) criteriamatch.Criteria {
+	return criteriamatch.Criteria{ID: criteria.ID, Kind: criteria.Kind, Config: criteria.Config}
+}
+
+func matchCriteriaSet(criteriaSet []DownloadCriteria) []criteriamatch.Criteria {
+	result := make([]criteriamatch.Criteria, len(criteriaSet))
+	for i, criteria := range criteriaSet {
+		result[i] = matchCriteria(criteria)
+	}
+	return result
+}
+
+// loadRestrictedFileDownloadTagFacts reports which Member tags the restricted
+// criteria select still exist and which of them the Member has.
 func loadRestrictedFileDownloadTagFacts(
 	ctx context.Context,
 	store DownloadStore,
 	memberID string,
 	criteriaSet []DownloadCriteria,
 ) (map[string]struct{}, map[string]struct{}, error) {
-	referencedTagIDs := make([]string, 0)
-	for _, criteria := range criteriaSet {
-		if strings.TrimSpace(string(criteria.Kind)) !=
-			string(DownloadMemberTags) {
-			continue
-		}
-		tagIDs, valid := validUUIDSet(criteria.Config.MemberTagIDs)
-		if valid {
-			referencedTagIDs = append(referencedTagIDs, tagIDs...)
-		}
-	}
-	referencedTagIDs = sliceutil.SortedUniqueTrimmed(referencedTagIDs)
+	referencedTagIDs := criteriamatch.ReferencedTagIDs(matchCriteriaSet(criteriaSet))
 	existingTagIDs := make(map[string]struct{}, len(referencedTagIDs))
 	memberTagIDs := make(map[string]struct{}, len(referencedTagIDs))
 	if len(referencedTagIDs) == 0 {
 		return existingTagIDs, memberTagIDs, nil
 	}
-
 	rows, err := store.TagFacts(ctx, memberID, referencedTagIDs)
 	if err != nil {
 		return nil, nil, err
@@ -580,113 +587,18 @@ func loadRestrictedFileDownloadTagFacts(
 	return existingTagIDs, memberTagIDs, nil
 }
 
-func restrictedFileDownloadMemberMatchesCriteria(
-	member DownloadMemberFacts,
-	criteria *DownloadCriteria,
-	existingTagIDs map[string]struct{},
-	memberTagIDs map[string]struct{},
-	permissions map[policyv1.RoleID]bool,
-) bool {
-	if criteria == nil {
-		return false
-	}
-
-	config := criteria.Config
-	switch strings.TrimSpace(string(criteria.Kind)) {
-	case string(DownloadAllMembers):
-		return true
-	case string(DownloadMemberTags):
-		return restrictedFileDownloadMemberMatchesTagCriteria(config, existingTagIDs, memberTagIDs)
-	case string(DownloadMembersByFilter):
-		return restrictedFileDownloadMemberMatchesFilterCriteria(member, config, permissions)
-	default:
-		return false
-	}
-}
-
-func restrictedFileDownloadMemberMatchesTagCriteria(
-	config DownloadCriteriaConfig,
-	existingTagIDs map[string]struct{},
-	memberTagIDs map[string]struct{},
-) bool {
-	if len(config.AccountRoles) > 0 || config.CreatedAfter != nil || config.CreatedBefore != nil || len(config.ExcludeMemberIDs) > 0 {
-		return false
-	}
-	tagIDs, valid := validUUIDSet(config.MemberTagIDs)
-	if !valid || len(tagIDs) == 0 {
-		return false
-	}
-	for _, tagID := range tagIDs {
-		if _, exists := existingTagIDs[tagID]; !exists {
-			return false
-		}
-	}
-	for _, tagID := range tagIDs {
-		if _, exists := memberTagIDs[tagID]; exists {
-			return true
-		}
-	}
-	return false
-}
-
-func restrictedFileDownloadMemberMatchesFilterCriteria(
-	member DownloadMemberFacts,
-	config DownloadCriteriaConfig,
-	permissions map[policyv1.RoleID]bool,
-) bool {
-	if len(config.MemberTagIDs) > 0 {
-		return false
-	}
-	requested, err := normalizeFileDownloadAccountPermissions(config.AccountRoles)
-	if err != nil {
-		// resolveRestrictedFileDownloadPermissions already failed the request
-		// for these stored permissions; never match on them.
-		return false
-	}
-	if len(requested) > 0 {
-		allowed := false
-		for _, permission := range requested {
-			if permissions[permission] {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false
-		}
-	}
-	if config.CreatedAfter != nil && member.CreatedAt.Before(*config.CreatedAfter) {
-		return false
-	}
-	if config.CreatedBefore != nil && member.CreatedAt.After(*config.CreatedBefore) {
-		return false
-	}
-	excludedMemberIDs, valid := validUUIDSet(config.ExcludeMemberIDs)
-	return valid && !slices.Contains(excludedMemberIDs, member.MemberID)
-}
-
+// resolveRestrictedFileDownloadPermissions checks the platform roles the
+// restricted filter criteria test.
 func resolveRestrictedFileDownloadPermissions(
 	ctx context.Context,
 	spiceDB DownloadAuthorizer,
 	user *auth.UserInfo,
 	criteriaSet []DownloadCriteria,
 ) (map[policyv1.RoleID]bool, error) {
-	requested := make(map[policyv1.RoleID]struct{})
-	for _, criteria := range criteriaSet {
-		if strings.TrimSpace(string(criteria.Kind)) != string(DownloadMembersByFilter) {
-			continue
-		}
-		permissions, err := normalizeFileDownloadAccountPermissions(criteria.Config.AccountRoles)
-		if err != nil {
-			// The permissions come from a stored criteria, not from this request.
-			return nil, failurecause.WithAttrs(
-				fmt.Errorf("read stored File download criteria: %w", err),
-				slog.String("member_criteria_id", criteria.ID),
-			)
-		}
-		for _, permission := range permissions {
-			requested[permission] = struct{}{}
-		}
+	requested, err := criteriamatch.RequestedRoles(matchCriteriaSet(criteriaSet))
+	if err != nil {
+		// The roles come from a stored criteria, not from this request.
+		return nil, err
 	}
 	resolved := make(map[policyv1.RoleID]bool, len(requested))
 	if len(requested) == 0 {
@@ -695,8 +607,8 @@ func resolveRestrictedFileDownloadPermissions(
 	if spiceDB == nil || user == nil {
 		return nil, domainerr.DependencyUnavailable("SpiceDB")
 	}
-	for permission := range requested {
-		can, err := restrictedDownloadPlatformCan(permission)
+	for _, role := range requested {
+		can, err := criteriamatch.PlatformCan(role)
 		if err != nil {
 			return nil, err
 		}
@@ -708,71 +620,7 @@ func resolveRestrictedFileDownloadPermissions(
 		if checkErr != nil {
 			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
-		resolved[permission] = allowed
+		resolved[role] = allowed
 	}
 	return resolved, nil
-}
-
-func restrictedDownloadPlatformCan(role policyv1.RoleID) (policyv1.Can, error) {
-	switch {
-	case role == policyv1.Role.Admin():
-		return policyv1.Platform.IsAdmin()
-	case role == policyv1.Role.Author():
-		return policyv1.Platform.IsAuthor()
-	case role == policyv1.Role.User():
-		return policyv1.Platform.IsUser()
-	default:
-		return policyv1.Can{}, fmt.Errorf("unsupported File download account role %q", role.ID())
-	}
-}
-
-func validUUIDSet(values []string) ([]string, bool) {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, rawValue := range values {
-		value := strings.TrimSpace(rawValue)
-		if _, err := uuid.Parse(value); err != nil {
-			return nil, false
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result, true
-}
-
-func normalizeFileDownloadAccountPermissions(values []string) ([]policyv1.RoleID, error) {
-	seen := make(map[policyv1.RoleID]struct{}, len(values))
-	roles := make([]policyv1.RoleID, 0, len(values))
-	for _, value := range values {
-		normalized := strings.TrimSpace(strings.ToLower(value))
-		if normalized == "" {
-			continue
-		}
-		role, ok := policyv1.Role.Parse(normalized)
-		if !ok {
-			return nil, fmt.Errorf("invalid account permission %q", value)
-		}
-		if _, exists := seen[role]; exists {
-			continue
-		}
-		seen[role] = struct{}{}
-		roles = append(roles, role)
-	}
-	return roles, nil
-}
-
-func (access FileDownloadAccess) Valid() bool {
-	switch access {
-	case FileDownloadAccessDisabled,
-		FileDownloadAccessPublic,
-		FileDownloadAccessAuthenticated,
-		FileDownloadAccessRestricted:
-		return true
-	default:
-		return false
-	}
 }

@@ -24,3 +24,20 @@ func ActivePolicyCriteriaSet(ctx context.Context, db *gorm.DB, ids []string) ([]
 	}
 	return result, nil
 }
+
+// CriteriaSetByID returns the Member criteria ids name that exist, archived
+// ones included, so a sign-in app can show the criteria it still links.
+func CriteriaSetByID(ctx context.Context, db *gorm.DB, ids []string) ([]membercriteria.Criteria, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []model.MemberCriteria
+	if err := db.WithContext(ctx).Where("id IN ?", ids).Order("id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]membercriteria.Criteria, len(rows))
+	for i, row := range rows {
+		result[i] = CriteriaOf(row)
+	}
+	return result, nil
+}

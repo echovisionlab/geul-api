@@ -249,17 +249,17 @@ jobs:
     env:
       GOPRIVATE: github.com/echovisionlab/*
       GOWORK: "off"
-      INTEGRATION_SCHEMA_REVISION: 1e6b881fe62fb5f3e5082d844020b730e556fbf9 # Member criteria rename (main)
+      INTEGRATION_SCHEMA_REVISION: 088fcc29de38789f00feaf86190892137820baaf # Sign-in app access tables (main)
       INTEGRATION_POSTGRES_IMAGE: registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138
       # Sibling checkouts the backend band starts (Identity config and Kratos,
       # editor-collab with its local Common/Contracts/Telemetry sources). Pin
       # released revisions; the Kratos image is the one built from that Identity.
-      INTEGRATION_IDENTITY_REVISION: 723829aa4c278699370a186960aa1129aa86f1ec # Member criteria (main)
+      INTEGRATION_IDENTITY_REVISION: eed171aad8078e88f4e2538fe7d3232f8afbd4b1 # OAuth app routes (main)
       GEUL_TEST_KRATOS_IMAGE: registry.rawsector.com/echovisionlab/geul-identity-kratos@sha256:e9d06c5765c16c5e4e410bca8cd1abdfb7ce1fd13e772a4e9936fe6c95ba4094
       INTEGRATION_COLLAB_REVISION: 7508b50cafbbdb06a8b767035b5798dd39ce318c # v0.6.10
       INTEGRATION_COMMON_REVISION: 8faddac1a051b786c88f677950c4a415012c837d # v0.11.1
-      INTEGRATION_CONTRACTS_REVISION: 7718d464d2b869e4a4470680318397aeb7c9f586 # v0.15.0
-      INTEGRATION_TELEMETRY_REVISION: 58ac7051aabbfe29f773752161a6a762133017b8 # v0.4.0
+      INTEGRATION_CONTRACTS_REVISION: af5e6e8f6efa828754634b0997c3bb8348e177b9 # v0.16.0
+      INTEGRATION_TELEMETRY_REVISION: fb79e5327ab2233af9ad0ac06ff30743e54c28ad # v0.5.0
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

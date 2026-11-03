@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	membercriteria "github.com/echovisionlab/geul-api/internal/member/criteria"
+	"github.com/echovisionlab/geul-api/internal/oauthapp"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 
 	"connectrpc.com/connect"
@@ -189,23 +191,37 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}, nil
 }
 
-func (r serviceRegistration) registerSiteAndAdministration() (*sitesettings.Service, error) {
-	if err := r.registerMemberCriteria(); err != nil {
-		return nil, err
+// registeredAdministration are the administration services the MCP tools
+// also call.
+type registeredAdministration struct {
+	siteSettings   *sitesettings.Service
+	memberCriteria *membercriteria.Service
+	oauthApps      *oauthapp.Service
+}
+
+func (r serviceRegistration) registerSiteAndAdministration() (registeredAdministration, error) {
+	criteriaService, err := r.registerMemberCriteria()
+	if err != nil {
+		return registeredAdministration{}, err
+	}
+
+	oauthAppService, err := r.registerOAuthApps()
+	if err != nil {
+		return registeredAdministration{}, err
 	}
 
 	siteSettingService, err := r.registerSiteSettings()
 	if err != nil {
-		return nil, err
+		return registeredAdministration{}, err
 	}
 
 	if err := r.registerAdmin(); err != nil {
-		return nil, err
+		return registeredAdministration{}, err
 	}
 
 	if err := r.registerShareLinks(); err != nil {
-		return nil, err
+		return registeredAdministration{}, err
 	}
 
-	return siteSettingService, nil
+	return registeredAdministration{siteSettings: siteSettingService, memberCriteria: criteriaService, oauthApps: oauthAppService}, nil
 }

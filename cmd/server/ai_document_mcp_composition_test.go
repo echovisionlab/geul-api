@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	membercriteria "github.com/echovisionlab/geul-api/internal/member/criteria"
+	"github.com/echovisionlab/geul-api/internal/oauthapp"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 
@@ -125,7 +127,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "19", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "20", envelope.Result.ServerInfo.Version)
 		require.NotContains(t, envelope.Result.Instructions, "DSUB")
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
@@ -149,6 +151,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"policy_delete allows every lifecycle and retains delivery history",
 			"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update",
 			"sender changes keep credentials",
+			"Pass oauth_app_get's revision to oauth_app_update/delete/secret_rotate",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -316,6 +319,8 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		"map_place_get", "map_place_get_many", "map_place_list", "map_place_create", "map_place_settings_update", "map_place_delete",
 		"map_theme_list", "map_theme_resolve", "map_theme_get", "map_theme_create", "map_theme_copy", "map_theme_delete", "map_theme_set_default", "map_theme_settings_update",
 		"genre_list", "style_list", "format_list", "form_list", "post_series_list", "member_tag_list",
+		"oauth_app_list", "oauth_app_get", "oauth_app_create", "oauth_app_update", "oauth_app_delete", "oauth_app_secret_rotate",
+		"oauth_connected_tool_list", "oauth_connected_tool_disconnect", "member_criteria_list",
 		"program_event_media_list", "program_event_media_add", "program_event_media_remove", "program_event_media_reorder",
 	} {
 		require.Contains(t, response.Body.String(), `"name":"`+tool+`"`)
@@ -515,6 +520,8 @@ func compositionContentApplications() contentMCPApplications {
 		siteSettings:  &sitesettings.Service{},
 		mailAdapters:  &emaildelivery.Service{},
 		emailLayouts:  (&emailauthoring.InternalService{}).LayoutAIDocuments(),
+		oauthApps:     &oauthapp.Service{},
+		criteria:      &membercriteria.Service{},
 	}
 }
 

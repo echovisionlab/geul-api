@@ -23,8 +23,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/member"
+	membercriteria "github.com/echovisionlab/geul-api/internal/member/criteria"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/oauthapp"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -155,6 +157,8 @@ type registeredContentSupport struct {
 	mailAdapters        *emaildelivery.Service
 	campaignUnits       campaign.Units
 	siteSettings        *sitesettings.Service
+	memberCriteria      *membercriteria.Service
+	oauthApps           *oauthapp.Service
 }
 
 func (c contentApplicationRegistration) registerSupport(postComposition registeredPost) (registeredContentSupport, error) {
@@ -206,7 +210,7 @@ func (c contentApplicationRegistration) registerSupport(postComposition register
 		return registeredContentSupport{}, err
 	}
 
-	siteSettingService, err := r.registerSiteAndAdministration()
+	administration, err := r.registerSiteAndAdministration()
 	if err != nil {
 		return registeredContentSupport{}, err
 	}
@@ -214,7 +218,8 @@ func (c contentApplicationRegistration) registerSupport(postComposition register
 	return registeredContentSupport{
 		series: seriesService, legalUnits: legalUnits, legalPolicies: legalPolicyService,
 		mapTheme: mapThemeService, emailAuthoringUnits: emailAuthoringUnits, mailAdapters: mailAdapterService,
-		campaignUnits: campaignUnits, siteSettings: siteSettingService,
+		campaignUnits: campaignUnits, siteSettings: administration.siteSettings,
+		memberCriteria: administration.memberCriteria, oauthApps: administration.oauthApps,
 	}, nil
 }
 
@@ -274,6 +279,8 @@ func (c contentApplicationRegistration) registerAIDocumentApplications(music reg
 		menuSettings:  support.siteSettings,
 		siteSettings:  support.siteSettings,
 		mailAdapters:  support.mailAdapters,
+		oauthApps:     support.oauthApps,
+		criteria:      support.memberCriteria,
 	}, translations, c.files)
 }
 

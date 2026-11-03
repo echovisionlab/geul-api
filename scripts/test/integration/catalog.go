@@ -83,6 +83,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/member/public/postgres",
 			"./internal/menu/postgres",
 			"./internal/mq",
+			"./internal/oauthapp/postgres",
 			"./internal/og/postgres",
 			"./internal/page/postgres",
 			"./internal/page/public/postgres",

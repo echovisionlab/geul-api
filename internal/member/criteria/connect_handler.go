@@ -170,6 +170,7 @@ func criteriaMessage(view CriteriaView) *managev1.MemberCriteria {
 		CampaignCount:                view.References.Campaigns,
 		DeliveryRunCount:             view.References.DeliveryRuns,
 		DownloadPolicyReferenceCount: view.References.DownloadPolicies,
+		SignInAppReferenceCount:      view.References.SignInApps,
 		MatchingMemberCount:          view.EstimatedCount,
 	}
 	if criteria.UpdatedAt != nil {

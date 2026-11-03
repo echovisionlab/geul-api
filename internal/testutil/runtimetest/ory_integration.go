@@ -56,6 +56,7 @@ func oryKratosEnv(t *testing.T, dsn string, browserBaseURL string, hookBaseURL s
 	environment := map[string]string{
 		"DSN":                                    dsn,
 		"KRATOS_ADMIN_URL":                       "http://kratos:4434",
+		"HYDRA_ADMIN_URL":                        "http://hydra:4445",
 		"KRATOS_PASSKEY_RP_ID":                   "127.0.0.1",
 		"TOKEN_SIGNING_SECRET":                   IntegrationTokenSigningSecret,
 		"INTERNAL_SERVICE_HEADER_NAME":           "X-Internal-Service",

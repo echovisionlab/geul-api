@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	oauthappadapter "github.com/echovisionlab/geul-api/internal/adapters/oauthapp"
+
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
@@ -106,23 +108,23 @@ func (r serviceRegistration) registerCampaign(collaborationRuntime *collaboratio
 	return campaignUnits, nil
 }
 
-func (r serviceRegistration) registerMemberCriteria() error {
+func (r serviceRegistration) registerMemberCriteria() (*membercriteria.Service, error) {
 	deps := r.dependencies
 	criteriaService, err := membercriteria.NewService(membercriteria.Deps{
-		Units:            criteriapostgres.NewUnits(deps.db, campaignpostgres.CriteriaUsage{}),
+		Units:            criteriapostgres.NewUnits(deps.db, campaignpostgres.CriteriaUsage{}, oauthappadapter.SignInAppUsage{}),
 		SpiceDB:          deps.spicedbClient,
 		Fence:            identitystate.PostgresFence{},
 		Audit:            deps.telemetryWriter,
 		RecipientCounter: membercriteriaadapter.NewRecipientCounter(deps.db, deps.spicedbClient),
 	})
 	if err != nil {
-		return fmt.Errorf("initialize criteria service: %w", err)
+		return nil, fmt.Errorf("initialize criteria service: %w", err)
 	}
 	criteriaPath, criteriaHandler := managev1connect.NewMemberCriteriaServiceHandler(membercriteria.NewConnectHandler(criteriaService), r.manageOptions...)
 	deps.mux.Handle(criteriaPath, criteriaHandler)
 	slog.Info("Registered service", "path", criteriaPath)
 
-	return nil
+	return criteriaService, nil
 }
 
 func (r serviceRegistration) registerEmailProviderCallbacks() {

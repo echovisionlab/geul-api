@@ -16,7 +16,7 @@ import (
 )
 
 // UpdatePageCommand changes the Page settings it sets. A present Slug that
-// trims to empty clears the slug; AccessPolicy replaces the whole audience.
+// trims to empty clears the slug; AccessPolicy replaces the whole policy.
 type UpdatePageCommand struct {
 	ID           string
 	Slug         *string
