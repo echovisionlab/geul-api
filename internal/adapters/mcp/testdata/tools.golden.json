@@ -7706,6 +7706,166 @@
     }
   },
   {
+    "name": "email_layout_source_get",
+    "title": "Get Email Layout source markup",
+    "description": "Read an Email Layout's source-locale wrapper markup and document_revision. layout_id is the UUID in the admin Email Layouts editor URL. The markup includes private \u003c!--geul-unit:...--\u003e markers that bind translations to source text; edit that text with document tools (p=email_layout), not here.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layout_id"
+      ],
+      "properties": {
+        "layout_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layout_id",
+        "source_locale",
+        "document_revision",
+        "source_markup"
+      ],
+      "properties": {
+        "layout_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "source_locale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "document_revision": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "source_markup": {
+          "type": "string"
+        }
+      }
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "email_layout_source_replace",
+    "title": "Replace Email Layout source markup",
+    "description": "Change Email Layout wrapper markup such as image sizes, attributes or inline styles that document tools cannot edit. Pass the exact current document_revision and a find string that occurs exactly once in source_markup. The result is validated like an editor save and must keep every translatable unit and its source text, so all locales keep their translations. Reread with email_layout_source_get after a revision conflict; never blindly retry.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layout_id",
+        "expected_document_revision",
+        "find",
+        "replace"
+      ],
+      "properties": {
+        "layout_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "expected_document_revision": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "find": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "description": "Exact source_markup substring that must occur exactly once."
+        },
+        "replace": {
+          "type": "string",
+          "maxLength": 65536,
+          "description": "Replacement markup. Keep every \u003c!--geul-unit:...--\u003e marker and the text it introduces unchanged."
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layout_id",
+        "document_revision",
+        "changed"
+      ],
+      "properties": {
+        "layout_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "document_revision": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "changed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
     "name": "file_delete",
     "title": "Delete Files",
     "description": "Request durable deletion of up to 100 Files through administrator File authority. accepted_file_ids means deletion is scheduled, not completed. Referenced Files are rejected with their current impact; no force or bypass is supported.",

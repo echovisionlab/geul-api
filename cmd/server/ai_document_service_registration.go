@@ -102,6 +102,7 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 	if err != nil {
 		return err
 	}
+	references.emailLayouts = documents.emailAuthoring.LayoutAIDocuments()
 	aiDocumentMCP, err := newAIDocumentMCPComposition(
 		registrations,
 		documents.post,

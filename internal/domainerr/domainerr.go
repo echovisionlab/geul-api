@@ -32,6 +32,9 @@ const (
 	Unavailable
 	// Aborted reports a concurrent change the client may retry past.
 	Aborted
+	// Exhausted rejects a caller that exceeded an attempt budget; it may
+	// retry after the budget recovers.
+	Exhausted
 )
 
 // Error is a use-case outcome. Message is what the client sees; the cause
@@ -107,6 +110,11 @@ func InvalidSession() *Error {
 // may succeed.
 func Retry(message string) *Error {
 	return New(Aborted, "", message)
+}
+
+// TooManyAttempts rejects a caller that exhausted an attempt budget.
+func TooManyAttempts(message string) *Error {
+	return New(Exhausted, "", message)
 }
 
 // DependencyUnavailable reports an unavailable dependency.

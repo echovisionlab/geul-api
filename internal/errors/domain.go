@@ -19,6 +19,7 @@ var domainCodes = map[domainerr.Kind]connect.Code{
 	domainerr.Unauthenticated:    connect.CodeUnauthenticated,
 	domainerr.Unavailable:        connect.CodeUnavailable,
 	domainerr.Aborted:            connect.CodeAborted,
+	domainerr.Exhausted:          connect.CodeResourceExhausted,
 }
 
 // Classified returns the Connect form of a client outcome carried by err:

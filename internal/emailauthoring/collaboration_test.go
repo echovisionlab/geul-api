@@ -380,6 +380,49 @@ func TestLayoutAIDocumentReplacesTargetValuesAndRejectsAStaleTarget(t *testing.T
 	require.Len(t, h.audit.Records(), 1)
 }
 
+func TestLayoutAIDocumentReplacesSourceMarkupButKeepsTranslationUnits(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	layout, revision, _ := layoutRoom(t, h)
+	editor := newPrincipal(t)
+	h.store.PutMember(editor.memberID)
+	documents := h.internal.LayoutAIDocuments()
+	replaceMarkup := func(markup string) emailauthoring.EmailLayoutAIDocumentMutationCompiler {
+		return func(state emailauthoring.EmailLayoutAIDocumentState) (emailauthoring.EmailLayoutAIDocumentMutation, error) {
+			return emailauthoring.EmailLayoutAIDocumentMutation{
+				LayoutID: state.LayoutID, Locale: state.Locale, ExpectedDocumentRevision: state.DocumentRevision,
+				ExpectedSource: state.SourceLocale, ExpectedPresence: state.LocaleExists,
+				ContributorMemberID: uuid.MustParse(state.ViewerMemberID), ReplaceSourceMarkup: true, SourceMarkup: markup,
+			}, nil
+		}
+	}
+	source, err := documents.LoadSource(editor.ctx, layout.ID)
+	require.NoError(t, err)
+	require.Equal(t, "en", source.Locale)
+	require.Equal(t, emailauthoringtest.LayoutSourceHTML, source.SourceMarkup)
+
+	removed := `<img src="{{logo_email_url}}" width="60" alt="">{{content}}`
+	_, err = documents.ExecuteAIDocumentMutation(editor.ctx, layout.ID, "en", emailauthoring.EmailLayoutAIDocumentExecutionApply, replaceMarkup(removed))
+	require.Equal(t, connect.CodeInvalidArgument, codeOf(err), "dropping a translated unit would orphan its translations")
+	require.Empty(t, h.audit.Records())
+
+	_, err = documents.ExecuteAIDocumentMutation(editor.ctx, layout.ID, "ko", emailauthoring.EmailLayoutAIDocumentExecutionApply, replaceMarkup(source.SourceMarkup))
+	require.Equal(t, connect.CodeInvalidArgument, codeOf(err), "only the source locale owns the wrapper")
+
+	resized := `<img src="{{logo_email_url}}" width="60" alt="" style="height: auto;">` + emailauthoringtest.LayoutSourceHTML
+	result, err := documents.ExecuteAIDocumentMutation(editor.ctx, layout.ID, "en", emailauthoring.EmailLayoutAIDocumentExecutionApply, replaceMarkup(resized))
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.NotEqual(t, revision.String(), result.DocumentRevision)
+	stored, _ := h.store.LayoutTranslation(layout.ID, "en")
+	require.Equal(t, resized, *stored.ContentHTML)
+	translated, err := documents.Load(editor.ctx, layout.ID, "ko")
+	require.NoError(t, err)
+	require.Equal(t, "안녕", *translated.Units[0].LocaleValue, "the translation stays attached to the unchanged unit")
+	require.Equal(t, "email_layout", h.store.ContentUpdates()[0].Entity)
+	require.Len(t, h.audit.Records(), 1)
+}
+
 func TestRequireTranslationSourceMutableLocksTheRootBeforeDeliveryAuthority(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
