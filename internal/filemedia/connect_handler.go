@@ -7,16 +7,13 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the administrator File RPCs. Each method translates
 // the request into a use-case command or query, and the result into the
 // response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedFileServiceHandler
 	files *Service
 }
 
@@ -28,7 +25,6 @@ func NewConnectHandler(files *Service) *ConnectHandler {
 // InternalConnectHandler serves the collaboration service's File ingest
 // boundary.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalFileIngestServiceHandler
 	files *Service
 }
 
@@ -40,7 +36,6 @@ func NewInternalConnectHandler(files *Service) *InternalConnectHandler {
 
 // LinkPreviewConnectHandler serves the editor's link preview RPC.
 type LinkPreviewConnectHandler struct {
-	managev1connect.UnimplementedLinkPreviewServiceHandler
 	previews *LinkPreviewService
 }
 

@@ -9,7 +9,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -22,7 +21,6 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 
 // MemberConnectHandler serves the public Member Connect RPCs.
 type MemberConnectHandler struct {
-	openv1connect.UnimplementedMemberServiceHandler
 	members *Service
 }
 
@@ -60,7 +58,6 @@ func (h *MemberConnectHandler) ListAuthors(ctx context.Context, req *connect.Req
 
 // NewsletterConnectHandler serves the public newsletter Connect RPCs.
 type NewsletterConnectHandler struct {
-	openv1connect.UnimplementedNewsletterServiceHandler
 	members *Service
 }
 

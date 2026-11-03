@@ -12,14 +12,11 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the Form management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedFormServiceHandler
 	forms *Service
 }
 
@@ -344,7 +341,6 @@ func submissionStatsMessage(stats SubmissionStats) *managev1.FormSubmissionStats
 // InternalConnectHandler serves the Form collaboration RPCs editor-collab
 // calls.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalFormServiceHandler
 	forms *Service
 }
 

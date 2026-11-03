@@ -14,10 +14,8 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -25,7 +23,6 @@ import (
 // request into a use-case command or query, and the result into the
 // response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedLabelServiceHandler
 	labels *Service
 }
 
@@ -37,7 +34,6 @@ func NewConnectHandler(labels *Service) *ConnectHandler {
 // InternalConnectHandler serves the collaboration service's Label document
 // RPCs.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalLabelServiceHandler
 	labels *Service
 }
 

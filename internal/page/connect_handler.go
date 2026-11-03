@@ -13,15 +13,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ConnectHandler serves the Page management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedPageServiceHandler
 	pages *Service
 }
 
@@ -130,7 +127,6 @@ func (h *ConnectHandler) RestorePageVersion(ctx context.Context, req *connect.Re
 // InternalConnectHandler serves the Page collaboration RPCs editor-collab
 // calls.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalPageServiceHandler
 	pages *Service
 }
 

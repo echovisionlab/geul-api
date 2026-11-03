@@ -9,12 +9,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ClientConnectHandler serves the Client RPCs.
 type ClientConnectHandler struct {
-	managev1connect.UnimplementedClientServiceHandler
 	catalog *Service
 }
 

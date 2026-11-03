@@ -19,17 +19,14 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the administrator Release RPCs. Each method
 // translates the request into a use-case command or query, and the result
 // into the response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedReleaseServiceHandler
 	releases *Service
 }
 
@@ -40,7 +37,6 @@ func NewConnectHandler(releases *Service) *ConnectHandler {
 
 // TrackConnectHandler serves the administrator Track RPCs.
 type TrackConnectHandler struct {
-	managev1connect.UnimplementedTrackServiceHandler
 	releases *Service
 }
 
@@ -52,7 +48,6 @@ func NewTrackConnectHandler(releases *Service) *TrackConnectHandler {
 // InternalConnectHandler serves the collaboration service's typed Release
 // Block boundary.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalReleaseServiceHandler
 	releases *Service
 }
 

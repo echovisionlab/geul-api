@@ -13,7 +13,6 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,7 +20,6 @@ import (
 // request into a use-case command or query, and the result into the
 // response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedMemberServiceHandler
 	members *Service
 }
 

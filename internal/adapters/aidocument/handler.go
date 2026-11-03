@@ -24,7 +24,6 @@ type Application interface {
 // lifecycle checks, and aggregate loading remain in the injected application
 // and owning-domain port.
 type Service struct {
-	managev1connect.UnimplementedAIDocumentServiceHandler
 	application Application
 }
 

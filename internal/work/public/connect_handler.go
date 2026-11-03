@@ -20,14 +20,12 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ConnectHandler serves the public Work RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedWorkServiceHandler
 	works *Service
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 func respond[T any](message *T, err error) (*connect.Response[T], error) {
@@ -24,7 +23,6 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 
 // ClientConnectHandler serves the public Client RPCs.
 type ClientConnectHandler struct {
-	openv1connect.UnimplementedClientServiceHandler
 	catalog *Service
 }
 
@@ -47,7 +45,6 @@ func (h *ClientConnectHandler) List(ctx context.Context, req *connect.Request[op
 
 // CategoryConnectHandler serves the public Category RPCs.
 type CategoryConnectHandler struct {
-	openv1connect.UnimplementedCategoryServiceHandler
 	catalog *Service
 }
 
@@ -65,7 +62,6 @@ func (h *CategoryConnectHandler) List(ctx context.Context, req *connect.Request[
 
 // TagConnectHandler serves the public Tag RPCs.
 type TagConnectHandler struct {
-	openv1connect.UnimplementedTagServiceHandler
 	catalog *Service
 }
 
@@ -83,7 +79,6 @@ func (h *TagConnectHandler) List(ctx context.Context, req *connect.Request[openv
 
 // MapPlaceConnectHandler serves the public Map Place RPCs.
 type MapPlaceConnectHandler struct {
-	openv1connect.UnimplementedMapPlaceServiceHandler
 	catalog *Service
 }
 

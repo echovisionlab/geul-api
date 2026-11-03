@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"gorm.io/gorm"
 )
 
@@ -24,7 +23,6 @@ type MemberLoader interface {
 }
 
 type Service struct {
-	intrav1connect.UnimplementedInternalCollaborationAuthorizationServiceHandler
 	db       *gorm.DB
 	registry *Registry
 	members  MemberLoader

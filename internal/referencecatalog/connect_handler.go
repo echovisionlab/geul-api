@@ -9,7 +9,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // Each Connect handler serves one administrator catalog RPC service. A method
@@ -50,7 +49,6 @@ func referenceListQuery(filters []*commonv1.FilterSpec, sorts []*commonv1.SortSp
 
 // GenreConnectHandler serves the Genre RPCs.
 type GenreConnectHandler struct {
-	managev1connect.UnimplementedGenreServiceHandler
 	catalog *Service
 }
 
@@ -85,7 +83,6 @@ func (h *GenreConnectHandler) DeleteGenre(ctx context.Context, req *connect.Requ
 
 // StyleConnectHandler serves the Style RPCs.
 type StyleConnectHandler struct {
-	managev1connect.UnimplementedStyleServiceHandler
 	catalog *Service
 }
 
@@ -120,7 +117,6 @@ func (h *StyleConnectHandler) DeleteStyle(ctx context.Context, req *connect.Requ
 
 // FormatConnectHandler serves the Format RPCs.
 type FormatConnectHandler struct {
-	managev1connect.UnimplementedFormatServiceHandler
 	catalog *Service
 }
 
@@ -155,7 +151,6 @@ func (h *FormatConnectHandler) DeleteFormat(ctx context.Context, req *connect.Re
 
 // TagConnectHandler serves the Tag RPCs.
 type TagConnectHandler struct {
-	managev1connect.UnimplementedTagServiceHandler
 	catalog *Service
 }
 
@@ -190,7 +185,6 @@ func (h *TagConnectHandler) DeleteTag(ctx context.Context, req *connect.Request[
 
 // CategoryConnectHandler serves the Category RPCs.
 type CategoryConnectHandler struct {
-	managev1connect.UnimplementedCategoryServiceHandler
 	catalog *Service
 }
 

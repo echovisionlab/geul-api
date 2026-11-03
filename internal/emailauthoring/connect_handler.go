@@ -10,9 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 func respond[T any](message *T, err error) (*connect.Response[T], error) {
@@ -26,7 +24,6 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 // translates the request into a use-case command or query, and the result
 // into the response; errs.Wrap maps use-case errors to Connect codes.
 type TemplateConnectHandler struct {
-	managev1connect.UnimplementedEmailTemplateServiceHandler
 	authoring *Service
 }
 
@@ -167,7 +164,6 @@ func (h *TemplateConnectHandler) PreviewEmailTemplate(ctx context.Context, req *
 
 // LayoutConnectHandler serves the Email Layout Connect RPCs.
 type LayoutConnectHandler struct {
-	managev1connect.UnimplementedEmailLayoutServiceHandler
 	authoring *Service
 }
 
@@ -250,7 +246,6 @@ func (h *LayoutConnectHandler) PreviewEmailLayoutContent(ctx context.Context, re
 // InternalTemplateConnectHandler serves the Email Template collaboration
 // RPCs.
 type InternalTemplateConnectHandler struct {
-	intrav1connect.UnimplementedInternalEmailTemplateServiceHandler
 	documents *InternalService
 }
 
@@ -319,7 +314,6 @@ func emailTemplateLocaleMetadataProjection(state emailcontent.ExactLocaleState, 
 
 // InternalLayoutConnectHandler serves the Email Layout collaboration RPCs.
 type InternalLayoutConnectHandler struct {
-	intrav1connect.UnimplementedInternalEmailLayoutServiceHandler
 	documents *InternalService
 }
 

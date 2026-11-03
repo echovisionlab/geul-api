@@ -8,14 +8,12 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the administrator Program Event RPCs. Each method
 // translates the request into a use-case command or query, and the result
 // into the response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
 	events *Service
 }
 
@@ -26,7 +24,6 @@ func NewConnectHandler(events *Service) *ConnectHandler {
 
 // SeriesConnectHandler serves the administrator Program Event series RPCs.
 type SeriesConnectHandler struct {
-	managev1connect.UnimplementedProgramEventSeriesServiceHandler
 	events *Service
 }
 
@@ -37,7 +34,6 @@ func NewSeriesConnectHandler(events *Service) *SeriesConnectHandler {
 
 // TypeConnectHandler serves the administrator Program Event type RPCs.
 type TypeConnectHandler struct {
-	managev1connect.UnimplementedProgramEventTypeServiceHandler
 	events *Service
 }
 

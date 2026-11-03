@@ -12,12 +12,10 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // MapPlaceConnectHandler serves the Map Place RPCs.
 type MapPlaceConnectHandler struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
 	catalog *Service
 }
 

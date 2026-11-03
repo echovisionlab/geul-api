@@ -8,12 +8,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public Series RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedSeriesServiceHandler
 	series *Service
 }
 

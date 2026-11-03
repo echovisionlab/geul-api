@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 func optionalStringValue(value *string) string {
@@ -76,7 +75,6 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 
 // TermsConnectHandler serves the public Terms RPCs.
 type TermsConnectHandler struct {
-	openv1connect.UnimplementedTermsServiceHandler
 	policies *Service
 }
 
@@ -118,7 +116,6 @@ func (h *TermsConnectHandler) List(ctx context.Context, req *connect.Request[ope
 
 // PrivacyConnectHandler serves the public Privacy RPCs.
 type PrivacyConnectHandler struct {
-	openv1connect.UnimplementedPrivacyServiceHandler
 	policies *Service
 }
 

@@ -9,12 +9,10 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public Map Theme RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedMapThemeServiceHandler
 	themes *Service
 }
 

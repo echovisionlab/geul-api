@@ -11,12 +11,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/requestip"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public Form RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedFormServiceHandler
 	forms *Service
 }
 

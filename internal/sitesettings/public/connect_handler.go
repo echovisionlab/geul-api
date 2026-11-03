@@ -9,12 +9,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public manifest RPC.
 type ConnectHandler struct {
-	openv1connect.UnimplementedManifestServiceHandler
 	manifest *Service
 }
 
