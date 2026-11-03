@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.0](https://github.com/echovisionlab/geul-api/compare/v5.0.1...v5.1.0) (2026-11-03)
+
+
+### Features
+
+* manage sign-in apps and decide who they admit ([#227](https://github.com/echovisionlab/geul-api/issues/227)) ([8a84968](https://github.com/echovisionlab/geul-api/commit/8a84968003cb135781544d7079150ed3e5ac8688))
+
 ## [5.0.1](https://github.com/echovisionlab/geul-api/compare/v5.0.0...v5.0.1) (2026-11-03)
 
 
