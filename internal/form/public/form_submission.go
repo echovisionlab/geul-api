@@ -71,7 +71,7 @@ func (s *Service) SubmitForm(ctx context.Context, command SubmitFormCommand) (st
 		// A visitor needs no session: the Form's own access policy, read
 		// from the locked row, admits the submission.
 		Access: mutation.Checked(func(ctx context.Context, store Store) error {
-			return s.enforceLockedFormSubmissionAccess(ctx, store, &locked, command.Password)
+			return s.enforceLockedFormSubmissionAccess(ctx, store, &locked, command.Password, command.ClientAddress)
 		}),
 		Change: func(ctx context.Context, store Store) (form.Submission, error) {
 			return createFormSubmission(ctx, store, &locked, command.Data, memberID, metadata)
@@ -179,6 +179,7 @@ func (s *Service) enforceLockedFormSubmissionAccess(
 	store Store,
 	locked *form.Form,
 	password *string,
+	clientAddress string,
 ) error {
 	return s.enforceFormAccess(ctx, store, locked, formAccessOptions{
 		context:                  ContextEmbed,
@@ -186,6 +187,7 @@ func (s *Service) enforceLockedFormSubmissionAccess(
 		draftAsNotFound:          false,
 		enforcePassword:          true,
 		password:                 password,
+		clientAddress:            clientAddress,
 		checkSubmissionLimit:     false,
 		checkDuplicateSubmission: false,
 	})

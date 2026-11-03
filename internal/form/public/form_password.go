@@ -8,7 +8,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/form"
 )
 
 // VerifyFormPasswordQuery checks one Form access password, with the share
@@ -18,6 +20,9 @@ type VerifyFormPasswordQuery struct {
 	Password      string
 	ShareToken    *string
 	SharePassword *string
+	// ClientAddress is the trusted client address that owns the password
+	// attempt budget.
+	ClientAddress string
 }
 
 // VerifyFormPassword validates one Form access password without exposing its
@@ -50,7 +55,20 @@ func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswo
 	if !found.HasPassword() {
 		return false, nil
 	}
-	return s.verifyFormPassword(ctx, query.Password, *found.AccessPassword), nil
+	return s.checkFormPassword(ctx, &found, query.ClientAddress, query.Password)
+}
+
+// checkFormPassword verifies a password for found within the client's failed
+// attempt budget. An exhausted budget rejects even a correct password until
+// the window passes, so guesses cannot be confirmed by timing the limit.
+func (s *Service) checkFormPassword(ctx context.Context, found *form.Form, clientAddress, password string) (bool, error) {
+	key := passwordAttemptKey(found.ID, clientAddress)
+	if s.attempts.exhausted(key) {
+		return false, domainerr.TooManyAttempts("too many Form password attempts; try again later")
+	}
+	matched := s.verifyFormPassword(ctx, password, *found.AccessPassword)
+	s.attempts.record(key, matched)
+	return matched, nil
 }
 
 // verifyFormPassword checks if the password matches the hash.

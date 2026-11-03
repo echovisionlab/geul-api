@@ -176,6 +176,7 @@ type formAccessOptions struct {
 	draftAsNotFound          bool
 	enforcePassword          bool
 	password                 *string
+	clientAddress            string
 	checkSubmissionLimit     bool
 	checkDuplicateSubmission bool
 }
@@ -240,8 +241,8 @@ func (s *Service) evaluateFormAccess(
 	); err != nil || reason != ReasonAllowed {
 		return reason, err
 	}
-	if formPasswordRequired(ctx, s, found, opts) {
-		return ReasonPasswordRequired, nil
+	if required, err := formPasswordRequired(ctx, s, found, opts); err != nil || required {
+		return ReasonPasswordRequired, err
 	}
 
 	return ReasonAllowed, nil
@@ -340,9 +341,15 @@ func evaluateFormSubmissionLimit(
 	return ReasonAllowed, nil
 }
 
-func formPasswordRequired(ctx context.Context, service *Service, found *form.Form, opts formAccessOptions) bool {
-	return opts.enforcePassword && found.HasPassword() &&
-		(opts.password == nil || *opts.password == "" || !service.verifyFormPassword(ctx, *opts.password, *found.AccessPassword))
+func formPasswordRequired(ctx context.Context, service *Service, found *form.Form, opts formAccessOptions) (bool, error) {
+	if !opts.enforcePassword || !found.HasPassword() {
+		return false, nil
+	}
+	if opts.password == nil || *opts.password == "" {
+		return true, nil
+	}
+	matched, err := service.checkFormPassword(ctx, found, opts.clientAddress, *opts.password)
+	return !matched, err
 }
 
 func formRoleCan(role string) (policyv1.Can, bool, error) {

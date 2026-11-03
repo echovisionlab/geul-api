@@ -41,6 +41,7 @@ func (h *ConnectHandler) CheckAccess(ctx context.Context, req *connect.Request[o
 		SharePassword:  req.Msg.SharePassword,
 		Password:       req.Msg.Password,
 		AcceptLanguage: req.Header().Get("Accept-Language"),
+		ClientAddress:  requestClientAddress(req),
 	})
 	if err != nil {
 		return nil, errs.Wrap(err)
@@ -64,7 +65,7 @@ func (h *ConnectHandler) Submit(ctx context.Context, req *connect.Request[openv1
 func submitFormCommand(req *connect.Request[openv1.SubmitFormRequest]) SubmitFormCommand {
 	return SubmitFormCommand{
 		FormID: req.Msg.FormId, Data: req.Msg.Data, Password: req.Msg.Password,
-		ClientAddress:  requestip.TrustedClientIP(req.Header().Get("X-Forwarded-For"), req.Header().Get("X-Real-IP"), req.Peer().Addr),
+		ClientAddress:  requestClientAddress(req),
 		UserAgent:      req.Header().Get("User-Agent"),
 		AcceptLanguage: req.Header().Get("Accept-Language"),
 	}
@@ -73,11 +74,17 @@ func submitFormCommand(req *connect.Request[openv1.SubmitFormRequest]) SubmitFor
 func (h *ConnectHandler) VerifyPassword(ctx context.Context, req *connect.Request[openv1.VerifyFormPasswordRequest]) (*connect.Response[openv1.VerifyFormPasswordResponse], error) {
 	valid, err := h.forms.VerifyFormPassword(ctx, VerifyFormPasswordQuery{
 		Slug: req.Msg.Slug, Password: req.Msg.Password, ShareToken: req.Msg.ShareToken, SharePassword: req.Msg.SharePassword,
+		ClientAddress: requestClientAddress(req),
 	})
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
 	return connect.NewResponse(&openv1.VerifyFormPasswordResponse{Valid: valid}), nil
+}
+
+// requestClientAddress is the trusted client the request came from.
+func requestClientAddress(req connect.AnyRequest) string {
+	return requestip.TrustedClientIP(req.Header().Get("X-Forwarded-For"), req.Header().Get("X-Real-IP"), req.Peer().Addr)
 }
 
 func (h *ConnectHandler) GetDashboard(ctx context.Context, req *connect.Request[openv1.GetFormDashboardRequest]) (*connect.Response[openv1.GetFormDashboardResponse], error) {

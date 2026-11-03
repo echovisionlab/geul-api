@@ -2,6 +2,8 @@
 package public
 
 import (
+	"time"
+
 	"context"
 	"errors"
 	"slices"
@@ -47,6 +49,7 @@ type Service struct {
 	password  *crypto.PasswordHasher
 	spiceDB   mutation.Authorizer
 	mutations *mutation.StoreRunner[Store]
+	attempts  *passwordAttempts
 }
 
 // NewService validates deps and returns the public Form use cases.
@@ -58,7 +61,10 @@ func NewService(deps Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{units: deps.Units, password: deps.Password, spiceDB: deps.SpiceDB, mutations: mutations}, nil
+	return &Service{
+		units: deps.Units, password: deps.Password, spiceDB: deps.SpiceDB, mutations: mutations,
+		attempts: newPasswordAttempts(time.Now),
+	}, nil
 }
 
 type formShareTokenState struct {
@@ -76,6 +82,9 @@ type CheckFormAccessQuery struct {
 	SharePassword  *string
 	Password       *string
 	AcceptLanguage string
+	// ClientAddress is the trusted client address that owns the password
+	// attempt budget.
+	ClientAddress string
 }
 
 // Access is whether a visitor may open a Form and why. Form is the Form
@@ -117,6 +126,7 @@ func (s *Service) CheckFormAccess(ctx context.Context, query CheckFormAccessQuer
 		bypassRoles:              shareTokenState.valid,
 		enforcePassword:          !shareTokenState.valid,
 		password:                 query.Password,
+		clientAddress:            query.ClientAddress,
 		checkSubmissionLimit:     !query.Dashboard,
 		checkDuplicateSubmission: !query.Dashboard,
 	})
