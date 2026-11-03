@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.1](https://github.com/echovisionlab/geul-api/compare/v5.0.0...v5.0.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* serve Member criteria RPCs under their contract names ([#225](https://github.com/echovisionlab/geul-api/issues/225)) ([9378d34](https://github.com/echovisionlab/geul-api/commit/9378d34fd14ef3c7cc7890f34351db69a4685fe1))
+
 ## [5.0.0](https://github.com/echovisionlab/geul-api/compare/v4.5.0...v5.0.0) (2026-11-03)
 
 
