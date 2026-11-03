@@ -122,6 +122,9 @@ func (tools *AIDocumentTools) mutateHeading(ctx context.Context, call toolCall[h
 		if _, ok := arguments["after_block_id"]; ok {
 			return executionError(errors.New("heading_update does not accept after_block_id"))
 		}
+		if err := tools.rejectFormattedReplacement(ctx, input.focusedMutationArguments, input.Block); err != nil {
+			return expectedToolError(err)
+		}
 	} else {
 		if _, ok := arguments["block_id"]; ok {
 			return executionError(errors.New("heading_create assigns block_id"))

@@ -9,7 +9,7 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 )
 
-const syncRequiredGuidance = " On sync_required, follow the returned document_read recipe and reread the latest targets before revising the intended edit."
+const syncRequiredGuidance = " On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions."
 
 // documentSyncResult is a routine recovery control result, never an applied change.
 type documentSyncResult struct {
@@ -72,9 +72,13 @@ func mutationSyncResult(request core.ApplyRequest, conflict *core.Conflict) (mcp
 	default:
 		return mcpserver.ToolResult{}, fmt.Errorf("application returned unsupported conflict code %q", conflict.Code)
 	}
-	return syncRequiredResult(reason, conflict.CurrentDocumentRevision, conflict.CurrentTargetRevision, conflict.AffectedHandles, readArguments{
-		Profile: request.Profile, Document: request.Document, Locale: request.Locale, Mode: core.ReadOutline,
-	}, false)
+	// Reread only the existing blocks the edit targeted; a batch that only
+	// inserts blocks needs the outline to find its parents again.
+	recipe := readArguments{Profile: request.Profile, Document: request.Document, Locale: request.Locale, Mode: core.ReadOutline, Limit: defaultOutlineReadLimit}
+	if blocks := core.ExistingTargetBlocks(request.Operations); len(blocks) > 0 && len(blocks) <= defaultOutlineReadLimit {
+		recipe.Mode, recipe.Blocks, recipe.Limit = core.ReadBlocks, blocks, len(blocks)
+	}
+	return syncRequiredResult(reason, conflict.CurrentDocumentRevision, conflict.CurrentTargetRevision, conflict.AffectedHandles, recipe, false)
 }
 
 // outputSchemaWithSync keeps recursive success references rooted in the combined

@@ -1034,3 +1034,28 @@ func TestDocumentMetadataUpdateSupportsProgramEventExactRevisions(t *testing.T) 
 		t.Fatalf("Program Event accepted Post-only metadata: %+v %v calls=%d", result, err, application.applyCalls)
 	}
 }
+
+func TestPlainTextToolsRefuseFormattedBlocksAndReadDefaultsFitOnePage(t *testing.T) {
+	formatted := core.Projection{Protocol: core.ProtocolVersion, Mode: core.ReadFields, Nodes: []core.Node{{
+		ID: "paragraph-a", Kind: "paragraph",
+		Localized: []core.FieldValue{{ID: "content", Value: core.RichText(core.InlineItem{Kind: core.InlineKindLink, Target: "https://example.com", Children: []core.InlineItem{core.InlineText("video")}})}},
+	}}}
+	application := &recordingAIDocumentApplication{readResult: formatted}
+	_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolParagraphUpdate, toolArguments(t, `{"document_type":"post","document_id":"`+syncTestDocument+`","locale":"ko","expected_document_revision":"current","block_id":"paragraph-a","text":"video"}`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) || !strings.Contains(execution.Message, "document_apply") || application.applyCalls != 0 {
+		t.Fatalf("formatted paragraph replacement = %v, apply calls %d", err, application.applyCalls)
+	}
+
+	for mode, want := range map[string]int{"outline": defaultOutlineReadLimit, "blocks": defaultValueReadLimit} {
+		reader := &recordingAIDocumentApplication{readResult: core.Projection{}}
+		arguments := `{"p":"post","d":"` + syncTestDocument + `","l":"ko","m":"` + mode + `"`
+		if mode == "blocks" {
+			arguments += `,"b":["paragraph-a"]`
+		}
+		_, _ = mustAIDocumentTools(t, reader).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentRead, toolArguments(t, arguments+`}`))
+		if reader.readRequest.Limit != want {
+			t.Fatalf("%s default limit = %d, want %d", mode, reader.readRequest.Limit, want)
+		}
+	}
+}

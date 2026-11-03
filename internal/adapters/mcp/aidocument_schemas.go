@@ -119,7 +119,7 @@ const mutationInputJSONSchema = `{
     "p":` + domainJSONSchema + `,
     "d":` + documentReferenceJSONSchema + `,
     "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "edr":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision dr returned by document_open or document_read."},
+    "edr":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "etr":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision tr returned for a non-source locale; omit when tr was not returned."},
     "o":{"type":"array","minItems":1,"maxItems":100,"description":"Typed DCDP operations for advanced batches. For ordinary plain-text paragraph writes, use the focused paragraph tools. A prior document_validate dry run is optional.","items":{"$ref":"#/$defs/operation"}}
   },
@@ -176,7 +176,7 @@ const paragraphCreateInputJSONSchema = `{
     "document_type":` + domainJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
     "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle returned by document_read. Required for Page documents and must identify a rich-text section."},
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert. Omit to insert at the beginning of the selected parent, or at the top level when parent_block_id is omitted."},
@@ -192,7 +192,7 @@ const paragraphUpdateInputJSONSchema = `{
     "document_type":` + domainJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
     "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing Paragraph Block handle returned by document_read."},
     "text":{"type":"string","description":"Replacement plain text for the Paragraph Block."}
@@ -207,7 +207,7 @@ const blockDeleteInputJSONSchema = `{
     "document_type":` + domainJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Source locale whose structure is being edited."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision when one was returned."},
     "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing Block handle returned by document_read."}
   }
@@ -246,6 +246,7 @@ const projectionOutputJSONSchema = `{
     "le":{"type":"boolean"},
     "m":{"enum":["outline","blocks","fields"]},
     "n":{"type":["array","null"],"items":{"$ref":"#/$defs/node"}},
+    "pv":{"type":"object","additionalProperties":{"type":"string"}},
     "next":{"type":["string","null"]}
   },
   "$defs":{
