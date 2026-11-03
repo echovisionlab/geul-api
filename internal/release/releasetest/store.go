@@ -202,7 +202,7 @@ func (s *Store) Savepoint() mutationtest.Checkpoint {
 			"references":    saved.references,
 			"tracks":        saved.tracks,
 			"trackCredits":  saved.trackCredits,
-			"criteria":   saved.criteriaSet,
+			"criteria":      saved.criteriaSet,
 			"uploads":       saved.uploads,
 			"documents":     saved.documents,
 			"files":         saved.files,

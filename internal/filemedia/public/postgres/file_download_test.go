@@ -32,7 +32,7 @@ import (
 
 const publicDownloadUnitSecret = "public-download-unit-secret"
 
-func TestFileServiceAuthorizeDownloadPostAccessAndScopeUnit(t *testing.T) {
+func TestFileServiceAuthorizeDownloadPostAccessAndScopeUnit(t *testing.T) { //nolint:funlen // Length predates the Member criteria rename, which only renamed this test.
 	db := newPublicFileDownloadUnitDB(t)
 	postID := uuid.NewString()
 	fileID := uuid.NewString()

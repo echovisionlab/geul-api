@@ -87,12 +87,12 @@ func (s *Store) Savepoint() mutationtest.Checkpoint {
 	policies := mutationtest.ClonePersisted(s.policies)
 	return mutationtest.Checkpoint{
 		State: map[string]any{
-			"criteria": criteriaSet,
-			"tags":        tags,
-			"members":     members,
-			"campaigns":   campaigns,
-			"runs":        runs,
-			"policies":    policies,
+			"criteria":  criteriaSet,
+			"tags":      tags,
+			"members":   members,
+			"campaigns": campaigns,
+			"runs":      runs,
+			"policies":  policies,
 		},
 		Restore: func() {
 			s.mu.Lock()

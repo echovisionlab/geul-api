@@ -14,9 +14,9 @@ import (
 
 var criteriaSortConfig = queryutil.SortConfig{
 	AllowedFields: map[string]string{
-		"name":          "name",
-		"created_at":    "created_at",
-		"kind": "kind",
+		"name":       "name",
+		"created_at": "created_at",
+		"kind":       "kind",
 	},
 	DefaultSort: "name ASC, id ASC",
 }
