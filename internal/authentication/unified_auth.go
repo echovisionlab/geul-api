@@ -146,7 +146,9 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 
 	method, code, identifier := authCodeRequestFields(request.Header.Get("Content-Type"), body)
 	observeUnifiedAuthentication(request.Context(), kind, flow.Refresh, request.Header.Get("Content-Type"), body)
-	if kind == unifiedAuthLoginFlow && strings.EqualFold(method, "code") && strings.TrimSpace(code) == "" {
+	// Only the fetched login flow can select refresh reauthentication. Keep it
+	// on Kratos login so the existing session cannot divert it into registration.
+	if kind == unifiedAuthLoginFlow && !flow.Refresh && strings.EqualFold(method, "code") && strings.TrimSpace(code) == "" {
 		h.handleInitialLoginCodeChallenge(w, request, flow, body, identifier)
 		return
 	}
