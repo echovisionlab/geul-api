@@ -28,7 +28,7 @@ const toolContractGoldenPath = "testdata/tools.golden.json"
 func allToolProviders() []ToolProvider {
 	return []ToolProvider{
 		&DocumentDiscoveryTools{}, &MenuDiscoveryTools{}, &ReferenceDiscoveryTools{}, &ProgramEventReferenceTools{},
-		&MusicReferenceTools{}, &PageReferenceTools{}, &ContentManagementTools{}, &LegalPolicyTools{},
+		&MusicReferenceTools{}, &PageReferenceTools{}, &ContentManagementTools{}, &LegalPolicyTools{}, &EmailLayoutSourceTools{},
 		&ProgramEventManagementTools{}, &ProgramEventMediaTools{}, &ReleaseManagementTools{}, &ReleaseRelationTools{},
 		&TrackManagementTools{}, &MapPlaceManagementTools{}, &MapThemeManagementTools{}, &MemberAdminTools{},
 		&MemberTagTools{}, &AdminSettingsTools{}, &ContentRelatedTools{}, &AIDocumentTools{},

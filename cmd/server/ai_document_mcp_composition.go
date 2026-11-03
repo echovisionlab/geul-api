@@ -125,6 +125,7 @@ type contentMCPApplications struct {
 	menuSettings mcpadapter.MenuLocationReader
 	siteSettings mcpadapter.SiteSettingsAdminApplication
 	mailAdapters mcpadapter.MailAdapterAdminApplication
+	emailLayouts mcpadapter.EmailLayoutSourceApplication
 }
 
 func newAIDocumentMCPComposition(
@@ -229,6 +230,10 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP legal policy tools: %w", err)
 	}
+	emailLayoutSourceTools, err := mcpadapter.NewEmailLayoutSourceTools(references.emailLayouts)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Email Layout source tools: %w", err)
+	}
 	eventManagementTools, err := mcpadapter.NewProgramEventManagementTools(programEvents)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Program Event management tools: %w", err)
@@ -319,7 +324,7 @@ func newAIDocumentMCPComposition(
 	}
 	toolSet, err := mcpadapter.NewToolSet(
 		discoveryTools, menuTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
-		managementTools, policyTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
+		managementTools, policyTools, emailLayoutSourceTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
 		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools, adminSettingsTools,
 		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
 	)

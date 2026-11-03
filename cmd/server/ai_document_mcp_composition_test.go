@@ -23,6 +23,7 @@ import (
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
@@ -510,6 +511,7 @@ func compositionContentApplications() contentMCPApplications {
 		menuSettings:  &sitesettings.Service{},
 		siteSettings:  &sitesettings.Service{},
 		mailAdapters:  &emaildelivery.Service{},
+		emailLayouts:  (&emailauthoring.InternalService{}).LayoutAIDocuments(),
 	}
 }
 

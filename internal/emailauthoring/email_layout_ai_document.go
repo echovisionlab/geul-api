@@ -43,8 +43,12 @@ type EmailLayoutAIDocumentState struct {
 	LocaleExists     bool
 	ViewerMemberID   string
 	Units            []EmailLayoutAIDocumentUnit
+	// SourceMarkup is the source locale's stored wrapper, including the
+	// private unit markers that bind translations to source text.
+	SourceMarkup string
 
 	sourceHTML      string
+	sourceText      string
 	documentID      uuid.UUID
 	localeUpdatedAt *time.Time
 }
@@ -59,9 +63,14 @@ type EmailLayoutAIDocumentMutation struct {
 	ContributorMemberID      uuid.UUID
 	Values                   map[string]string
 	ReplaceValues            bool
-	CreateTranslation        bool
-	DeleteTranslation        bool
-	Noop                     bool
+	// ReplaceSourceMarkup stores SourceMarkup as the source locale's wrapper.
+	// Every translatable unit must keep its identity, kind and source value so
+	// existing translations stay attached; only surrounding markup changes.
+	ReplaceSourceMarkup bool
+	SourceMarkup        string
+	CreateTranslation   bool
+	DeleteTranslation   bool
+	Noop                bool
 }
 
 type EmailLayoutAIDocumentMutationResult struct {
@@ -119,6 +128,29 @@ func (s *EmailLayoutAIDocumentService) Load(
 		return err
 	})
 	return state, failurecause.WithAttrs(err, slog.String("entity_type", "email_layout"), slog.String("entity_id", layoutID), slog.String("locale", locale))
+}
+
+// LoadSource reads the layout in its source locale, which callers editing the
+// source wrapper do not need to know in advance.
+func (s *EmailLayoutAIDocumentService) LoadSource(ctx context.Context, layoutID string) (EmailLayoutAIDocumentState, error) {
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
+	if err != nil {
+		return EmailLayoutAIDocumentState{}, err
+	}
+	var state EmailLayoutAIDocumentState
+	err = s.internal.units.ReadLocked(ctx, func(store Store) error {
+		memberID, err := s.authorize(ctx, store, layoutID, emailcontent.ShareLock)
+		if err != nil {
+			return err
+		}
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, store, layoutID, emailcontent.ShareLock)
+		if err != nil {
+			return err
+		}
+		state, err = loadEmailLayoutAIDocumentState(ctx, store, layoutID, authority.SourceLocale, memberID, emailcontent.ShareLock)
+		return err
+	})
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "email_layout"), slog.String("entity_id", layoutID))
 }
 
 // authorize locks the layout root with lock, rejects a layout an active
@@ -260,6 +292,8 @@ func applyLayoutAIDocument(
 		if changed {
 			err = replaceLayoutAIDocumentValues(ctx, store, current, m, now)
 		}
+	case m.ReplaceSourceMarkup:
+		changed, err = replaceLayoutAIDocumentSourceMarkup(ctx, store, current, m, now)
 	}
 	if err != nil {
 		return layoutAIDocumentApply{}, err
@@ -315,6 +349,57 @@ func replaceLayoutAIDocumentValues(ctx context.Context, store Store, current Ema
 		&emailutil.LayoutTranslationDocument{ContentHTML: contentHTML, ContentText: contentText}, now,
 	)
 	return err
+}
+
+// replaceLayoutAIDocumentSourceMarkup stores new source wrapper markup as the
+// next document revision. It canonicalizes and validates the markup like an
+// editor save and rejects any change to the translatable units.
+func replaceLayoutAIDocumentSourceMarkup(ctx context.Context, store Store, current EmailLayoutAIDocumentState, m EmailLayoutAIDocumentMutation, now time.Time) (bool, error) {
+	contentHTML, err := emailutil.CanonicalizeLayoutSourceMarkers(m.SourceMarkup)
+	if err != nil {
+		return false, domainerr.InvalidField("source_markup", err.Error())
+	}
+	if err := emailutil.ValidateLayoutHTMLContentError(contentHTML); err != nil {
+		return false, domainerr.InvalidField("source_markup", err.Error())
+	}
+	units, err := emailutil.ExtractLayoutContentUnits(contentHTML)
+	if err != nil {
+		return false, domainerr.InvalidField("source_markup", err.Error())
+	}
+	if !sameEmailLayoutSourceUnits(current.Units, units) {
+		return false, domainerr.InvalidField(
+			"source_markup",
+			"must keep every translatable unit marker, element, attribute and source value unchanged; edit text with document tools",
+		)
+	}
+	if contentHTML == current.sourceHTML {
+		return false, nil
+	}
+	expectedRevision, err := uuid.Parse(current.DocumentRevision)
+	if err != nil || expectedRevision == uuid.Nil {
+		return false, fmt.Errorf("Email Layout Content Document revision %q is invalid", current.DocumentRevision)
+	}
+	contentText := current.sourceText
+	authority := LayoutAuthority{LayoutID: m.LayoutID, SourceLocale: current.SourceLocale, DocumentID: current.documentID}
+	_, err = saveEmailLayoutSource(
+		ctx, store, m.LayoutID, authority, expectedRevision,
+		&emailutil.LayoutTranslationDocument{ContentHTML: &contentHTML, ContentText: &contentText}, now,
+	)
+	return err == nil, err
+}
+
+func sameEmailLayoutSourceUnits(current []EmailLayoutAIDocumentUnit, next []emailutil.LayoutContentUnit) bool {
+	if len(current) != len(next) {
+		return false
+	}
+	for index, unit := range current {
+		candidate := next[index]
+		if unit.Handle != candidate.Handle || unit.Kind != candidate.Kind || unit.Element != candidate.Element ||
+			unit.Attribute != candidate.Attribute || unit.SourceValue != candidate.SourceValue {
+			return false
+		}
+	}
+	return true
 }
 
 func lockEmailLayoutAIDocumentRoot(ctx context.Context, store Store, layoutID string, lock emailcontent.RowLock) error {
@@ -378,7 +463,7 @@ func loadEmailLayoutAIDocumentState(
 		LayoutID: layoutID, DocumentRevision: authority.DocumentRevision.String(),
 		SourceLocale: authority.SourceLocale, Locale: locale,
 		LocaleExists: localeExists, ViewerMemberID: memberID.String(),
-		sourceHTML: sourceHTML, documentID: authority.DocumentID,
+		SourceMarkup: sourceHTML, sourceHTML: sourceHTML, sourceText: derefString(source.ContentText), documentID: authority.DocumentID,
 		localeUpdatedAt: localeUpdatedAt,
 	}
 	for _, descriptor := range descriptors {
@@ -448,7 +533,7 @@ func validateEmailLayoutAIDocumentMutation(
 		input.ExpectedTargetRevision = &revision
 	}
 	modes := 0
-	for _, enabled := range []bool{input.ReplaceValues, input.CreateTranslation, input.DeleteTranslation, input.Noop} {
+	for _, enabled := range []bool{input.ReplaceValues, input.ReplaceSourceMarkup, input.CreateTranslation, input.DeleteTranslation, input.Noop} {
 		if enabled {
 			modes++
 		}
@@ -461,6 +546,9 @@ func validateEmailLayoutAIDocumentMutation(
 	}
 	if input.DeleteTranslation && (input.Locale == input.ExpectedSource || !input.ExpectedPresence) {
 		return input, domainerr.InvalidField("locale", "only an existing non-source Email Layout translation can be deleted")
+	}
+	if input.ReplaceSourceMarkup && (input.Locale != input.ExpectedSource || strings.TrimSpace(input.SourceMarkup) == "") {
+		return input, domainerr.InvalidField("source_markup", "only non-empty source locale markup can replace the Email Layout wrapper")
 	}
 	input.Values = maps.Clone(input.Values)
 	return input, nil
