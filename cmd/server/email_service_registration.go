@@ -8,20 +8,20 @@ import (
 
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
-	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
-	"github.com/echovisionlab/geul-api/internal/audience"
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
+	membercriteriaadapter "github.com/echovisionlab/geul-api/internal/adapters/membercriteria"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	membercriteria "github.com/echovisionlab/geul-api/internal/member/criteria"
+	criteriapostgres "github.com/echovisionlab/geul-api/internal/member/criteria/postgres"
 	mutation "github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
@@ -86,7 +86,7 @@ func (r serviceRegistration) registerCampaign(collaborationRuntime *collaboratio
 
 	campaignUnits, err := campaignpostgres.NewUnits(deps.db, campaignpostgres.Ports{
 		ContentBlocks: deps.contentBlockStore, Publisher: campaignRuntime, Routes: campaignRuntime, SpiceDB: deps.spicedbClient,
-		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(),
+		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), CriteriaTargets: campaignadapter.NewCriteriaTargets(),
 		Members: memberadapter.ContributorMembers{}, Checkpoints: collaborationRuntime.Checkpoints,
 	})
 	if err != nil {
@@ -106,21 +106,21 @@ func (r serviceRegistration) registerCampaign(collaborationRuntime *collaboratio
 	return campaignUnits, nil
 }
 
-func (r serviceRegistration) registerAudience() error {
+func (r serviceRegistration) registerMemberCriteria() error {
 	deps := r.dependencies
-	audienceService, err := audience.NewService(audience.Deps{
-		Units:            audiencepostgres.NewUnits(deps.db, campaignpostgres.SegmentUsage{}),
+	criteriaService, err := membercriteria.NewService(membercriteria.Deps{
+		Units:            criteriapostgres.NewUnits(deps.db, campaignpostgres.CriteriaUsage{}),
 		SpiceDB:          deps.spicedbClient,
 		Fence:            identitystate.PostgresFence{},
 		Audit:            deps.telemetryWriter,
-		RecipientCounter: audienceadapter.NewRecipientCounter(deps.db, deps.spicedbClient),
+		RecipientCounter: membercriteriaadapter.NewRecipientCounter(deps.db, deps.spicedbClient),
 	})
 	if err != nil {
-		return fmt.Errorf("initialize audience service: %w", err)
+		return fmt.Errorf("initialize criteria service: %w", err)
 	}
-	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audience.NewConnectHandler(audienceService), r.manageOptions...)
-	deps.mux.Handle(audiencePath, audienceHandler)
-	slog.Info("Registered service", "path", audiencePath)
+	criteriaPath, criteriaHandler := managev1connect.NewMemberCriteriaServiceHandler(membercriteria.NewConnectHandler(criteriaService), r.manageOptions...)
+	deps.mux.Handle(criteriaPath, criteriaHandler)
+	slog.Info("Registered service", "path", criteriaPath)
 
 	return nil
 }

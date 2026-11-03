@@ -47,7 +47,7 @@ type Store struct {
 	failures          map[string]error
 	Members           map[string]bool
 	Sessions          map[string]*auth.UserInfo
-	Audiences         map[string]campaign.CampaignAudienceTarget
+	CriteriaSet       map[string]campaign.CampaignCriteriaTarget
 	Layouts           map[string]campaign.CampaignLayoutReference
 	LayoutLocales     map[string][]campaign.CampaignLayoutLocaleSnapshot
 	Candidates        []campaign.DeliveryRecipient
@@ -63,7 +63,7 @@ type Store struct {
 var _ campaign.Store = (*Store)(nil)
 
 func New() (*Store, *mutationtest.UnitOfWork[campaign.Store]) {
-	s := &Store{Store: emailcontenttest.New(), state: state{campaigns: map[string]campaign.Campaign{}, runs: map[string]campaign.DeliveryRun{}, recipients: map[string]campaign.DeliveryRecipient{}, targets: map[string]campaign.CampaignDeliveryTarget{}}, Members: map[string]bool{}, Sessions: map[string]*auth.UserInfo{}, Audiences: map[string]campaign.CampaignAudienceTarget{}, Layouts: map[string]campaign.CampaignLayoutReference{}, LayoutLocales: map[string][]campaign.CampaignLayoutLocaleSnapshot{}, Renderable: map[string]bool{}, failures: map[string]error{}}
+	s := &Store{Store: emailcontenttest.New(), state: state{campaigns: map[string]campaign.Campaign{}, runs: map[string]campaign.DeliveryRun{}, recipients: map[string]campaign.DeliveryRecipient{}, targets: map[string]campaign.CampaignDeliveryTarget{}}, Members: map[string]bool{}, Sessions: map[string]*auth.UserInfo{}, CriteriaSet: map[string]campaign.CampaignCriteriaTarget{}, Layouts: map[string]campaign.CampaignLayoutReference{}, LayoutLocales: map[string][]campaign.CampaignLayoutLocaleSnapshot{}, Renderable: map[string]bool{}, failures: map[string]error{}}
 	s.Touched = func(id string, now time.Time) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -246,7 +246,7 @@ func (s *Store) UpdateCampaign(_ context.Context, v campaign.Campaign, change ca
 		v.Name = *change.Name
 	}
 	if c := change.Configuration; c != nil {
-		v.TargetMode, v.SegmentID, v.LayoutID, v.RecipientScope = c.TargetMode, c.SegmentID, c.LayoutID, c.RecipientScope
+		v.TargetMode, v.CriteriaID, v.LayoutID, v.RecipientScope = c.TargetMode, c.CriteriaID, c.LayoutID, c.RecipientScope
 	}
 	v.UpdatedAt = change.UpdatedAt
 	s.mu.Lock()
@@ -396,13 +396,13 @@ func (s *Store) LockLayouts(_ context.Context, ids ...string) (map[string]campai
 func (s *Store) LayoutSnapshot(_ context.Context, id string) ([]campaign.CampaignLayoutLocaleSnapshot, error) {
 	return slices.Clone(s.LayoutLocales[id]), s.fail("LayoutSnapshot")
 }
-func (s *Store) LockAudienceTarget(_ context.Context, id string) (campaign.CampaignAudienceTarget, error) {
-	if err := s.fail("LockAudienceTarget"); err != nil {
-		return campaign.CampaignAudienceTarget{}, err
+func (s *Store) LockCriteriaTarget(_ context.Context, id string) (campaign.CampaignCriteriaTarget, error) {
+	if err := s.fail("LockCriteriaTarget"); err != nil {
+		return campaign.CampaignCriteriaTarget{}, err
 	}
-	v, ok := s.Audiences[id]
+	v, ok := s.CriteriaSet[id]
 	if !ok {
-		return v, campaign.ErrAudienceNotFound
+		return v, campaign.ErrCriteriaNotFound
 	}
 	return v, nil
 }

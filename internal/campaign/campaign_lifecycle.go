@@ -16,7 +16,7 @@ import (
 
 // ScheduleCampaignCommand schedules a draft Campaign. RecipientScope must
 // equal the Campaign's stored scope, so a stale editor cannot schedule a
-// different audience.
+// different criteria.
 type ScheduleCampaignCommand struct {
 	ID             string
 	ScheduledAt    *time.Time
@@ -97,7 +97,7 @@ func (s *Service) ScheduleCampaign(ctx context.Context, command ScheduleCampaign
 }
 
 // requireSchedulable checks the requested time and scope against the locked
-// draft and its current content and audience, and returns the scheduled
+// draft and its current content and criteria, and returns the scheduled
 // time at storage precision.
 func (s *Service) requireSchedulable(ctx context.Context, tx Store, campaign Campaign, command ScheduleCampaignCommand) (time.Time, error) {
 	if command.ScheduledAt == nil {

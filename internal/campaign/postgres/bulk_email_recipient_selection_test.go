@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRecipientSelectionFromAudienceSegmentMapsConfig(t *testing.T) {
+func TestRecipientSelectionFromMemberCriteriaMapsConfig(t *testing.T) {
 	t.Parallel()
 
 	createdAfter := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	selection, err := recipientSelectionFromAudienceSegment(&model.AudienceSegment{
-		SegmentType: model.AudienceSegmentMembersByFilter,
-		Config: model.AudienceSegmentConfig{
+	selection, err := recipientSelectionFromMemberCriteria(&model.MemberCriteria{
+		Kind: model.MemberCriteriaKindFilter,
+		Config: model.MemberCriteriaConfig{
 			AccountRoles:     []string{"admin", "author"},
 			CreatedAfter:     &createdAfter,
 			ExcludeMemberIDs: []string{"member-1"},
@@ -36,7 +36,7 @@ func TestRecipientSelectionFromAudienceSegmentMapsConfig(t *testing.T) {
 	assert.Equal(t, []string{"member-1"}, selection.Filters.ExcludedMemberIDs)
 }
 
-func TestBuildBulkEmailRecipientCandidatesValidatesAudiencePlans(t *testing.T) {
+func TestBuildBulkEmailRecipientCandidatesValidatesCriteriaPlans(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildBulkEmailRecipientCandidates(&bulkEmailRecipientSelection{

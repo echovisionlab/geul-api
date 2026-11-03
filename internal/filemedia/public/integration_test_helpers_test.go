@@ -61,28 +61,28 @@ func publicIntegrationSpiceDBClient(t *testing.T) *auth.SpiceDBClient {
 var errUnusedTestDependency = errors.New("test did not configure this public File dependency")
 
 // newTestService builds the public File use cases through NewService. A test
-// that leaves Segments unset gets a loader that fails if reached.
+// that leaves CriteriaSet unset gets a loader that fails if reached.
 func newTestService(deps testDeps) *Service {
-	if deps.Segments == nil {
-		deps.Segments = unusedSegmentConfigs{}
+	if deps.CriteriaSet == nil {
+		deps.CriteriaSet = unusedCriteriaConfigs{}
 	}
-	service, err := NewService(Deps{Units: filepublicpostgres.NewUnits(deps.DB, filepublicpostgres.Ports{Segments: deps.Segments}), SpiceDB: deps.SpiceDB, CDNDomain: deps.CDNDomain, MediaDomain: deps.MediaDomain, MediaSecret: deps.MediaSecret, DownloadTTL: deps.DownloadTTL})
+	service, err := NewService(Deps{Units: filepublicpostgres.NewUnits(deps.DB, filepublicpostgres.Ports{CriteriaSet: deps.CriteriaSet}), SpiceDB: deps.SpiceDB, CDNDomain: deps.CDNDomain, MediaDomain: deps.MediaDomain, MediaSecret: deps.MediaSecret, DownloadTTL: deps.DownloadTTL})
 	if err != nil {
 		panic(err)
 	}
 	return service
 }
 
-type unusedSegmentConfigs struct{}
+type unusedCriteriaConfigs struct{}
 
-func (unusedSegmentConfigs) LoadSegmentConfigs(context.Context, *gorm.DB, []*model.AudienceSegment) error {
+func (unusedCriteriaConfigs) LoadCriteriaConfigs(context.Context, *gorm.DB, []*model.MemberCriteria) error {
 	return errUnusedTestDependency
 }
 
 type testDeps struct {
 	DB                                  *gorm.DB
 	SpiceDB                             *auth.SpiceDBClient
-	Segments                            mediaassetpostgres.SegmentConfigLoader
+	CriteriaSet                         mediaassetpostgres.CriteriaConfigLoader
 	CDNDomain, MediaDomain, MediaSecret string
 	DownloadTTL                         time.Duration
 }

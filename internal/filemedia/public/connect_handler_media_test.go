@@ -84,7 +84,7 @@ func TestContentMediaBoundaryKeepsPartialHydrationOnSigningError(t *testing.T) {
 	f := newPublicFixture(t)
 	asset := publictest.Asset(f.file.ID, "image", "ready", time.Now())
 	f.store.Assets[asset.AssetID] = asset
-	f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceDisabled
+	f.store.Relations[0].Access = mediaasset.FileDownloadAccessDisabled
 	second := f.relation
 	second.BlockID = uuid.NewString()
 	f.store.Relations = append(f.store.Relations, second)

@@ -217,7 +217,7 @@ func newTestStore(t *testing.T) (*gorm.DB, *Store, *testReuseAuthorizer) {
 	require.NoError(t, db.Exec("PRAGMA foreign_keys = ON").Error)
 	require.NoError(t, db.AutoMigrate(
 		&documentRow{}, &blockRow{}, &blockLocaleRow{}, &fileRow{}, &blockAttachmentRow{},
-		&blockAttachmentDownloadAudienceSegmentRow{},
+		&blockAttachmentDownloadMemberCriteriaRow{},
 	))
 	reuse := &testReuseAuthorizer{}
 	store, err := NewStore(testContract{}, reuse)
@@ -234,11 +234,11 @@ func TestReplaceBlockAttachmentsPreservesExactSelectorAndResetsReplacementPolicy
 	referencePath := "file"
 	restricted := blockAttachmentRow{
 		BlockID: blockID, ReferencePath: referencePath, SelectorKind: "active",
-		FileID: &firstFileID, DownloadAudience: "restricted",
+		FileID: &firstFileID, DownloadAccess: "restricted",
 	}
 	require.NoError(t, db.Create(&restricted).Error)
-	require.NoError(t, db.Create(&blockAttachmentDownloadAudienceSegmentRow{
-		BlockID: blockID, ReferencePath: referencePath, AudienceSegmentID: segmentID,
+	require.NoError(t, db.Create(&blockAttachmentDownloadMemberCriteriaRow{
+		BlockID: blockID, ReferencePath: referencePath, MemberCriteriaID: segmentID,
 	}).Error)
 	after := newAggregate(Document{})
 	after.blocks[blockID] = FullBlock{BaseBlock: BaseBlock{ID: blockID}, FileReferences: []FileReference{{
@@ -247,9 +247,9 @@ func TestReplaceBlockAttachmentsPreservesExactSelectorAndResetsReplacementPolicy
 	require.NoError(t, replaceBlockAttachments(t.Context(), db, after, []uuid.UUID{blockID}))
 	var preserved blockAttachmentRow
 	require.NoError(t, db.Where("block_id = ? AND reference_path = ?", blockID, referencePath).Take(&preserved).Error)
-	require.Equal(t, "restricted", preserved.DownloadAudience)
+	require.Equal(t, "restricted", preserved.DownloadAccess)
 	var segmentCount int64
-	require.NoError(t, db.Model(&blockAttachmentDownloadAudienceSegmentRow{}).Where("block_id = ?", blockID).Count(&segmentCount).Error)
+	require.NoError(t, db.Model(&blockAttachmentDownloadMemberCriteriaRow{}).Where("block_id = ?", blockID).Count(&segmentCount).Error)
 	require.Equal(t, int64(1), segmentCount)
 
 	changed := after.blocks[blockID]
@@ -258,9 +258,9 @@ func TestReplaceBlockAttachmentsPreservesExactSelectorAndResetsReplacementPolicy
 	require.NoError(t, replaceBlockAttachments(t.Context(), db, after, []uuid.UUID{blockID}))
 	var reset blockAttachmentRow
 	require.NoError(t, db.Where("block_id = ? AND reference_path = ?", blockID, referencePath).Take(&reset).Error)
-	require.Equal(t, "disabled", reset.DownloadAudience)
+	require.Equal(t, "disabled", reset.DownloadAccess)
 	require.Equal(t, secondFileID, *reset.FileID)
-	require.NoError(t, db.Model(&blockAttachmentDownloadAudienceSegmentRow{}).Where("block_id = ?", blockID).Count(&segmentCount).Error)
+	require.NoError(t, db.Model(&blockAttachmentDownloadMemberCriteriaRow{}).Where("block_id = ?", blockID).Count(&segmentCount).Error)
 	require.Zero(t, segmentCount)
 }
 

@@ -24,7 +24,7 @@ type CampaignDeliveryRun struct {
 	DefinitionSealed        bool       `gorm:"column:definition_sealed;not null;default:false"`
 	SourceTemplateID        *string    `gorm:"column:source_template_id;type:uuid"`
 	SourceLayoutID          *string    `gorm:"column:source_layout_id;type:uuid"`
-	AudienceSegmentID       *string    `gorm:"column:audience_segment_id;type:uuid"`
+	MemberCriteriaID        *string    `gorm:"column:member_criteria_id;type:uuid"`
 	SourceCampaignUpdatedAt *time.Time `gorm:"column:source_campaign_updated_at;type:timestamptz"`
 	SourceTemplateUpdatedAt *time.Time `gorm:"column:source_template_updated_at;type:timestamptz"`
 	SourceLayoutUpdatedAt   *time.Time `gorm:"column:source_layout_updated_at;type:timestamptz"`

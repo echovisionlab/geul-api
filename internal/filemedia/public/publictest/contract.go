@@ -189,7 +189,7 @@ func publicMediaContractContentOwnership(t *testing.T, h Harness) {
 	h.SeedFile(t, f)
 	owner := Owner("post")
 	h.SeedOwner(t, owner)
-	relation := Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: f.ID, Kind: "file", Owner: owner, Audience: mediaasset.FileDownloadAudiencePublic}
+	relation := Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: f.ID, Kind: "file", Owner: owner, Access: mediaasset.FileDownloadAccessPublic}
 	h.SeedRelation(t, relation)
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s public.Store) error {
 		status, found, err := s.LockContentOwner(ctx, public.EntityPost, owner.ResourceID)
@@ -219,7 +219,7 @@ func publicMediaContractTrackRelease(t *testing.T, h Harness) {
 	h.SeedFile(t, f)
 	owner := Owner("release")
 	h.SeedOwner(t, owner)
-	track := Track{ID: uuid.NewString(), ReleaseID: owner.ResourceID, FileID: f.ID, Audience: mediaasset.FileDownloadAudiencePublic}
+	track := Track{ID: uuid.NewString(), ReleaseID: owner.ResourceID, FileID: f.ID, Access: mediaasset.FileDownloadAccessPublic}
 	h.SeedTrack(t, track)
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s public.Store) error {
 		source, status, found, err := s.ResolveTrackSource(ctx, owner.ResourceID, track.ID, true)
@@ -244,7 +244,7 @@ func publicMediaContractOwnerRecheck(t *testing.T, h Harness) {
 	h.SeedFile(t, f)
 	owner := Owner("post")
 	h.SeedOwner(t, owner)
-	relation := Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: f.ID, Kind: "file", Owner: owner, Audience: mediaasset.FileDownloadAudienceDisabled}
+	relation := Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: f.ID, Kind: "file", Owner: owner, Access: mediaasset.FileDownloadAccessDisabled}
 	h.SeedRelation(t, relation)
 	selector := mediaasset.ContentBlockDownloadSelector{BlockID: relation.BlockID, ReferencePath: "file"}
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s public.Store) error {
@@ -272,8 +272,8 @@ func publicMediaContractRelationProjection(t *testing.T, h Harness) {
 	h.SeedFile(t, ready)
 	h.SeedFile(t, pending)
 	block := uuid.NewString()
-	h.SeedRelation(t, Relation{BlockID: block, ReferencePath: "file", FileID: ready.ID, Kind: "file", Owner: owner, Audience: mediaasset.FileDownloadAudienceDisabled})
-	h.SeedRelation(t, Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: pending.ID, Kind: "file", Owner: owner, Audience: mediaasset.FileDownloadAudiencePublic})
+	h.SeedRelation(t, Relation{BlockID: block, ReferencePath: "file", FileID: ready.ID, Kind: "file", Owner: owner, Access: mediaasset.FileDownloadAccessDisabled})
+	h.SeedRelation(t, Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: pending.ID, Kind: "file", Owner: owner, Access: mediaasset.FileDownloadAccessPublic})
 	require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s public.Store) error {
 		rows, err := s.ContentRelations(ctx, []mediaasset.ContentBlockDownloadSelector{{BlockID: block, ReferencePath: "file"}, {BlockID: block, ReferencePath: "other"}}, true)
 		require.NoError(t, err)

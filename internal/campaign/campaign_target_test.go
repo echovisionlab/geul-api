@@ -12,33 +12,33 @@ import (
 func TestCreateCampaignTargetDefinitionRequiresExplicitTarget(t *testing.T) {
 	t.Parallel()
 
-	segmentID := uuid.NewString()
+	criteriaID := uuid.NewString()
 	empty, invalid := "", "not-a-uuid"
 	tests := []struct {
-		name        string
-		target      CreateCampaignTarget
-		wantMode    string
-		wantSegment *string
-		wantErr     bool
+		name         string
+		target       CreateCampaignTarget
+		wantMode     string
+		wantCriteria *string
+		wantErr      bool
 	}{
 		{name: "unset target", wantErr: true},
 		{name: "empty all", target: CreateCampaignTarget{allMissing: true}, wantErr: true},
 		{name: "all", target: CreateCampaignTarget{All: true}, wantMode: CampaignTargetModeAll},
-		{name: "empty segment", target: CreateCampaignTarget{SegmentID: &empty}, wantErr: true},
-		{name: "invalid segment", target: CreateCampaignTarget{SegmentID: &invalid}, wantErr: true},
-		{name: "segment", target: CreateCampaignTarget{SegmentID: &segmentID}, wantMode: CampaignTargetModeSegment, wantSegment: &segmentID},
+		{name: "empty criteria", target: CreateCampaignTarget{CriteriaID: &empty}, wantErr: true},
+		{name: "invalid criteria", target: CreateCampaignTarget{CriteriaID: &invalid}, wantErr: true},
+		{name: "criteria", target: CreateCampaignTarget{CriteriaID: &criteriaID}, wantMode: CampaignTargetModeMemberCriteria, wantCriteria: &criteriaID},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mode, segment, err := createCampaignTargetDefinition(test.target)
+			mode, criteria, err := createCampaignTargetDefinition(test.target)
 			if test.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, test.wantMode, mode)
-			require.Equal(t, test.wantSegment, segment)
+			require.Equal(t, test.wantCriteria, criteria)
 		})
 	}
 }

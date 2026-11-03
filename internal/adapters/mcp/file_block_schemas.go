@@ -83,20 +83,20 @@ const documentFileDownloadPolicyGetInputJSONSchema = `{
 
 const documentFileDownloadPolicyUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","block_id","expected_file_id","audience","observed_policy"],
+  "required":["document_type","document_id","block_id","expected_file_id","access","observed_policy"],
   "properties":{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "block_id":` + uuidJSONSchema + `,
     "expected_file_id":` + uuidJSONSchema + `,
-    "audience":{"enum":["disabled","public","authenticated","restricted"]},
-    "audience_segment_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + uuidJSONSchema + `},
+    "access":{"enum":["disabled","public","authenticated","restricted"]},
+    "member_criteria_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + uuidJSONSchema + `},
     "observed_policy":{
-      "type":"object","additionalProperties":false,"required":["audience","audience_segment_ids"],
-      "description":"Exact baseline from the prior policy get: copy audience and every audience_segments ID; do not substitute a fresh or empty baseline.",
+      "type":"object","additionalProperties":false,"required":["access","member_criteria_ids"],
+      "description":"Exact baseline from the prior policy get: copy access and every member_criteria ID; do not substitute a fresh or empty baseline.",
       "properties":{
-        "audience":{"enum":["disabled","public","authenticated","restricted"]},
-        "audience_segment_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + uuidJSONSchema + `}
+        "access":{"enum":["disabled","public","authenticated","restricted"]},
+        "member_criteria_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + uuidJSONSchema + `}
       }
     }
   }
@@ -104,15 +104,15 @@ const documentFileDownloadPolicyUpdateInputJSONSchema = `{
 
 const documentFileDownloadPolicyOutputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","block_id","reference_path","file_id","audience","audience_segments"],
+  "required":["document_type","document_id","block_id","reference_path","file_id","access","member_criteria"],
   "properties":{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "block_id":` + uuidJSONSchema + `,
     "reference_path":{"const":"file"},
     "file_id":` + uuidJSONSchema + `,
-    "audience":{"enum":["disabled","public","authenticated","restricted"]},
-    "audience_segments":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + uuidJSONSchema + `,"name":{"type":"string"}}}}
+    "access":{"enum":["disabled","public","authenticated","restricted"]},
+    "member_criteria":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + uuidJSONSchema + `,"name":{"type":"string"}}}}
   }
 }`
 

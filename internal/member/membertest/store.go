@@ -45,7 +45,7 @@ type state struct {
 	pendingDeletions map[string]bool
 	tags             map[string]member.Tag
 	mappings         map[string]map[string]bool
-	segmentTags      map[string]bool
+	criteriaTags     map[string]bool
 	newsletter       map[string]time.Time
 	consents         []member.CookieConsent
 	assets           map[string]*memberref.Asset
@@ -65,7 +65,7 @@ type state struct {
 func New() (*Store, *mutationtest.UnitOfWork[member.Store]) {
 	store := &Store{state: state{
 		members: map[string]member.Member{}, identities: map[string]Identity{}, pendingDeletions: map[string]bool{},
-		tags: map[string]member.Tag{}, mappings: map[string]map[string]bool{}, segmentTags: map[string]bool{},
+		tags: map[string]member.Tag{}, mappings: map[string]map[string]bool{}, criteriaTags: map[string]bool{},
 		newsletter: map[string]time.Time{}, assets: map[string]*memberref.Asset{}, assetStatus: map[string]string{},
 		bindings: map[string]string{}, avatarSources: map[string]string{}, tokens: map[string]int{},
 		anchors: map[string]bool{}, bootstrap: map[string]string{}, deliveries: map[string]member.WelcomeDelivery{},
@@ -88,7 +88,7 @@ func (s *Store) Savepoint() mutationtest.Checkpoint {
 			"pendingDeletions": saved.pendingDeletions,
 			"tags":             saved.tags,
 			"mappings":         saved.mappings,
-			"segmentTags":      saved.segmentTags,
+			"criteriaTags":     saved.criteriaTags,
 			"newsletter":       saved.newsletter,
 			"consents":         saved.consents,
 			"assets":           saved.assets,
@@ -124,7 +124,7 @@ func (st state) clone() state {
 	clone.pendingDeletions = mutationtest.ClonePersisted(st.pendingDeletions)
 	clone.tags = mutationtest.ClonePersisted(st.tags)
 	clone.mappings = mutationtest.ClonePersisted(st.mappings)
-	clone.segmentTags = mutationtest.ClonePersisted(st.segmentTags)
+	clone.criteriaTags = mutationtest.ClonePersisted(st.criteriaTags)
 	clone.newsletter = mutationtest.ClonePersisted(st.newsletter)
 	clone.consents = mutationtest.ClonePersisted(st.consents)
 	clone.assets = mutationtest.ClonePersisted(st.assets)
@@ -204,11 +204,11 @@ func (s *Store) SeedMemberTags(memberID string, tagIDs ...string) {
 	}
 }
 
-// SeedSegmentTag makes an audience segment use the tag.
-func (s *Store) SeedSegmentTag(tagID string) {
+// SeedCriteriaTag makes a Member criteria use the tag.
+func (s *Store) SeedCriteriaTag(tagID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.segmentTags[tagID] = true
+	s.state.criteriaTags[tagID] = true
 }
 
 // SeedNewsletter subscribes an Identity.
@@ -741,10 +741,10 @@ func (s *Store) LockTag(_ context.Context, tagID string) (member.Tag, error) {
 	return tag, nil
 }
 
-func (s *Store) TagReferencedBySegment(_ context.Context, tagID string) (bool, error) {
+func (s *Store) TagReferencedByCriteria(_ context.Context, tagID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state.segmentTags[tagID], nil
+	return s.state.criteriaTags[tagID], nil
 }
 
 func (s *Store) DeleteTag(_ context.Context, tagID string) error {

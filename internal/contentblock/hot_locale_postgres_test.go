@@ -536,16 +536,16 @@ func TestHotSharedPostgresFilePolicyAndRollback(t *testing.T) {
 	require.NoError(t, err)
 	segmentID := uuid.New()
 	require.NoError(t, db.Exec(`
-		INSERT INTO audience_segment (id, name, segment_type, created_at)
-		VALUES (?, 'Hot shared policy', 'SEGMENT_TYPE_MEMBER_TAGS', NOW())
+		INSERT INTO member_criteria (id, name, kind, created_at)
+		VALUES (?, 'Hot shared policy', 'MEMBER_CRITERIA_KIND_MEMBER_TAGS', NOW())
 	`, segmentID).Error)
 	require.NoError(t, db.Exec(`
-		UPDATE content_block_attachment SET download_audience = 'restricted'
+		UPDATE content_block_attachment SET download_access = 'restricted'
 		WHERE block_id = ? AND reference_path = 'file'
 	`, blockID).Error)
 	require.NoError(t, db.Exec(`
-		INSERT INTO content_block_attachment_download_audience_segment (
-			block_id, reference_path, audience_segment_id
+		INSERT INTO content_block_attachment_download_member_criteria (
+			block_id, reference_path, member_criteria_id
 		) VALUES (?, 'file', ?)
 	`, blockID, segmentID).Error)
 	reuse.calls = nil
@@ -615,16 +615,16 @@ func TestHotSharedPostgresFilePolicyAndRollback(t *testing.T) {
 	var audience string
 	require.NoError(t, db.Table("content_block_attachment").
 		Where("block_id = ? AND reference_path = 'file'", blockID).
-		Pluck("download_audience", &audience).Error)
+		Pluck("download_access", &audience).Error)
 	require.Equal(t, "disabled", audience)
 	var policySegments int64
-	require.NoError(t, db.Table("content_block_attachment_download_audience_segment").
+	require.NoError(t, db.Table("content_block_attachment_download_member_criteria").
 		Where("block_id = ? AND reference_path = 'file'", blockID).Count(&policySegments).Error)
 	require.Zero(t, policySegments)
 
 	require.NoError(t, db.Table("content_block_attachment").
 		Where("block_id = ? AND reference_path = 'file'", blockID).
-		Update("download_audience", "public").Error)
+		Update("download_access", "public").Error)
 	reuse.calls = nil
 	noOp, statements, err := applyFile(applied.DocumentRevision, replacementID)
 	require.NoError(t, err)
@@ -633,7 +633,7 @@ func TestHotSharedPostgresFilePolicyAndRollback(t *testing.T) {
 	require.Empty(t, reuse.calls)
 	require.NoError(t, db.Table("content_block_attachment").
 		Where("block_id = ? AND reference_path = 'file'", blockID).
-		Pluck("download_audience", &audience).Error)
+		Pluck("download_access", &audience).Error)
 	require.Equal(t, "public", audience)
 
 	_, statements, err = applyFile(seeded.DocumentRevision, activeID)

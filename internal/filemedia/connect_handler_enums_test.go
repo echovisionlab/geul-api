@@ -27,7 +27,7 @@ func TestDomainEnumsPreserveStoredNamesAndWireOrdinals(t *testing.T) {
 		{name: "MeshProfile", names: managev1.MeshOptimizationProfile_name, label: func(value int32) string { return MeshProfile(value).String() }},
 		{name: "LibrarySortField", names: managev1.FileManagerSortField_name, label: func(value int32) string { return LibrarySortField(value).String() }},
 		{name: "SortOrder", names: commonv1.SortOrder_name, label: func(value int32) string { return SortOrder(value).String() }},
-		{name: "DownloadAudience", names: managev1.FileDownloadAudience_name, label: func(value int32) string { return DownloadAudience(value).String() }},
+		{name: "DownloadAccess", names: managev1.FileDownloadAccess_name, label: func(value int32) string { return DownloadAccess(value).String() }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

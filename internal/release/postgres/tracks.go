@@ -17,7 +17,7 @@ func trackFromRow(row model.Track) release.Track {
 		ID: row.ID, ReleaseID: row.ReleaseID, TrackNumber: row.TrackNumber, Title: row.Title,
 		DurationSeconds: row.DurationSeconds, ProcessingStatus: row.ProcessingStatus, Lyrics: row.Lyrics,
 		Metadata: map[string]any(row.Metadata), CreatedAt: row.CreatedAt, AudioOriginalFileID: row.AudioOriginalFileID,
-		DownloadAudience: row.DownloadAudience,
+		DownloadAccess: row.DownloadAccess,
 	}
 }
 
@@ -26,7 +26,7 @@ func trackRow(track release.Track) model.Track {
 		ID: track.ID, ReleaseID: track.ReleaseID, TrackNumber: track.TrackNumber, Title: track.Title,
 		DurationSeconds: track.DurationSeconds, ProcessingStatus: track.ProcessingStatus, Lyrics: track.Lyrics,
 		Metadata: model.TrackMetadata(track.Metadata), CreatedAt: track.CreatedAt, AudioOriginalFileID: track.AudioOriginalFileID,
-		DownloadAudience: track.DownloadAudience,
+		DownloadAccess: track.DownloadAccess,
 	}
 }
 
@@ -78,17 +78,17 @@ func (s *store) LockTrackIDs(ctx context.Context, releaseID string) ([]string, e
 	return trackIDs, nil
 }
 
-func (s *store) LockTrackDownloadSegments(ctx context.Context, trackID string) error {
+func (s *store) LockTrackDownloadCriteriaSet(ctx context.Context, trackID string) error {
 	var rows []struct {
 		ID string `gorm:"column:id"`
 	}
 	return s.tx.WithContext(ctx).
-		Table("audience_segment AS segment").
-		Select("segment.id").
-		Joins("JOIN track_download_audience_segment AS association ON association.audience_segment_id = segment.id").
+		Table("member_criteria AS criteria").
+		Select("criteria.id").
+		Joins("JOIN track_download_member_criteria AS association ON association.member_criteria_id = criteria.id").
 		Where("association.track_id = ?", trackID).
-		Order("segment.id").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
+		Order("criteria.id").
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "criteria"}}).
 		Find(&rows).Error
 }
 
@@ -119,16 +119,16 @@ func (s *store) SaveTrack(ctx context.Context, track release.Track) error {
 func (s *store) DisableTrackDownload(ctx context.Context, trackID string) error {
 	tx := s.tx.WithContext(ctx)
 	if err := tx.Model(&model.Track{}).Where("id = ?", trackID).
-		Update("download_audience", release.DownloadAudienceDisabled).Error; err != nil {
+		Update("download_access", release.DownloadAccessDisabled).Error; err != nil {
 		return err
 	}
-	return tx.Where("track_id = ?", trackID).Delete(&model.TrackDownloadAudienceSegment{}).Error
+	return tx.Where("track_id = ?", trackID).Delete(&model.TrackDownloadMemberCriteria{}).Error
 }
 
 func (s *store) AttachTrackAudio(ctx context.Context, trackID string, audio release.TrackAudio) error {
 	updates := structured.Fields{
 		"audio_original_file_id": audio.FileID, "processing_status": string(release.TrackProcessingProcessing),
-		"download_audience": release.DownloadAudienceDisabled,
+		"download_access": release.DownloadAccessDisabled,
 	}
 	if audio.Completed {
 		updates["processing_status"] = string(release.TrackProcessingCompleted)
@@ -138,7 +138,7 @@ func (s *store) AttachTrackAudio(ctx context.Context, trackID string, audio rele
 	if err := tx.Model(&model.Track{ID: trackID}).Updates(updates).Error; err != nil {
 		return err
 	}
-	return tx.Where("track_id = ?", trackID).Delete(&model.TrackDownloadAudienceSegment{}).Error
+	return tx.Where("track_id = ?", trackID).Delete(&model.TrackDownloadMemberCriteria{}).Error
 }
 
 func (s *store) DeleteTrack(ctx context.Context, trackID string) error {

@@ -2333,7 +2333,7 @@
   {
     "name": "document_file_download_policy_get",
     "title": "Read a File Block download policy",
-    "description": "Read the download audience owned by one exact File Block attachment. The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. For an update, copy the returned audience and every audience_segments ID into observed_policy; preserve that exact read baseline.",
+    "description": "Read the download access owned by one exact File Block attachment. The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. For an update, copy the returned access and every member_criteria ID into observed_policy; preserve that exact read baseline.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -2373,8 +2373,8 @@
         "block_id",
         "reference_path",
         "file_id",
-        "audience",
-        "audience_segments"
+        "access",
+        "member_criteria"
       ],
       "properties": {
         "document_type": {
@@ -2404,7 +2404,7 @@
           "format": "uuid",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
-        "audience": {
+        "access": {
           "enum": [
             "disabled",
             "public",
@@ -2412,7 +2412,7 @@
             "restricted"
           ]
         },
-        "audience_segments": {
+        "member_criteria": {
           "type": "array",
           "items": {
             "type": "object",
@@ -2473,7 +2473,7 @@
         "document_id",
         "block_id",
         "expected_file_id",
-        "audience",
+        "access",
         "observed_policy"
       ],
       "properties": {
@@ -2501,7 +2501,7 @@
           "format": "uuid",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
-        "audience": {
+        "access": {
           "enum": [
             "disabled",
             "public",
@@ -2509,7 +2509,7 @@
             "restricted"
           ]
         },
-        "audience_segment_ids": {
+        "member_criteria_ids": {
           "type": "array",
           "maxItems": 20,
           "uniqueItems": true,
@@ -2523,12 +2523,12 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "audience",
-            "audience_segment_ids"
+            "access",
+            "member_criteria_ids"
           ],
-          "description": "Exact baseline from the prior policy get: copy audience and every audience_segments ID; do not substitute a fresh or empty baseline.",
+          "description": "Exact baseline from the prior policy get: copy access and every member_criteria ID; do not substitute a fresh or empty baseline.",
           "properties": {
-            "audience": {
+            "access": {
               "enum": [
                 "disabled",
                 "public",
@@ -2536,7 +2536,7 @@
                 "restricted"
               ]
             },
-            "audience_segment_ids": {
+            "member_criteria_ids": {
               "type": "array",
               "maxItems": 20,
               "uniqueItems": true,
@@ -2559,8 +2559,8 @@
         "block_id",
         "reference_path",
         "file_id",
-        "audience",
-        "audience_segments"
+        "access",
+        "member_criteria"
       ],
       "properties": {
         "document_type": {
@@ -2590,7 +2590,7 @@
           "format": "uuid",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
-        "audience": {
+        "access": {
           "enum": [
             "disabled",
             "public",
@@ -2598,7 +2598,7 @@
             "restricted"
           ]
         },
-        "audience_segments": {
+        "member_criteria": {
           "type": "array",
           "items": {
             "type": "object",

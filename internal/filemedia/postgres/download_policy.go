@@ -20,7 +20,7 @@ type PolicyOwners interface {
 type PolicySignals interface {
 	PublishPolicyChange(context.Context, *gorm.DB, domain.PolicyChangeSignal) error
 }
-type PolicySegments interface {
+type PolicyCriteriaRelations interface {
 	InsertTrack(context.Context, *gorm.DB, string, []string, time.Time) error
 	InsertAttachment(context.Context, *gorm.DB, string, string, []string, time.Time) error
 }
@@ -28,18 +28,18 @@ type PolicySegments interface {
 func (s *store) ResolveDownloadPolicyRelation(ctx context.Context, selector domain.PolicySelector, lock bool) (domain.PolicyRelation, error) {
 	var row struct {
 		FileID                   string
-		Audience                 mediaasset.FileDownloadAudience `gorm:"column:download_audience"`
+		Access                   mediaasset.FileDownloadAccess `gorm:"column:download_access"`
 		ResourceType, ResourceID string
 	}
 	query := s.tx.WithContext(ctx)
 	switch selector.OwnerKind {
 	case "post", "page", "work", "program_event":
-		query = query.Table("content_block_attachment AS attachment").Select("attachment.file_id, attachment.download_audience, ? AS resource_type, owner.id AS resource_id", selector.OwnerKind).Joins("JOIN content_block AS block ON block.id = attachment.block_id").Joins("JOIN "+selector.OwnerKind+" AS owner ON owner.content_document_id = block.document_id").Joins("JOIN file ON file.id = attachment.file_id AND file.delete_requested_at IS NULL").Where("owner.id = ?", selector.EntityID).Where("block.id = ? AND block.kind = 'file'", *selector.BlockID).Where("attachment.reference_path = ? AND attachment.selector_kind = 'active'", *selector.ReferencePath)
+		query = query.Table("content_block_attachment AS attachment").Select("attachment.file_id, attachment.download_access, ? AS resource_type, owner.id AS resource_id", selector.OwnerKind).Joins("JOIN content_block AS block ON block.id = attachment.block_id").Joins("JOIN "+selector.OwnerKind+" AS owner ON owner.content_document_id = block.document_id").Joins("JOIN file ON file.id = attachment.file_id AND file.delete_requested_at IS NULL").Where("owner.id = ?", selector.EntityID).Where("block.id = ? AND block.kind = 'file'", *selector.BlockID).Where("attachment.reference_path = ? AND attachment.selector_kind = 'active'", *selector.ReferencePath)
 		if lock {
 			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "attachment"}})
 		}
 	case "track":
-		query = query.Table("track").Select("track.audio_original_file_id AS file_id, track.download_audience, 'release' AS resource_type, track.release_id AS resource_id").Joins("JOIN file ON file.id = track.audio_original_file_id AND file.delete_requested_at IS NULL").Where("track.id = ?", selector.EntityID)
+		query = query.Table("track").Select("track.audio_original_file_id AS file_id, track.download_access, 'release' AS resource_type, track.release_id AS resource_id").Joins("JOIN file ON file.id = track.audio_original_file_id AND file.delete_requested_at IS NULL").Where("track.id = ?", selector.EntityID)
 		if lock {
 			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "track"}})
 		}
@@ -50,57 +50,57 @@ func (s *store) ResolveDownloadPolicyRelation(ctx context.Context, selector doma
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		err = storeError{err, domain.ErrPolicyRelationNotFound}
 	}
-	return domain.PolicyRelation{Selector: selector, FileID: row.FileID, Audience: row.Audience, ResourceType: row.ResourceType, ResourceID: row.ResourceID}, err
+	return domain.PolicyRelation{Selector: selector, FileID: row.FileID, Access: row.Access, ResourceType: row.ResourceType, ResourceID: row.ResourceID}, err
 }
-func (s *store) DownloadPolicySegmentIDs(ctx context.Context, selector domain.PolicySelector) ([]string, error) {
+func (s *store) DownloadPolicyCriteriaIDs(ctx context.Context, selector domain.PolicySelector) ([]string, error) {
 	var ids []string
 	query := s.tx.WithContext(ctx)
 	if selector.OwnerKind == "track" {
-		query = query.Table("track_download_audience_segment").Where("track_id = ?", selector.EntityID)
+		query = query.Table("track_download_member_criteria").Where("track_id = ?", selector.EntityID)
 	} else {
-		query = query.Table("content_block_attachment_download_audience_segment").Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath)
+		query = query.Table("content_block_attachment_download_member_criteria").Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath)
 	}
-	err := query.Order("audience_segment_id ASC").Pluck("audience_segment_id", &ids).Error
+	err := query.Order("member_criteria_id ASC").Pluck("member_criteria_id", &ids).Error
 	return ids, err
 }
-func (s *store) SetDownloadPolicy(ctx context.Context, selector domain.PolicySelector, audience mediaasset.FileDownloadAudience, ids []string, now time.Time) error {
-	if len(ids) > 0 && s.ports.PolicySegments == nil {
-		return fmt.Errorf("File download policy segment writers are required")
+func (s *store) SetDownloadPolicy(ctx context.Context, selector domain.PolicySelector, access mediaasset.FileDownloadAccess, ids []string, now time.Time) error {
+	if len(ids) > 0 && s.ports.PolicyCriteriaRelations == nil {
+		return fmt.Errorf("File download policy criteria writers are required")
 	}
 	if selector.OwnerKind == "track" {
-		if err := s.tx.WithContext(ctx).Model(&model.Track{}).Where("id = ?", selector.EntityID).Update("download_audience", string(audience)).Error; err != nil {
+		if err := s.tx.WithContext(ctx).Model(&model.Track{}).Where("id = ?", selector.EntityID).Update("download_access", string(access)).Error; err != nil {
 			return err
 		}
-		if err := s.tx.WithContext(ctx).Where("track_id = ?", selector.EntityID).Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
+		if err := s.tx.WithContext(ctx).Where("track_id = ?", selector.EntityID).Delete(&model.TrackDownloadMemberCriteria{}).Error; err != nil {
 			return err
 		}
 		if len(ids) == 0 {
 			return nil
 		}
-		return s.ports.PolicySegments.InsertTrack(ctx, s.tx, selector.EntityID, ids, now)
+		return s.ports.PolicyCriteriaRelations.InsertTrack(ctx, s.tx, selector.EntityID, ids, now)
 	}
-	if err := s.tx.WithContext(ctx).Table("content_block_attachment").Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath).Update("download_audience", string(audience)).Error; err != nil {
+	if err := s.tx.WithContext(ctx).Table("content_block_attachment").Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath).Update("download_access", string(access)).Error; err != nil {
 		return err
 	}
-	if err := s.tx.WithContext(ctx).Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath).Delete(&model.ContentBlockAttachmentDownloadAudienceSegment{}).Error; err != nil {
+	if err := s.tx.WithContext(ctx).Where("block_id = ? AND reference_path = ?", *selector.BlockID, *selector.ReferencePath).Delete(&model.ContentBlockAttachmentDownloadMemberCriteria{}).Error; err != nil {
 		return err
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	return s.ports.PolicySegments.InsertAttachment(ctx, s.tx, *selector.BlockID, *selector.ReferencePath, ids, now)
+	return s.ports.PolicyCriteriaRelations.InsertAttachment(ctx, s.tx, *selector.BlockID, *selector.ReferencePath, ids, now)
 }
-func (s *store) ActivePolicySegments(ctx context.Context, ids []string) ([]domain.PolicySegment, error) {
-	if s.ports.PolicyAudiences == nil {
-		return nil, fmt.Errorf("File policy audience access is required")
+func (s *store) ActivePolicyCriteriaSet(ctx context.Context, ids []string) ([]domain.PolicyCriteria, error) {
+	if s.ports.PolicyCriteriaReader == nil {
+		return nil, fmt.Errorf("File policy access access is required")
 	}
-	return s.ports.PolicyAudiences.ActivePolicySegments(ctx, s.tx, ids)
+	return s.ports.PolicyCriteriaReader.ActivePolicyCriteriaSet(ctx, s.tx, ids)
 }
-func (s *store) ValidatePolicySegments(ctx context.Context, ids []string) error {
-	if s.ports.PolicyAudiences == nil {
-		return fmt.Errorf("File policy audience access is required")
+func (s *store) ValidatePolicyCriteriaSet(ctx context.Context, ids []string) error {
+	if s.ports.PolicyCriteriaReader == nil {
+		return fmt.Errorf("File policy access access is required")
 	}
-	return s.ports.PolicyAudiences.ValidatePolicySegments(ctx, s.tx, ids)
+	return s.ports.PolicyCriteriaReader.ValidatePolicyCriteriaSet(ctx, s.tx, ids)
 }
 func (s *store) RequirePolicyOwner(ctx context.Context, kind, id string, edit bool) error {
 	if s.ports.PolicyOwners == nil {
@@ -118,7 +118,7 @@ func (s *store) PublishPolicyChange(ctx context.Context, signal domain.PolicyCha
 	return s.ports.PolicySignals.PublishPolicyChange(ctx, s.tx, signal)
 }
 
-type PolicyAudiences interface {
-	ActivePolicySegments(context.Context, *gorm.DB, []string) ([]domain.PolicySegment, error)
-	ValidatePolicySegments(context.Context, *gorm.DB, []string) error
+type PolicyCriteriaReader interface {
+	ActivePolicyCriteriaSet(context.Context, *gorm.DB, []string) ([]domain.PolicyCriteria, error)
+	ValidatePolicyCriteriaSet(context.Context, *gorm.DB, []string) error
 }

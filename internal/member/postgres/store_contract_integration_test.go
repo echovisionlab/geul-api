@@ -53,10 +53,10 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 			SeedLinked: func(t *testing.T, nickname string, onboarded bool) (string, string) {
 				return seedLinked(t, db, nickname, onboarded)
 			},
-			SeedSegmentTag: func(t *testing.T, tagID string) {
-				segmentID := uuid.NewString()
-				require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type) VALUES (?::uuid, ?, 'SEGMENT_TYPE_MEMBER_TAGS')`, segmentID, "segment-"+segmentID[:8]).Error)
-				require.NoError(t, db.Exec(`INSERT INTO audience_segment_user_tag (audience_segment_id, user_tag_id) VALUES (?::uuid, ?::uuid)`, segmentID, tagID).Error)
+			SeedCriteriaTag: func(t *testing.T, tagID string) {
+				criteriaID := uuid.NewString()
+				require.NoError(t, db.Exec(`INSERT INTO member_criteria (id, name, kind) VALUES (?::uuid, ?, 'MEMBER_CRITERIA_KIND_MEMBER_TAGS')`, criteriaID, "criteria-"+criteriaID[:8]).Error)
+				require.NoError(t, db.Exec(`INSERT INTO member_criteria_tag (member_criteria_id, user_tag_id) VALUES (?::uuid, ?::uuid)`, criteriaID, tagID).Error)
 			},
 		}
 	})

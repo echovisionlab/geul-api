@@ -124,29 +124,29 @@ func mustCan(can policyv1.Can, err error) policyv1.Can {
 	}
 	return can
 }
-func TestCreateCampaignValidationAndAssignedAudience(t *testing.T) {
+func TestCreateCampaignValidationAndAssignedCriteria(t *testing.T) {
 	cases := []struct {
 		name     string
 		command  campaign.CreateCampaignCommand
-		audience *campaign.CampaignAudienceTarget
+		criteria *campaign.CampaignCriteriaTarget
 		want     connect.Code
 	}{
 		{name: "empty name and subject", command: campaign.CreateCampaignCommand{SourceLocale: "en", Target: campaign.CreateCampaignTarget{All: true}}, want: connect.CodeInvalidArgument},
 		{name: "unsupported locale", command: campaign.CreateCampaignCommand{Name: "N", SourceLocale: "xx", Target: campaign.CreateCampaignTarget{All: true}}, want: connect.CodeInvalidArgument},
 		{name: "missing target", command: campaign.CreateCampaignCommand{Name: "N", SourceLocale: "en"}, want: connect.CodeInvalidArgument},
-		{name: "missing segment", want: connect.CodeNotFound},
-		{name: "archived segment", audience: &campaign.CampaignAudienceTarget{Archived: true}, want: connect.CodeFailedPrecondition},
-		{name: "assignable segment", audience: &campaign.CampaignAudienceTarget{Valid: true}},
+		{name: "missing criteria", want: connect.CodeNotFound},
+		{name: "archived criteria", criteria: &campaign.CampaignCriteriaTarget{Archived: true}, want: connect.CodeFailedPrecondition},
+		{name: "assignable criteria", criteria: &campaign.CampaignCriteriaTarget{Valid: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			command := tc.command
 			if command.Name == "" && command.SourceLocale == "" {
-				segmentID := uuid.NewString()
-				command = campaign.CreateCampaignCommand{Name: "N", SourceLocale: "en", Target: campaign.CreateCampaignTarget{SegmentID: &segmentID}}
-				if tc.audience != nil {
-					h.store.Audiences[segmentID] = *tc.audience
+				criteriaID := uuid.NewString()
+				command = campaign.CreateCampaignCommand{Name: "N", SourceLocale: "en", Target: campaign.CreateCampaignTarget{CriteriaID: &criteriaID}}
+				if tc.criteria != nil {
+					h.store.CriteriaSet[criteriaID] = *tc.criteria
 				}
 			}
 			result, err := h.service.CreateCampaign(h.ctx, command)
@@ -236,19 +236,19 @@ func TestConfigurationPatchSemanticsAndAudit(t *testing.T) {
 	h := newHarness(t)
 	row := h.store.PutCampaign(campaign.Campaign{})
 	layoutID := uuid.NewString()
-	segmentID := uuid.NewString()
+	criteriaID := uuid.NewString()
 	h.store.Layouts[layoutID] = campaign.CampaignLayoutReference{ID: layoutID}
-	h.store.Audiences[segmentID] = campaign.CampaignAudienceTarget{Valid: true}
-	mode, scope := campaign.TargetModeSegment, campaign.RecipientScopeAllMatchingUsers
-	result, err := h.service.UpdateCampaignConfiguration(h.ctx, campaign.UpdateCampaignConfigurationCommand{ID: row.ID, TargetMode: &mode, SegmentID: &segmentID, LayoutID: &layoutID, RecipientScope: &scope})
+	h.store.CriteriaSet[criteriaID] = campaign.CampaignCriteriaTarget{Valid: true}
+	mode, scope := campaign.TargetModeMemberCriteria, campaign.RecipientScopeAllMatchingUsers
+	result, err := h.service.UpdateCampaignConfiguration(h.ctx, campaign.UpdateCampaignConfigurationCommand{ID: row.ID, TargetMode: &mode, CriteriaID: &criteriaID, LayoutID: &layoutID, RecipientScope: &scope})
 	require.NoError(t, err)
 	require.True(t, result.Changed)
-	require.Equal(t, &segmentID, result.SegmentID)
+	require.Equal(t, &criteriaID, result.CriteriaID)
 	require.Equal(t, &layoutID, result.LayoutID)
 	require.Equal(t, "ALL_MATCHING_USERS", result.RecipientScope)
-	require.Equal(t, []string{"layout", "recipient_scope", "segment", "target_mode"}, h.audit.Records()[0].ChangedFields)
+	require.Equal(t, []string{"layout", "member_criteria", "recipient_scope", "target_mode"}, h.audit.Records()[0].ChangedFields)
 	n := len(h.audit.Records())
-	result, err = h.service.UpdateCampaignConfiguration(h.ctx, campaign.UpdateCampaignConfigurationCommand{ID: row.ID, TargetMode: &mode, SegmentID: &segmentID, LayoutID: &layoutID, RecipientScope: &scope})
+	result, err = h.service.UpdateCampaignConfiguration(h.ctx, campaign.UpdateCampaignConfigurationCommand{ID: row.ID, TargetMode: &mode, CriteriaID: &criteriaID, LayoutID: &layoutID, RecipientScope: &scope})
 	require.NoError(t, err)
 	require.False(t, result.Changed)
 	require.Len(t, h.audit.Records(), n)
@@ -256,24 +256,24 @@ func TestConfigurationPatchSemanticsAndAudit(t *testing.T) {
 	empty := ""
 	result, err = h.service.UpdateCampaignConfiguration(h.ctx, campaign.UpdateCampaignConfigurationCommand{ID: row.ID, TargetMode: &mode, LayoutID: &empty})
 	require.NoError(t, err)
-	require.Nil(t, result.SegmentID)
+	require.Nil(t, result.CriteriaID)
 	require.Nil(t, result.LayoutID)
 	calls := h.store.Calls
 	require.Less(t, slices.Index(calls, "LockLayouts"), slices.Index(calls, "LockCampaign"))
 }
 func TestConfigurationRejectsInvalidAndFrozenPatches(t *testing.T) {
-	for _, kind := range []string{"empty", "segment alone", "missing segment", "missing layout", "frozen", "audit rollback"} {
+	for _, kind := range []string{"empty", "criteria alone", "missing criteria", "missing layout", "frozen", "audit rollback"} {
 		t.Run(kind, func(t *testing.T) {
 			h := newHarness(t)
 			row := h.store.PutCampaign(campaign.Campaign{})
 			command := campaign.UpdateCampaignConfigurationCommand{ID: row.ID}
 			value := uuid.NewString()
-			mode := campaign.TargetModeSegment
+			mode := campaign.TargetModeMemberCriteria
 			want := connect.CodeInvalidArgument
 			switch kind {
-			case "segment alone":
-				command.SegmentID = &value
-			case "missing segment":
+			case "criteria alone":
+				command.CriteriaID = &value
+			case "missing criteria":
 				command.TargetMode = &mode
 			case "missing layout":
 				command.LayoutID = &value

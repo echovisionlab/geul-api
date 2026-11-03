@@ -494,12 +494,12 @@ func (s store) LockTag(ctx context.Context, tagID string) (member.Tag, error) {
 	return member.Tag{ID: tag.ID, Name: tag.Name, CreatedAt: tag.CreatedAt}, nil
 }
 
-func (s store) TagReferencedBySegment(ctx context.Context, tagID string) (bool, error) {
+func (s store) TagReferencedByCriteria(ctx context.Context, tagID string) (bool, error) {
 	var referenced bool
 	err := s.db(ctx).Raw(`
 		SELECT EXISTS (
 			SELECT 1
-			FROM audience_segment_user_tag
+			FROM member_criteria_tag
 			WHERE user_tag_id = ?
 		)
 	`, tagID).Scan(&referenced).Error

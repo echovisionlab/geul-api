@@ -11,26 +11,26 @@ func campaignTargetModeValue(
 	switch mode {
 	case TargetModeAll:
 		return CampaignTargetModeAll, nil
-	case TargetModeSegment:
-		return CampaignTargetModeSegment, nil
+	case TargetModeMemberCriteria:
+		return CampaignTargetModeMemberCriteria, nil
 	default:
 		return "", fmt.Errorf("campaign target_mode is required")
 	}
 }
 
 func validateCampaignTargetDefinition(campaign Campaign) error {
-	segmentID := strings.TrimSpace(ptrStringValue(campaign.SegmentID))
+	criteriaID := strings.TrimSpace(ptrStringValue(campaign.CriteriaID))
 	switch strings.TrimSpace(campaign.TargetMode) {
 	case CampaignTargetModeAll:
-		if segmentID != "" {
+		if criteriaID != "" {
 			return fmt.Errorf(
-				"all-recipient campaign must not reference an audience segment",
+				"all-recipient campaign must not reference a Member criteria",
 			)
 		}
-	case CampaignTargetModeSegment:
-		if segmentID == "" {
+	case CampaignTargetModeMemberCriteria:
+		if criteriaID == "" {
 			return fmt.Errorf(
-				"segment-targeted campaign requires an audience segment",
+				"criteria-targeted campaign requires a Member criteria",
 			)
 		}
 	default:

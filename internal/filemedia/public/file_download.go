@@ -33,7 +33,7 @@ type ContentBlockFileSelector struct {
 }
 
 // AuthorizeDownload evaluates the viewer's download access in one snapshot,
-// then locks the policy segments, the owner, the draft principal and the
+// then locks the policy Member criteria, the owner, the draft principal and the
 // viewer, re-reads the attachment and signs only when nothing it evaluated
 // changed.
 func (s *Service) AuthorizeDownload(ctx context.Context, query AuthorizeDownloadQuery) (*DownloadResult, error) {
@@ -211,7 +211,7 @@ func (s *Service) evaluateFileDownload(ctx context.Context, tx Store, target fil
 // draft principal, viewer and attachment still match the evaluation.
 func (s *Service) revalidateFileDownload(ctx context.Context, tx Store, target fileDownloadTarget, evaluation fileDownloadEvaluation) (*DownloadResult, error) {
 	evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluation.source.PolicyKey: evaluation.source}
-	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); err != nil {
+	if err := mediaasset.LockFileDownloadPolicyCriteriaSet(ctx, tx, evaluatedSources); err != nil {
 		return nil, err
 	}
 	ownerStatus, ownerFound, err := target.lockOwner(ctx, tx)
@@ -352,17 +352,17 @@ func (s *Service) evaluateReferencedFileDownload(
 	if err != nil {
 		return nil, err
 	}
-	signInActionable := source.Audience == mediaasset.FileDownloadAudienceAuthenticated
-	if source.Audience == mediaasset.FileDownloadAudienceRestricted &&
+	signInActionable := source.Access == mediaasset.FileDownloadAccessAuthenticated
+	if source.Access == mediaasset.FileDownloadAccessRestricted &&
 		(user == nil || !user.Authenticated || user.MemberID == "") {
-		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, store, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
+		presence, err := mediaasset.RestrictedFileDownloadCriteriaPresence(ctx, store, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
 		if err != nil {
 			return nil, err
 		}
 		signInActionable = presence[source.PolicyKey]
 	}
 	return effectiveFileDownloadAccess(
-		source.Audience,
+		source.Access,
 		user,
 		allowed,
 		signInActionable,
@@ -401,7 +401,7 @@ func (s *Service) signReferencedFileDownload(
 }
 
 func effectiveFileDownloadAccess(
-	audience mediaasset.FileDownloadAudience,
+	access mediaasset.FileDownloadAccess,
 	user *auth.UserInfo,
 	allowed bool,
 	signInActionable bool,
@@ -412,8 +412,8 @@ func effectiveFileDownloadAccess(
 			Action:       ActionDownload,
 		}
 	}
-	if (audience == mediaasset.FileDownloadAudienceAuthenticated ||
-		audience == mediaasset.FileDownloadAudienceRestricted) &&
+	if (access == mediaasset.FileDownloadAccessAuthenticated ||
+		access == mediaasset.FileDownloadAccessRestricted) &&
 		(user == nil || !user.Authenticated || user.MemberID == "") &&
 		signInActionable {
 		return &DownloadAccess{
@@ -429,7 +429,7 @@ func fileDownloadDecisionDependsOnActiveViewer(
 	access *DownloadAccess,
 ) bool {
 	return downloadAction(access) == ActionDownload &&
-		(source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted)
+		(source.Access == mediaasset.FileDownloadAccessAuthenticated || source.Access == mediaasset.FileDownloadAccessRestricted)
 }
 
 func unavailableFileDownloadAccess() *DownloadAccess {

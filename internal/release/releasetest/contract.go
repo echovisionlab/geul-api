@@ -33,7 +33,7 @@ type Harness struct {
 	// SeedFile stores a File and returns its ID.
 	SeedFile func(t *testing.T) string
 	// SeedRestrictedDownload gives the Track an original audio File and a
-	// restricted download audience with one segment.
+	// restricted download access with one criteria.
 	SeedRestrictedDownload func(t *testing.T, trackID string)
 	// SeedUploadSession opens an audio upload session of the Track.
 	SeedUploadSession func(t *testing.T, trackID string)
@@ -87,9 +87,9 @@ func FakeHarness() Harness {
 		},
 		SeedRestrictedDownload: func(_ *testing.T, trackID string) {
 			track, _ := store.Track(trackID)
-			track.AudioOriginalFileID, track.DownloadAudience = new(uuid.NewString()), "restricted"
+			track.AudioOriginalFileID, track.DownloadAccess = new(uuid.NewString()), "restricted"
 			store.PutTrack(track)
-			store.PutTrackSegments(trackID, uuid.NewString())
+			store.PutTrackCriteriaSet(trackID, uuid.NewString())
 		},
 		SeedUploadSession: func(_ *testing.T, trackID string) { store.SetUploadSession(trackID, true) },
 	}
@@ -474,7 +474,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.Equal(t, 2, second.TrackNumber)
 		require.NotEmpty(t, first.ID)
 		require.False(t, first.CreatedAt.IsZero())
-		require.Equal(t, release.DownloadAudienceDisabled, first.DownloadAudience)
+		require.Equal(t, release.DownloadAccessDisabled, first.DownloadAccess)
 		require.NotNil(t, first.Metadata)
 		transact(t, h, func(ctx context.Context, store release.Store) error {
 			require.NoError(t, store.RenumberTracks(ctx, inserted.ID, []string{second.ID, first.ID}))
@@ -548,7 +548,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		)
 		require.NoError(t, err)
 	},
-	"attaching audio and disabling a download forget the download segments": func(t *testing.T, h Harness) {
+	"attaching audio and disabling a download forget the download Member criteria": func(t *testing.T, h Harness) {
 		inserted := insert(t, h, nil)
 		attached := insertTrack(t, h, inserted.ID, "Attached")
 		disabled := insertTrack(t, h, inserted.ID, "Disabled")
@@ -557,7 +557,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		fileID := h.SeedFile(t)
 		duration := 42
 		transact(t, h, func(ctx context.Context, store release.Store) error {
-			require.NoError(t, store.LockTrackDownloadSegments(ctx, attached.ID))
+			require.NoError(t, store.LockTrackDownloadCriteriaSet(ctx, attached.ID))
 			require.NoError(t, store.AttachTrackAudio(ctx, attached.ID, release.TrackAudio{FileID: fileID, Completed: true, DurationSeconds: &duration}))
 			return store.DisableTrackDownload(ctx, disabled.ID)
 		})
@@ -567,10 +567,10 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.Equal(t, fileID, *found.AudioOriginalFileID)
 			require.Equal(t, string(release.TrackProcessingCompleted), *found.ProcessingStatus)
 			require.Equal(t, 42, *found.DurationSeconds)
-			require.Equal(t, release.DownloadAudienceDisabled, found.DownloadAudience)
+			require.Equal(t, release.DownloadAccessDisabled, found.DownloadAccess)
 			found, err = store.FindTrack(ctx, disabled.ID)
 			require.NoError(t, err)
-			require.Equal(t, release.DownloadAudienceDisabled, found.DownloadAudience)
+			require.Equal(t, release.DownloadAccessDisabled, found.DownloadAccess)
 			return nil
 		})
 	},

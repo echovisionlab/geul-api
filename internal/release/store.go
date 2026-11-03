@@ -161,17 +161,17 @@ type TrackRows interface {
 	// LockTrackIDs locks the Release's Tracks for update and lists their
 	// IDs.
 	LockTrackIDs(ctx context.Context, releaseID string) ([]string, error)
-	// LockTrackDownloadSegments locks the audience segments of the Track's
+	// LockTrackDownloadCriteriaSet locks the Member criteria of the Track's
 	// download policy for update, in ID order.
-	LockTrackDownloadSegments(ctx context.Context, trackID string) error
+	LockTrackDownloadCriteriaSet(ctx context.Context, trackID string) error
 	// NextTrackNumber is one past the Release's highest track number.
 	NextTrackNumber(ctx context.Context, releaseID string) (int, error)
 	// InsertTrack stores a new Track and fills its generated columns.
 	InsertTrack(ctx context.Context, track *Track) error
 	// SaveTrack stores every column of the Track.
 	SaveTrack(ctx context.Context, track Track) error
-	// DisableTrackDownload disables the Track's download audience and
-	// forgets its audience segments.
+	// DisableTrackDownload disables the Track's download access and
+	// forgets its Member criteria.
 	DisableTrackDownload(ctx context.Context, trackID string) error
 	// AttachTrackAudio stores the original audio and its processing state,
 	// disabling the Track's download.

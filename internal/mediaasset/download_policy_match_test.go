@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRestrictedFileDownloadMemberMatchesAllMembersSegment(t *testing.T) {
-	segment := &DownloadSegment{
-		SegmentType: DownloadAllMembers,
+func TestRestrictedFileDownloadMemberMatchesAllMembersCriteria(t *testing.T) {
+	criteria := &DownloadCriteria{
+		Kind: DownloadAllMembers,
 	}
 
-	require.True(t, restrictedFileDownloadMemberMatchesSegment(
+	require.True(t, restrictedFileDownloadMemberMatchesCriteria(
 		DownloadMemberFacts{MemberID: "active-member"},
-		segment,
+		criteria,
 		nil,
 		nil,
 		nil,
@@ -26,15 +26,15 @@ func TestRestrictedFileDownloadMemberMatchesAllMembersSegment(t *testing.T) {
 }
 
 func TestResolveRestrictedFileDownloadPermissionsRejectsCorruptStoredRolesAsInternal(t *testing.T) {
-	segments := []DownloadSegment{{
-		ID:          "4b0d7b8e-34f4-4c44-8f5f-4f3a3c8f2d10",
-		SegmentType: DownloadMembersByFilter,
-		Config:      DownloadSegmentConfig{AccountRoles: []string{"superuser"}},
+	criteriaSet := []DownloadCriteria{{
+		ID:     "4b0d7b8e-34f4-4c44-8f5f-4f3a3c8f2d10",
+		Kind:   DownloadMembersByFilter,
+		Config: DownloadCriteriaConfig{AccountRoles: []string{"superuser"}},
 	}}
 
-	_, err := resolveRestrictedFileDownloadPermissions(context.Background(), nil, nil, segments)
+	_, err := resolveRestrictedFileDownloadPermissions(context.Background(), nil, nil, criteriaSet)
 
-	// The roles come from a stored segment, so the requester did nothing wrong.
+	// The roles come from a stored criteria, so the requester did nothing wrong.
 	require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	require.ErrorContains(t, err, `invalid account permission "superuser"`)
 }

@@ -17,18 +17,18 @@ var (
 	ErrNotFound         = errors.New("campaign store row not found")
 	ErrCampaignNotFound = errors.New("campaign not found")
 	ErrDurableReference = errors.New("campaign has a durable reference")
-	ErrAudienceNotFound = errors.New("campaign audience not found")
+	ErrCriteriaNotFound = errors.New("campaign criteria not found")
 	ErrDeliveryStarted  = errors.New("campaign delivery has already started")
 )
 
-type AudienceSegmentType string
+type MemberCriteriaKind string
 
 const (
-	AudienceSegmentAllMembers              AudienceSegmentType = "SEGMENT_TYPE_ALL_MEMBERS"
-	AudienceSegmentMemberTags              AudienceSegmentType = "SEGMENT_TYPE_MEMBER_TAGS"
-	AudienceSegmentMembersByFilter         AudienceSegmentType = "SEGMENT_TYPE_MEMBERS_BY_FILTER"
-	BulkEmailContextAccountCurrent                             = "account_current"
-	BulkEmailContextNewsletterSubscription                     = "newsletter_subscription"
+	MemberCriteriaKindAllMembers           MemberCriteriaKind = "MEMBER_CRITERIA_KIND_ALL_MEMBERS"
+	MemberCriteriaKindMemberTags           MemberCriteriaKind = "MEMBER_CRITERIA_KIND_MEMBER_TAGS"
+	MemberCriteriaKindFilter               MemberCriteriaKind = "MEMBER_CRITERIA_KIND_FILTER"
+	BulkEmailContextAccountCurrent                            = "account_current"
+	BulkEmailContextNewsletterSubscription                    = "newsletter_subscription"
 )
 
 type CampaignList struct {
@@ -87,7 +87,7 @@ type Store interface {
 	EnsureCampaignRoute(context.Context, string) error
 	LockLayouts(context.Context, ...string) (map[string]CampaignLayoutReference, error)
 	LayoutSnapshot(context.Context, string) ([]CampaignLayoutLocaleSnapshot, error)
-	LockAudienceTarget(context.Context, string) (CampaignAudienceTarget, error)
+	LockCriteriaTarget(context.Context, string) (CampaignCriteriaTarget, error)
 	ResolveSessionPrincipal(context.Context, string) (*auth.UserInfo, error)
 	LockMembers(context.Context, []string) ([]string, error)
 	RequireCurrentContributors(context.Context, string, []string) error

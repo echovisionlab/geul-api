@@ -43,7 +43,7 @@ func sealCampaignDeliveryRun(
 		RenderSnapshot:          renderSnapshot,
 		SnapshotSchemaVersion:   definition.SnapshotSchemaVersion,
 		SourceLayoutID:          definition.SourceLayoutID,
-		AudienceSegmentID:       definition.AudienceSegmentID,
+		MemberCriteriaID:        definition.MemberCriteriaID,
 		SourceCampaignUpdatedAt: &sourceCampaignUpdatedAt,
 		SourceLayoutUpdatedAt:   definition.SourceLayoutUpdatedAt,
 		TargetQueryVersion:      definition.Target.QueryVersion,

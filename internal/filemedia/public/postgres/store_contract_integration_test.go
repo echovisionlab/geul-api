@@ -74,9 +74,9 @@ func TestPostgresPublicStoreContractIntegration(t *testing.T) {
 			var position int64
 			require.NoError(t, db.Table("content_block").Where("document_id = ?", r.Owner.DocumentID).Count(&position).Error)
 			require.NoError(t, db.Exec(`INSERT INTO content_block(id,document_id,container_slot,position,kind,shared_data) VALUES (?::uuid,?::uuid,'root',?,?,'{}'::jsonb)`, r.BlockID, r.Owner.DocumentID, position, r.Kind).Error)
-			require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_audience) VALUES (?::uuid,?,'active',?::uuid,?)`, r.BlockID, r.ReferencePath, r.FileID, string(r.Audience)).Error)
+			require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_access) VALUES (?::uuid,?,'active',?::uuid,?)`, r.BlockID, r.ReferencePath, r.FileID, string(r.Access)).Error)
 		}, SeedTrack: func(t *testing.T, r publictest.Track) {
-			require.NoError(t, db.Exec(`INSERT INTO track(id,release_id,track_number,title,audio_original_file_id,download_audience) VALUES (?::uuid,?::uuid,1,'Track',?::uuid,?)`, r.ID, r.ReleaseID, r.FileID, string(r.Audience)).Error)
+			require.NoError(t, db.Exec(`INSERT INTO track(id,release_id,track_number,title,audio_original_file_id,download_access) VALUES (?::uuid,?::uuid,1,'Track',?::uuid,?)`, r.ID, r.ReleaseID, r.FileID, string(r.Access)).Error)
 		}, SeedShareLink: func(t *testing.T, r public.ShareLink) {
 			require.NoError(t, db.Exec(`INSERT INTO share_link(id,entity_type,entity_id,token,expires_at) VALUES (?::uuid,?,?::uuid,?,?)`, r.ID, r.EntityType, r.EntityID, uuid.NewString(), r.ExpiresAt).Error)
 		}, UpdateOwner: func(ctx context.Context, bound public.Store, o public.OwnerWitness) error {

@@ -77,7 +77,7 @@ type nativeFileUnits struct {
 
 func withNativeFileUnits(service *Service, db *gorm.DB, owners nativeFilePorts) *Service {
 	client, _ := service.spiceDB.(*auth.SpiceDBClient)
-	ports := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, UploadTracks: owners.Tracks, PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: owners.Posts, Pages: owners.Pages, Works: owners.Works, Events: owners.Events, Releases: owners.Releases, SpiceDB: client}), PolicyAudiences: filemediapolicy.Audiences{}}
+	ports := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, UploadTracks: owners.Tracks, PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: owners.Posts, Pages: owners.Pages, Works: owners.Works, Events: owners.Events, Releases: owners.Releases, SpiceDB: client}), PolicyCriteriaReader: filemediapolicy.CriteriaReader{}}
 	service.units = nativeFileUnits{UnitOfWork: service.units, db: db, ports: ports, transcoder: owners.Transcoder}
 	ports = testFilePorts(service)
 	if db != nil {
@@ -101,7 +101,7 @@ func testFilePorts(s *Service) filemediapostgres.Ports {
 	ports.IngestTranscodes = filemediaqueue.Transcodes(transcoder, s.asyncPublisher)
 	ports.DeletionQueue = filemediaqueue.Async(s.asyncPublisher)
 	ports.AttachmentReferences = filereferences.Attachments{}
-	ports.PolicySegments = filemediapolicy.Segments{}
+	ports.PolicyCriteriaRelations = filemediapolicy.CriteriaRelations{}
 	ports.PolicySignals = filemediaqueue.Policy(s.asyncPublisher)
 	return ports
 }

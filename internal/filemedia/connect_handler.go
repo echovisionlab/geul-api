@@ -209,10 +209,10 @@ func (h *ConnectHandler) UpdateFileDownloadPolicy(ctx context.Context, req *conn
 	command := UpdateFileDownloadPolicyCommand{
 		Target:         fileDownloadPolicyTarget(req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath),
 		ExpectedFileID: req.Msg.ExpectedFileId,
-		Policy:         FileDownloadPolicyState{Audience: DownloadAudience(req.Msg.Audience), AudienceSegmentIDs: req.Msg.AudienceSegmentIds},
+		Policy:         FileDownloadPolicyState{Access: DownloadAccess(req.Msg.Access), MemberCriteriaIDs: req.Msg.MemberCriteriaIds},
 	}
 	if observed := req.Msg.ObservedPolicy; observed != nil {
-		command.Observed = &FileDownloadPolicyState{Audience: DownloadAudience(observed.Audience), AudienceSegmentIDs: observed.AudienceSegmentIds}
+		command.Observed = &FileDownloadPolicyState{Access: DownloadAccess(observed.Access), MemberCriteriaIDs: observed.MemberCriteriaIds}
 	}
 	policy, err := h.files.UpdateFileDownloadPolicy(ctx, command)
 	return respond(&managev1.UpdateFileDownloadPolicyResponse{Policy: downloadPolicyMessage(policy)}, err)

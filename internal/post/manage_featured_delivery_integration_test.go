@@ -107,7 +107,7 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 	store := contenttest.NewPostContentBlockStore(t)
 
 	filePostAccess := filemediaadapter.NewPostAccess(spiceDB)
-	filePorts := filemediapostgres.Ports{PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, SpiceDB: spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySegments: filemediapolicy.Segments{}, PolicySignals: filemediaqueue.Policy(postFeaturedAsyncPublisher{})}
+	filePorts := filemediapostgres.Ports{PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, SpiceDB: spiceDB}), PolicyCriteriaReader: filemediapolicy.CriteriaReader{}, PolicyCriteriaRelations: filemediapolicy.CriteriaRelations{}, PolicySignals: filemediaqueue.Policy(postFeaturedAsyncPublisher{})}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		IngestLocks:     filemediapostgres.NewIngestLocks(db, filePorts),
 		FaviconCommits:  filemediapostgres.NewFaviconCommits(db, filePorts),

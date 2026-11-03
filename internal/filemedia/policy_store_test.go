@@ -23,32 +23,32 @@ func policyFixture(t *testing.T) (*libraryFixture, domain.PolicyRelation, fileme
 	row := filemediatest.CatalogFile("policy", nil)
 	f.store.Files[row.ID] = filemediatest.CatalogFileRecord{Row: row}
 	selector := domain.PolicySelector{OwnerKind: "post", EntityID: uuid.NewString(), BlockID: new(uuid.NewString()), ReferencePath: new("file")}
-	relation := domain.PolicyRelation{Selector: selector, FileID: row.ID, Audience: mediaasset.FileDownloadAudienceDisabled, ResourceType: "post", ResourceID: selector.EntityID}
+	relation := domain.PolicyRelation{Selector: selector, FileID: row.ID, Access: mediaasset.FileDownloadAccessDisabled, ResourceType: "post", ResourceID: selector.EntityID}
 	f.store.Policies[filemediatest.PolicyKey(selector)] = filemediatest.PolicyRecord{Relation: relation}
-	command := filemedia.UpdateFileDownloadPolicyCommand{Target: filemedia.FileDownloadPolicyTarget{EntityType: filemedia.EntityPost, EntityID: selector.EntityID, BlockID: selector.BlockID, ReferencePath: selector.ReferencePath}, ExpectedFileID: row.ID, Policy: filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceDisabled}, Observed: &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceDisabled}}
+	command := filemedia.UpdateFileDownloadPolicyCommand{Target: filemedia.FileDownloadPolicyTarget{EntityType: filemedia.EntityPost, EntityID: selector.EntityID, BlockID: selector.BlockID, ReferencePath: selector.ReferencePath}, ExpectedFileID: row.ID, Policy: filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccessDisabled}, Observed: &filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccessDisabled}}
 	return f, relation, command
 }
-func TestFilePolicyStoreMergesIndependentSegmentChanges(t *testing.T) {
+func TestFilePolicyStoreMergesIndependentCriteriaChanges(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	ids := []string{uuid.NewString(), uuid.NewString(), uuid.NewString()}
 	names := []string{"Alpha", "Beta", "Gamma"}
 	for i, id := range ids {
-		f.store.Segments[id] = domain.PolicySegment{ID: id, Name: names[i], Kind: "SEGMENT_TYPE_MEMBER_TAGS", Eligible: true}
+		f.store.CriteriaSet[id] = domain.PolicyCriteria{ID: id, Name: names[i], Kind: "MEMBER_CRITERIA_KIND_MEMBER_TAGS", Eligible: true}
 	}
-	relation.Audience = mediaasset.FileDownloadAudienceRestricted
-	f.store.Policies[filemediatest.PolicyKey(relation.Selector)] = filemediatest.PolicyRecord{Relation: relation, SegmentIDs: ids[:2]}
-	command.Observed = &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: ids[:1]}
-	command.Policy = filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: []string{ids[0], ids[2]}}
+	relation.Access = mediaasset.FileDownloadAccessRestricted
+	f.store.Policies[filemediatest.PolicyKey(relation.Selector)] = filemediatest.PolicyRecord{Relation: relation, CriteriaIDs: ids[:2]}
+	command.Observed = &filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccessRestricted, MemberCriteriaIDs: ids[:1]}
+	command.Policy = filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccessRestricted, MemberCriteriaIDs: []string{ids[0], ids[2]}}
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
-	require.Equal(t, mediaasset.FileDownloadAudienceRestricted, got.Audience)
-	require.Len(t, got.AudienceSegments, 3)
-	for i, summary := range got.AudienceSegments {
+	require.Equal(t, mediaasset.FileDownloadAccessRestricted, got.Access)
+	require.Len(t, got.MemberCriteria, 3)
+	for i, summary := range got.MemberCriteria {
 		require.Equal(t, ids[i], summary.ID)
 	}
 	stored := f.store.Policies[filemediatest.PolicyKey(relation.Selector)]
 	sorted := slices.Sorted(slices.Values(ids))
-	require.Equal(t, sorted, stored.SegmentIDs)
+	require.Equal(t, sorted, stored.CriteriaIDs)
 	require.Len(t, f.audit.Records(), 1)
 	require.Len(t, f.store.PolicySignals, 1)
 	require.Equal(t, relation.ResourceID, f.store.PolicySignals[0].ResourceID)
@@ -66,14 +66,14 @@ func TestFilePolicyNoOpDoesNotAuditOrSignal(t *testing.T) {
 	require.Empty(t, f.audit.Records())
 	require.Empty(t, f.store.PolicySignals)
 }
-func TestFilePolicyOwnerDenialPrecedesSegmentValidation(t *testing.T) {
+func TestFilePolicyOwnerDenialPrecedesCriteriaValidation(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	denied := domainerr.Denied("owner denied")
 	f.store.PolicyDenied["post\x00"+relation.ResourceID] = denied
-	command.Policy = filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: []string{uuid.NewString()}}
+	command.Policy = filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccessRestricted, MemberCriteriaIDs: []string{uuid.NewString()}}
 	_, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.ErrorIs(t, err, denied)
-	require.Empty(t, f.store.ValidatedPolicySegments)
+	require.Empty(t, f.store.ValidatedPolicyCriteriaSet)
 	require.Zero(t, f.store.Writes)
 	require.Empty(t, f.audit.Records())
 }
@@ -81,7 +81,7 @@ func TestFilePolicyChangedAttachmentAndSignalFailureRollBack(t *testing.T) {
 	for _, mode := range []string{"attachment", "signal"} {
 		t.Run(mode, func(t *testing.T) {
 			f, relation, command := policyFixture(t)
-			command.Policy.Audience = filemedia.DownloadAudiencePublic
+			command.Policy.Access = filemedia.DownloadAccessPublic
 			if mode == "attachment" {
 				command.ExpectedFileID = uuid.NewString()
 			} else {
@@ -89,63 +89,63 @@ func TestFilePolicyChangedAttachmentAndSignalFailureRollBack(t *testing.T) {
 			}
 			_, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 			require.Error(t, err)
-			require.Equal(t, mediaasset.FileDownloadAudienceDisabled, f.store.Policies[filemediatest.PolicyKey(relation.Selector)].Relation.Audience)
+			require.Equal(t, mediaasset.FileDownloadAccessDisabled, f.store.Policies[filemediatest.PolicyKey(relation.Selector)].Relation.Access)
 			require.Zero(t, f.store.Writes)
 			require.Empty(t, f.store.PolicySignals)
 		})
 	}
 }
-func TestFilePolicyReadRejectsIneligibleCurrentSegment(t *testing.T) {
+func TestFilePolicyReadRejectsIneligibleCurrentCriteria(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	id := uuid.NewString()
-	f.store.Segments[id] = domain.PolicySegment{ID: id, Name: "all", Kind: "SEGMENT_TYPE_ALL_MEMBERS", Eligible: false}
-	relation.Audience = mediaasset.FileDownloadAudienceRestricted
-	f.store.Policies[filemediatest.PolicyKey(relation.Selector)] = filemediatest.PolicyRecord{Relation: relation, SegmentIDs: []string{id}}
+	f.store.CriteriaSet[id] = domain.PolicyCriteria{ID: id, Name: "all", Kind: "MEMBER_CRITERIA_KIND_ALL_MEMBERS", Eligible: false}
+	relation.Access = mediaasset.FileDownloadAccessRestricted
+	f.store.Policies[filemediatest.PolicyKey(relation.Selector)] = filemediatest.PolicyRecord{Relation: relation, CriteriaIDs: []string{id}}
 	got, err := f.files.GetFileDownloadPolicy(f.ctx, filemedia.GetFileDownloadPolicyQuery{Target: command.Target})
 	require.Nil(t, got)
-	require.ErrorContains(t, err, "attachment references an ineligible audience segment")
+	require.ErrorContains(t, err, "attachment references an ineligible Member criteria")
 	require.Len(t, f.store.PolicyChecks, 1)
 	require.False(t, f.store.PolicyChecks[0].Edit)
 }
 
-func TestPolicySegmentsDeduplicateAndRejectInvalidRequests(t *testing.T) {
+func TestPolicyCriteriaSetDeduplicateAndRejectInvalidRequests(t *testing.T) {
 	f, relation, command := policyFixture(t)
-	command.Policy.Audience = filemedia.DownloadAudienceRestricted
+	command.Policy.Access = filemedia.DownloadAccessRestricted
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
-	require.Empty(t, got.AudienceSegments)
+	require.Empty(t, got.MemberCriteria)
 	require.Len(t, f.store.PolicySignals, 1)
-	command.Observed.Audience = filemedia.DownloadAudienceRestricted
+	command.Observed.Access = filemedia.DownloadAccessRestricted
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Len(t, f.store.PolicySignals, 1)
 	id := uuid.NewString()
-	f.store.Segments[id] = domain.PolicySegment{ID: id, Name: "Members", Kind: "SEGMENT_TYPE_MEMBER_TAGS", Eligible: true}
-	command.Policy.AudienceSegmentIDs = []string{id, id}
+	f.store.CriteriaSet[id] = domain.PolicyCriteria{ID: id, Name: "Members", Kind: "MEMBER_CRITERIA_KIND_MEMBER_TAGS", Eligible: true}
+	command.Policy.MemberCriteriaIDs = []string{id, id}
 	got, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
-	require.Len(t, got.AudienceSegments, 1)
-	require.Equal(t, id, got.AudienceSegments[0].ID)
-	require.Equal(t, "SEGMENT_TYPE_MEMBER_TAGS", got.AudienceSegments[0].Kind)
-	command.Observed.AudienceSegmentIDs = []string{id}
-	command.Policy.Audience = filemedia.DownloadAudiencePublic
+	require.Len(t, got.MemberCriteria, 1)
+	require.Equal(t, id, got.MemberCriteria[0].ID)
+	require.Equal(t, "MEMBER_CRITERIA_KIND_MEMBER_TAGS", got.MemberCriteria[0].Kind)
+	command.Observed.MemberCriteriaIDs = []string{id}
+	command.Policy.Access = filemedia.DownloadAccessPublic
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
-	command.Policy.Audience = filemedia.DownloadAudienceRestricted
-	command.Policy.AudienceSegmentIDs = nil
+	command.Policy.Access = filemedia.DownloadAccessRestricted
+	command.Policy.MemberCriteriaIDs = nil
 	for i := 0; i < 21; i++ {
-		command.Policy.AudienceSegmentIDs = append(command.Policy.AudienceSegmentIDs, uuid.NewString())
+		command.Policy.MemberCriteriaIDs = append(command.Policy.MemberCriteriaIDs, uuid.NewString())
 	}
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
-	require.Equal(t, mediaasset.FileDownloadAudienceRestricted, f.store.Policies[filemediatest.PolicyKey(relation.Selector)].Relation.Audience)
+	require.Equal(t, mediaasset.FileDownloadAccessRestricted, f.store.Policies[filemediatest.PolicyKey(relation.Selector)].Relation.Access)
 }
 func TestPolicyUsesCurrentRelationAndIgnoresIngestProvenance(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	f.store.IngestBindings[relation.FileID] = domain.IngestBinding{FileID: relation.FileID, UploadType: "UPLOAD_TYPE_EDITOR_AUDIO", EntityType: new("TRANSCODE_ENTITY_TYPE_POST"), EntityID: uuid.NewString()}
-	command.Policy.Audience = filemedia.DownloadAudiencePublic
+	command.Policy.Access = filemedia.DownloadAccessPublic
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Equal(t, relation.ResourceID, got.EntityID)
-	require.Equal(t, mediaasset.FileDownloadAudiencePublic, got.Audience)
+	require.Equal(t, mediaasset.FileDownloadAccessPublic, got.Access)
 }

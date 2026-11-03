@@ -39,24 +39,24 @@ type blockLocaleRow struct {
 func (blockLocaleRow) TableName() string { return "content_block_locale" }
 
 type blockAttachmentRow struct {
-	BlockID          uuid.UUID  `gorm:"column:block_id;type:uuid;primaryKey"`
-	ReferencePath    string     `gorm:"column:reference_path;primaryKey"`
-	SelectorKind     string     `gorm:"column:selector_kind"`
-	FileID           *uuid.UUID `gorm:"column:file_id;type:uuid"`
-	MissingKind      *string    `gorm:"column:missing_kind"`
-	DownloadAudience string     `gorm:"column:download_audience"`
+	BlockID        uuid.UUID  `gorm:"column:block_id;type:uuid;primaryKey"`
+	ReferencePath  string     `gorm:"column:reference_path;primaryKey"`
+	SelectorKind   string     `gorm:"column:selector_kind"`
+	FileID         *uuid.UUID `gorm:"column:file_id;type:uuid"`
+	MissingKind    *string    `gorm:"column:missing_kind"`
+	DownloadAccess string     `gorm:"column:download_access"`
 }
 
 func (blockAttachmentRow) TableName() string { return "content_block_attachment" }
 
-type blockAttachmentDownloadAudienceSegmentRow struct {
-	BlockID           uuid.UUID `gorm:"column:block_id;type:uuid;primaryKey"`
-	ReferencePath     string    `gorm:"column:reference_path;primaryKey"`
-	AudienceSegmentID uuid.UUID `gorm:"column:audience_segment_id;type:uuid;primaryKey"`
+type blockAttachmentDownloadMemberCriteriaRow struct {
+	BlockID          uuid.UUID `gorm:"column:block_id;type:uuid;primaryKey"`
+	ReferencePath    string    `gorm:"column:reference_path;primaryKey"`
+	MemberCriteriaID uuid.UUID `gorm:"column:member_criteria_id;type:uuid;primaryKey"`
 }
 
-func (blockAttachmentDownloadAudienceSegmentRow) TableName() string {
-	return "content_block_attachment_download_audience_segment"
+func (blockAttachmentDownloadMemberCriteriaRow) TableName() string {
+	return "content_block_attachment_download_member_criteria"
 }
 
 type fileRow struct {

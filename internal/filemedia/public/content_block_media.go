@@ -155,7 +155,7 @@ func (s *Service) evaluateContentDownloads(
 	evaluation.decisions = make(map[string]*DownloadAccess, len(request.selectors))
 	for key, source := range evaluation.sources {
 		if evaluation.ownerAuthorized {
-			evaluation.decisions[key] = effectiveFileDownloadAccess(source.Audience, request.user, allowed[key], signIn[key])
+			evaluation.decisions[key] = effectiveFileDownloadAccess(source.Access, request.user, allowed[key], signIn[key])
 		} else {
 			evaluation.decisions[key] = unavailableFileDownloadAccess()
 		}
@@ -164,8 +164,8 @@ func (s *Service) evaluateContentDownloads(
 }
 
 // contentDownloadSignInHints reports, for a reader without a member session,
-// which sources signing in could open: authenticated-audience files and
-// restricted files whose segments exist.
+// which sources signing in could open: authenticated-access files and
+// restricted files whose Member criteria exist.
 func contentDownloadSignInHints(
 	ctx context.Context,
 	tx Store,
@@ -178,14 +178,14 @@ func contentDownloadSignInHints(
 	}
 	restricted := make(map[string]mediaasset.FileDownloadSource)
 	for key, source := range sources {
-		switch source.Audience {
-		case mediaasset.FileDownloadAudienceAuthenticated:
+		switch source.Access {
+		case mediaasset.FileDownloadAccessAuthenticated:
 			signIn[key] = true
-		case mediaasset.FileDownloadAudienceRestricted:
+		case mediaasset.FileDownloadAccessRestricted:
 			restricted[key] = source
 		}
 	}
-	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
+	presence, err := mediaasset.RestrictedFileDownloadCriteriaPresence(ctx, tx, restricted)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (s *Service) lockContentDownloads(
 	evaluation downloadEvaluation,
 ) (lockedContentDownloads, error) {
 	var current lockedContentDownloads
-	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluation.sources); err != nil {
+	if err := mediaasset.LockFileDownloadPolicyCriteriaSet(ctx, tx, evaluation.sources); err != nil {
 		return current, err
 	}
 	var err error

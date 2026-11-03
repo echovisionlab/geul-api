@@ -48,7 +48,7 @@ func LockTrackForUpload(ctx context.Context, store Store, trackID string) error 
 	if _, err := uuid.Parse(trackID); err != nil {
 		return domainerr.InvalidField("track_id", "must be a UUID")
 	}
-	if err := store.LockTrackDownloadSegments(ctx, trackID); err != nil {
+	if err := store.LockTrackDownloadCriteriaSet(ctx, trackID); err != nil {
 		return err
 	}
 	if err := store.LockTrackID(ctx, trackID); err != nil {

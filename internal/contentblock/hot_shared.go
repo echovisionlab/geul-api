@@ -298,9 +298,9 @@ stored_attachments AS MATERIALIZED (
 ),
 locked_policy_segments AS MATERIALIZED (
     SELECT segment.id
-    FROM audience_segment AS segment
-    JOIN content_block_attachment_download_audience_segment AS association
-      ON association.audience_segment_id = segment.id
+    FROM member_criteria AS segment
+    JOIN content_block_attachment_download_member_criteria AS association
+      ON association.member_criteria_id = segment.id
     JOIN stored_attachments AS stored
       ON stored.block_id = association.block_id
      AND stored.reference_path = association.reference_path
@@ -402,7 +402,7 @@ deleted_attachments AS (
     RETURNING stored.block_id
 ),
 reset_attachment_segments AS (
-    DELETE FROM content_block_attachment_download_audience_segment AS segment
+    DELETE FROM content_block_attachment_download_member_criteria AS segment
     USING input_attachments AS desired, stored_attachments AS stored, changed_targets, bumped
     WHERE segment.block_id = desired.block_id
       AND segment.reference_path = desired.reference_path
@@ -418,7 +418,7 @@ reset_attachment_segments AS (
 ),
 upserted_attachments AS (
     INSERT INTO content_block_attachment(
-        block_id, reference_path, selector_kind, file_id, missing_kind, download_audience
+        block_id, reference_path, selector_kind, file_id, missing_kind, download_access
     )
     SELECT desired.block_id, desired.reference_path, desired.selector_kind,
            desired.file_id, desired.missing_kind, 'disabled'
@@ -429,11 +429,11 @@ upserted_attachments AS (
         selector_kind = EXCLUDED.selector_kind,
         file_id = EXCLUDED.file_id,
         missing_kind = EXCLUDED.missing_kind,
-        download_audience = CASE
+        download_access = CASE
             WHEN content_block_attachment.selector_kind IS NOT DISTINCT FROM EXCLUDED.selector_kind
              AND content_block_attachment.file_id IS NOT DISTINCT FROM EXCLUDED.file_id
              AND content_block_attachment.missing_kind IS NOT DISTINCT FROM EXCLUDED.missing_kind
-            THEN content_block_attachment.download_audience
+            THEN content_block_attachment.download_access
             ELSE 'disabled'
         END
     RETURNING block_id

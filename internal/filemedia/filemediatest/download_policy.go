@@ -16,8 +16,8 @@ import (
 )
 
 type PolicyRecord struct {
-	Relation   domain.PolicyRelation
-	SegmentIDs []string
+	Relation    domain.PolicyRelation
+	CriteriaIDs []string
 }
 type PolicyCheck struct {
 	Kind, ID string
@@ -48,37 +48,37 @@ func (s *LibraryStore) ResolveDownloadPolicyRelation(_ context.Context, selector
 	row.Relation.Selector = selector
 	return row.Relation, nil
 }
-func (s *LibraryStore) DownloadPolicySegmentIDs(_ context.Context, selector domain.PolicySelector) ([]string, error) {
+func (s *LibraryStore) DownloadPolicyCriteriaIDs(_ context.Context, selector domain.PolicySelector) ([]string, error) {
 	if s.Fail != nil {
 		return nil, s.Fail
 	}
-	return slices.Sorted(slices.Values(s.Policies[PolicyKey(selector)].SegmentIDs)), nil
+	return slices.Sorted(slices.Values(s.Policies[PolicyKey(selector)].CriteriaIDs)), nil
 }
-func (s *LibraryStore) SetDownloadPolicy(_ context.Context, selector domain.PolicySelector, audience mediaasset.FileDownloadAudience, ids []string, _ time.Time) error {
+func (s *LibraryStore) SetDownloadPolicy(_ context.Context, selector domain.PolicySelector, access mediaasset.FileDownloadAccess, ids []string, _ time.Time) error {
 	if s.Fail != nil {
 		return s.Fail
 	}
 	key := PolicyKey(selector)
 	if r, ok := s.Policies[key]; ok {
-		r.Relation.Audience = audience
-		r.SegmentIDs = slices.Clone(ids)
+		r.Relation.Access = access
+		r.CriteriaIDs = slices.Clone(ids)
 		s.Policies[key] = r
 		s.Writes++
 	}
 	return nil
 }
-func (s *LibraryStore) ActivePolicySegments(_ context.Context, ids []string) ([]domain.PolicySegment, error) {
+func (s *LibraryStore) ActivePolicyCriteriaSet(_ context.Context, ids []string) ([]domain.PolicyCriteria, error) {
 	if s.Fail != nil {
 		return nil, s.Fail
 	}
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
-	rows := []domain.PolicySegment{}
+	rows := []domain.PolicyCriteria{}
 	for _, id := range ids {
-		if row, ok := s.Segments[id]; ok && row.ArchivedAt == nil {
+		if row, ok := s.CriteriaSet[id]; ok && row.ArchivedAt == nil {
 			rows = append(rows, row)
 		}
 	}
-	slices.SortFunc(rows, func(a, b domain.PolicySegment) int {
+	slices.SortFunc(rows, func(a, b domain.PolicyCriteria) int {
 		if n := cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); n != 0 {
 			return n
 		}
@@ -86,24 +86,24 @@ func (s *LibraryStore) ActivePolicySegments(_ context.Context, ids []string) ([]
 	})
 	return rows, nil
 }
-func (s *LibraryStore) ValidatePolicySegments(_ context.Context, ids []string) error {
-	s.ValidatedPolicySegments = append(s.ValidatedPolicySegments, slices.Clone(ids))
+func (s *LibraryStore) ValidatePolicyCriteriaSet(_ context.Context, ids []string) error {
+	s.ValidatedPolicyCriteriaSet = append(s.ValidatedPolicyCriteriaSet, slices.Clone(ids))
 	if s.Fail != nil {
 		return s.Fail
 	}
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
-	rows := []domain.PolicySegment{}
+	rows := []domain.PolicyCriteria{}
 	for _, id := range ids {
-		if row, ok := s.Segments[id]; ok {
+		if row, ok := s.CriteriaSet[id]; ok {
 			rows = append(rows, row)
 		}
 	}
 	if len(ids) != len(rows) {
-		return domainerr.InvalidField("audience_segment_ids", "one or more audience segments do not exist or cannot grant authenticated access")
+		return domainerr.InvalidField("member_criteria_ids", "one or more Member criteria do not exist or cannot grant authenticated access")
 	}
 	for _, row := range rows {
 		if !row.Eligible || row.ArchivedAt != nil {
-			return domainerr.InvalidField("audience_segment_ids", "one or more audience segments do not exist or cannot grant authenticated access")
+			return domainerr.InvalidField("member_criteria_ids", "one or more Member criteria do not exist or cannot grant authenticated access")
 		}
 	}
 	return nil

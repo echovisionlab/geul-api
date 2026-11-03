@@ -60,17 +60,17 @@ func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutations(t *testing.
 	require.Len(t, tagRecords(f, sharedtelemetry.AuditMemberTagDeleted), 1)
 }
 
-func TestMemberTagDeleteRejectsAudienceReferencesWithoutAudit(t *testing.T) {
+func TestMemberTagDeleteRejectsCriteriaReferencesWithoutAudit(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	tagID := uuid.NewString()
-	f.store.SeedTag(member.Tag{ID: tagID, Name: "segmented"})
-	f.store.SeedSegmentTag(tagID)
+	f.store.SeedTag(member.Tag{ID: tagID, Name: "criteriaed"})
+	f.store.SeedCriteriaTag(tagID)
 
 	err := f.service.DeleteMemberTag(f.ctx(t), member.DeleteMemberTagCommand{ID: tagID})
 
 	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
-	require.ErrorContains(t, err, "member tag is referenced by an audience segment")
+	require.ErrorContains(t, err, "member tag is referenced by a Member criteria")
 	require.Contains(t, f.store.Tags(), tagID)
 	require.Empty(t, tagRecords(f, sharedtelemetry.AuditMemberTagDeleted))
 }

@@ -147,8 +147,8 @@ func fileManagerFolderPath(raw []byte) ([]*FolderPathSegment, error) {
 		return nil, err
 	}
 	path := make([]*FolderPathSegment, 0, len(decoded))
-	for _, segment := range decoded {
-		path = append(path, &FolderPathSegment{ID: segment.ID, Name: segment.Name})
+	for _, criteria := range decoded {
+		path = append(path, &FolderPathSegment{ID: criteria.ID, Name: criteria.Name})
 	}
 	return path, nil
 }

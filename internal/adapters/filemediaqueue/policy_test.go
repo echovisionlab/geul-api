@@ -68,7 +68,7 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	revision := uuid.NewString()
-	require.NoError(t, db.Exec(`CREATE TABLE content_document (id TEXT PRIMARY KEY, revision TEXT NOT NULL); CREATE TABLE release (id TEXT PRIMARY KEY, content_document_id TEXT); CREATE TABLE policy (audience TEXT)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE content_document (id TEXT PRIMARY KEY, revision TEXT NOT NULL); CREATE TABLE release (id TEXT PRIMARY KEY, content_document_id TEXT); CREATE TABLE policy (access TEXT)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_document VALUES ('doc', ?);`, revision).Error)
 	require.NoError(t, db.Exec(`INSERT INTO release VALUES ('release', 'doc'); INSERT INTO policy VALUES ('disabled')`).Error)
 	publisher := &policySignalPublisher{}
@@ -79,7 +79,7 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 	ctx, err := contentsignal.WithClientOrigin(context.Background(), origin)
 	require.NoError(t, err)
 	err = db.Transaction(func(tx *gorm.DB) error {
-		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("audience", "public").Error)
+		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("access", "public").Error)
 		return queue.PublishPolicyChange(ctx, tx, signal)
 	})
 	require.NoError(t, err)
@@ -92,13 +92,13 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 	require.NoError(t, contentsignal.Validate(publisher.events[0]))
 	publisher.err = errors.New("signal failed")
 	err = db.Transaction(func(tx *gorm.DB) error {
-		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("audience", "restricted").Error)
+		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("access", "restricted").Error)
 		return queue.PublishPolicyChange(ctx, tx, signal)
 	})
 	require.ErrorContains(t, err, "signal failed")
-	var audience string
-	require.NoError(t, db.Table("policy").Pluck("audience", &audience).Error)
-	require.Equal(t, "public", audience)
+	var access string
+	require.NoError(t, db.Table("policy").Pluck("access", &access).Error)
+	require.Equal(t, "public", access)
 	require.Error(t, queue.PublishPolicyChange(ctx, db, signal))
 	queue = Policy(nil)
 	require.ErrorIs(t, queue.PublishPolicyChange(ctx, db, signal), contentsignal.ErrPublisherRequired)

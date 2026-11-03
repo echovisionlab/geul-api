@@ -43,7 +43,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "ory"},
 		{"--band", "serial"},
 		{"--package", "./internal/translation"},
-		{"--package", "./internal/filemedia", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
+		{"--package", "./internal/filemedia", "--run", "^TestFileDownloadAccessPolicyIntegration$"},
 		{"--package", "./internal/member"},
 		{"--package", "./internal/testutil/pgtest"},
 		{"--go-work", "/workspace/go.work"},
@@ -59,8 +59,8 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "db", "--jobs", "17"},
 		{"--band", "unknown"},
 		{"--band", "db", "--package", "./internal/translation"},
-		{"--run", "^TestFileDownloadAudiencePolicyIntegration$"},
-		{"--band", "ory", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
+		{"--run", "^TestFileDownloadAccessPolicyIntegration$"},
+		{"--band", "ory", "--run", "^TestFileDownloadAccessPolicyIntegration$"},
 		{"--package", "./internal/not-cataloged"},
 		{"--package", "./internal/filemedia", "--run", "["},
 		{"--package", "./internal/filemedia", "--run", ""},
@@ -120,7 +120,7 @@ func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) 
 		}
 	}
 
-	filter := "^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$"
+	filter := "^(TestFileDownloadAccessPolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$"
 	withFilter := packageGoTestArguments(packagePath, filter, integrationRuntimeExclusive, 3)
 	wantWithFilter := []string{
 		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",

@@ -61,9 +61,9 @@ var fileBlockTools = toolRegistry[FileBlockTools]{
 	}, (*FileBlockTools).updateCaption),
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileDownloadPolicyGet, Title: "Read a File Block download policy",
-		Description: "Read the download audience owned by one exact File Block attachment. " +
+		Description: "Read the download access owned by one exact File Block attachment. " +
 			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. " +
-			"For an update, copy the returned audience and every audience_segments ID into observed_policy; preserve that exact read baseline.",
+			"For an update, copy the returned access and every member_criteria ID into observed_policy; preserve that exact read baseline.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyGetInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 	}, (*FileBlockTools).getDownloadPolicy),
@@ -153,15 +153,15 @@ type documentFilePolicyArguments struct {
 
 type documentFilePolicyUpdateArguments struct {
 	documentFilePolicyArguments
-	ExpectedFileID     string                               `json:"expected_file_id"`
-	Audience           string                               `json:"audience"`
-	AudienceSegmentIDs []string                             `json:"audience_segment_ids,omitempty"`
-	ObservedPolicy     *fileDownloadPolicyObservedArguments `json:"observed_policy"`
+	ExpectedFileID    string                               `json:"expected_file_id"`
+	Access            string                               `json:"access"`
+	MemberCriteriaIDs []string                             `json:"member_criteria_ids,omitempty"`
+	ObservedPolicy    *fileDownloadPolicyObservedArguments `json:"observed_policy"`
 }
 
 type fileDownloadPolicyObservedArguments struct {
-	Audience           string   `json:"audience"`
-	AudienceSegmentIDs []string `json:"audience_segment_ids"`
+	Access            string   `json:"access"`
+	MemberCriteriaIDs []string `json:"member_criteria_ids"`
 }
 
 type fileBlockSelectionError struct{ message string }
@@ -357,29 +357,29 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, _ string,
 	if err != nil {
 		return executionError(err)
 	}
-	audience, err := fileDownloadAudience(input.Audience)
+	access, err := fileDownloadAccess(input.Access)
 	if err != nil {
 		return executionError(err)
 	}
-	segmentIDs, err := fileDownloadPolicySegmentIDs(input.AudienceSegmentIDs, audience, "audience_segment_ids")
+	criteriaIDs, err := fileDownloadPolicyCriteriaIDs(input.MemberCriteriaIDs, access, "member_criteria_ids")
 	if err != nil {
 		return executionError(err)
 	}
-	if input.ObservedPolicy == nil || input.ObservedPolicy.AudienceSegmentIDs == nil {
-		return executionError(errors.New("observed_policy with audience and audience_segment_ids is required"))
+	if input.ObservedPolicy == nil || input.ObservedPolicy.MemberCriteriaIDs == nil {
+		return executionError(errors.New("observed_policy with access and member_criteria_ids is required"))
 	}
-	observedAudience, err := fileDownloadAudience(input.ObservedPolicy.Audience)
+	observedAccess, err := fileDownloadAccess(input.ObservedPolicy.Access)
 	if err != nil {
-		return executionError(fmt.Errorf("observed_policy.audience: %w", err))
+		return executionError(fmt.Errorf("observed_policy.access: %w", err))
 	}
-	observedSegments, err := fileDownloadPolicySegmentIDs(input.ObservedPolicy.AudienceSegmentIDs, observedAudience, "observed_policy.audience_segment_ids")
+	observedCriteriaSet, err := fileDownloadPolicyCriteriaIDs(input.ObservedPolicy.MemberCriteriaIDs, observedAccess, "observed_policy.member_criteria_ids")
 	if err != nil {
 		return executionError(err)
 	}
 	policy, err := tools.files.UpdateFileDownloadPolicy(ctx, filemedia.UpdateFileDownloadPolicyCommand{
 		Target: selector, ExpectedFileID: expectedFileID,
-		Policy:   filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudience(audience), AudienceSegmentIDs: segmentIDs},
-		Observed: &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudience(observedAudience), AudienceSegmentIDs: observedSegments},
+		Policy:   filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccess(access), MemberCriteriaIDs: criteriaIDs},
+		Observed: &filemedia.FileDownloadPolicyState{Access: filemedia.DownloadAccess(observedAccess), MemberCriteriaIDs: observedCriteriaSet},
 	})
 	if err != nil {
 		return fileToolCallError(err)
@@ -387,12 +387,12 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, _ string,
 	return fileBlockPolicyResult(policy)
 }
 
-func fileDownloadPolicySegmentIDs(values []string, audience managev1.FileDownloadAudience, field string) ([]string, error) {
+func fileDownloadPolicyCriteriaIDs(values []string, access managev1.FileDownloadAccess, field string) ([]string, error) {
 	if len(values) > 20 {
 		return nil, fmt.Errorf("%s cannot contain more than 20 values", field)
 	}
-	if audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED && len(values) != 0 {
-		return nil, fmt.Errorf("%s are allowed only for restricted audience", field)
+	if access != managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED && len(values) != 0 {
+		return nil, fmt.Errorf("%s are allowed only for restricted access", field)
 	}
 	ids := make([]string, len(values))
 	seen := make(map[string]struct{}, len(values))
@@ -459,18 +459,18 @@ func documentTypeFromFileBlockEntity(entityType managev1.TranscodeEntityType) (s
 	}
 }
 
-func fileDownloadAudience(value string) (managev1.FileDownloadAudience, error) {
+func fileDownloadAccess(value string) (managev1.FileDownloadAccess, error) {
 	switch value {
 	case "disabled":
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, nil
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_DISABLED, nil
 	case "public":
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC, nil
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC, nil
 	case "authenticated":
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_AUTHENTICATED, nil
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_AUTHENTICATED, nil
 	case "restricted":
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, nil
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED, nil
 	default:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_UNSPECIFIED, fmt.Errorf("unsupported audience %q", value)
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_UNSPECIFIED, fmt.Errorf("unsupported access %q", value)
 	}
 }
 
@@ -491,30 +491,30 @@ func fileBlockPolicyResult(policy *filemedia.DownloadPolicy) (mcpserver.ToolResu
 	if _, err := canonicalFileBlockUUID(policy.FileID, "policy file_id"); err != nil {
 		return mcpserver.ToolResult{}, err
 	}
-	audience := string(policy.Audience)
-	if _, err := fileDownloadAudience(audience); err != nil {
-		return mcpserver.ToolResult{}, errors.New("file policy service returned an invalid audience")
+	access := string(policy.Access)
+	if _, err := fileDownloadAccess(access); err != nil {
+		return mcpserver.ToolResult{}, errors.New("file policy service returned an invalid access")
 	}
-	segments := make([]map[string]any, 0, len(policy.AudienceSegments))
-	if len(policy.AudienceSegments) > 20 {
-		return mcpserver.ToolResult{}, errors.New("file policy service returned too many audience segments")
+	criteriaSet := make([]map[string]any, 0, len(policy.MemberCriteria))
+	if len(policy.MemberCriteria) > 20 {
+		return mcpserver.ToolResult{}, errors.New("file policy service returned too many Member criteria")
 	}
-	for _, segment := range policy.AudienceSegments {
-		if segment == nil {
-			return mcpserver.ToolResult{}, errors.New("file policy service returned an empty audience segment")
+	for _, criteria := range policy.MemberCriteria {
+		if criteria == nil {
+			return mcpserver.ToolResult{}, errors.New("file policy service returned an empty Member criteria")
 		}
-		if _, err := canonicalFileBlockUUID(segment.ID, "policy audience segment ID"); err != nil {
+		if _, err := canonicalFileBlockUUID(criteria.ID, "policy Member criteria ID"); err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		segments = append(segments, map[string]any{"id": segment.ID, "name": segment.Name})
+		criteriaSet = append(criteriaSet, map[string]any{"id": criteria.ID, "name": criteria.Name})
 	}
-	if audience != "restricted" && len(segments) != 0 {
-		return mcpserver.ToolResult{}, errors.New("file policy service returned audience segments for a non-restricted policy")
+	if access != "restricted" && len(criteriaSet) != 0 {
+		return mcpserver.ToolResult{}, errors.New("file policy service returned Member criteria for a non-restricted policy")
 	}
 	return contentResult(map[string]any{
 		"document_type": documentType, "document_id": policy.EntityID,
 		"block_id": *policy.BlockID, "reference_path": *policy.ReferencePath,
-		"file_id": policy.FileID, "audience": audience, "audience_segments": segments,
+		"file_id": policy.FileID, "access": access, "member_criteria": criteriaSet,
 	})
 }
 

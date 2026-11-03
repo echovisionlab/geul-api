@@ -789,7 +789,7 @@ domain's integration tests stay the check until step 9 replaces them.
 
 ### Recurring cases
 
-The first six domains moved (audience, sharelink, menu, series, maptheme,
+The first six domains moved (Member criteria, then named audience; sharelink, menu, series, maptheme,
 label with artist) met these cases. Follow the rule given here; where an
 earlier domain used another name for the same thing, the final wave aligns
 it.
@@ -926,7 +926,7 @@ it.
   ports, keeping physical deletion outside the prepare/finalize transactions.
 - **Public download revalidation.** `filemedia/public.Service` evaluates
   downloads in one `ReadLocked` snapshot, then opens a second snapshot to
-  revalidate and sign. Preserve the lock order: policy segments, owner,
+  revalidate and sign. Preserve the lock order: policy Member criteria, owner,
   draft principal, viewer, exact attachment relation. Sign while those locks
   remain held. Its Store embeds the media asset download port so every
   lookup joins the same pass. Delivery and download results use plain types;

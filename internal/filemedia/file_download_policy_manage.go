@@ -22,7 +22,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-const maxFileDownloadAudienceSegments = 20
+const maxFileDownloadMemberCriteria = 20
 
 type filePolicyOwnerAction uint8
 
@@ -41,7 +41,7 @@ type fileDownloadPolicySelector struct {
 type fileDownloadPolicyRelation struct {
 	Selector     fileDownloadPolicySelector
 	FileID       string
-	Audience     mediaasset.FileDownloadAudience
+	Access       mediaasset.FileDownloadAccess
 	ResourceType string
 	ResourceID   string
 }
@@ -88,10 +88,10 @@ func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownlo
 	return policy, nil
 }
 
-// FileDownloadPolicyState is a download audience with its segments.
+// FileDownloadPolicyState is a download access with its Member criteria.
 type FileDownloadPolicyState struct {
-	Audience           DownloadAudience
-	AudienceSegmentIDs []string
+	Access            DownloadAccess
+	MemberCriteriaIDs []string
 }
 
 // UpdateFileDownloadPolicyCommand sets the download policy of the attachment
@@ -107,12 +107,12 @@ type UpdateFileDownloadPolicyCommand struct {
 
 // fileDownloadPolicyChange is a validated UpdateFileDownloadPolicyCommand.
 type fileDownloadPolicyChange struct {
-	selector           fileDownloadPolicySelector
-	expectedFileID     string
-	audience           mediaasset.FileDownloadAudience
-	segmentIDs         []string
-	observedAudience   mediaasset.FileDownloadAudience
-	observedSegmentIDs []string
+	selector            fileDownloadPolicySelector
+	expectedFileID      string
+	access              mediaasset.FileDownloadAccess
+	criteriaIDs         []string
+	observedAccess      mediaasset.FileDownloadAccess
+	observedCriteriaIDs []string
 }
 
 func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (fileDownloadPolicyChange, error) {
@@ -124,44 +124,44 @@ func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (
 	if parseErr != nil {
 		return fileDownloadPolicyChange{}, domainerr.InvalidField("expected_file_id", "must be a valid UUID")
 	}
-	audience, ok := storedFileDownloadAudience(command.Policy.Audience)
+	access, ok := storedFileDownloadAccess(command.Policy.Access)
 	if !ok {
-		return fileDownloadPolicyChange{}, domainerr.InvalidField("audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("access", "unsupported file download access")
 	}
-	segmentIDs, err := uniqueUUIDs(command.Policy.AudienceSegmentIDs, "audience_segment_ids")
+	criteriaIDs, err := uniqueUUIDs(command.Policy.MemberCriteriaIDs, "member_criteria_ids")
 	if err != nil {
 		return fileDownloadPolicyChange{}, err
 	}
 	if command.Observed == nil {
 		return fileDownloadPolicyChange{}, domainerr.InvalidField("observed_policy", "is required")
 	}
-	observedAudience, ok := storedFileDownloadAudience(command.Observed.Audience)
+	observedAccess, ok := storedFileDownloadAccess(command.Observed.Access)
 	if !ok {
-		return fileDownloadPolicyChange{}, domainerr.InvalidField("observed_policy.audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("observed_policy.access", "unsupported file download access")
 	}
-	observedSegmentIDs, err := uniqueUUIDs(command.Observed.AudienceSegmentIDs, "observed_policy.audience_segment_ids")
+	observedCriteriaIDs, err := uniqueUUIDs(command.Observed.MemberCriteriaIDs, "observed_policy.member_criteria_ids")
 	if err != nil {
 		return fileDownloadPolicyChange{}, err
 	}
-	if len(observedSegmentIDs) > maxFileDownloadAudienceSegments {
-		return fileDownloadPolicyChange{}, tooManyFileDownloadAudienceSegments("observed_policy.audience_segment_ids")
+	if len(observedCriteriaIDs) > maxFileDownloadMemberCriteria {
+		return fileDownloadPolicyChange{}, tooManyFileDownloadMemberCriteria("observed_policy.member_criteria_ids")
 	}
-	if len(segmentIDs) > maxFileDownloadAudienceSegments {
-		return fileDownloadPolicyChange{}, tooManyFileDownloadAudienceSegments("audience_segment_ids")
+	if len(criteriaIDs) > maxFileDownloadMemberCriteria {
+		return fileDownloadPolicyChange{}, tooManyFileDownloadMemberCriteria("member_criteria_ids")
 	}
-	if audience != mediaasset.FileDownloadAudienceRestricted && len(segmentIDs) > 0 {
-		return fileDownloadPolicyChange{}, domainerr.InvalidField("audience_segment_ids", "audience segments require restricted audience")
+	if access != mediaasset.FileDownloadAccessRestricted && len(criteriaIDs) > 0 {
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("member_criteria_ids", "Member criteria require restricted access")
 	}
-	slices.Sort(segmentIDs)
+	slices.Sort(criteriaIDs)
 	return fileDownloadPolicyChange{
 		selector: selector, expectedFileID: parsedExpectedFileID.String(),
-		audience: audience, segmentIDs: segmentIDs,
-		observedAudience: observedAudience, observedSegmentIDs: observedSegmentIDs,
+		access: access, criteriaIDs: criteriaIDs,
+		observedAccess: observedAccess, observedCriteriaIDs: observedCriteriaIDs,
 	}, nil
 }
 
-func tooManyFileDownloadAudienceSegments(field string) error {
-	return domainerr.InvalidField(field, fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments))
+func tooManyFileDownloadMemberCriteria(field string) error {
+	return domainerr.InvalidField(field, fmt.Sprintf("at most %d Member criteria are allowed", maxFileDownloadMemberCriteria))
 }
 
 func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFileDownloadPolicyCommand) (*DownloadPolicy, error) {
@@ -172,9 +172,9 @@ func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFi
 	if err := requireFileDownloadPolicyActor(ctx); err != nil {
 		return nil, err
 	}
-	// Authorize the exact owner before validating Segment IDs so an unrelated
-	// caller cannot probe Audience state. The locked check is repeated inside
-	// the mutation transaction after Segment locks are acquired.
+	// Authorize the exact owner before validating Criteria IDs so an unrelated
+	// caller cannot probe Access state. The locked check is repeated inside
+	// the mutation transaction after Criteria locks are acquired.
 	var initial fileDownloadPolicyRelation
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
@@ -191,10 +191,10 @@ func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFi
 	var resolved fileDownloadPolicyRelation
 	update, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileDownloadPolicyUpdate, Store]{
 		Lock: func(ctx context.Context, tx Store) error {
-			// Audience Segment rows are the first database lock in policy and
+			// Access Criteria rows are the first database lock in policy and
 			// archive flows. This stable order prevents archive-versus-policy
 			// deadlocks.
-			if err := tx.ValidatePolicySegments(ctx, change.segmentIDs); err != nil {
+			if err := tx.ValidatePolicyCriteriaSet(ctx, change.criteriaIDs); err != nil {
 				return err
 			}
 			var err error
@@ -238,29 +238,29 @@ func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx Store, c
 	if locked.FileID != change.expectedFileID {
 		return fileDownloadPolicyUpdate{}, domainerr.Precondition("File attachment changed; reload before saving download policy")
 	}
-	previousSegmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, tx, locked)
+	previousCriteriaIDs, err := loadFileDownloadPolicyCriteriaIDs(ctx, tx, locked)
 	if err != nil {
 		return fileDownloadPolicyUpdate{}, err
 	}
-	nextAudience, nextSegmentIDs := mergeObservedFileDownloadPolicy(
-		locked.Audience, change.observedAudience, change.audience, previousSegmentIDs, change.observedSegmentIDs, change.segmentIDs,
+	nextAccess, nextCriteriaIDs := mergeObservedFileDownloadPolicy(
+		locked.Access, change.observedAccess, change.access, previousCriteriaIDs, change.observedCriteriaIDs, change.criteriaIDs,
 	)
-	if len(nextSegmentIDs) > maxFileDownloadAudienceSegments {
-		return fileDownloadPolicyUpdate{}, tooManyFileDownloadAudienceSegments("audience_segment_ids")
+	if len(nextCriteriaIDs) > maxFileDownloadMemberCriteria {
+		return fileDownloadPolicyUpdate{}, tooManyFileDownloadMemberCriteria("member_criteria_ids")
 	}
-	if locked.Audience == nextAudience && slices.Equal(previousSegmentIDs, nextSegmentIDs) {
+	if locked.Access == nextAccess && slices.Equal(previousCriteriaIDs, nextCriteriaIDs) {
 		policy, err := s.loadManageFileDownloadPolicy(ctx, tx, locked)
 		return fileDownloadPolicyUpdate{policy: policy, audit: mutation.Unchanged()}, err
 	}
-	audit, err := relationFileDownloadPolicyAudit(locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs)
+	audit, err := relationFileDownloadPolicyAudit(locked, locked.Access, nextAccess, previousCriteriaIDs, nextCriteriaIDs)
 	if err != nil {
 		return fileDownloadPolicyUpdate{}, err
 	}
-	if err := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAudience, nextSegmentIDs); err != nil {
+	if err := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAccess, nextCriteriaIDs); err != nil {
 		return fileDownloadPolicyUpdate{}, err
 	}
 	signaled := locked
-	locked.Audience = nextAudience
+	locked.Access = nextAccess
 	policy, err := s.loadManageFileDownloadPolicy(ctx, tx, locked)
 	return fileDownloadPolicyUpdate{policy: policy, changed: true, relation: signaled, audit: audit}, err
 }
@@ -273,22 +273,22 @@ func (s *Service) publishFileDownloadPolicyChanged(ctx context.Context, store St
 }
 
 func mergeObservedFileDownloadPolicy(
-	currentAudience, observedAudience, desiredAudience mediaasset.FileDownloadAudience,
-	currentSegmentIDs, observedSegmentIDs, desiredSegmentIDs []string,
-) (mediaasset.FileDownloadAudience, []string) {
-	mergedAudience := currentAudience
-	if observedAudience != desiredAudience {
-		mergedAudience = desiredAudience
+	currentAccess, observedAccess, desiredAccess mediaasset.FileDownloadAccess,
+	currentCriteriaIDs, observedCriteriaIDs, desiredCriteriaIDs []string,
+) (mediaasset.FileDownloadAccess, []string) {
+	mergedAccess := currentAccess
+	if observedAccess != desiredAccess {
+		mergedAccess = desiredAccess
 	}
-	mergedSegmentIDs := mergeObservedFileDownloadSegmentIDs(currentSegmentIDs, observedSegmentIDs, desiredSegmentIDs)
-	if mergedAudience != mediaasset.FileDownloadAudienceRestricted {
-		// Non-restricted audiences cannot retain segment relations.
-		mergedSegmentIDs = nil
+	mergedCriteriaIDs := mergeObservedFileDownloadCriteriaIDs(currentCriteriaIDs, observedCriteriaIDs, desiredCriteriaIDs)
+	if mergedAccess != mediaasset.FileDownloadAccessRestricted {
+		// Non-restricted access values cannot retain criteria relations.
+		mergedCriteriaIDs = nil
 	}
-	return mergedAudience, mergedSegmentIDs
+	return mergedAccess, mergedCriteriaIDs
 }
 
-func mergeObservedFileDownloadSegmentIDs(current, observed, desired []string) []string {
+func mergeObservedFileDownloadCriteriaIDs(current, observed, desired []string) []string {
 	result := make(map[string]struct{}, len(current)+len(desired))
 	observedSet := make(map[string]struct{}, len(observed))
 	desiredSet := make(map[string]struct{}, len(desired))
@@ -373,7 +373,7 @@ func (s *Service) resolveFileDownloadPolicyRelation(ctx context.Context, store S
 		}
 		return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("File Block attachment", *selector.BlockID)
 	}
-	return fileDownloadPolicyRelation{Selector: selector, FileID: row.FileID, Audience: row.Audience, ResourceType: row.ResourceType, ResourceID: row.ResourceID}, err
+	return fileDownloadPolicyRelation{Selector: selector, FileID: row.FileID, Access: row.Access, ResourceType: row.ResourceType, ResourceID: row.ResourceID}, err
 }
 func (s fileDownloadPolicySelector) storage() domain.PolicySelector {
 	kind := "track"
@@ -413,11 +413,11 @@ func contentBlockFilePolicyOwner(entityType EntityType) (string, bool) {
 	}
 }
 
-func loadFileDownloadPolicySegmentIDs(ctx context.Context, store Store, relation fileDownloadPolicyRelation) ([]string, error) {
-	return store.DownloadPolicySegmentIDs(ctx, relation.Selector.storage())
+func loadFileDownloadPolicyCriteriaIDs(ctx context.Context, store Store, relation fileDownloadPolicyRelation) ([]string, error) {
+	return store.DownloadPolicyCriteriaIDs(ctx, relation.Selector.storage())
 }
-func updateFileDownloadPolicyRelation(ctx context.Context, store Store, relation fileDownloadPolicyRelation, audience mediaasset.FileDownloadAudience, ids []string) error {
-	return store.SetDownloadPolicy(ctx, relation.Selector.storage(), audience, ids, time.Now().UTC())
+func updateFileDownloadPolicyRelation(ctx context.Context, store Store, relation fileDownloadPolicyRelation, access mediaasset.FileDownloadAccess, ids []string) error {
+	return store.SetDownloadPolicy(ctx, relation.Selector.storage(), access, ids, time.Now().UTC())
 }
 
 func (s *Service) loadManageFileDownloadPolicy(
@@ -425,37 +425,37 @@ func (s *Service) loadManageFileDownloadPolicy(
 	store Store,
 	relation fileDownloadPolicyRelation,
 ) (*DownloadPolicy, error) {
-	audienceValue, ok := validatedStoredFileDownloadAudience(relation.Audience)
+	accessValue, ok := validatedStoredFileDownloadAccess(relation.Access)
 	if !ok {
-		return nil, errors.New("attachment has invalid download audience")
+		return nil, errors.New("attachment has invalid download access")
 	}
-	segmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, store, relation)
+	criteriaIDs, err := loadFileDownloadPolicyCriteriaIDs(ctx, store, relation)
 	if err != nil {
 		return nil, err
 	}
-	var segments []domain.PolicySegment
-	if len(segmentIDs) > 0 {
-		segments, err = store.ActivePolicySegments(ctx, segmentIDs)
+	var criteriaSet []domain.PolicyCriteria
+	if len(criteriaIDs) > 0 {
+		criteriaSet, err = store.ActivePolicyCriteriaSet(ctx, criteriaIDs)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	summaries := make([]*domain.PolicySegment, 0, len(segments))
-	for i := range segments {
-		if !segments[i].Eligible {
-			return nil, errors.New("attachment references an ineligible audience segment")
+	summaries := make([]*domain.PolicyCriteria, 0, len(criteriaSet))
+	for i := range criteriaSet {
+		if !criteriaSet[i].Eligible {
+			return nil, errors.New("attachment references an ineligible Member criteria")
 		}
-		summaries = append(summaries, &segments[i])
+		summaries = append(summaries, &criteriaSet[i])
 	}
 	return &DownloadPolicy{
-		EntityType:       int32(relation.Selector.EntityType),
-		EntityID:         relation.Selector.EntityID,
-		BlockID:          relation.Selector.BlockID,
-		ReferencePath:    relation.Selector.ReferencePath,
-		FileID:           relation.FileID,
-		Audience:         audienceValue,
-		AudienceSegments: summaries,
+		EntityType:     int32(relation.Selector.EntityType),
+		EntityID:       relation.Selector.EntityID,
+		BlockID:        relation.Selector.BlockID,
+		ReferencePath:  relation.Selector.ReferencePath,
+		FileID:         relation.FileID,
+		Access:         accessValue,
+		MemberCriteria: summaries,
 	}, nil
 }
 
@@ -463,38 +463,38 @@ func (s *Service) loadManageFileDownloadPolicy(
 // policy change.
 func relationFileDownloadPolicyAudit(
 	relation fileDownloadPolicyRelation,
-	previousAudience, audience mediaasset.FileDownloadAudience,
-	previousSegmentIDs, segmentIDs []string,
+	previousAccess, access mediaasset.FileDownloadAccess,
+	previousCriteriaIDs, criteriaIDs []string,
 ) (mutation.Audit, error) {
 	var action sharedtelemetry.AuditAction
 	var build func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error)
-	previous := sharedtelemetry.AuditState(previousAudience)
-	next := sharedtelemetry.AuditState(audience)
+	previous := sharedtelemetry.AuditState(previousAccess)
+	next := sharedtelemetry.AuditState(access)
 	switch relation.ResourceType {
 	case "post":
 		action = sharedtelemetry.AuditPostUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPostFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
+			return sharedtelemetry.NewPostFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousCriteriaIDs, criteriaIDs)
 		}
 	case "page":
 		action = sharedtelemetry.AuditPageUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
+			return sharedtelemetry.NewPageFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousCriteriaIDs, criteriaIDs)
 		}
 	case "work":
 		action = sharedtelemetry.AuditWorkUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
+			return sharedtelemetry.NewWorkFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousCriteriaIDs, criteriaIDs)
 		}
 	case "program_event":
 		action = sharedtelemetry.AuditProgramEventUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
+			return sharedtelemetry.NewProgramEventFileBlockDownloadPolicyAuditRecord(m, relation.ResourceID, *relation.Selector.BlockID, relation.FileID, previous, next, previousCriteriaIDs, criteriaIDs)
 		}
 	case "release":
 		action = sharedtelemetry.AuditReleaseUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewReleaseTrackDownloadPolicyAuditRecord(m, relation.ResourceID, relation.Selector.EntityID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
+			return sharedtelemetry.NewReleaseTrackDownloadPolicyAuditRecord(m, relation.ResourceID, relation.Selector.EntityID, relation.FileID, previous, next, previousCriteriaIDs, criteriaIDs)
 		}
 	default:
 		return mutation.Audit{}, errors.New("unsupported File download policy audit owner")
@@ -548,25 +548,25 @@ func uniqueUUIDs(values []string, field string) ([]string, error) {
 	return result, nil
 }
 
-func storedFileDownloadAudience(audience DownloadAudience) (mediaasset.FileDownloadAudience, bool) {
-	switch audience {
-	case DownloadAudienceDisabled:
-		return mediaasset.FileDownloadAudienceDisabled, true
-	case DownloadAudiencePublic:
-		return mediaasset.FileDownloadAudiencePublic, true
-	case DownloadAudienceAuthenticated:
-		return mediaasset.FileDownloadAudienceAuthenticated, true
-	case DownloadAudienceRestricted:
-		return mediaasset.FileDownloadAudienceRestricted, true
+func storedFileDownloadAccess(access DownloadAccess) (mediaasset.FileDownloadAccess, bool) {
+	switch access {
+	case DownloadAccessDisabled:
+		return mediaasset.FileDownloadAccessDisabled, true
+	case DownloadAccessPublic:
+		return mediaasset.FileDownloadAccessPublic, true
+	case DownloadAccessAuthenticated:
+		return mediaasset.FileDownloadAccessAuthenticated, true
+	case DownloadAccessRestricted:
+		return mediaasset.FileDownloadAccessRestricted, true
 	default:
 		return "", false
 	}
 }
 
-func validatedStoredFileDownloadAudience(audience mediaasset.FileDownloadAudience) (mediaasset.FileDownloadAudience, bool) {
-	switch audience {
-	case mediaasset.FileDownloadAudienceDisabled, mediaasset.FileDownloadAudiencePublic, mediaasset.FileDownloadAudienceAuthenticated, mediaasset.FileDownloadAudienceRestricted:
-		return audience, true
+func validatedStoredFileDownloadAccess(access mediaasset.FileDownloadAccess) (mediaasset.FileDownloadAccess, bool) {
+	switch access {
+	case mediaasset.FileDownloadAccessDisabled, mediaasset.FileDownloadAccessPublic, mediaasset.FileDownloadAccessAuthenticated, mediaasset.FileDownloadAccessRestricted:
+		return access, true
 	default:
 		return "", false
 	}

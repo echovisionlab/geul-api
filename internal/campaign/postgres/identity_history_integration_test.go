@@ -34,14 +34,14 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 	includedMemberID := seedCampaignActiveMemberEmailPair(t, db, includedIdentityID, includedEmail)
 	excludedMemberID := seedCampaignActiveMemberEmailPair(t, db, excludedIdentityID, excludedEmail)
 
-	segmentID := uuid.NewString()
-	require.NoError(t, db.Create(&model.AudienceSegment{
-		ID: segmentID, Name: "Frozen exclusion", SegmentType: model.AudienceSegmentMembersByFilter,
+	criteriaID := uuid.NewString()
+	require.NoError(t, db.Create(&model.MemberCriteria{
+		ID: criteriaID, Name: "Frozen exclusion", Kind: model.MemberCriteriaKindFilter,
 		CreatedAt: now, UpdatedAt: &now,
 	}).Error)
-	require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{
-		AudienceSegmentID: segmentID,
-		MemberID:          excludedMemberID,
+	require.NoError(t, db.Create(&model.MemberCriteriaExcludedMember{
+		MemberCriteriaID: criteriaID,
+		MemberID:         excludedMemberID,
 	}).Error)
 
 	campaignID := uuid.NewString()
@@ -54,7 +54,7 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 		ID: campaignID, ContentDocumentID: &campaignDocumentID,
 		Name: "Frozen identity campaign", Subject: "Frozen identity campaign",
 		Status:     managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String(),
-		TargetMode: model.CampaignTargetModeSegment, SegmentID: &segmentID,
+		TargetMode: model.CampaignTargetModeMemberCriteria, CriteriaID: &criteriaID,
 		RecipientScope: "ALL_MATCHING_USERS",
 		CreatedAt:      now, UpdatedAt: now,
 	}).Error)
@@ -72,7 +72,7 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 			TemplateData: model.JSONFields{}, RenderSnapshot: renderSnapshot,
 			SnapshotSchemaVersion:   campaign.CampaignDeliverySnapshotSchemaVersion,
 			SourceCampaignUpdatedAt: &now,
-			AudienceSegmentID:       &segmentID,
+			MemberCriteriaID:        &criteriaID,
 			TargetQueryVersion:      campaign.CampaignDeliveryTargetQueryVersion,
 			TargetMode:              campaign.CampaignDeliveryTargetModeUsersByFilter,
 			TargetRecipientScope:    "ALL_MATCHING_USERS",
@@ -103,11 +103,11 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 	require.NoError(t, db.First(&frozenBefore, "id = ?", runID).Error)
 	require.NoError(t, db.Exec("DELETE FROM kratos.identities WHERE id = ?", excludedIdentityID).Error)
 
-	var segmentExclusions int64
-	require.NoError(t, db.Model(&model.AudienceSegmentExcludedMember{}).
-		Where("audience_segment_id = ? AND member_id = ?", segmentID, excludedMemberID).
-		Count(&segmentExclusions).Error)
-	require.EqualValues(t, 1, segmentExclusions)
+	var criteriaExclusions int64
+	require.NoError(t, db.Model(&model.MemberCriteriaExcludedMember{}).
+		Where("member_criteria_id = ? AND member_id = ?", criteriaID, excludedMemberID).
+		Count(&criteriaExclusions).Error)
+	require.EqualValues(t, 1, criteriaExclusions)
 	var runExclusions int64
 	require.NoError(t, db.Model(&model.EmailDeliveryRunTargetExcludedMember{}).
 		Where("run_id = ? AND member_id = ?", runID, excludedMemberID).

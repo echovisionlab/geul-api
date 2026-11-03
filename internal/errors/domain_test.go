@@ -25,7 +25,7 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"required", domainerr.Required("name"), Required("name")},
 		{"not found", domainerr.ResourceNotFound("member", "id-1"), NotFound("member", "id-1")},
 		{"duplicate", domainerr.Duplicate("member", "nickname", "taken"), AlreadyExists("member", "nickname", "taken")},
-		{"precondition", domainerr.Precondition("member tag is referenced by an audience segment"), FailedPrecondition("member tag is referenced by an audience segment")},
+		{"precondition", domainerr.Precondition("member tag is referenced by a Member criteria"), FailedPrecondition("member tag is referenced by a Member criteria")},
 		{"denied", domainerr.Denied("avatar source does not belong to this member"), PermissionDenied("avatar source does not belong to this member")},
 		{"invalid session", domainerr.InvalidSession(), InvalidSession()},
 		{"unavailable", domainerr.DependencyUnavailable("account email"), DependencyUnavailable("account email")},
@@ -36,7 +36,7 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"author required", domainerr.AuthorRequired(), AuthorRequired()},
 		{"invalid entity type", domainerr.InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED"), InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED")},
 		{"invalid entity id", domainerr.InvalidEntityID(), InvalidEntityID()},
-		{"retry", domainerr.Retry("audience segment changed while it was being archived; retry"), connect.NewError(connect.CodeAborted, stderrors.New("audience segment changed while it was being archived; retry"))},
+		{"retry", domainerr.Retry("Member criteria changed while it was being archived; retry"), connect.NewError(connect.CodeAborted, stderrors.New("Member criteria changed while it was being archived; retry"))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

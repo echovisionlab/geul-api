@@ -38,9 +38,9 @@ const (
 	TrackProcessingCompleted  TrackProcessingStatus = "TRACK_PROCESSING_STATUS_COMPLETED"
 )
 
-// DownloadAudienceDisabled is the stored download audience of a Track whose
+// DownloadAccessDisabled is the stored download access of a Track whose
 // original audio may not be downloaded.
-const DownloadAudienceDisabled = "disabled"
+const DownloadAccessDisabled = "disabled"
 
 // Release is one Release row.
 type Release struct {
@@ -103,7 +103,7 @@ type Track struct {
 	Metadata            map[string]any
 	CreatedAt           time.Time
 	AudioOriginalFileID *string
-	DownloadAudience    string
+	DownloadAccess      string
 }
 
 // TrackAudio is the original audio a File ingest attaches to a Track.

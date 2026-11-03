@@ -157,9 +157,9 @@ type Store interface {
 	InsertTag(ctx context.Context, name string) (Tag, error)
 	// LockTag locks a tag FOR UPDATE, or reports ErrTagNotFound.
 	LockTag(ctx context.Context, tagID string) (Tag, error)
-	// TagReferencedBySegment reports whether an audience segment uses the
+	// TagReferencedByCriteria reports whether a Member criteria uses the
 	// tag.
-	TagReferencedBySegment(ctx context.Context, tagID string) (bool, error)
+	TagReferencedByCriteria(ctx context.Context, tagID string) (bool, error)
 	// DeleteTag deletes a tag and its Member assignments.
 	DeleteTag(ctx context.Context, tagID string) error
 	// CountTags counts the existing tags among tagIDs.

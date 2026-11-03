@@ -42,7 +42,7 @@ func (r serviceRegistration) newFiles(downloadTTL time.Duration, legalRuntime *l
 	fileTrackAttachment := filemediaadapter.NewTrackAttachment(deps.telemetryWriter)
 	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: deps.spicedbClient})
 
-	fileMediaPorts := filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(deps.transcodeTracker, deps.servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(deps.transcodeTracker, deps.servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(deps.servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySegments: filemediapolicy.Segments{}, PolicySignals: filemediaqueue.Policy(deps.servicePublisher)}
+	fileMediaPorts := filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(deps.transcodeTracker, deps.servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(deps.transcodeTracker, deps.servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(deps.servicePublisher), PolicyOwners: filePolicyOwners, PolicyCriteriaReader: filemediapolicy.CriteriaReader{}, PolicyCriteriaRelations: filemediapolicy.CriteriaRelations{}, PolicySignals: filemediaqueue.Policy(deps.servicePublisher)}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		IngestLocks:        filemediapostgres.NewIngestLocks(deps.db, fileMediaPorts),
 		FaviconCommits:     filemediapostgres.NewFaviconCommits(deps.db, fileMediaPorts),
@@ -136,7 +136,7 @@ func (r serviceRegistration) registerUploadRoutes(fileService *filemedia.Service
 func (r serviceRegistration) newPublicFiles(downloadTTL time.Duration) (*filepublic.Service, error) {
 	deps := r.dependencies
 	publicFileService, err := filepublic.NewService(filepublic.Deps{
-		Units: filepublicpostgres.NewUnits(deps.db, filepublicpostgres.Ports{Segments: mediaassetadapter.NewSegmentConfigs()}), SpiceDB: deps.spicedbClient,
+		Units: filepublicpostgres.NewUnits(deps.db, filepublicpostgres.Ports{CriteriaSet: mediaassetadapter.NewCriteriaConfigs()}), SpiceDB: deps.spicedbClient,
 		CDNDomain: deps.cfg.CDNURL, MediaDomain: deps.cfg.MediaURL, MediaSecret: deps.cfg.MediaSigningSecret, DownloadTTL: downloadTTL,
 	})
 	if err != nil {

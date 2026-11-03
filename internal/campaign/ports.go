@@ -20,12 +20,12 @@ type CampaignDeliveryMetrics interface {
 	RecordRunDuration(context.Context, DeliveryRun, time.Time)
 }
 
-// CampaignAudienceTarget is the validated Audience-owned target snapshot that
+// CampaignCriteriaTarget is the validated Criteria-owned target snapshot that
 // Campaign needs while sealing an immutable delivery definition.
-type CampaignAudienceTarget struct {
+type CampaignCriteriaTarget struct {
 	Archived          bool
 	Valid             bool
-	SegmentType       AudienceSegmentType
+	Kind              MemberCriteriaKind
 	CreatedAfter      *time.Time
 	CreatedBefore     *time.Time
 	MemberTagIDs      []string
@@ -41,7 +41,7 @@ type CampaignDeliveryRunDefinition struct {
 	SnapshotSchemaVersion   int16
 	Snapshot                CampaignDeliverySnapshot
 	SourceLayoutID          *string
-	AudienceSegmentID       *string
+	MemberCriteriaID        *string
 	SourceCampaignUpdatedAt time.Time
 	SourceLayoutUpdatedAt   *time.Time
 	Target                  CampaignDeliveryTarget

@@ -403,28 +403,28 @@ func (value SortOrder) String() string {
 	}
 }
 
-type DownloadAudience int32
+type DownloadAccess int32
 
 const (
-	DownloadAudienceUnspecified   DownloadAudience = 0
-	DownloadAudienceDisabled      DownloadAudience = 1
-	DownloadAudiencePublic        DownloadAudience = 2
-	DownloadAudienceAuthenticated DownloadAudience = 3
-	DownloadAudienceRestricted    DownloadAudience = 4
+	DownloadAccessUnspecified   DownloadAccess = 0
+	DownloadAccessDisabled      DownloadAccess = 1
+	DownloadAccessPublic        DownloadAccess = 2
+	DownloadAccessAuthenticated DownloadAccess = 3
+	DownloadAccessRestricted    DownloadAccess = 4
 )
 
-func (value DownloadAudience) String() string {
+func (value DownloadAccess) String() string {
 	switch value {
-	case DownloadAudienceUnspecified:
-		return "FILE_DOWNLOAD_AUDIENCE_UNSPECIFIED"
-	case DownloadAudienceDisabled:
-		return "FILE_DOWNLOAD_AUDIENCE_DISABLED"
-	case DownloadAudiencePublic:
-		return "FILE_DOWNLOAD_AUDIENCE_PUBLIC"
-	case DownloadAudienceAuthenticated:
-		return "FILE_DOWNLOAD_AUDIENCE_AUTHENTICATED"
-	case DownloadAudienceRestricted:
-		return "FILE_DOWNLOAD_AUDIENCE_RESTRICTED"
+	case DownloadAccessUnspecified:
+		return "FILE_DOWNLOAD_ACCESS_UNSPECIFIED"
+	case DownloadAccessDisabled:
+		return "FILE_DOWNLOAD_ACCESS_DISABLED"
+	case DownloadAccessPublic:
+		return "FILE_DOWNLOAD_ACCESS_PUBLIC"
+	case DownloadAccessAuthenticated:
+		return "FILE_DOWNLOAD_ACCESS_AUTHENTICATED"
+	case DownloadAccessRestricted:
+		return "FILE_DOWNLOAD_ACCESS_RESTRICTED"
 	default:
 		return strconv.FormatInt(int64(value), 10)
 	}

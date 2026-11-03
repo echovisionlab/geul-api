@@ -29,7 +29,7 @@ func NewUnits(db *gorm.DB, ports Ports) (campaigndomain.Units, error) {
 		return nil, errors.New("campaign store database is required")
 	}
 	var missing []string
-	for name, absent := range map[string]bool{"ContentBlocks": ports.ContentBlocks == nil, "Publisher": ports.Publisher == nil, "Routes": ports.Routes == nil, "EmailAuthoring": ports.EmailAuthoring == nil, "EmailRendering": ports.EmailRendering == nil, "AudienceTargets": ports.AudienceTargets == nil, "Members": ports.Members == nil, "Checkpoints": ports.Checkpoints == nil, "SpiceDB": ports.SpiceDB == nil} {
+	for name, absent := range map[string]bool{"ContentBlocks": ports.ContentBlocks == nil, "Publisher": ports.Publisher == nil, "Routes": ports.Routes == nil, "EmailAuthoring": ports.EmailAuthoring == nil, "EmailRendering": ports.EmailRendering == nil, "CriteriaTargets": ports.CriteriaTargets == nil, "Members": ports.Members == nil, "Checkpoints": ports.Checkpoints == nil, "SpiceDB": ports.SpiceDB == nil} {
 		if absent {
 			missing = append(missing, name)
 		}
@@ -77,9 +77,9 @@ func (s *store) LockLayouts(ctx context.Context, ids ...string) (map[string]camp
 func (s *store) LayoutSnapshot(ctx context.Context, id string) ([]campaigndomain.CampaignLayoutLocaleSnapshot, error) {
 	return s.ports.EmailAuthoring.LoadLayoutSnapshot(ctx, s.tx, id)
 }
-func (s *store) LockAudienceTarget(ctx context.Context, id string) (campaigndomain.CampaignAudienceTarget, error) {
-	target, err := s.ports.AudienceTargets.LockTarget(ctx, s.tx, id)
-	return target, notFound(err, campaigndomain.ErrAudienceNotFound)
+func (s *store) LockCriteriaTarget(ctx context.Context, id string) (campaigndomain.CampaignCriteriaTarget, error) {
+	target, err := s.ports.CriteriaTargets.LockTarget(ctx, s.tx, id)
+	return target, notFound(err, campaigndomain.ErrCriteriaNotFound)
 }
 func (s *store) ResolveSessionPrincipal(ctx context.Context, id string) (*auth.UserInfo, error) {
 	return auth.ResolveAuthenticatedPrincipalBySessionID(ctx, s.tx, id)

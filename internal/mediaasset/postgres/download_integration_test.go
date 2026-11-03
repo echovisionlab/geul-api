@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	criteriapostgres "github.com/echovisionlab/geul-api/internal/member/criteria/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
@@ -20,10 +20,10 @@ import (
 	"gorm.io/gorm"
 )
 
-type segmentConfigs struct{}
+type criteriaConfigs struct{}
 
-func (segmentConfigs) LoadSegmentConfigs(ctx context.Context, db *gorm.DB, rows []*model.AudienceSegment) error {
-	return audiencepostgres.LoadSegmentConfigs(ctx, db, rows)
+func (criteriaConfigs) LoadCriteriaConfigs(ctx context.Context, db *gorm.DB, rows []*model.MemberCriteria) error {
+	return criteriapostgres.LoadCriteriaConfigs(ctx, db, rows)
 }
 
 func TestDownloadStoreRequiresExactActiveIdentityLinkIntegration(t *testing.T) {
@@ -48,7 +48,7 @@ func TestDownloadStoreRequiresExactActiveIdentityLinkIntegration(t *testing.T) {
 			case "wrong identity":
 				identity = uuid.NewString()
 			}
-			facts, found, err := mediaassetpostgres.NewDownloadStore(db, segmentConfigs{}).MemberFacts(t.Context(), member, identity)
+			facts, found, err := mediaassetpostgres.NewDownloadStore(db, criteriaConfigs{}).MemberFacts(t.Context(), member, identity)
 			require.NoError(t, err)
 			require.Equal(t, condition == "active", found)
 			if found {
@@ -59,7 +59,7 @@ func TestDownloadStoreRequiresExactActiveIdentityLinkIntegration(t *testing.T) {
 		})
 	}
 }
-func TestDownloadPolicyQueryBudgetIsIndependentOfSegmentCountIntegration(t *testing.T) {
+func TestDownloadPolicyQueryBudgetIsIndependentOfCriteriaCountIntegration(t *testing.T) {
 	t.Parallel()
 	one := downloadPolicyQueryCount(t, 1)
 	many := downloadPolicyQueryCount(t, 12)
@@ -76,16 +76,16 @@ func downloadPolicyQueryCount(t *testing.T, count int) int {
 	require.NoError(t, db.Create(&model.File{ID: file, FileName: "download", MimeType: "text/plain", FileSize: 1, Extension: "txt", SHA256: make([]byte, 32), CreatedAt: time.Now().UTC()}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'post', ?::uuid)`, document, uuid.NewString()).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, parent_block_id, container_slot, position, kind, shared_data) VALUES (?::uuid, ?::uuid, NULL, 'root', 0, 'file', '{}'::jsonb)`, block, document).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?::uuid, 'file', 'active', ?::uuid, 'restricted')`, block, file).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?::uuid, 'file', 'active', ?::uuid, 'restricted')`, block, file).Error)
 	require.NoError(t, db.Exec(`INSERT INTO user_tag (id, name, created_at) VALUES (?::uuid, 'download', now())`, tag).Error)
 	require.NoError(t, db.Exec(`INSERT INTO user_tag_mapping (member_id, tag_id, created_at) VALUES (?::uuid, ?::uuid, now())`, member, tag).Error)
 	for range count {
 		id := uuid.NewString()
-		require.NoError(t, db.Create(&model.AudienceSegment{ID: id, Name: id, SegmentType: model.AudienceSegmentMemberTags, CreatedAt: time.Now().UTC()}).Error)
-		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{AudienceSegmentID: id, UserTagID: tag}).Error)
-		require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, block, id).Error)
+		require.NoError(t, db.Create(&model.MemberCriteria{ID: id, Name: id, Kind: model.MemberCriteriaKindMemberTags, CreatedAt: time.Now().UTC()}).Error)
+		require.NoError(t, db.Create(&model.MemberCriteriaTag{MemberCriteriaID: id, UserTagID: tag}).Error)
+		require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_member_criteria (block_id, reference_path, member_criteria_id) VALUES (?::uuid, 'file', ?::uuid)`, block, id).Error)
 	}
-	store := mediaassetpostgres.NewDownloadStore(db, segmentConfigs{})
+	store := mediaassetpostgres.NewDownloadStore(db, criteriaConfigs{})
 	sources, err := mediaasset.LoadContentBlockDownloadSources(t.Context(), store, []mediaasset.ContentBlockDownloadSelector{{BlockID: block, ReferencePath: "file"}})
 	require.NoError(t, err)
 	require.Len(t, sources, 1)

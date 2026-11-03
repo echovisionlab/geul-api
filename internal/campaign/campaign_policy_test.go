@@ -8,7 +8,7 @@ import (
 )
 
 func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing.T) {
-	segmentID := "segment-id"
+	criteriaID := "criteria-id"
 	tests := []struct {
 		name     string
 		campaign Campaign
@@ -21,31 +21,31 @@ func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing
 			},
 		},
 		{
-			name: "segment",
+			name: "criteria",
 			campaign: Campaign{
-				TargetMode: CampaignTargetModeSegment,
-				SegmentID:  &segmentID,
+				TargetMode: CampaignTargetModeMemberCriteria,
+				CriteriaID: &criteriaID,
 			},
 		},
 		{
 			name: "unspecified",
 			campaign: Campaign{
-				SegmentID: &segmentID,
+				CriteriaID: &criteriaID,
 			},
 			wantErr: true,
 		},
 		{
-			name: "all with segment",
+			name: "all with criteria",
 			campaign: Campaign{
 				TargetMode: CampaignTargetModeAll,
-				SegmentID:  &segmentID,
+				CriteriaID: &criteriaID,
 			},
 			wantErr: true,
 		},
 		{
-			name: "segment without segment",
+			name: "criteria without criteria",
 			campaign: Campaign{
-				TargetMode: CampaignTargetModeSegment,
+				TargetMode: CampaignTargetModeMemberCriteria,
 			},
 			wantErr: true,
 		},
@@ -76,10 +76,10 @@ func TestCampaignTargetModePolicyRequiresExplicitConsistentDefinition(t *testing
 	)
 	require.Equal(
 		t,
-		CampaignTargetModeSegment,
+		CampaignTargetModeMemberCriteria,
 		mustCampaignTargetModeFromProto(
 			t,
-			managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT,
+			managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_MEMBER_CRITERIA,
 		),
 	)
 }

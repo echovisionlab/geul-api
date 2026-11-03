@@ -57,12 +57,12 @@ type LegalNoticeDeliveryPort interface {
 		time.Time,
 	) error
 }
-type CampaignAudienceTargetPort interface {
+type CampaignCriteriaTargetPort interface {
 	LockTarget(
 		context.Context,
 		*gorm.DB,
 		string,
-	) (campaigndomain.CampaignAudienceTarget, error)
+	) (campaigndomain.CampaignCriteriaTarget, error)
 }
 type ContributorMembers interface {
 	// LockMembers takes a KEY SHARE lock on each existing Member of
@@ -75,7 +75,7 @@ type Ports struct {
 	ContentBlocks   *contentblock.Store
 	EmailAuthoring  CampaignEmailAuthoringPort
 	EmailRendering  CampaignEmailRenderingPort
-	AudienceTargets CampaignAudienceTargetPort
+	CriteriaTargets CampaignCriteriaTargetPort
 	Members         ContributorMembers
 	Checkpoints     persistencecheckpoint.ContributorFence
 	SpiceDB         RecipientAuthorizer

@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type campaignAudienceTargetFunc struct {
+type campaignCriteriaTargetFunc struct {
 	Store
-	fn func(context.Context, string) (CampaignAudienceTarget, error)
+	fn func(context.Context, string) (CampaignCriteriaTarget, error)
 }
 
-func (s campaignAudienceTargetFunc) LockAudienceTarget(ctx context.Context, id string) (CampaignAudienceTarget, error) {
+func (s campaignCriteriaTargetFunc) LockCriteriaTarget(ctx context.Context, id string) (CampaignCriteriaTarget, error) {
 	return s.fn(ctx, id)
 }
 
@@ -45,17 +45,17 @@ func TestCampaignRecipientScopeControlsNewsletterFilter(t *testing.T) {
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
 
-func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
-	segmentID := "segment-a"
+func TestDeriveCampaignDeliveryTargetUsesCriteriaPortSnapshot(t *testing.T) {
+	criteriaID := "criteria-a"
 	createdAfter := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	port := campaignAudienceTargetFunc{fn: func(
+	port := campaignCriteriaTargetFunc{fn: func(
 		_ context.Context,
-		gotSegmentID string,
-	) (CampaignAudienceTarget, error) {
-		require.Equal(t, segmentID, gotSegmentID)
-		return CampaignAudienceTarget{
+		gotCriteriaID string,
+	) (CampaignCriteriaTarget, error) {
+		require.Equal(t, criteriaID, gotCriteriaID)
+		return CampaignCriteriaTarget{
 			Valid:             true,
-			SegmentType:       AudienceSegmentMembersByFilter,
+			Kind:              MemberCriteriaKindFilter,
 			CreatedAfter:      &createdAfter,
 			AccountRoles:      []string{"ADMIN"},
 			ExcludedMemberIDs: []string{"member-a"},
@@ -66,8 +66,8 @@ func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
 		context.Background(),
 		port,
 		Campaign{
-			TargetMode:     CampaignTargetModeSegment,
-			SegmentID:      &segmentID,
+			TargetMode:     CampaignTargetModeMemberCriteria,
+			CriteriaID:     &criteriaID,
 			RecipientScope: campaignRecipientScopeSubscribedUsers,
 		},
 	)

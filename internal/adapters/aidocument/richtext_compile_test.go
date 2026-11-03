@@ -342,7 +342,7 @@ func newCodecStoreForTest(t *testing.T, profile string) (*gorm.DB, *contentblock
 		`CREATE TABLE content_document (id TEXT PRIMARY KEY, profile TEXT, revision TEXT, created_at DATETIME, updated_at DATETIME)`,
 		`CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT, parent_block_id TEXT, container_slot TEXT, position INTEGER, kind TEXT, shared_data BLOB, created_at DATETIME, updated_at DATETIME)`,
 		`CREATE TABLE content_block_locale (block_id TEXT, locale TEXT, localized_data BLOB, PRIMARY KEY(block_id, locale))`,
-		`CREATE TABLE content_block_attachment (block_id TEXT, reference_path TEXT, selector_kind TEXT, file_id TEXT, missing_kind TEXT, download_audience TEXT, PRIMARY KEY(block_id, reference_path))`,
+		`CREATE TABLE content_block_attachment (block_id TEXT, reference_path TEXT, selector_kind TEXT, file_id TEXT, missing_kind TEXT, download_access TEXT, PRIMARY KEY(block_id, reference_path))`,
 	} {
 		require.NoError(t, db.Exec(statement).Error)
 	}
