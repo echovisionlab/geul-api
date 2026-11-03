@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.5.0](https://github.com/echovisionlab/geul-api/compare/v4.4.0...v4.5.0) (2026-11-03)
+
+
+### Features
+
+* **mcp:** find text with an outline search and replace it in place ([#221](https://github.com/echovisionlab/geul-api/issues/221)) ([bb4b120](https://github.com/echovisionlab/geul-api/commit/bb4b120b748addba2f2ca1fcae6b455ca481e724))
+
 ## [4.4.0](https://github.com/echovisionlab/geul-api/compare/v4.3.0...v4.4.0) (2026-11-03)
 
 
