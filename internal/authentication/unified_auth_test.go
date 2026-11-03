@@ -555,8 +555,8 @@ func TestUnifiedAuthCodeChallengeHasSamePublicResponseShapeForKnownAndNewEmail(t
 		handler.reuseHoldCheck = func(context.Context, string) (bool, error) { return blocked, nil }
 		request := httptest.NewRequest(
 			http.MethodPost,
-			"https://auth.example/login?flow=login-flow",
-			strings.NewReader(`{"method":"code","identifier":" JohnDoe@Example.COM ","csrf_token":"login-csrf"}`),
+			"https://auth.example/login?flow=login-flow&refresh=true",
+			strings.NewReader(`{"method":"code","identifier":" JohnDoe@Example.COM ","csrf_token":"login-csrf","refresh":true}`),
 		)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -804,6 +804,211 @@ func TestUnifiedAuthHandlerPreservesRetryAfterAndFailsClosed(t *testing.T) {
 			t.Fatalf("status = %d, proxy calls = %d", response.Code, proxyCalls)
 		}
 	})
+}
+
+func TestUnifiedAuthHandlerRefreshCodeWithExistingSession(t *testing.T) {
+	for _, contentType := range []string{"application/json", "application/x-www-form-urlencoded"} {
+		t.Run(contentType, func(t *testing.T) {
+			const returnTo = "https://app.example/settings?tab=security"
+			finder := &unifiedAuthFinderStub{exists: true}
+			var registrationCalls, loginPosts, deliveries int
+			var expectedBody []byte
+			activeCode := ""
+			flowBody := func(body []byte) []byte {
+				var flow structured.Fields
+				require.NoError(t, json.Unmarshal(body, &flow))
+				flow["refresh"] = true
+				return mustJSON(t, flow)
+			}
+			upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				require.Equal(t, "ory_kratos_session=valid-old-session; csrf_cookie=login", r.Header.Get("Cookie"))
+				switch r.Method + " " + r.URL.Path {
+				case "GET /self-service/login/flows":
+					require.Equal(t, url.Values{"id": {"refresh-flow"}}, r.URL.Query())
+					if activeCode == "" {
+						_, _ = w.Write(flowBody(unifiedAuthFlowJSON("refresh-flow", "login-csrf", "", returnTo)))
+					} else {
+						_, _ = w.Write(flowBody(unifiedAuthCodeFlowJSON("refresh-flow", "login-csrf", "person@example.com", returnTo)))
+					}
+				case "GET /self-service/registration/browser":
+					registrationCalls++
+					// Kratos refuses registration while this browser has a valid session.
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"id":"session_already_available"}}`)
+				case "POST /self-service/login":
+					loginPosts++
+					require.Equal(t, url.Values{"flow": {"refresh-flow"}}, r.URL.Query())
+					require.Equal(t, contentType, r.Header.Get("Content-Type"))
+					require.Equal(t, "https://app.example", r.Header.Get("Origin"))
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					require.Equal(t, expectedBody, body, "login must retain the submitted CSRF, code, and resend fields")
+					fields := make(map[string]string)
+					if contentType == "application/json" {
+						require.NoError(t, json.Unmarshal(body, &fields))
+					} else {
+						values, err := url.ParseQuery(string(body))
+						require.NoError(t, err)
+						for name := range values {
+							fields[name] = values.Get(name)
+						}
+					}
+					if fields["csrf_token"] != "login-csrf" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = io.WriteString(w, `{"error":{"id":"security_csrf_violation"}}`)
+						return
+					}
+					if fields["code"] != "" {
+						if activeCode == "" || fields["code"] != activeCode {
+							w.WriteHeader(http.StatusBadRequest)
+							_, _ = w.Write(flowBody(unifiedAuthInvalidCodeFlowJSON("refresh-flow", "login-csrf", "person@example.com", returnTo)))
+							return
+						}
+						http.SetCookie(w, &http.Cookie{Name: "ory_kratos_session", Value: "refreshed-session", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+						w.Header().Set("Location", returnTo)
+						_, _ = io.WriteString(w, `{"session":{"id":"refreshed-session"}}`)
+						return
+					}
+					if activeCode == "" || fields["resend"] == "code" {
+						deliveries++
+						activeCode = strconv.Itoa(123455 + deliveries)
+					}
+					http.SetCookie(w, &http.Cookie{Name: "csrf_cookie", Value: "login", Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write(flowBody(unifiedAuthCodeFlowJSON("refresh-flow", "login-csrf", "person@example.com", returnTo)))
+				default:
+					t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL)
+				}
+			})
+			handler, err := NewUnifiedAuthHandler(upstream, finder, RegistrationReuseCheckerFunc(func(context.Context, string) (bool, error) {
+				t.Fatal("refresh must not consult registration holds")
+				return false, nil
+			}))
+			require.NoError(t, err)
+			submit := func(csrf, code, resend string) *httptest.ResponseRecorder {
+				t.Helper()
+				fields := map[string]string{"method": "code", "identifier": "person@example.com", "csrf_token": csrf, "refresh": "false"}
+				if code != "" {
+					fields["code"] = code
+				}
+				if resend != "" {
+					fields["resend"] = resend
+				}
+				if contentType == "application/json" {
+					expectedBody = mustJSON(t, fields)
+				} else {
+					values := make(url.Values)
+					for name, value := range fields {
+						values.Set(name, value)
+					}
+					expectedBody = []byte(values.Encode())
+				}
+				request := httptest.NewRequest(http.MethodPost, "https://auth.example/login?flow=refresh-flow&refresh=false&return_to=https://attacker.example", bytes.NewReader(expectedBody))
+				request.Header.Set("Content-Type", contentType)
+				request.Header.Set("Origin", "https://app.example")
+				request.Header.Set("Cookie", "ory_kratos_session=valid-old-session; csrf_cookie=login")
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				return response
+			}
+			assertChallenge := func(response *httptest.ResponseRecorder, messageType string) {
+				t.Helper()
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				require.Equal(t, messageType, unifiedAuthFlowMessageType(t, response.Body.Bytes()))
+				flow, err := decodeUnifiedAuthFlow(response.Body.Bytes())
+				require.NoError(t, err)
+				require.Equal(t, "refresh-flow", flow.ID)
+				require.True(t, flow.Refresh)
+				require.Equal(t, returnTo, flow.ReturnTo)
+				require.Equal(t, "login-csrf", flow.nodeString("csrf_token"))
+				require.NotContains(t, response.Body.String(), `"session"`)
+				require.Empty(t, response.Header().Get("Location"))
+				require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				for _, cookie := range response.Result().Cookies() {
+					require.NotEqual(t, "ory_kratos_session", cookie.Name, "old session alone must not complete refresh")
+				}
+			}
+
+			initial := submit("login-csrf", "", "")
+			require.Equal(t, 1, deliveries, "refresh must reach login code issuance; registration calls=%d, response=%s", registrationCalls, initial.Body.String())
+			assertChallenge(initial, "info")
+			require.Equal(t, []string{"csrf_cookie=login; Path=/; HttpOnly; Secure; SameSite=Lax"}, initial.Header().Values("Set-Cookie"))
+
+			for _, fields := range [][2]string{{"", ""}, {"forged-csrf", ""}, {"forged-csrf", "123456"}} {
+				response := submit(fields[0], fields[1], "code")
+				require.Equal(t, http.StatusForbidden, response.Code)
+				require.JSONEq(t, `{"error":{"id":"security_csrf_violation"}}`, response.Body.String())
+				require.Empty(t, response.Result().Cookies())
+				require.Equal(t, 1, deliveries)
+			}
+			assertChallenge(submit("login-csrf", "000000", ""), "error")
+			require.Equal(t, 1, deliveries)
+			assertChallenge(submit("login-csrf", "", "code"), "info")
+			require.Equal(t, 2, deliveries, "resend must issue through the same refresh login flow")
+			assertChallenge(submit("login-csrf", "123456", ""), "error")
+			completed := submit("login-csrf", "123457", "")
+			require.Equal(t, http.StatusOK, completed.Code)
+			require.JSONEq(t, `{"session":{"id":"refreshed-session"}}`, completed.Body.String())
+			require.Equal(t, returnTo, completed.Header().Get("Location"))
+			require.Len(t, completed.Result().Cookies(), 1)
+			require.Equal(t, "refreshed-session", completed.Result().Cookies()[0].Value)
+			require.Equal(t, 2, deliveries)
+			require.Equal(t, 8, loginPosts)
+			require.Zero(t, registrationCalls, "authenticated refresh must never bootstrap registration")
+			require.Empty(t, finder.seen, "Kratos login remains the identity authority for refresh")
+		})
+	}
+}
+
+func TestUnifiedAuthHandlerRefreshUnknownIdentifierNeverRegisters(t *testing.T) {
+	for _, body := range []string{
+		`{"method":"code","identifier":"unknown@example.com","csrf_token":"login-csrf"}`,
+		`{"method":"code","identifier":"unknown@example.com","csrf_token":"login-csrf","resend":"code"}`,
+		`{"method":"code","identifier":"unknown@example.com","csrf_token":"login-csrf","code":"123456"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			finder := &unifiedAuthFinderStub{}
+			var calls []string
+			upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls = append(calls, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /self-service/login/flows":
+					var flow structured.Fields
+					require.NoError(t, json.Unmarshal(unifiedAuthFlowJSON("refresh-flow", "login-csrf", "", "/after-auth"), &flow))
+					flow["refresh"] = true
+					_, _ = w.Write(mustJSON(t, flow))
+				case "GET /self-service/registration/browser":
+					// Without a session, registration would succeed and could create an account.
+					_, _ = w.Write(unifiedAuthFlowJSON("registration-flow", "registration-csrf", "", "/after-auth"))
+				case "POST /self-service/login":
+					require.Equal(t, "refresh-flow", r.URL.Query().Get("flow"))
+					forwarded, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					require.Equal(t, body, string(forwarded))
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"id":"invalid_credentials"}}`)
+				default:
+					t.Fatalf("refresh reached an unexpected endpoint: %s %s", r.Method, r.URL)
+				}
+			})
+			handler, err := NewUnifiedAuthHandler(upstream, finder, RegistrationReuseCheckerFunc(func(context.Context, string) (bool, error) {
+				t.Fatal("refresh must not make a registration eligibility decision")
+				return false, nil
+			}))
+			require.NoError(t, err)
+			request := httptest.NewRequest(http.MethodPost, "https://auth.example/login?flow=refresh-flow", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			require.JSONEq(t, `{"error":{"id":"invalid_credentials"}}`, response.Body.String())
+			require.Empty(t, response.Result().Cookies())
+			require.Equal(t, []string{"GET /self-service/login/flows", "POST /self-service/login"}, calls)
+			require.Empty(t, finder.seen)
+		})
+	}
 }
 
 func TestProjectUnifiedAuthFlowRemovesInternalRegistrationSignals(t *testing.T) {
