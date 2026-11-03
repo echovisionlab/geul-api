@@ -19,23 +19,49 @@ import (
 
 const mcpServerImplementationVersion = "19"
 
-const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist to find UUIDs. Pass d unchanged; never substitute slugs or URLs. " +
-	"Use policy_list/get for policy UUIDs; read/edit with p=terms or p=privacy. policy_create creates an empty draft without email; edits send no email. policy_schedule and policy_activate_now start notice email delivery. policy_delete allows every lifecycle and retains delivery history. " +
-	"Use menu_list for Menu UUIDs/locales and menu_locations_get for placement. Pass d with p=menu to document tools using current revisions and stable handles. " +
-	"Read settings before focused management tools. Post/Page/Release unpublish returns to draft; administrator-managed archived Posts can also return to draft. Program Events archive. Track publication follows Release. Map Places/Themes have no publication state. " +
-	"Read release_relations_get or track_list before relation edits; preserve exact observed snapshots and supported order_intent. Resolve references through reference_search, label_list, event type/series lists, music genre/style/format lists, form_list, post_series_list, and map_theme_list/get. Theme snapshot updates require its read revision. " +
-	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names and Page access_policy user_tag_ids. " +
-	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; sender changes keep credentials and may send verification email. " +
-	"Use document_catalog for typed fields, block kinds, relations and File ownership. document_metadata_update edits titles, summaries, Post categories/tags and Page layout. Post settings/layout require configuration_revision. " +
-	"Use work_settings_get before updating Work metadata or clients; pass read values as observed_metadata or observed_client_ids. Use focused featured-image, participant, credit, version, slug, and File tools. " +
-	"Use file_upload for ChatGPT attachments, including independent File library uploads without a document. Retain correlation_id on retry; only the returned File UUID can be attached. file_list browses folders. Read deletion impacts before file_delete; accepted IDs mean deletion scheduled, and referenced Files are rejected. " +
-	"Use document_file_add/replace/remove for document images and attachments; native File Blocks render image MIME. Use document_file_caption_update for localized captions. Removing a Block preserves File bytes. Page placements need a rich-text parent. " +
-	"Use document_file_download_policy_get before updates; copy audience and segment IDs into observed_policy.audience and observed_policy.audience_segment_ids. expected_file_id guards the exact attachment. " +
-	"For Track audio use file_transfer k=track_audio with track_id and current audio_original_file_id as expected_current_file_id; omit only if absent. Preserve returned handles and browser media bundles. Remote imports retain the same correlation_id on retries. " +
-	"Use focused paragraph/block tools for ordinary text. Use document_apply for advanced typed batches. Use document_validate only for explicit dry runs. " +
-	"A sync_required result with isError=false and applied=false means no change was applied. Follow document_read recovery. For read_continuation_invalid, discard previous pages and restart without a cursor. " +
-	"For document_revision_changed or target_revision_changed, reread targets and compare the previous read, latest values, and intended edit; preserve current values and adjust the intention using fresh revisions. Never just replace an expected revision and resend stale operations. affected_handles are pending targets, not proof that concurrent edits are disjoint. " +
-	"The server cannot semantically merge without a stored base. Limit automatic reread/reassess retries to 3 cycles per task edit; report continued changes as pending. Ask only about incompatible intentions or ambiguous deleted targets, not routine version changes."
+const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=page, p=program_event, p=release or p=artist), policy_list (p=terms or p=privacy) " +
+	"and menu_list (p=menu; menu_locations_get for placement); pass d unchanged, never a slug or URL. " +
+	"Edit a document in three steps. 1) document_read m=outline: " +
+	"every block's handle, kind, parent and a pv text preview, one page for most documents. 2) " +
+	"document_read m=blocks with only the handles you will change. 3) " +
+	"Use focused tools for plain paragraphs, headings and tables, and document_apply for formatted text or other changes. " +
+	"document_open is optional. Pass dr (and tr for a translation) " +
+	"from your latest read or the previous edit's result; consecutive edits need no reread. " +
+	"Plain-text paragraph/heading tools refuse a block with marks, links, colors or breaks: " +
+	"write its full inline content with document_apply to keep them. " +
+	"Editing the source locale changes every translation's tr, so reread a translation before editing it afterwards. " +
+	"A sync_required result with isError=false and applied=false means no change was applied: " +
+	"run the returned read recipe, compare the latest values with the intended edit, keep concurrent values, and retry with the new revisions. " +
+	"Never just replace an expected revision and resend stale operations; " +
+	"affected_handles are pending targets, not proof that concurrent edits are disjoint. " +
+	"Stop after 3 cycles per task edit and report it as pending; " +
+	"ask only about incompatible intentions or deleted targets, not routine version changes. " +
+	"For read_continuation_invalid, discard previous pages and restart without a cursor. " +
+	"Use document_validate only for requested dry runs and document_catalog for field shapes, block kinds, relations and File ownership. " +
+	"Email Layout wrapper markup is edited with email_layout_source_get/replace; " +
+	"its text with document tools (p=email_layout). policy_create creates an empty draft without email; " +
+	"edits send no email. policy_schedule and policy_activate_now start notice email delivery. " +
+	"policy_delete allows every lifecycle and retains delivery history. " +
+	"Read settings before focused management tools: post_settings_update needs configuration_revision. " +
+	"Use work_settings_get before updating Work metadata or clients; " +
+	"pass read values as observed_metadata or observed_client_ids. Theme snapshot updates need their read revision. " +
+	"Post/Page/Release unpublish returns to draft; archived Posts can return to draft; Program Events archive; " +
+	"Track publication follows Release; Map Places/Themes have no publication state. " +
+	"Read release_relations_get or track_list before relation edits and keep observed snapshots and order_intent. " +
+	"Resolve references with reference_search and the label, event type/series, genre/style/format, form, post_series, map_theme and member_tag lists. " +
+	"Use member_admin_list/get for audited member data. " +
+	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; " +
+	"sender changes keep credentials and may send verification email. File work: " +
+	"file_upload for chat attachments, keeping correlation_id on retries; " +
+	"only the returned File UUID can be attached. file_list browses folders. " +
+	"Read deletion impacts before file_delete; referenced Files are rejected. " +
+	"expected_file_id guards the exact attachment. Preserve returned handles and browser media bundles. " +
+	"document_file_add/replace/remove handle document images and attachments, document_file_caption_update localized captions; " +
+	"removing a Block keeps File bytes; Page placements need a rich-text parent. " +
+	"Read document_file_download_policy_get before updating and copy its IDs into observed_policy.audience and observed_policy.audience_segment_ids. " +
+	"For Track audio use file_transfer k=track_audio with the current audio_original_file_id as expected_current_file_id. " +
+	"Program Event media: read program_event_media_list first; " +
+	"adding the same event/role/file upserts alt/caption and omitted values clear them."
 
 // aiDocumentDomainRegistrations makes the complete production DCDP catalog
 // explicit at the composition root. The adapter registry independently rejects

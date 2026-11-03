@@ -23,7 +23,10 @@ type Projection struct {
 	LocaleExists     bool              `json:"le"`
 	Mode             ReadMode          `json:"m"`
 	Nodes            []Node            `json:"n"`
-	Next             *Cursor           `json:"next"`
+	// Previews holds the start of each outline node's locale text; other read
+	// modes return full values instead.
+	Previews map[BlockID]string `json:"pv,omitempty"`
+	Next     *Cursor            `json:"next"`
 }
 
 func EncodeOpenMetadata(metadata OpenMetadata) ([]byte, error) {

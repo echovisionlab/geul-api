@@ -341,6 +341,10 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 	}
 	end := min(offset+limit, len(nodes))
 	page := nodes[offset:end]
+	var previews map[BlockID]string
+	if request.Mode == ReadOutline {
+		previews = outlinePreviews(selectedSourceNodes(document.Nodes, page))
+	}
 	var next *Cursor
 	if end < len(nodes) {
 		cursor := encodeCursor(end, fingerprint)
@@ -359,6 +363,7 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 		LocaleExists:     document.LocaleExists,
 		Mode:             request.Mode,
 		Nodes:            page,
+		Previews:         previews,
 		Next:             next,
 	}, nil
 }
@@ -560,6 +565,21 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 	}
 }
 
+// selectedSourceNodes returns the full document nodes behind an outline page.
+func selectedSourceNodes(nodes []Node, page []Node) []Node {
+	wanted := make(map[BlockID]bool, len(page))
+	for _, node := range page {
+		wanted[node.ID] = true
+	}
+	result := make([]Node, 0, len(page))
+	for _, node := range nodes {
+		if wanted[node.ID] {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
 func projectOutline(nodes []Node) []Node {
 	result := make([]Node, len(nodes))
 	for index, node := range nodes {
@@ -592,7 +612,7 @@ func selectBlocks(nodes []Node, blocks []BlockID) ([]Node, error) {
 		}
 	}
 	if len(selected) != 0 {
-		return nil, errors.New("one or more selected blocks do not exist")
+		return nil, errors.New("one or more selected blocks do not exist; reread the outline for current block handles")
 	}
 	return result, nil
 }

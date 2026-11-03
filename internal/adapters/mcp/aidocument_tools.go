@@ -31,8 +31,8 @@ const (
 var documentTools = toolRegistry[AIDocumentTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentOpen, Title: "Open AI document",
-		Description: "Open a locale-aware DCDP/1 document by canonical UUID. " +
-			"Use d returned by document_list when selecting a Post; do not pass a URL slug as d.",
+		Description: "Optional: return a document's revisions and locale state without blocks. document_read returns the same envelope, so read directly when you already have d. " +
+			"Use d returned by document_list or another listing tool; never pass a URL slug as d.",
 		InputSchema: openInputSchema(), OutputSchema: openOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -40,9 +40,10 @@ var documentTools = toolRegistry[AIDocumentTools]{
 	}, (*AIDocumentTools).open),
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentRead, Title: "Read AI document",
-		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. Site variable atoms use [\"siteVariable\",key] or [\"siteVariable\",key,true]; discover the six keys and permitted links in document schemas. " +
-			"outline accepts no selectors; blocks requires non-empty b and no f; fields requires non-empty f and no b. " +
-			"Pass the canonical document UUID d returned by document_list or document_open." + syncRequiredGuidance,
+		Description: "Read a document. m=outline lists every block's handle, kind, parent and order, with pv mapping handles to the start of their locale text: use it to find the blocks to read or change. " +
+			"m=blocks returns full values for the handles in b; m=fields returns selected values ([block,field] or [block,relation,item,field]). outline accepts no selectors. " +
+			"Pages default to 256 outline nodes or 128 blocks/fields; n sets up to 256. Follow next until it is null and do not mix pages from different revisions. " +
+			"Site variable atoms are [\"siteVariable\",key] or [\"siteVariable\",key,true]. Use d from document_list or another listing tool." + syncRequiredGuidance,
 		InputSchema: readInputSchema(), OutputSchema: projectionOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -51,7 +52,7 @@ var documentTools = toolRegistry[AIDocumentTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
-			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
+			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
@@ -59,30 +60,30 @@ var documentTools = toolRegistry[AIDocumentTools]{
 	}, (*AIDocumentTools).createParagraph),
 	defineTool(mcpserver.Tool{
 		Name: ToolParagraphUpdate, Title: "Update document paragraph",
-		Description: "Replace the plain text of one existing Paragraph Block. " +
-			"Read the Block first and pass its stable block_id with the exact current document and target revisions." + syncRequiredGuidance,
+		Description: "Replace the text of one existing Paragraph Block with plain text. Refused when the paragraph has marks, links, colors, breaks or site variables, because plain text would remove them; " +
+			"write that paragraph's full inline content with document_apply fs content [\"i\",...] instead. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*AIDocumentTools).updateParagraph),
 	defineTool(mcpserver.Tool{Name: ToolHeadingCreate, Title: "Create document heading",
-		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass exact current revisions. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
+		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
 		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
 		return tools.mutateHeading(ctx, call, false)
 	}),
 	defineTool(mcpserver.Tool{Name: ToolHeadingUpdate, Title: "Update document heading",
-		Description: "Replace an existing heading's plain text and level (1..3), with optional alignment, in a Page or Post. Pass its stable block_id and exact current revisions. Omitted alignment is preserved." + syncRequiredGuidance,
+		Description: "Replace an existing heading's text with plain text and optionally its level (1..3) and alignment, in a Page or Post. Refused when the heading has formatting; use document_apply for it. Omitted level and alignment are preserved. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
 		InputSchema: headingInputSchema(true), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
 		return tools.mutateHeading(ctx, call, true)
 	}),
 	defineTool(mcpserver.Tool{Name: ToolTableCreate, Title: "Create document table",
-		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass exact current revisions. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
+		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
 		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, (*AIDocumentTools).createTable),
 	defineTool(mcpserver.Tool{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
-			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
+			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -92,7 +93,7 @@ var documentTools = toolRegistry[AIDocumentTools]{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
 		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, Terms of Service or Privacy Policy, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release and legal policies have no summary field. Legal policy titles can be edited in every lifecycle with the required source or translation permissions; editing sends no notice email. " +
 			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
-			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
+			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -110,7 +111,7 @@ var documentTools = toolRegistry[AIDocumentTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
 		Description: "Apply an advanced typed DCDP/1 operation batch that the focused tools cannot represent. " +
-			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run. Page rich blocks require a rich-text section parent. Heading level is ['n','1'|'2'|'3']. Tables use bi plus fs table (shared UUID rows/cells, id equal to handle, header flags) and fs tableContent (locale cell inline content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
+			"Use it to keep formatting when editing text: send the block's full inline content read with m=blocks. Up to 100 operations apply atomically in one call. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Use schema-defined tuples; document_validate is optional unless the user requests a dry run. Page rich blocks require a rich-text section parent. Heading level is ['n','1'|'2'|'3']. Tables use bi plus fs table (shared UUID rows/cells, id equal to handle, header flags) and fs tableContent (locale cell inline content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: acceptedOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -256,7 +257,7 @@ func (tools *AIDocumentTools) read(ctx context.Context, _ string, call toolCall[
 	}
 	request := core.ReadRequest{
 		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
-		Mode: input.Mode, Blocks: input.Blocks, Limit: input.Limit, Cursor: input.Cursor,
+		Mode: input.Mode, Blocks: input.Blocks, Limit: defaultReadLimit(input.Mode, input.Limit), Cursor: input.Cursor,
 	}
 	for index, field := range input.Fields {
 		switch len(field) {
@@ -281,6 +282,44 @@ func (tools *AIDocumentTools) read(ctx context.Context, _ string, call toolCall[
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document projection: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+// MCP reads default to pages large enough that typical documents fit in one
+// call: outline nodes are small, block values are larger.
+const (
+	defaultOutlineReadLimit = 256
+	defaultValueReadLimit   = 128
+)
+
+func defaultReadLimit(mode core.ReadMode, requested int) int {
+	if requested != 0 {
+		return requested
+	}
+	if mode == core.ReadOutline {
+		return defaultOutlineReadLimit
+	}
+	return defaultValueReadLimit
+}
+
+// rejectFormattedReplacement keeps the plain-text focused tools from silently
+// dropping marks, links, colors or breaks from an existing block's content.
+func (tools *AIDocumentTools) rejectFormattedReplacement(ctx context.Context, input focusedMutationArguments, block core.BlockID) error {
+	projection, err := tools.application.Read(ctx, core.ReadRequest{
+		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Mode: core.ReadFields, Fields: []core.FieldSelection{{Block: block, Field: "content"}},
+	})
+	if err != nil {
+		return err
+	}
+	for _, node := range projection.Nodes {
+		for _, field := range node.Localized {
+			if field.ID == "content" && core.HasInlineFormatting(field.Value) {
+				return &core.InputError{Message: "block " + string(block) + " has formatting (marks, links, colors, breaks or site variables) that plain-text replacement would remove; " +
+					"read it with document_read m=blocks and write the full inline content with document_apply fs content [\"i\",...] instead"}
+			}
+		}
+	}
+	return nil
 }
 
 func (tools *AIDocumentTools) createParagraph(ctx context.Context, _ string, call toolCall[paragraphCreateArguments]) (mcpserver.ToolResult, error) {
@@ -314,6 +353,9 @@ func (tools *AIDocumentTools) updateParagraph(ctx context.Context, _ string, cal
 	}
 	if input.Text == nil {
 		return executionError(errors.New("text is required and must be a string"))
+	}
+	if err := tools.rejectFormattedReplacement(ctx, input.focusedMutationArguments, input.Block); err != nil {
+		return expectedToolError(err)
 	}
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
 		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(*input.Text))),

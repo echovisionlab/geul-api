@@ -34,7 +34,7 @@ var fileBlockTools = toolRegistry[FileBlockTools]{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
 		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
 			"Image Files render as images through the native File Block. An optional caption is saved in the same mutation. " +
-			"Read the document first and pass its exact current revision. New File Block download policy starts disabled." + syncRequiredGuidance,
+			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. New File Block download policy starts disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
 	}, (*FileBlockTools).add),
@@ -55,7 +55,7 @@ var fileBlockTools = toolRegistry[FileBlockTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileCaptionUpdate, Title: "Update a File Block caption",
 		Description: "Set the plain-text caption of one existing File Block, including an image. Caption is locale-owned; an empty string explicitly clears it in the requested locale. " +
-			"Read the Block first and pass its exact current document and target revisions. File attachment and bytes are unchanged." + syncRequiredGuidance,
+			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. File attachment and bytes are unchanged." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileCaptionUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	}, (*FileBlockTools).updateCaption),

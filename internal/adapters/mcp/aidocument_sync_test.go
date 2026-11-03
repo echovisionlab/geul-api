@@ -126,7 +126,7 @@ func TestDocumentMutationSyncCoversConflictCarriers(t *testing.T) {
 					if code == core.ConflictTargetRevision {
 						reason = "target_revision_changed"
 					}
-					assertDocumentSync(t, result, reason, "document-current", &target, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "en", "m": "outline"})
+					assertDocumentSync(t, result, reason, "document-current", &target, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "en", "m": "blocks", "b": []any{"paragraph-a"}, "n": float64(1)})
 					request := application.applyRequest
 					if tool == ToolDocumentValidate {
 						request = application.validateRequest
@@ -150,7 +150,7 @@ func TestFocusedDocumentMutationUsesSyncContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDocumentSync(t, result, "document_revision_changed", "current", nil, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "ko", "m": "outline"})
+	assertDocumentSync(t, result, "document_revision_changed", "current", nil, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "ko", "m": "blocks", "b": []any{"paragraph-a"}, "n": float64(1)})
 	if application.applyCalls != 1 || application.applyRequest.ExpectedDocumentRevision != "stale" {
 		t.Fatal("focused mutation retried or replaced CAS")
 	}

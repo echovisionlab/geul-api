@@ -387,7 +387,7 @@ func TestSelectNodesTable(t *testing.T) {
 		{name: "blocks with invalid ID", request: ReadRequest{Mode: ReadBlocks, Blocks: []BlockID{"1"}},
 			wantErr: `block ID "1" contains a positional index`},
 		{name: "blocks with missing ID", request: ReadRequest{Mode: ReadBlocks, Blocks: []BlockID{"root", "ghost"}},
-			wantErr: "one or more selected blocks do not exist"},
+			wantErr: "one or more selected blocks do not exist; reread the outline for current block handles"},
 		{name: "fields across block, file and relation values", request: ReadRequest{Mode: ReadFields, Fields: []FieldSelection{
 			{Block: "root", Field: "title"},
 			{Block: "root", Field: "slug"},

@@ -9,7 +9,7 @@ const documentFileAddInputJSONSchema = `{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Current source locale whose document structure is being edited."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision when one was returned."},
     "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle. Required for a File Block inside a Page rich-text section."},
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert the File Block."},
@@ -25,7 +25,7 @@ const documentFileReplaceInputJSONSchema = `{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256},
     "block_id":` + uuidJSONSchema + `,
     "file_id":` + uuidJSONSchema + `
@@ -39,7 +39,7 @@ const documentFileRemoveInputJSONSchema = `{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current document revision returned by document_open or document_read."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256},
     "block_id":` + uuidJSONSchema + `
   }
