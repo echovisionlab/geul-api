@@ -21,16 +21,16 @@ import (
 )
 
 type DownloadAccess struct {
-	db       *gorm.DB
-	spiceDB  *auth.SpiceDBClient
-	segments mediaassetpostgres.SegmentConfigLoader
+	db          *gorm.DB
+	spiceDB     *auth.SpiceDBClient
+	criteriaSet mediaassetpostgres.CriteriaConfigLoader
 }
 
-func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, segments mediaassetpostgres.SegmentConfigLoader) *DownloadAccess {
-	if segments == nil {
-		panic("release download access: segment config loader is required")
+func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, criteriaSet mediaassetpostgres.CriteriaConfigLoader) *DownloadAccess {
+	if criteriaSet == nil {
+		panic("release download access: criteria config loader is required")
 	}
-	return &DownloadAccess{db: db, spiceDB: spiceDB, segments: segments}
+	return &DownloadAccess{db: db, spiceDB: spiceDB, criteriaSet: criteriaSet}
 }
 
 func (a *DownloadAccess) Resolve(
@@ -78,7 +78,7 @@ func (a *DownloadAccess) Resolve(
 				delete(sources, trackID)
 			}
 		}
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), a.spiceDB, sources, user)
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.NewDownloadStore(tx, a.criteriaSet), a.spiceDB, sources, user)
 		if evaluateErr != nil {
 			return evaluateErr
 		}
@@ -86,16 +86,16 @@ func (a *DownloadAccess) Resolve(
 		if user == nil || !user.Authenticated || user.MemberID == "" {
 			restricted := make(map[string]mediaasset.FileDownloadSource)
 			for id, source := range sources {
-				switch source.Audience {
-				case mediaasset.FileDownloadAudienceAuthenticated:
+				switch source.Access {
+				case mediaasset.FileDownloadAccessAuthenticated:
 					signIn[id] = true
-				case mediaasset.FileDownloadAudienceRestricted:
+				case mediaasset.FileDownloadAccessRestricted:
 					restricted[id] = source
-				case mediaasset.FileDownloadAudienceDisabled, mediaasset.FileDownloadAudiencePublic:
+				case mediaasset.FileDownloadAccessDisabled, mediaasset.FileDownloadAccessPublic:
 					// Signing in changes nothing: the download is off, or already open.
 				}
 			}
-			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), restricted)
+			presence, presenceErr := mediaasset.RestrictedFileDownloadCriteriaPresence(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), restricted)
 			if presenceErr != nil {
 				return presenceErr
 			}
@@ -107,7 +107,7 @@ func (a *DownloadAccess) Resolve(
 		for id, source := range sources {
 			access[id] = trackDownloadAccess(source, user, allowed[id], signIn[id])
 		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), sources)
+		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.criteriaSet), sources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
@@ -127,7 +127,7 @@ func (a *DownloadAccess) Resolve(
 	}
 
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), evaluatedSources); lockErr != nil {
+		if lockErr := mediaasset.LockFileDownloadPolicyCriteriaSet(ctx, mediaassetpostgres.NewDownloadStore(tx, nil), evaluatedSources); lockErr != nil {
 			return lockErr
 		}
 		var releaseRow struct {
@@ -167,7 +167,7 @@ func (a *DownloadAccess) Resolve(
 		if loadErr != nil {
 			return loadErr
 		}
-		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.segments), currentSources)
+		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.NewDownloadStore(tx, a.criteriaSet), currentSources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
@@ -318,7 +318,7 @@ func trackDownloadAccess(source mediaasset.FileDownloadSource, user *auth.UserIn
 	if allowed {
 		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionDownload}
 	}
-	if (source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted) &&
+	if (source.Access == mediaasset.FileDownloadAccessAuthenticated || source.Access == mediaasset.FileDownloadAccessRestricted) &&
 		(user == nil || !user.Authenticated || user.MemberID == "") && signIn {
 		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionSignIn}
 	}
@@ -342,5 +342,5 @@ func trackDownloadDecisionDependsOnActiveViewer(
 	access *releasepublic.DownloadAccess,
 ) bool {
 	return downloadAction(access) == releasepublic.DownloadActionDownload &&
-		(source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted)
+		(source.Access == mediaasset.FileDownloadAccessAuthenticated || source.Access == mediaasset.FileDownloadAccessRestricted)
 }

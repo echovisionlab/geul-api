@@ -143,7 +143,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"menu_list",
 			"menu_locations_get",
 			"Use work_settings_get before updating Work metadata or clients",
-			"observed_policy.audience_segment_ids",
+			"observed_policy.member_criteria_ids",
 			"policy_create creates an empty draft without email",
 			"policy_schedule and policy_activate_now start notice email delivery",
 			"policy_delete allows every lifecycle and retains delivery history",

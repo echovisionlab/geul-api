@@ -97,7 +97,7 @@ func (s *Service) CreateMemberTag(ctx context.Context, command CreateMemberTagCo
 	})
 }
 
-// DeleteMemberTagCommand deletes a Member tag that no audience segment uses.
+// DeleteMemberTagCommand deletes a Member tag that no Member criteria uses.
 type DeleteMemberTagCommand struct {
 	ID string
 }
@@ -114,12 +114,12 @@ func (s *Service) DeleteMemberTag(ctx context.Context, command DeleteMemberTagCo
 			if err != nil {
 				return tag, err
 			}
-			referenced, err := store.TagReferencedBySegment(ctx, tag.ID)
+			referenced, err := store.TagReferencedByCriteria(ctx, tag.ID)
 			if err != nil {
 				return tag, err
 			}
 			if referenced {
-				return tag, domainerr.Precondition("member tag is referenced by an audience segment")
+				return tag, domainerr.Precondition("member tag is referenced by a Member criteria")
 			}
 			return tag, store.DeleteTag(ctx, command.ID)
 		},

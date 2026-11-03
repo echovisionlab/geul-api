@@ -30,7 +30,7 @@ type Track struct {
 	Metadata            TrackMetadata `gorm:"column:metadata;type:jsonb;default:'{}'::jsonb"`
 	CreatedAt           time.Time     `gorm:"column:created_at;not null;default:now()"`
 	AudioOriginalFileID *string       `gorm:"column:audio_original_file_id;type:uuid"`
-	DownloadAudience    string        `gorm:"column:download_audience;type:text;not null;default:disabled"`
+	DownloadAccess      string        `gorm:"column:download_access;type:text;not null;default:disabled"`
 }
 
 // TableName returns the table name for GORM

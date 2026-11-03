@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	CampaignTargetModeAll     = "all"
-	CampaignTargetModeSegment = "segment"
+	CampaignTargetModeAll            = "all"
+	CampaignTargetModeMemberCriteria = "member_criteria"
 )
 
 type CampaignStatus string
@@ -30,7 +30,7 @@ type Campaign struct {
 	ContentHTML       *string
 	Status            CampaignStatus
 	TargetMode        string
-	SegmentID         *string
+	CriteriaID        *string
 	LayoutID          *string
 	ScheduledAt       *time.Time
 	SentAt            *time.Time
@@ -57,7 +57,7 @@ type DeliveryRun struct {
 	DefinitionSealed        bool
 	SourceTemplateID        *string
 	SourceLayoutID          *string
-	AudienceSegmentID       *string
+	MemberCriteriaID        *string
 	SourceCampaignUpdatedAt *time.Time
 	SourceTemplateUpdatedAt *time.Time
 	SourceLayoutUpdatedAt   *time.Time
@@ -115,8 +115,8 @@ type CollaborationPrincipal struct{ SessionID string }
 type TargetMode int32
 
 const (
-	TargetModeAll     TargetMode = 1
-	TargetModeSegment TargetMode = 2
+	TargetModeAll            TargetMode = 1
+	TargetModeMemberCriteria TargetMode = 2
 )
 
 type RecipientScope int32

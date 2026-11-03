@@ -45,53 +45,53 @@ type accountRecipientCandidateOptions struct {
 	Filters                       *bulkEmailRecipientFilters
 }
 
-func recipientSelectionFromAudienceSegment(
-	segment *model.AudienceSegment,
+func recipientSelectionFromMemberCriteria(
+	criteria *model.MemberCriteria,
 ) (*bulkEmailRecipientSelection, error) {
-	if segment == nil {
+	if criteria == nil {
 		return &bulkEmailRecipientSelection{
 			Mode: campaigndomain.CampaignDeliveryTargetModeAllUsers,
 		}, nil
 	}
 
-	switch model.AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
-	case model.AudienceSegmentAllMembers:
+	switch model.MemberCriteriaKind(strings.TrimSpace(string(criteria.Kind))) {
+	case model.MemberCriteriaKindAllMembers:
 		return &bulkEmailRecipientSelection{
 			Mode: campaigndomain.CampaignDeliveryTargetModeAllUsers,
 		}, nil
-	case model.AudienceSegmentMemberTags:
+	case model.MemberCriteriaKindMemberTags:
 		return &bulkEmailRecipientSelection{
 			Mode:         campaigndomain.CampaignDeliveryTargetModeUserTags,
-			MemberTagIDs: segment.Config.MemberTagIDs,
+			MemberTagIDs: criteria.Config.MemberTagIDs,
 		}, nil
-	case model.AudienceSegmentMembersByFilter:
+	case model.MemberCriteriaKindFilter:
 		return &bulkEmailRecipientSelection{
 			Mode: campaigndomain.CampaignDeliveryTargetModeUsersByFilter,
 			Filters: &bulkEmailRecipientFilters{
-				AccountRoles:      segment.Config.AccountRoles,
-				CreatedAfter:      segment.Config.CreatedAfter,
-				CreatedBefore:     segment.Config.CreatedBefore,
-				ExcludedMemberIDs: segment.Config.ExcludeMemberIDs,
+				AccountRoles:      criteria.Config.AccountRoles,
+				CreatedAfter:      criteria.Config.CreatedAfter,
+				CreatedBefore:     criteria.Config.CreatedBefore,
+				ExcludedMemberIDs: criteria.Config.ExcludeMemberIDs,
 			},
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown segment type: %s", segment.SegmentType)
+		return nil, fmt.Errorf("unknown criteria type: %s", criteria.Kind)
 	}
 }
 
-// CountBulkEmailRecipientsForAudienceSegment counts the current audience
-// segment through the delivery-owned recipient selection query.
-func CountBulkEmailRecipientsForAudienceSegment(ctx context.Context, db *gorm.DB, spiceDB RecipientAuthorizer, segment *model.AudienceSegment) (int64, error) {
-	if segment != nil {
-		switch segment.SegmentType {
-		case model.AudienceSegmentMemberTags:
-			if len(segment.Config.MemberTagIDs) == 0 {
+// CountBulkEmailRecipientsForMemberCriteria counts the current criteria
+// criteria through the delivery-owned recipient selection query.
+func CountBulkEmailRecipientsForMemberCriteria(ctx context.Context, db *gorm.DB, spiceDB RecipientAuthorizer, criteria *model.MemberCriteria) (int64, error) {
+	if criteria != nil {
+		switch criteria.Kind {
+		case model.MemberCriteriaKindMemberTags:
+			if len(criteria.Config.MemberTagIDs) == 0 {
 				return 0, nil
 			}
 		}
 	}
 
-	selection, err := recipientSelectionFromAudienceSegment(segment)
+	selection, err := recipientSelectionFromMemberCriteria(criteria)
 	if err != nil {
 		return 0, err
 	}
@@ -289,7 +289,7 @@ func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB 
 	}
 	lookups, err := normalizeBulkEmailSubjectLookups(selection.Filters.AccountRoles)
 	if err != nil {
-		// The roles come from a stored audience segment or delivery target,
+		// The roles come from a stored Member criteria or delivery target,
 		// which validated them on write, not from this request.
 		return err
 	}

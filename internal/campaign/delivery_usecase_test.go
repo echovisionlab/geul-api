@@ -200,7 +200,7 @@ func (p *bulkPublisher) PublishSendBulkEmail(_ context.Context, j *managev1.Send
 	return p.err
 }
 
-func TestDispatcherSealsZeroAudienceTerminalAndQueuesDueAudience(t *testing.T) {
+func TestDispatcherSealsZeroCriteriaTerminalAndQueuesDueCriteria(t *testing.T) {
 	for _, kind := range []string{"campaign empty", "campaign due", "legal empty", "future", "enqueue rollback"} {
 		t.Run(kind, func(t *testing.T) {
 			h := newHarness(t)

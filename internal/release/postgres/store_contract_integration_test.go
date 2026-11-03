@@ -80,13 +80,13 @@ func TestPostgresStoreKeepsTheReleaseStoreContractIntegration(t *testing.T) {
 				fileID := seedFile(t)
 				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 					segmentID := uuid.NewString()
-					if err := tx.Exec(`UPDATE track SET audio_original_file_id = ?, download_audience = 'restricted' WHERE id = ?`, fileID, trackID).Error; err != nil {
+					if err := tx.Exec(`UPDATE track SET audio_original_file_id = ?, download_access = 'restricted' WHERE id = ?`, fileID, trackID).Error; err != nil {
 						return err
 					}
-					if err := tx.Exec(`INSERT INTO audience_segment (id, name, segment_type) VALUES (?, ?, 'SEGMENT_TYPE_ALL_MEMBERS')`, segmentID, "Segment "+segmentID[:8]).Error; err != nil {
+					if err := tx.Exec(`INSERT INTO member_criteria (id, name, kind) VALUES (?, ?, 'MEMBER_CRITERIA_KIND_ALL_MEMBERS')`, segmentID, "Segment "+segmentID[:8]).Error; err != nil {
 						return err
 					}
-					return tx.Exec(`INSERT INTO track_download_audience_segment (track_id, audience_segment_id) VALUES (?, ?)`, trackID, segmentID).Error
+					return tx.Exec(`INSERT INTO track_download_member_criteria (track_id, member_criteria_id) VALUES (?, ?)`, trackID, segmentID).Error
 				}))
 			},
 			SeedUploadSession: func(t *testing.T, trackID string) {

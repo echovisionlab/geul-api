@@ -162,7 +162,7 @@ func seedFileDeliveryPostAuthority(
 	require.NoError(t, err)
 }
 
-func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {
+func seedAccessPostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {
 	t.Helper()
 	documentID := uuid.NewString()
 	blockID := uuid.NewString()

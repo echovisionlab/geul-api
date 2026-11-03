@@ -42,20 +42,20 @@ func TestUpdateTrackResetsTheDownloadOfReplacedAudio(t *testing.T) {
 	value := h.seedRelease(t, "Album")
 	original := uuid.NewString()
 	track := h.seedTrack(t, value.ID, 1, func(track *release.Track) {
-		track.AudioOriginalFileID, track.DownloadAudience = &original, "restricted"
+		track.AudioOriginalFileID, track.DownloadAccess = &original, "restricted"
 	})
-	h.store.PutTrackSegments(track.ID, uuid.NewString())
+	h.store.PutTrackCriteriaSet(track.ID, uuid.NewString())
 
 	renamed, err := h.service.UpdateTrack(h.ctx(t), release.UpdateTrackCommand{ID: track.ID, Title: text("Renamed")})
 	require.NoError(t, err)
-	require.Equal(t, "restricted", renamed.DownloadAudience, "a metadata edit keeps the download policy")
-	require.NotEmpty(t, h.store.TrackSegments(track.ID))
+	require.Equal(t, "restricted", renamed.DownloadAccess, "a metadata edit keeps the download policy")
+	require.NotEmpty(t, h.store.TrackCriteriaSet(track.ID))
 
 	cleared, err := h.service.UpdateTrack(h.ctx(t), release.UpdateTrackCommand{ID: track.ID, ClearAudioOriginal: true})
 	require.NoError(t, err)
 	require.Nil(t, cleared.AudioOriginalFileID)
-	require.Equal(t, release.DownloadAudienceDisabled, cleared.DownloadAudience)
-	require.Empty(t, h.store.TrackSegments(track.ID))
+	require.Equal(t, release.DownloadAccessDisabled, cleared.DownloadAccess)
+	require.Empty(t, h.store.TrackCriteriaSet(track.ID))
 	// The rename, then the clear: its reset download policy is a metadata
 	// change, and the removed original is a record of its own.
 	records := h.audit.Records()
@@ -256,7 +256,7 @@ func TestAttachTrackOriginalAudio(t *testing.T) {
 	newTrack := func(t *testing.T) (*releasetest.Store, release.Track, string) {
 		store := releasetest.NewStore()
 		original := uuid.NewString()
-		track := release.Track{ID: uuid.NewString(), ReleaseID: uuid.NewString(), TrackNumber: 1, AudioOriginalFileID: &original, DownloadAudience: "public"}
+		track := release.Track{ID: uuid.NewString(), ReleaseID: uuid.NewString(), TrackNumber: 1, AudioOriginalFileID: &original, DownloadAccess: "public"}
 		store.PutTrack(track)
 		return store, track, original
 	}
@@ -276,7 +276,7 @@ func TestAttachTrackOriginalAudio(t *testing.T) {
 		stored, _ := store.Track(track.ID)
 		require.Equal(t, string(release.TrackProcessingCompleted), *stored.ProcessingStatus)
 		require.Equal(t, duration, *stored.DurationSeconds)
-		require.Equal(t, release.DownloadAudienceDisabled, stored.DownloadAudience)
+		require.Equal(t, release.DownloadAccessDisabled, stored.DownloadAccess)
 		records := recorder.Records()
 		require.Len(t, records, 1)
 		require.Equal(t, sharedtelemetry.ActorKindSystem, records[0].Kind)
@@ -284,7 +284,7 @@ func TestAttachTrackOriginalAudio(t *testing.T) {
 	})
 	t.Run("the same file keeps the download policy", func(t *testing.T) {
 		store, track, original := newTrack(t)
-		store.PutTrackSegments(track.ID, uuid.NewString())
+		store.PutTrackCriteriaSet(track.ID, uuid.NewString())
 		recorder := &audittest.Recorder{}
 		attachment, err := release.AttachTrackOriginalAudio(t.Context(), joined(store, recorder), release.TrackOriginalAudioInput{
 			TrackID: track.ID, VerifiedFileID: original,
@@ -292,8 +292,8 @@ func TestAttachTrackOriginalAudio(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, attachment.AlreadyApplied)
 		stored, _ := store.Track(track.ID)
-		require.Equal(t, "public", stored.DownloadAudience)
-		require.NotEmpty(t, store.TrackSegments(track.ID))
+		require.Equal(t, "public", stored.DownloadAccess)
+		require.NotEmpty(t, store.TrackCriteriaSet(track.ID))
 		require.Empty(t, recorder.Records())
 	})
 	t.Run("rejects malformed identities and a missing track", func(t *testing.T) {

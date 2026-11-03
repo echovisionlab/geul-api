@@ -33,11 +33,11 @@ type FileRecord struct {
 type Relation struct {
 	BlockID, ReferencePath, FileID, Kind string
 	Owner                                public.OwnerWitness
-	Audience                             mediaasset.FileDownloadAudience
+	Access                               mediaasset.FileDownloadAccess
 }
 type Track struct {
 	ID, ReleaseID, Status, FileID string
-	Audience                      mediaasset.FileDownloadAudience
+	Access                        mediaasset.FileDownloadAccess
 }
 
 // Store contains facts returned by the public File ports. Its queries never
@@ -211,7 +211,7 @@ func (s *Store) contentSource(r Relation) (mediaasset.FileDownloadSource, bool) 
 	if !ok || f.PendingDeletion {
 		return mediaasset.FileDownloadSource{}, false
 	}
-	return mediaasset.FileDownloadSource{PolicyKey: mediaasset.ContentBlockDownloadPolicyKey(r.BlockID, r.ReferencePath), PolicyKind: mediaasset.FileDownloadPolicyContentBlock, FileID: r.FileID, BlockID: r.BlockID, ReferencePath: r.ReferencePath, Extension: f.Extension, MimeType: f.MimeType, FileName: f.FileName, FileSize: f.FileSize, Audience: r.Audience}, r.Kind == "file"
+	return mediaasset.FileDownloadSource{PolicyKey: mediaasset.ContentBlockDownloadPolicyKey(r.BlockID, r.ReferencePath), PolicyKind: mediaasset.FileDownloadPolicyContentBlock, FileID: r.FileID, BlockID: r.BlockID, ReferencePath: r.ReferencePath, Extension: f.Extension, MimeType: f.MimeType, FileName: f.FileName, FileSize: f.FileSize, Access: r.Access}, r.Kind == "file"
 }
 func (s *Store) ContentSources(_ context.Context, ids []string) ([]mediaasset.FileDownloadSource, error) {
 	if s.Fail != nil {
@@ -247,7 +247,7 @@ func (s *Store) ResolveTrackSource(_ context.Context, release, id string, lock b
 	if !ok || file.PendingDeletion {
 		return mediaasset.FileDownloadSource{}, owner.Status, false, nil
 	}
-	return mediaasset.FileDownloadSource{PolicyKey: id, PolicyKind: mediaasset.FileDownloadPolicyTrack, TrackID: id, FileID: track.FileID, Extension: file.Extension, MimeType: file.MimeType, FileName: file.FileName, FileSize: file.FileSize, Audience: track.Audience}, owner.Status, true, nil
+	return mediaasset.FileDownloadSource{PolicyKey: id, PolicyKind: mediaasset.FileDownloadPolicyTrack, TrackID: id, FileID: track.FileID, Extension: file.Extension, MimeType: file.MimeType, FileName: file.FileName, FileSize: file.FileSize, Access: track.Access}, owner.Status, true, nil
 }
 func (s *Store) PageAccess(_ context.Context, _ authz.AuthorizationDecisionChecker, id string) (pageaccess.Reason, error) {
 	return s.PageReasons[id], s.Fail
@@ -307,9 +307,9 @@ func (s *Store) ContentRelations(_ context.Context, selectors []mediaasset.Conte
 	}
 	return result, nil
 }
-func (s *Store) LockSegments(ctx context.Context, ids []string) error {
-	s.Locks = append(s.Locks, "segments")
-	return s.DownloadStore.LockSegments(ctx, ids)
+func (s *Store) LockCriteriaSet(ctx context.Context, ids []string) error {
+	s.Locks = append(s.Locks, "criteria")
+	return s.DownloadStore.LockCriteriaSet(ctx, ids)
 }
 func (s *Store) LockViewer(ctx context.Context, user *auth.UserInfo, authenticated bool) (bool, error) {
 	s.Locks = append(s.Locks, "viewer")

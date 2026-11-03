@@ -75,7 +75,7 @@ type state struct {
 	references      map[release.ReferenceRelation]map[string][]string
 	tracks          map[string]release.Track
 	trackCredits    map[string][]release.TrackCredit
-	segments        map[string][]string
+	criteriaSet     map[string][]string
 	uploads         map[string]bool
 	documents       map[uuid.UUID]Document
 	files           map[string]string
@@ -106,7 +106,7 @@ func (s state) clone() state {
 	clone.references = mutationtest.ClonePersisted(s.references)
 	clone.tracks = mutationtest.ClonePersisted(s.tracks)
 	clone.trackCredits = cloneLists(s.trackCredits)
-	clone.segments = cloneLists(s.segments)
+	clone.criteriaSet = cloneLists(s.criteriaSet)
 	clone.uploads = mutationtest.ClonePersisted(s.uploads)
 	clone.documents = mutationtest.ClonePersisted(s.documents)
 	clone.files = mutationtest.ClonePersisted(s.files)
@@ -166,7 +166,7 @@ func NewStore() *Store {
 			labels: map[string][]release.ReleaseLabel{}, formats: map[string][]release.ReleaseFormat{},
 			credits: map[string][]creditRow{}, references: map[release.ReferenceRelation]map[string][]string{},
 			tracks: map[string]release.Track{}, trackCredits: map[string][]release.TrackCredit{},
-			segments: map[string][]string{}, uploads: map[string]bool{}, documents: map[uuid.UUID]Document{},
+			criteriaSet: map[string][]string{}, uploads: map[string]bool{}, documents: map[uuid.UUID]Document{},
 			files: map[string]string{}, artwork: map[string]string{}, bindings: map[string]string{},
 			shareLinks: map[string]int{}, defaultLocale: "en",
 		},
@@ -202,7 +202,7 @@ func (s *Store) Savepoint() mutationtest.Checkpoint {
 			"references":    saved.references,
 			"tracks":        saved.tracks,
 			"trackCredits":  saved.trackCredits,
-			"segments":      saved.segments,
+			"criteria":   saved.criteriaSet,
 			"uploads":       saved.uploads,
 			"documents":     saved.documents,
 			"files":         saved.files,
@@ -316,12 +316,12 @@ func (s *Store) AddTrackCredit(credit release.TrackCredit) {
 	s.trackCredits[credit.TrackID] = append(s.trackCredits[credit.TrackID], credit)
 }
 
-// PutTrackSegments stores the audience segments of a Track's download
+// PutTrackCriteriaSet stores the Member criteria of a Track's download
 // policy.
-func (s *Store) PutTrackSegments(trackID string, segmentIDs ...string) {
+func (s *Store) PutTrackCriteriaSet(trackID string, criteriaIDs ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.segments[trackID] = slices.Clone(segmentIDs)
+	s.criteriaSet[trackID] = slices.Clone(criteriaIDs)
 }
 
 // SetUploadSession marks whether a Track has an audio upload session.
@@ -415,11 +415,11 @@ func (s *Store) Track(trackID string) (release.Track, bool) {
 	return track, ok
 }
 
-// TrackSegments returns the audience segments of a Track's download policy.
-func (s *Store) TrackSegments(trackID string) []string {
+// TrackCriteriaSet returns the Member criteria of a Track's download policy.
+func (s *Store) TrackCriteriaSet(trackID string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.segments[trackID])
+	return slices.Clone(s.criteriaSet[trackID])
 }
 
 // StoredTrackCredits returns the stored Track credits in order.
@@ -665,7 +665,7 @@ func (s *Store) DeleteRelease(_ context.Context, releaseID string) error {
 		if track.ReleaseID == releaseID {
 			delete(s.tracks, id)
 			delete(s.trackCredits, id)
-			delete(s.segments, id)
+			delete(s.criteriaSet, id)
 		}
 	}
 	return nil
@@ -1253,8 +1253,8 @@ func (s *Store) LockTrackIDs(_ context.Context, releaseID string) ([]string, err
 	return ids, nil
 }
 
-func (s *Store) LockTrackDownloadSegments(context.Context, string) error {
-	return s.fail("LockTrackDownloadSegments")
+func (s *Store) LockTrackDownloadCriteriaSet(context.Context, string) error {
+	return s.fail("LockTrackDownloadCriteriaSet")
 }
 
 func (s *Store) NextTrackNumber(_ context.Context, releaseID string) (int, error) {
@@ -1283,8 +1283,8 @@ func (s *Store) InsertTrack(_ context.Context, track *release.Track) error {
 	if track.ID == "" {
 		track.ID = uuid.NewString()
 	}
-	if track.DownloadAudience == "" {
-		track.DownloadAudience = release.DownloadAudienceDisabled
+	if track.DownloadAccess == "" {
+		track.DownloadAccess = release.DownloadAccessDisabled
 	}
 	if track.Metadata == nil {
 		track.Metadata = map[string]any{}
@@ -1308,10 +1308,10 @@ func (s *Store) DisableTrackDownload(_ context.Context, trackID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if track, ok := s.tracks[trackID]; ok {
-		track.DownloadAudience = release.DownloadAudienceDisabled
+		track.DownloadAccess = release.DownloadAccessDisabled
 		s.tracks[trackID] = track
 	}
-	delete(s.segments, trackID)
+	delete(s.criteriaSet, trackID)
 	return nil
 }
 
@@ -1327,13 +1327,13 @@ func (s *Store) AttachTrackAudio(_ context.Context, trackID string, audio releas
 	}
 	track.AudioOriginalFileID = new(audio.FileID)
 	track.ProcessingStatus = new(string(release.TrackProcessingProcessing))
-	track.DownloadAudience = release.DownloadAudienceDisabled
+	track.DownloadAccess = release.DownloadAccessDisabled
 	if audio.Completed {
 		track.ProcessingStatus = new(string(release.TrackProcessingCompleted))
 		track.DurationSeconds = audio.DurationSeconds
 	}
 	s.tracks[trackID] = track
-	delete(s.segments, trackID)
+	delete(s.criteriaSet, trackID)
 	return nil
 }
 
@@ -1348,7 +1348,7 @@ func (s *Store) DeleteTrack(_ context.Context, trackID string) error {
 	}
 	delete(s.tracks, trackID)
 	delete(s.trackCredits, trackID)
-	delete(s.segments, trackID)
+	delete(s.criteriaSet, trackID)
 	return nil
 }
 

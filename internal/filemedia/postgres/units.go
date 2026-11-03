@@ -16,16 +16,16 @@ type DeletionQueue interface {
 	EnqueueFileDeletion(context.Context, eventpkg.DBTX, domain.DeletionTarget) error
 }
 type Ports struct {
-	AttachmentReferences AttachmentReferences
-	UploadWorks          UploadWorks
-	MeshJobs             MeshJobs
-	IngestTranscodes     IngestTranscodes
-	UploadTracks         UploadTracks
-	DeletionQueue        DeletionQueue
-	PolicyOwners         PolicyOwners
-	PolicyAudiences      PolicyAudiences
-	PolicySegments       PolicySegments
-	PolicySignals        PolicySignals
+	AttachmentReferences    AttachmentReferences
+	UploadWorks             UploadWorks
+	MeshJobs                MeshJobs
+	IngestTranscodes        IngestTranscodes
+	UploadTracks            UploadTracks
+	DeletionQueue           DeletionQueue
+	PolicyOwners            PolicyOwners
+	PolicyCriteriaReader    PolicyCriteriaReader
+	PolicyCriteriaRelations PolicyCriteriaRelations
+	PolicySignals           PolicySignals
 }
 type store struct {
 	tx    *gorm.DB

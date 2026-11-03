@@ -740,9 +740,9 @@ func TestManagePostCollaboratorGetsInlineWithoutOriginalDownloadIntegration(t *t
 	require.NoError(t, err)
 	require.NotEmpty(t, response.Msg.GetDelivery().GetInline().GetUrl())
 	require.Nil(t, response.Msg.GetDelivery().GetDownload())
-	var audience string
-	require.NoError(t, db.Table("content_block_attachment").Where("file_id = ?", fileID).Pluck("download_audience", &audience).Error)
-	require.Equal(t, "disabled", audience)
+	var access string
+	require.NoError(t, db.Table("content_block_attachment").Where("file_id = ?", fileID).Pluck("download_access", &access).Error)
+	require.Equal(t, "disabled", access)
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterDetachCommitIntegration(t *testing.T) {
@@ -1256,7 +1256,7 @@ func seedManagePostCollaboratorUsageForFile(
 		VALUES (?::uuid, ?::uuid, 'content', 0, 'file')
 	`, blockID, documentID).Error)
 	require.NoError(t, db.Exec(`
-		INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience)
+		INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access)
 		VALUES (?::uuid, 'file', 'active', ?::uuid, 'disabled')
 	`, blockID, fileID).Error)
 	seedFileDeliveryContentPolicy(t, spiceDB, "post", postID)
@@ -1289,7 +1289,7 @@ func seedManageContentOwnerUsage(
 		VALUES (?::uuid, ?::uuid, 'content', 0, 'file')
 	`, blockID, documentID).Error)
 	require.NoError(t, db.Exec(`
-		INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience)
+		INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access)
 		VALUES (?::uuid, 'file', 'active', ?::uuid, 'disabled')
 	`, blockID, fileID).Error)
 	return resourceID, documentID, blockID

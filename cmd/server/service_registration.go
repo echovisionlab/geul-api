@@ -190,7 +190,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 }
 
 func (r serviceRegistration) registerSiteAndAdministration() (*sitesettings.Service, error) {
-	if err := r.registerAudience(); err != nil {
+	if err := r.registerMemberCriteria(); err != nil {
 		return nil, err
 	}
 

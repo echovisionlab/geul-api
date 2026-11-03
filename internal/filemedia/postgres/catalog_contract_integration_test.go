@@ -55,8 +55,8 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				require.NoError(t, json.Unmarshal(row.Payload, &result[i]))
 			}
 			return result
-		}, SeedScoped: fixture.seedScoped, SeedSegment: func(t *testing.T, segment domain.PolicySegment) {
-			row := model.AudienceSegment{ID: segment.ID, Name: segment.Name, Description: segment.Description, SegmentType: model.AudienceSegmentType(segment.Kind), ArchivedAt: segment.ArchivedAt}
+		}, SeedScoped: fixture.seedScoped, SeedCriteria: func(t *testing.T, criteria domain.PolicyCriteria) {
+			row := model.MemberCriteria{ID: criteria.ID, Name: criteria.Name, Description: criteria.Description, Kind: model.MemberCriteriaKind(criteria.Kind), ArchivedAt: criteria.ArchivedAt}
 			require.NoError(t, db.Create(&row).Error)
 		}, SeedPolicy: fixture.seedPolicy, Audit: deletionContractOutputs{}, SeedAssetBinding: func(t *testing.T, asset, id string) {
 			require.NoError(t, db.Create(&model.PublicAssetBinding{AssetID: asset, SourceFileID: &id, OwnerType: "post", OwnerID: uuid.NewString(), BindingKey: "featured_image"}).Error)
@@ -88,7 +88,7 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				expires = *m.ExpiresAt
 			}
 			return filemediatest.MeshRecord{Status: m.Status, CancelledAt: m.CancelledAt, ExpiresAt: expires, UpdatedAt: updated}, true
-		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: meshContractOutputs{}, IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}, PolicySegments: filemediapolicy.Segments{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
+		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{AttachmentReferences: filereferences.Attachments{}, UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: meshContractOutputs{}, IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyCriteriaReader: filemediapolicy.CriteriaReader{}, PolicyCriteriaRelations: filemediapolicy.CriteriaRelations{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
 			r := mediaassetpostgres.AssetRow(a)
 			require.NoError(t, db.Create(&r).Error)
 		}, SeedGeneration: func(t *testing.T, g mediaasset.Generation) {
@@ -142,12 +142,12 @@ func (f catalogContractFixture) seedPolicy(t *testing.T, r domain.PolicyRelation
 	if r.Selector.OwnerKind == "track" {
 		require.NoError(t, f.db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'compact')`, doc).Error)
 		require.NoError(t, f.db.Exec(`INSERT INTO release(id,content_document_id,type) VALUES (?::uuid,?::uuid,'RELEASE_TYPE_ALBUM')`, r.ResourceID, doc).Error)
-		require.NoError(t, f.db.Exec(`INSERT INTO track(id,release_id,track_number,title,audio_original_file_id,download_audience) VALUES (?::uuid,?::uuid,1,'Track',?::uuid,?)`, r.Selector.EntityID, r.ResourceID, r.FileID, string(r.Audience)).Error)
+		require.NoError(t, f.db.Exec(`INSERT INTO track(id,release_id,track_number,title,audio_original_file_id,download_access) VALUES (?::uuid,?::uuid,1,'Track',?::uuid,?)`, r.Selector.EntityID, r.ResourceID, r.FileID, string(r.Access)).Error)
 	} else {
 		require.NoError(t, f.db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'post')`, doc).Error)
 		require.NoError(t, f.db.Exec(`INSERT INTO post(id,content_document_id) VALUES (?::uuid,?::uuid)`, r.ResourceID, doc).Error)
 		require.NoError(t, f.db.Exec(`INSERT INTO content_block(id,document_id,container_slot,position,kind) VALUES (?::uuid,?::uuid,'body',0,'file')`, *r.Selector.BlockID, doc).Error)
-		require.NoError(t, f.db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_audience) VALUES (?::uuid,?,'active',?::uuid,?)`, *r.Selector.BlockID, *r.Selector.ReferencePath, r.FileID, string(r.Audience)).Error)
+		require.NoError(t, f.db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_access) VALUES (?::uuid,?,'active',?::uuid,?)`, *r.Selector.BlockID, *r.Selector.ReferencePath, r.FileID, string(r.Access)).Error)
 	}
 	require.Empty(t, ids)
 }

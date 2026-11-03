@@ -114,35 +114,35 @@ func deriveCampaignDeliveryTarget(
 	if campaign.TargetMode == CampaignTargetModeAll {
 		return target, nil
 	}
-	segmentID := strings.TrimSpace(ptrStringValue(campaign.SegmentID))
+	criteriaID := strings.TrimSpace(ptrStringValue(campaign.CriteriaID))
 
-	segment, err := tx.LockAudienceTarget(ctx, segmentID)
+	criteria, err := tx.LockCriteriaTarget(ctx, criteriaID)
 	if err != nil {
-		if errors.Is(err, ErrAudienceNotFound) {
-			return CampaignDeliveryTarget{}, domainerr.Precondition(msgCampaignSegmentNotFound)
+		if errors.Is(err, ErrCriteriaNotFound) {
+			return CampaignDeliveryTarget{}, domainerr.Precondition(msgCampaignCriteriaNotFound)
 		}
 		return CampaignDeliveryTarget{}, err
 	}
-	if segment.Archived {
-		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is archived")
+	if criteria.Archived {
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign Member criteria is archived")
 	}
-	if !segment.Valid {
-		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is invalid")
+	if !criteria.Valid {
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign Member criteria is invalid")
 	}
-	target.CreatedAfter = segment.CreatedAfter
-	target.CreatedBefore = segment.CreatedBefore
-	target.MemberTagIDs = append([]string(nil), segment.MemberTagIDs...)
-	target.AccountRoles = append([]string(nil), segment.AccountRoles...)
-	target.ExcludedMemberIDs = append([]string(nil), segment.ExcludedMemberIDs...)
-	switch AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
-	case AudienceSegmentAllMembers:
+	target.CreatedAfter = criteria.CreatedAfter
+	target.CreatedBefore = criteria.CreatedBefore
+	target.MemberTagIDs = append([]string(nil), criteria.MemberTagIDs...)
+	target.AccountRoles = append([]string(nil), criteria.AccountRoles...)
+	target.ExcludedMemberIDs = append([]string(nil), criteria.ExcludedMemberIDs...)
+	switch MemberCriteriaKind(strings.TrimSpace(string(criteria.Kind))) {
+	case MemberCriteriaKindAllMembers:
 		target.Mode = CampaignDeliveryTargetModeAllUsers
-	case AudienceSegmentMemberTags:
+	case MemberCriteriaKindMemberTags:
 		target.Mode = CampaignDeliveryTargetModeUserTags
-	case AudienceSegmentMembersByFilter:
+	case MemberCriteriaKindFilter:
 		target.Mode = CampaignDeliveryTargetModeUsersByFilter
 	default:
-		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment type is unsupported")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign Member criteria type is unsupported")
 	}
 	return target, nil
 }

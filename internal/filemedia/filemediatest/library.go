@@ -24,56 +24,56 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
-	MeshCandidateRows       map[string]domain.MeshCandidate
-	MeshJobs                []domain.MeshJob
-	MeshJobError            error
-	MeshPublisherError      error
-	IngestCommands          []domain.IngestTranscodeCommand
-	IngestTranscodeError    error
-	TrackOriginals          map[string]string
-	UploadTracks            map[string]bool
-	UploadSessions          map[string]domain.UploadSession
-	UploadPartRows          map[string][]domain.UploadPart
-	ScopedOwners            map[string]ScopedOwner
-	ScopedAttachments       []ScopedAttachmentRecord
-	ValidatedPolicySegments [][]string
-	Policies                map[string]PolicyRecord
-	Segments                map[string]domain.PolicySegment
-	PolicyChecks            []PolicyCheck
-	PolicyDenied            map[string]error
-	PolicySignals           []domain.PolicyChangeSignal
-	PolicySignalError       error
-	AssetIDs                map[string]bool
-	Generations             map[string]mediaasset.Generation
-	References              map[string][]string
-	FaviconDeletions        []string
-	DeletionOutbox          []domain.DeletionTarget
-	Audits                  []telemetry.AuditRecord
-	EnqueueError            error
-	Usages                  []domain.FileUsageRow
-	Slugs                   []domain.FileUsageSlug
-	TrackReleases           map[string]string
-	MeshRecords             map[string]MeshRecord
-	Derivatives             map[string][]domain.StoredDerivativeDelivery
-	MediaAssets             *mediaassettest.Store
-	Failures                domain.ProcessingFailureCounts
-	DeliveryUsages          []domain.CurrentDeliveryUsage
-	IngestBindings          map[string]domain.IngestBinding
-	PrincipalFence          *identitystatetest.Fence
-	DeliveryLocks           []string
-	ReadyMeshes             map[string]domain.MeshDeliveryWitness
-	AvatarOwners            map[string]string
-	DeliveryOwners          map[string]domain.DeliveryOwner
-	ExactUsages             map[string]bool
-	Folders                 map[string]domain.FileFolder
-	Files                   map[string]CatalogFileRecord
-	Fail                    error
-	Writes                  int
+	MeshCandidateRows          map[string]domain.MeshCandidate
+	MeshJobs                   []domain.MeshJob
+	MeshJobError               error
+	MeshPublisherError         error
+	IngestCommands             []domain.IngestTranscodeCommand
+	IngestTranscodeError       error
+	TrackOriginals             map[string]string
+	UploadTracks               map[string]bool
+	UploadSessions             map[string]domain.UploadSession
+	UploadPartRows             map[string][]domain.UploadPart
+	ScopedOwners               map[string]ScopedOwner
+	ScopedAttachments          []ScopedAttachmentRecord
+	ValidatedPolicyCriteriaSet [][]string
+	Policies                   map[string]PolicyRecord
+	CriteriaSet                map[string]domain.PolicyCriteria
+	PolicyChecks               []PolicyCheck
+	PolicyDenied               map[string]error
+	PolicySignals              []domain.PolicyChangeSignal
+	PolicySignalError          error
+	AssetIDs                   map[string]bool
+	Generations                map[string]mediaasset.Generation
+	References                 map[string][]string
+	FaviconDeletions           []string
+	DeletionOutbox             []domain.DeletionTarget
+	Audits                     []telemetry.AuditRecord
+	EnqueueError               error
+	Usages                     []domain.FileUsageRow
+	Slugs                      []domain.FileUsageSlug
+	TrackReleases              map[string]string
+	MeshRecords                map[string]MeshRecord
+	Derivatives                map[string][]domain.StoredDerivativeDelivery
+	MediaAssets                *mediaassettest.Store
+	Failures                   domain.ProcessingFailureCounts
+	DeliveryUsages             []domain.CurrentDeliveryUsage
+	IngestBindings             map[string]domain.IngestBinding
+	PrincipalFence             *identitystatetest.Fence
+	DeliveryLocks              []string
+	ReadyMeshes                map[string]domain.MeshDeliveryWitness
+	AvatarOwners               map[string]string
+	DeliveryOwners             map[string]domain.DeliveryOwner
+	ExactUsages                map[string]bool
+	Folders                    map[string]domain.FileFolder
+	Files                      map[string]CatalogFileRecord
+	Fail                       error
+	Writes                     int
 }
 
 func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
-	return &LibraryStore{MeshCandidateRows: map[string]domain.MeshCandidate{}, UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{MeshCandidateRows: map[string]domain.MeshCandidate{}, UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, CriteriaSet: map[string]domain.PolicyCriteria{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() mutationtest.Checkpoint {
 	assets := s.MediaAssets.Savepoint()

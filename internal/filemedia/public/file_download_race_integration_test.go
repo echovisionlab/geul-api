@@ -56,7 +56,7 @@ func (l *relationSourceBlockingLogger) Trace(
 	err error,
 ) {
 	sql, rows := fc()
-	if strings.Contains(sql, "content_block_attachment") && strings.Contains(sql, "download_audience") &&
+	if strings.Contains(sql, "content_block_attachment") && strings.Contains(sql, "download_access") &&
 		strings.Contains(sql, "JOIN file") && l.count.Add(1) == l.trigger {
 		l.once.Do(func() {
 			close(l.loaded)
@@ -78,7 +78,7 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 		require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256) VALUES (?::uuid, ?, 'wav', 'audio/wav', 4096, ?)`, fileID, fileID, make([]byte, 32)).Error)
 	}
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, parent_block_id, container_slot, position, kind, shared_data) VALUES (?::uuid, ?::uuid, NULL, 'root', 0, 'file', '{}'::jsonb)`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?::uuid, 'file', 'active', ?::uuid, 'public')`, blockID, originalFileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?::uuid, 'file', 'active', ?::uuid, 'public')`, blockID, originalFileID).Error)
 
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
@@ -121,10 +121,10 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 	go func() {
 		close(replacementStarted)
 		replaced <- db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Exec(`DELETE FROM content_block_attachment_download_audience_segment WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error; err != nil {
+			if err := tx.Exec(`DELETE FROM content_block_attachment_download_member_criteria WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error; err != nil {
 				return err
 			}
-			return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_audience = ? WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, string(mediaasset.FileDownloadAudienceDisabled), blockID).Error
+			return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_access = ? WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, string(mediaasset.FileDownloadAccessDisabled), blockID).Error
 		})
 	}()
 	<-replacementStarted
@@ -155,7 +155,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 		require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256) VALUES (?::uuid, ?, 'wav', 'audio/wav', 4096, ?)`, fileID, fileID, make([]byte, 32)).Error)
 	}
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, parent_block_id, container_slot, position, kind, shared_data) VALUES (?::uuid, ?::uuid, NULL, 'root', 0, 'file', '{}'::jsonb)`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?::uuid, 'file', 'active', ?::uuid, 'public')`, blockID, originalFileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?::uuid, 'file', 'active', ?::uuid, 'public')`, blockID, originalFileID).Error)
 
 	loaded, release := make(chan struct{}), make(chan struct{})
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
@@ -188,10 +188,10 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 	go func() {
 		close(replacementStarted)
 		replaced <- db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Exec(`DELETE FROM content_block_attachment_download_audience_segment WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error; err != nil {
+			if err := tx.Exec(`DELETE FROM content_block_attachment_download_member_criteria WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error; err != nil {
 				return err
 			}
-			return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_audience = ? WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, string(mediaasset.FileDownloadAudienceDisabled), blockID).Error
+			return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_access = ? WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, string(mediaasset.FileDownloadAccessDisabled), blockID).Error
 		})
 	}()
 	<-replacementStarted
@@ -228,7 +228,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, parent_block_id, container_slot, position, kind, shared_data) VALUES
 		(?::uuid, ?::uuid, NULL, 'root', 0, 'file', '{}'::jsonb),
 		(?::uuid, ?::uuid, NULL, 'root', 1, 'file', '{}'::jsonb)`, stableBlockID, documentID, replacedBlockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES
 		(?::uuid, 'file', 'active', ?::uuid, 'public'),
 		(?::uuid, 'file', 'active', ?::uuid, 'public')`, stableBlockID, originalFileID, replacedBlockID, originalFileID).Error)
 
@@ -262,10 +262,10 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 		t.Fatal("hydration did not reach the phase-one relation snapshot")
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`DELETE FROM content_block_attachment_download_audience_segment WHERE block_id = ?::uuid AND reference_path = 'file'`, replacedBlockID).Error; err != nil {
+		if err := tx.Exec(`DELETE FROM content_block_attachment_download_member_criteria WHERE block_id = ?::uuid AND reference_path = 'file'`, replacedBlockID).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_audience = 'disabled' WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, replacedBlockID).Error
+		return tx.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid, download_access = 'disabled' WHERE block_id = ?::uuid AND reference_path = 'file'`, replacementFileID, replacedBlockID).Error
 	}))
 	close(release)
 	result := <-hydrated
@@ -292,7 +292,7 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, fileID := seedDownloadRelationForPrincipalFenceIntegration(
-		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceAuthenticated,
+		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAccessAuthenticated,
 	)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
@@ -342,14 +342,14 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
-		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceRestricted,
+		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAccessRestricted,
 	)
-	segmentID := uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, segmentID, model.AudienceSegmentAllMembers).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, blockID, segmentID).Error)
+	criteriaID := uuid.NewString()
+	require.NoError(t, db.Exec(`INSERT INTO member_criteria (id, name, kind, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, criteriaID, model.MemberCriteriaKindAllMembers).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_member_criteria (block_id, reference_path, member_criteria_id) VALUES (?::uuid, 'file', ?::uuid)`, blockID, criteriaID).Error)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
-	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL, Segments: mediaassetadapter.NewSegmentConfigs()})
+	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL, CriteriaSet: mediaassetadapter.NewCriteriaConfigs()})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -375,13 +375,13 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 	require.Nil(t, inactive.Msg.GetDownload())
 
 	require.NoError(t, db.Exec(`UPDATE member SET onboarded = TRUE WHERE id = ?::uuid`, member.MemberID).Error)
-	require.NoError(t, db.Exec(`UPDATE audience_segment SET archived_at = CURRENT_TIMESTAMP WHERE id = ?::uuid`, segmentID).Error)
+	require.NoError(t, db.Exec(`UPDATE member_criteria SET archived_at = CURRENT_TIMESTAMP WHERE id = ?::uuid`, criteriaID).Error)
 	archived, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, archived.Msg.GetAccess().GetAction())
 	require.Nil(t, archived.Msg.GetDownload())
 
-	require.NoError(t, db.Exec(`DELETE FROM content_block_attachment_download_audience_segment WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error)
+	require.NoError(t, db.Exec(`DELETE FROM content_block_attachment_download_member_criteria WHERE block_id = ?::uuid AND reference_path = 'file'`, blockID).Error)
 	restrictedEmpty, err := NewConnectHandler(svc).AuthorizeDownload(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, restrictedEmpty.Msg.GetAccess().GetAction())
@@ -393,7 +393,7 @@ func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneI
 	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
-		t, db, managev1.PostStatus_POST_STATUS_DRAFT.String(), mediaasset.FileDownloadAudiencePublic,
+		t, db, managev1.PostStatus_POST_STATUS_DRAFT.String(), mediaasset.FileDownloadAccessPublic,
 	)
 	member := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	orytest.GrantPostIntegrationRole(t, stack.SpiceDBClient, member.IdentityID, policyv1.Role.Admin())
@@ -437,7 +437,7 @@ func seedDownloadRelationForPrincipalFenceIntegration(
 	t *testing.T,
 	db *gorm.DB,
 	status string,
-	audience mediaasset.FileDownloadAudience,
+	access mediaasset.FileDownloadAccess,
 ) (string, string, string, string) {
 	t.Helper()
 	postID, documentID, blockID, fileID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -445,6 +445,6 @@ func seedDownloadRelationForPrincipalFenceIntegration(
 	require.NoError(t, db.Exec(`INSERT INTO post (id, status, content_document_id) VALUES (?::uuid, ?, ?::uuid)`, postID, status, documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256) VALUES (?::uuid, 'principal-fence', 'wav', 'audio/wav', 4096, ?)`, fileID, make([]byte, 32)).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, parent_block_id, container_slot, position, kind, shared_data) VALUES (?::uuid, ?::uuid, NULL, 'root', 0, 'file', '{}'::jsonb)`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?::uuid, 'file', 'active', ?::uuid, ?)`, blockID, fileID, string(audience)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?::uuid, 'file', 'active', ?::uuid, ?)`, blockID, fileID, string(access)).Error)
 	return postID, documentID, blockID, fileID
 }

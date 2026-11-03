@@ -15,12 +15,12 @@ import (
 
 // UpdateCampaignConfigurationCommand changes a draft Campaign's recipient
 // targeting and layout; a nil field keeps its value. TargetMode and
-// SegmentID are one patch unit: an absent segment clears it for ALL and
-// fails validation for SEGMENT, and a segment needs a target mode.
+// CriteriaID are one patch unit: an absent criteria clears it for ALL and
+// fails validation for SEGMENT, and a criteria needs a target mode.
 type UpdateCampaignConfigurationCommand struct {
 	ID             string
 	TargetMode     *TargetMode
-	SegmentID      *string
+	CriteriaID     *string
 	RecipientScope *RecipientScope
 	// LayoutID set to an empty value clears the layout.
 	LayoutID *string
@@ -31,7 +31,7 @@ type CampaignConfiguration struct {
 	ID             string
 	Changed        bool
 	TargetMode     string
-	SegmentID      *string
+	CriteriaID     *string
 	LayoutID       *string
 	RecipientScope string
 	UpdatedAt      time.Time
@@ -89,7 +89,7 @@ func (s *Service) UpdateCampaignConfiguration(ctx context.Context, command Updat
 // current configuration.
 func requestedCampaignConfiguration(campaign Campaign, command UpdateCampaignConfigurationCommand) (CampaignConfiguration, error) {
 	next := CampaignConfiguration{
-		ID: campaign.ID, TargetMode: campaign.TargetMode, SegmentID: campaign.SegmentID,
+		ID: campaign.ID, TargetMode: campaign.TargetMode, CriteriaID: campaign.CriteriaID,
 		LayoutID: campaign.LayoutID, RecipientScope: campaign.RecipientScope, UpdatedAt: campaign.UpdatedAt,
 	}
 	touched := false
@@ -99,10 +99,10 @@ func requestedCampaignConfiguration(campaign Campaign, command UpdateCampaignCon
 			return next, domainerr.InvalidField("target_mode", err.Error())
 		}
 		next.TargetMode = parsedMode
-		next.SegmentID = nullableTrimmedString(ptrStringValue(command.SegmentID))
+		next.CriteriaID = nullableTrimmedString(ptrStringValue(command.CriteriaID))
 		touched = true
-	} else if command.SegmentID != nil {
-		return next, domainerr.InvalidField("segment_id", "must be updated together with target_mode")
+	} else if command.CriteriaID != nil {
+		return next, domainerr.InvalidField("criteria_id", "must be updated together with target_mode")
 	}
 	if command.RecipientScope != nil {
 		parsedScope, err := campaignRecipientScopeValue(*command.RecipientScope)
@@ -123,7 +123,7 @@ func requestedCampaignConfiguration(campaign Campaign, command UpdateCampaignCon
 }
 
 // validateCampaignConfiguration checks the requested configuration against
-// the locked draft, its observed layout and the requested segment and
+// the locked draft, its observed layout and the requested criteria and
 // layout.
 func (s *Service) validateCampaignConfiguration(
 	ctx context.Context,
@@ -134,7 +134,7 @@ func (s *Service) validateCampaignConfiguration(
 	observedLayoutID string,
 	lockedLayouts map[string]CampaignLayoutReference,
 ) error {
-	if err := validateCampaignTargetDefinition(Campaign{TargetMode: next.TargetMode, SegmentID: next.SegmentID}); err != nil {
+	if err := validateCampaignTargetDefinition(Campaign{TargetMode: next.TargetMode, CriteriaID: next.CriteriaID}); err != nil {
 		return domainerr.InvalidField("target_mode", err.Error())
 	}
 	if !campaignStatusAllowsEdit(campaign.Status) {
@@ -143,8 +143,8 @@ func (s *Service) validateCampaignConfiguration(
 	if ptrStringValue(campaign.LayoutID) != observedLayoutID {
 		return domainerr.Precondition("campaign layout assignment changed; retry")
 	}
-	if next.TargetMode == CampaignTargetModeSegment {
-		if err := s.requireAssignableSegment(ctx, tx, *next.SegmentID); err != nil {
+	if next.TargetMode == CampaignTargetModeMemberCriteria {
+		if err := s.requireAssignableCriteria(ctx, tx, *next.CriteriaID); err != nil {
 			return err
 		}
 	}
@@ -163,8 +163,8 @@ func applyCampaignConfiguration(ctx context.Context, tx Store, campaign Campaign
 	if campaign.TargetMode != next.TargetMode {
 		fields = append(fields, "target_mode")
 	}
-	if ptrStringValue(campaign.SegmentID) != ptrStringValue(next.SegmentID) {
-		fields = append(fields, "segment")
+	if ptrStringValue(campaign.CriteriaID) != ptrStringValue(next.CriteriaID) {
+		fields = append(fields, "member_criteria")
 	}
 	if ptrStringValue(campaign.LayoutID) != ptrStringValue(next.LayoutID) {
 		fields = append(fields, "layout")

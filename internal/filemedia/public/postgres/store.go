@@ -24,7 +24,7 @@ import (
 )
 
 type Ports struct {
-	Segments mediaassetpostgres.SegmentConfigLoader
+	CriteriaSet mediaassetpostgres.CriteriaConfigLoader
 }
 type store struct {
 	tx *gorm.DB
@@ -38,7 +38,7 @@ func NewUnits(db *gorm.DB, ports Ports) mutation.UnitOfWork[public.Store] {
 	return mutation.Postgres(db, func(tx *gorm.DB) public.Store { return NewStore(tx, ports) })
 }
 func NewStore(tx *gorm.DB, ports Ports) public.Store {
-	return &store{tx: tx, DownloadStore: mediaassetpostgres.NewDownloadStore(tx, ports.Segments)}
+	return &store{tx: tx, DownloadStore: mediaassetpostgres.NewDownloadStore(tx, ports.CriteriaSet)}
 }
 
 func readyPublicAssetSelect(alias string) string {

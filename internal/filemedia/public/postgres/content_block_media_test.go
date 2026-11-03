@@ -32,7 +32,7 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 		firstBlockID, documentID, secondBlockID, documentID, thirdBlockID, documentID,
 	).Error)
 	require.NoError(t, db.Exec(
-		`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES
+		`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES
 			(?, 'file', 'active', ?, 'public'),
 			(?, 'file', 'active', ?, 'authenticated'),
 			(?, 'file', 'active', ?, 'disabled')`,
@@ -107,7 +107,7 @@ func TestHydrateAuthorizedContentBlockMediaDeliversImmersiveSceneAttachmentsWith
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size) VALUES (?, 'scene.glb', 'glb', 'model/gltf-binary', 35848)`, meshFileID).Error)
 	for _, referencePath := range referencePaths {
 		require.NoError(t, db.Exec(
-			`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?, ?, 'active', ?, 'disabled')`,
+			`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?, ?, 'active', ?, 'disabled')`,
 			blockID, referencePath, meshFileID,
 		).Error)
 	}
@@ -139,7 +139,7 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 	require.NoError(t, db.Exec(`INSERT INTO content_document (id) VALUES (?)`, documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO post (id, status, content_document_id) VALUES (?, 'POST_STATUS_PUBLISHED', ?)`, postID, documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id, document_id, kind) VALUES (?, ?, 'file')`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?, 'file', 'active', ?, 'public')`, blockID, fileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_access) VALUES (?, 'file', 'active', ?, 'public')`, blockID, fileID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size) VALUES (?, 'private.png', 'png', 'image/png', 1024)`, fileID).Error)
 
 	service := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "unit-secret", DownloadTTL: time.Minute})
@@ -227,14 +227,14 @@ func newContentBlockMediaUnitDB(t *testing.T) *gorm.DB {
 			selector_kind TEXT NOT NULL,
 			file_id TEXT,
 			missing_kind TEXT,
-			download_audience TEXT NOT NULL DEFAULT 'disabled',
+			download_access TEXT NOT NULL DEFAULT 'disabled',
 			PRIMARY KEY (block_id, reference_path)
 		);
-		CREATE TABLE content_block_attachment_download_audience_segment (
+		CREATE TABLE content_block_attachment_download_member_criteria (
 			block_id TEXT NOT NULL,
 			reference_path TEXT NOT NULL,
-			audience_segment_id TEXT NOT NULL,
-			PRIMARY KEY (block_id, reference_path, audience_segment_id)
+			member_criteria_id TEXT NOT NULL,
+			PRIMARY KEY (block_id, reference_path, member_criteria_id)
 		);
 		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,

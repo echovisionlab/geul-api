@@ -130,7 +130,7 @@ func (h *harness) seedTrack(t *testing.T, releaseID string, number int, change .
 	t.Helper()
 	track := release.Track{
 		ID: uuid.NewString(), ReleaseID: releaseID, TrackNumber: number, Title: "Track",
-		Metadata: map[string]any{}, CreatedAt: time.Now().UTC(), DownloadAudience: release.DownloadAudienceDisabled,
+		Metadata: map[string]any{}, CreatedAt: time.Now().UTC(), DownloadAccess: release.DownloadAccessDisabled,
 	}
 	for _, apply := range change {
 		apply(&track)

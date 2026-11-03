@@ -68,8 +68,8 @@ func (h *ConnectHandler) CreateCampaign(ctx context.Context, req *connect.Reques
 	switch target := req.Msg.Target.(type) {
 	case *managev1.CreateCampaignRequest_All:
 		command.Target = CreateCampaignTarget{All: target.All != nil, allMissing: target.All == nil}
-	case *managev1.CreateCampaignRequest_SegmentId:
-		command.Target = CreateCampaignTarget{SegmentID: &target.SegmentId}
+	case *managev1.CreateCampaignRequest_MemberCriteriaId:
+		command.Target = CreateCampaignTarget{CriteriaID: &target.MemberCriteriaId}
 	}
 	campaign, err := h.campaigns.CreateCampaign(ctx, command)
 	if err != nil {
@@ -88,7 +88,7 @@ func (h *ConnectHandler) UpdateCampaignName(ctx context.Context, req *connect.Re
 
 func (h *ConnectHandler) UpdateCampaignConfiguration(ctx context.Context, req *connect.Request[managev1.UpdateCampaignConfigurationRequest]) (*connect.Response[managev1.UpdateCampaignConfigurationResponse], error) {
 	configuration, err := h.campaigns.UpdateCampaignConfiguration(ctx, UpdateCampaignConfigurationCommand{
-		ID: req.Msg.Id, TargetMode: targetModeInput(req.Msg.TargetMode), SegmentID: req.Msg.SegmentId,
+		ID: req.Msg.Id, TargetMode: targetModeInput(req.Msg.TargetMode), CriteriaID: req.Msg.MemberCriteriaId,
 		RecipientScope: recipientScopeInput(req.Msg.RecipientScope), LayoutID: req.Msg.LayoutId,
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func (h *ConnectHandler) UpdateCampaignConfiguration(ctx context.Context, req *c
 	recipientScope, err := campaignRecipientScopeToProto(configuration.RecipientScope)
 	return respond(&managev1.UpdateCampaignConfigurationResponse{
 		Id: configuration.ID, Changed: configuration.Changed,
-		TargetMode: campaignTargetModeToProto(configuration.TargetMode), SegmentId: configuration.SegmentID,
+		TargetMode: campaignTargetModeToProto(configuration.TargetMode), MemberCriteriaId: configuration.CriteriaID,
 		LayoutId: configuration.LayoutID, RecipientScope: recipientScope, UpdatedAt: timestamppb.New(configuration.UpdatedAt),
 	}, err)
 }

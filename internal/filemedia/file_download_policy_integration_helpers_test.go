@@ -15,10 +15,10 @@ import (
 )
 
 func managePolicyString(value string) *string { return &value }
-func observedFileDownloadPolicy(audience managev1.FileDownloadAudience, segmentIDs ...string) *managev1.FileDownloadPolicyObservedState {
+func observedFileDownloadPolicy(access managev1.FileDownloadAccess, criteriaIDs ...string) *managev1.FileDownloadPolicyObservedState {
 	return &managev1.FileDownloadPolicyObservedState{
-		Audience:           audience,
-		AudienceSegmentIds: segmentIDs,
+		Access:            access,
+		MemberCriteriaIds: criteriaIDs,
 	}
 }
 

@@ -21,8 +21,8 @@ type Fixture struct {
 	// SeedLinked stores an active Identity and a Member linked to it both
 	// ways, onboarded as asked, and returns the Member and Identity IDs.
 	SeedLinked func(t *testing.T, nickname string, onboarded bool) (memberID, identityID string)
-	// SeedSegmentTag makes an audience segment use the tag.
-	SeedSegmentTag func(t *testing.T, tagID string)
+	// SeedCriteriaTag makes a Member criteria use the tag.
+	SeedCriteriaTag func(t *testing.T, tagID string)
 }
 
 // FakeFixture is the Fixture of the in-memory store.
@@ -37,7 +37,7 @@ func FakeFixture(*testing.T) Fixture {
 			store.SeedMember(value)
 			return memberID, identityID
 		},
-		SeedSegmentTag: func(_ *testing.T, tagID string) { store.SeedSegmentTag(tagID) },
+		SeedCriteriaTag: func(_ *testing.T, tagID string) { store.SeedCriteriaTag(tagID) },
 	}
 }
 
@@ -186,12 +186,12 @@ var storeContract = map[string]func(t *testing.T, f Fixture){
 			}
 			return store.ReplaceMemberTags(ctx, memberID, []string{first.ID, second.ID})
 		}))
-		f.SeedSegmentTag(t, first.ID)
+		f.SeedCriteriaTag(t, first.ID)
 		require.NoError(t, transact(t, f, func(ctx context.Context, store member.Store) error {
-			referenced, err := store.TagReferencedBySegment(ctx, first.ID)
+			referenced, err := store.TagReferencedByCriteria(ctx, first.ID)
 			require.True(t, referenced)
 			require.NoError(t, err)
-			referenced, err = store.TagReferencedBySegment(ctx, second.ID)
+			referenced, err = store.TagReferencedByCriteria(ctx, second.ID)
 			require.False(t, referenced)
 			require.NoError(t, err)
 			return store.DeleteTag(ctx, second.ID)

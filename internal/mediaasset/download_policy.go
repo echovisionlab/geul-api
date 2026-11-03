@@ -21,13 +21,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type FileDownloadAudience string
+type FileDownloadAccess string
 
 const (
-	FileDownloadAudienceDisabled      FileDownloadAudience = "disabled"
-	FileDownloadAudiencePublic        FileDownloadAudience = "public"
-	FileDownloadAudienceAuthenticated FileDownloadAudience = "authenticated"
-	FileDownloadAudienceRestricted    FileDownloadAudience = "restricted"
+	FileDownloadAccessDisabled      FileDownloadAccess = "disabled"
+	FileDownloadAccessPublic        FileDownloadAccess = "public"
+	FileDownloadAccessAuthenticated FileDownloadAccess = "authenticated"
+	FileDownloadAccessRestricted    FileDownloadAccess = "restricted"
 )
 
 type FileDownloadSource struct {
@@ -41,7 +41,7 @@ type FileDownloadSource struct {
 	MimeType      string
 	FileSize      int64
 	FileName      *string
-	Audience      FileDownloadAudience
+	Access        FileDownloadAccess
 }
 
 type FileDownloadPolicyKind string
@@ -131,8 +131,8 @@ func LoadContentBlockDownloadSources(
 		if _, ok := requested[key]; !ok {
 			continue
 		}
-		if !source.Audience.Valid() {
-			return nil, errors.New("content Block attachment has invalid download audience")
+		if !source.Access.Valid() {
+			return nil, errors.New("content Block attachment has invalid download access")
 		}
 		source.PolicyKey = key
 		source.PolicyKind = FileDownloadPolicyContentBlock
@@ -157,8 +157,8 @@ func LoadTrackDownloadSources(
 
 	sources := make(map[string]FileDownloadSource, len(rows))
 	for _, source := range rows {
-		if !source.Audience.Valid() {
-			return nil, errors.New("track has invalid download audience")
+		if !source.Access.Valid() {
+			return nil, errors.New("track has invalid download access")
 		}
 		source.PolicyKey = source.TrackID
 		source.PolicyKind = FileDownloadPolicyTrack
@@ -198,7 +198,7 @@ func EvaluateFileDownloadAccessBatch(
 	return evaluateFileDownloadAccessBatchAt(ctx, store, spiceDB, sources, user, time.Now().UTC())
 }
 
-func RestrictedFileDownloadSegmentPresence(
+func RestrictedFileDownloadCriteriaPresence(
 	ctx context.Context,
 	store DownloadStore,
 	sources map[string]FileDownloadSource,
@@ -215,25 +215,25 @@ func RestrictedFileDownloadSegmentPresence(
 }
 
 type fileDownloadPolicyFingerprint struct {
-	Kind          FileDownloadPolicyKind            `json:"kind"`
-	BlockID       string                            `json:"block_id,omitempty"`
-	ReferencePath string                            `json:"reference_path,omitempty"`
-	TrackID       string                            `json:"track_id,omitempty"`
-	FileID        string                            `json:"file_id"`
-	Extension     string                            `json:"extension"`
-	MimeType      string                            `json:"mime_type"`
-	FileSize      int64                             `json:"file_size"`
-	FileName      *string                           `json:"file_name,omitempty"`
-	Audience      FileDownloadAudience              `json:"audience"`
-	Segments      []fileDownloadPolicySegmentRecord `json:"segments"`
+	Kind          FileDownloadPolicyKind             `json:"kind"`
+	BlockID       string                             `json:"block_id,omitempty"`
+	ReferencePath string                             `json:"reference_path,omitempty"`
+	TrackID       string                             `json:"track_id,omitempty"`
+	FileID        string                             `json:"file_id"`
+	Extension     string                             `json:"extension"`
+	MimeType      string                             `json:"mime_type"`
+	FileSize      int64                              `json:"file_size"`
+	FileName      *string                            `json:"file_name,omitempty"`
+	Access        FileDownloadAccess                 `json:"access"`
+	CriteriaSet   []fileDownloadPolicyCriteriaRecord `json:"member_criteria"`
 }
 
-type fileDownloadPolicySegmentRecord struct {
-	ID          string                `json:"id"`
-	SegmentType string                `json:"segment_type"`
-	ArchivedAt  *time.Time            `json:"archived_at,omitempty"`
-	UpdatedAt   *time.Time            `json:"updated_at,omitempty"`
-	Config      DownloadSegmentConfig `json:"config"`
+type fileDownloadPolicyCriteriaRecord struct {
+	ID         string                 `json:"id"`
+	Kind       string                 `json:"kind"`
+	ArchivedAt *time.Time             `json:"archived_at,omitempty"`
+	UpdatedAt  *time.Time             `json:"updated_at,omitempty"`
+	Config     DownloadCriteriaConfig `json:"config"`
 }
 
 type fileDownloadViewerFingerprint struct {
@@ -247,7 +247,7 @@ type fileDownloadViewerFingerprint struct {
 }
 
 // LoadFileDownloadPolicyFingerprints captures the exact relation, File
-// metadata, audience, and normalized Segment policy used by a download
+// metadata, access, and normalized Criteria policy used by a download
 // decision. Callers can evaluate external entitlements without a relation lock,
 // then lock and compare this value before local signing.
 func LoadFileDownloadPolicyFingerprints(
@@ -259,45 +259,45 @@ func LoadFileDownloadPolicyFingerprints(
 	if err != nil {
 		return nil, err
 	}
-	segmentIDsByPolicy := make(map[string][]string, len(sources))
-	allSegmentIDs := make([]string, 0, len(associations))
+	criteriaIDsByPolicy := make(map[string][]string, len(sources))
+	allCriteriaIDs := make([]string, 0, len(associations))
 	for _, association := range associations {
-		segmentIDsByPolicy[association.PolicyKey] = append(segmentIDsByPolicy[association.PolicyKey], association.AudienceSegmentID)
-		allSegmentIDs = append(allSegmentIDs, association.AudienceSegmentID)
+		criteriaIDsByPolicy[association.PolicyKey] = append(criteriaIDsByPolicy[association.PolicyKey], association.MemberCriteriaID)
+		allCriteriaIDs = append(allCriteriaIDs, association.MemberCriteriaID)
 	}
-	allSegmentIDs = sliceutil.SortedUniqueTrimmed(allSegmentIDs)
-	segmentsByID := make(map[string]DownloadSegment, len(allSegmentIDs))
-	if len(allSegmentIDs) > 0 {
-		segments, err := store.Segments(ctx, allSegmentIDs, false)
+	allCriteriaIDs = sliceutil.SortedUniqueTrimmed(allCriteriaIDs)
+	criteriaSetByID := make(map[string]DownloadCriteria, len(allCriteriaIDs))
+	if len(allCriteriaIDs) > 0 {
+		criteriaSet, err := store.CriteriaSet(ctx, allCriteriaIDs, false)
 		if err != nil {
 			return nil, err
 		}
-		for _, segment := range segments {
-			segment.Config.MemberTagIDs = sliceutil.SortedUniqueTrimmed(segment.Config.MemberTagIDs)
-			segment.Config.AccountRoles = sliceutil.SortedUniqueTrimmed(segment.Config.AccountRoles)
-			segment.Config.ExcludeMemberIDs = sliceutil.SortedUniqueTrimmed(segment.Config.ExcludeMemberIDs)
-			segmentsByID[segment.ID] = segment
+		for _, criteria := range criteriaSet {
+			criteria.Config.MemberTagIDs = sliceutil.SortedUniqueTrimmed(criteria.Config.MemberTagIDs)
+			criteria.Config.AccountRoles = sliceutil.SortedUniqueTrimmed(criteria.Config.AccountRoles)
+			criteria.Config.ExcludeMemberIDs = sliceutil.SortedUniqueTrimmed(criteria.Config.ExcludeMemberIDs)
+			criteriaSetByID[criteria.ID] = criteria
 		}
 	}
 
 	result := make(map[string]string, len(sources))
 	for key, source := range sources {
-		segmentIDs := sliceutil.SortedUniqueTrimmed(segmentIDsByPolicy[key])
+		criteriaIDs := sliceutil.SortedUniqueTrimmed(criteriaIDsByPolicy[key])
 		record := fileDownloadPolicyFingerprint{
 			Kind: source.PolicyKind, BlockID: source.BlockID, ReferencePath: source.ReferencePath,
 			TrackID: source.TrackID, FileID: source.FileID, Extension: source.Extension,
 			MimeType: source.MimeType, FileSize: source.FileSize, FileName: source.FileName,
-			Audience: source.Audience, Segments: make([]fileDownloadPolicySegmentRecord, 0, len(segmentIDs)),
+			Access: source.Access, CriteriaSet: make([]fileDownloadPolicyCriteriaRecord, 0, len(criteriaIDs)),
 		}
-		for _, segmentID := range segmentIDs {
-			segment, exists := segmentsByID[segmentID]
+		for _, criteriaID := range criteriaIDs {
+			criteria, exists := criteriaSetByID[criteriaID]
 			if !exists {
-				record.Segments = append(record.Segments, fileDownloadPolicySegmentRecord{ID: segmentID})
+				record.CriteriaSet = append(record.CriteriaSet, fileDownloadPolicyCriteriaRecord{ID: criteriaID})
 				continue
 			}
-			record.Segments = append(record.Segments, fileDownloadPolicySegmentRecord{
-				ID: segment.ID, SegmentType: string(segment.SegmentType), ArchivedAt: segment.ArchivedAt,
-				UpdatedAt: segment.UpdatedAt, Config: segment.Config,
+			record.CriteriaSet = append(record.CriteriaSet, fileDownloadPolicyCriteriaRecord{
+				ID: criteria.ID, Kind: string(criteria.Kind), ArchivedAt: criteria.ArchivedAt,
+				UpdatedAt: criteria.UpdatedAt, Config: criteria.Config,
 			})
 		}
 		encoded, err := json.Marshal(record)
@@ -324,10 +324,10 @@ func LoadFileDownloadViewerFingerprint(
 	requiresMember := false
 	restricted := false
 	for _, source := range sources {
-		if source.Audience == FileDownloadAudienceAuthenticated || source.Audience == FileDownloadAudienceRestricted {
+		if source.Access == FileDownloadAccessAuthenticated || source.Access == FileDownloadAccessRestricted {
 			requiresMember = true
 		}
-		if source.Audience == FileDownloadAudienceRestricted {
+		if source.Access == FileDownloadAccessRestricted {
 			restricted = true
 		}
 	}
@@ -371,9 +371,9 @@ func LoadFileDownloadViewerFingerprint(
 	return hex.EncodeToString(digest[:]), nil
 }
 
-// LockFileDownloadPolicySegments establishes the shared policy lock order used
+// LockFileDownloadPolicyCriteriaSet establishes the shared policy lock order used
 // before an owning root and exact relation are locked for final signing.
-func LockFileDownloadPolicySegments(
+func LockFileDownloadPolicyCriteriaSet(
 	ctx context.Context,
 	store DownloadStore,
 	sources map[string]FileDownloadSource,
@@ -382,15 +382,15 @@ func LockFileDownloadPolicySegments(
 	if err != nil {
 		return err
 	}
-	segmentIDs := make([]string, 0, len(associations))
+	criteriaIDs := make([]string, 0, len(associations))
 	for _, association := range associations {
-		segmentIDs = append(segmentIDs, association.AudienceSegmentID)
+		criteriaIDs = append(criteriaIDs, association.MemberCriteriaID)
 	}
-	segmentIDs = sliceutil.SortedUniqueTrimmed(segmentIDs)
-	if len(segmentIDs) == 0 {
+	criteriaIDs = sliceutil.SortedUniqueTrimmed(criteriaIDs)
+	if len(criteriaIDs) == 0 {
 		return nil
 	}
-	return store.LockSegments(ctx, segmentIDs)
+	return store.LockCriteriaSet(ctx, criteriaIDs)
 }
 
 func LockFileDownloadViewerFacts(
@@ -402,10 +402,10 @@ func LockFileDownloadViewerFacts(
 	requiresMember := false
 	restricted := false
 	for _, source := range sources {
-		if source.Audience == FileDownloadAudienceAuthenticated || source.Audience == FileDownloadAudienceRestricted {
+		if source.Access == FileDownloadAccessAuthenticated || source.Access == FileDownloadAccessRestricted {
 			requiresMember = true
 		}
-		if source.Audience == FileDownloadAudienceRestricted {
+		if source.Access == FileDownloadAccessRestricted {
 			restricted = true
 		}
 	}
@@ -445,7 +445,7 @@ func evaluateFileDownloadAccessBatchAt(
 			return nil, err
 		}
 	}
-	result, restrictedPolicyKeys, err := fileDownloadAudienceDecisions(sources, hasAuthenticatedUser && activeMemberFound)
+	result, restrictedPolicyKeys, err := fileDownloadAccessDecisions(sources, hasAuthenticatedUser && activeMemberFound)
 	if err != nil {
 		return nil, err
 	}
@@ -460,76 +460,76 @@ func evaluateFileDownloadAccessBatchAt(
 	if err != nil {
 		return nil, err
 	}
-	segmentIDs := make([]string, 0, len(associations))
+	criteriaIDs := make([]string, 0, len(associations))
 	for _, association := range associations {
-		segmentIDs = append(segmentIDs, association.AudienceSegmentID)
+		criteriaIDs = append(criteriaIDs, association.MemberCriteriaID)
 	}
-	segmentIDs = sliceutil.SortedUniqueTrimmed(segmentIDs)
-	if len(segmentIDs) == 0 {
+	criteriaIDs = sliceutil.SortedUniqueTrimmed(criteriaIDs)
+	if len(criteriaIDs) == 0 {
 		return result, nil
 	}
-	segments, err := store.Segments(ctx, segmentIDs, true)
+	criteriaSet, err := store.CriteriaSet(ctx, criteriaIDs, true)
 	if err != nil {
 		return nil, err
 	}
-	segmentsByID := make(map[string]DownloadSegment, len(segments))
-	for _, segment := range segments {
-		segmentsByID[segment.ID] = segment
+	criteriaSetByID := make(map[string]DownloadCriteria, len(criteriaSet))
+	for _, criteria := range criteriaSet {
+		criteriaSetByID[criteria.ID] = criteria
 	}
 	memberFacts := activeMember
 	existingTagIDs, memberTagIDs, err := loadRestrictedFileDownloadTagFacts(
 		ctx,
 		store,
 		memberFacts.MemberID,
-		segments,
+		criteriaSet,
 	)
 	if err != nil {
 		return nil, err
 	}
-	permissions, err := resolveRestrictedFileDownloadPermissions(ctx, spiceDB, user, segments)
+	permissions, err := resolveRestrictedFileDownloadPermissions(ctx, spiceDB, user, criteriaSet)
 	if err != nil {
 		return nil, err
 	}
-	matchesBySegmentID := make(map[string]bool, len(segmentIDs))
-	for _, segmentID := range segmentIDs {
-		segment, exists := segmentsByID[segmentID]
+	matchesByCriteriaID := make(map[string]bool, len(criteriaIDs))
+	for _, criteriaID := range criteriaIDs {
+		criteria, exists := criteriaSetByID[criteriaID]
 		if !exists {
 			continue
 		}
-		matchesBySegmentID[segmentID] = restrictedFileDownloadMemberMatchesSegment(
+		matchesByCriteriaID[criteriaID] = restrictedFileDownloadMemberMatchesCriteria(
 			memberFacts,
-			&segment,
+			&criteria,
 			existingTagIDs,
 			memberTagIDs,
 			permissions,
 		)
 	}
 	for _, association := range associations {
-		if matchesBySegmentID[association.AudienceSegmentID] {
+		if matchesByCriteriaID[association.MemberCriteriaID] {
 			result[association.PolicyKey] = true
 		}
 	}
 	return result, nil
 }
 
-// fileDownloadAudienceDecisions decides each source whose audience needs no
-// segment lookup and returns the restricted policy keys left to match, in
+// fileDownloadAccessDecisions decides each source whose access needs no
+// criteria lookup and returns the restricted policy keys left to match, in
 // order. eligible is whether the viewer is an active authenticated Member.
-func fileDownloadAudienceDecisions(sources map[string]FileDownloadSource, eligible bool) (map[string]bool, []string, error) {
+func fileDownloadAccessDecisions(sources map[string]FileDownloadSource, eligible bool) (map[string]bool, []string, error) {
 	result := make(map[string]bool, len(sources))
 	restrictedPolicyKeys := make([]string, 0, len(sources))
 	for policyKey, source := range sources {
-		if !source.Audience.Valid() {
-			return nil, nil, errors.New("file has invalid download audience")
+		if !source.Access.Valid() {
+			return nil, nil, errors.New("file has invalid download access")
 		}
-		switch source.Audience {
-		case FileDownloadAudienceDisabled:
+		switch source.Access {
+		case FileDownloadAccessDisabled:
 			result[policyKey] = false
-		case FileDownloadAudiencePublic:
+		case FileDownloadAccessPublic:
 			result[policyKey] = true
-		case FileDownloadAudienceAuthenticated:
+		case FileDownloadAccessAuthenticated:
 			result[policyKey] = eligible
-		case FileDownloadAudienceRestricted:
+		case FileDownloadAccessRestricted:
 			if !eligible {
 				result[policyKey] = false
 			} else {
@@ -541,21 +541,21 @@ func fileDownloadAudienceDecisions(sources map[string]FileDownloadSource, eligib
 	return result, restrictedPolicyKeys, nil
 }
 
-// loadRestrictedFileDownloadSegments loads the live segments a restricted
+// loadRestrictedFileDownloadCriteriaSet loads the live Member criteria a restricted
 // policy names, with their configuration.
 func loadRestrictedFileDownloadTagFacts(
 	ctx context.Context,
 	store DownloadStore,
 	memberID string,
-	segments []DownloadSegment,
+	criteriaSet []DownloadCriteria,
 ) (map[string]struct{}, map[string]struct{}, error) {
 	referencedTagIDs := make([]string, 0)
-	for _, segment := range segments {
-		if strings.TrimSpace(string(segment.SegmentType)) !=
+	for _, criteria := range criteriaSet {
+		if strings.TrimSpace(string(criteria.Kind)) !=
 			string(DownloadMemberTags) {
 			continue
 		}
-		tagIDs, valid := validUUIDSet(segment.Config.MemberTagIDs)
+		tagIDs, valid := validUUIDSet(criteria.Config.MemberTagIDs)
 		if valid {
 			referencedTagIDs = append(referencedTagIDs, tagIDs...)
 		}
@@ -580,32 +580,32 @@ func loadRestrictedFileDownloadTagFacts(
 	return existingTagIDs, memberTagIDs, nil
 }
 
-func restrictedFileDownloadMemberMatchesSegment(
+func restrictedFileDownloadMemberMatchesCriteria(
 	member DownloadMemberFacts,
-	segment *DownloadSegment,
+	criteria *DownloadCriteria,
 	existingTagIDs map[string]struct{},
 	memberTagIDs map[string]struct{},
 	permissions map[policyv1.RoleID]bool,
 ) bool {
-	if segment == nil {
+	if criteria == nil {
 		return false
 	}
 
-	config := segment.Config
-	switch strings.TrimSpace(string(segment.SegmentType)) {
+	config := criteria.Config
+	switch strings.TrimSpace(string(criteria.Kind)) {
 	case string(DownloadAllMembers):
 		return true
 	case string(DownloadMemberTags):
-		return restrictedFileDownloadMemberMatchesTagSegment(config, existingTagIDs, memberTagIDs)
+		return restrictedFileDownloadMemberMatchesTagCriteria(config, existingTagIDs, memberTagIDs)
 	case string(DownloadMembersByFilter):
-		return restrictedFileDownloadMemberMatchesFilterSegment(member, config, permissions)
+		return restrictedFileDownloadMemberMatchesFilterCriteria(member, config, permissions)
 	default:
 		return false
 	}
 }
 
-func restrictedFileDownloadMemberMatchesTagSegment(
-	config DownloadSegmentConfig,
+func restrictedFileDownloadMemberMatchesTagCriteria(
+	config DownloadCriteriaConfig,
 	existingTagIDs map[string]struct{},
 	memberTagIDs map[string]struct{},
 ) bool {
@@ -629,9 +629,9 @@ func restrictedFileDownloadMemberMatchesTagSegment(
 	return false
 }
 
-func restrictedFileDownloadMemberMatchesFilterSegment(
+func restrictedFileDownloadMemberMatchesFilterCriteria(
 	member DownloadMemberFacts,
-	config DownloadSegmentConfig,
+	config DownloadCriteriaConfig,
 	permissions map[policyv1.RoleID]bool,
 ) bool {
 	if len(config.MemberTagIDs) > 0 {
@@ -669,19 +669,19 @@ func resolveRestrictedFileDownloadPermissions(
 	ctx context.Context,
 	spiceDB DownloadAuthorizer,
 	user *auth.UserInfo,
-	segments []DownloadSegment,
+	criteriaSet []DownloadCriteria,
 ) (map[policyv1.RoleID]bool, error) {
 	requested := make(map[policyv1.RoleID]struct{})
-	for _, segment := range segments {
-		if strings.TrimSpace(string(segment.SegmentType)) != string(DownloadMembersByFilter) {
+	for _, criteria := range criteriaSet {
+		if strings.TrimSpace(string(criteria.Kind)) != string(DownloadMembersByFilter) {
 			continue
 		}
-		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)
+		permissions, err := normalizeFileDownloadAccountPermissions(criteria.Config.AccountRoles)
 		if err != nil {
-			// The permissions come from a stored segment, not from this request.
+			// The permissions come from a stored criteria, not from this request.
 			return nil, failurecause.WithAttrs(
-				fmt.Errorf("read stored File download segment: %w", err),
-				slog.String("segment_id", segment.ID),
+				fmt.Errorf("read stored File download criteria: %w", err),
+				slog.String("criteria_id", criteria.ID),
 			)
 		}
 		for _, permission := range permissions {
@@ -765,12 +765,12 @@ func normalizeFileDownloadAccountPermissions(values []string) ([]policyv1.RoleID
 	return roles, nil
 }
 
-func (audience FileDownloadAudience) Valid() bool {
-	switch audience {
-	case FileDownloadAudienceDisabled,
-		FileDownloadAudiencePublic,
-		FileDownloadAudienceAuthenticated,
-		FileDownloadAudienceRestricted:
+func (access FileDownloadAccess) Valid() bool {
+	switch access {
+	case FileDownloadAccessDisabled,
+		FileDownloadAccessPublic,
+		FileDownloadAccessAuthenticated,
+		FileDownloadAccessRestricted:
 		return true
 	default:
 		return false

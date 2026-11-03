@@ -9,30 +9,30 @@ func downloadPolicyMessage(value *DownloadPolicy) *managev1.FileDownloadPolicy {
 	if value == nil {
 		return nil
 	}
-	audience, _ := manageFileDownloadAudience(value.Audience)
-	result := &managev1.FileDownloadPolicy{EntityType: managev1.TranscodeEntityType(value.EntityType), EntityId: value.EntityID, BlockId: value.BlockID, ReferencePath: value.ReferencePath, FileId: value.FileID, Audience: audience}
-	if value.AudienceSegments != nil {
-		result.AudienceSegments = make([]*managev1.AudienceSegmentSummary, len(value.AudienceSegments))
-		for i, segment := range value.AudienceSegments {
-			if segment != nil {
-				result.AudienceSegments[i] = &managev1.AudienceSegmentSummary{Id: segment.ID, Name: segment.Name, Description: segment.Description, SegmentType: managev1.SegmentType(managev1.SegmentType_value[segment.Kind])}
+	access, _ := manageFileDownloadAccess(value.Access)
+	result := &managev1.FileDownloadPolicy{EntityType: managev1.TranscodeEntityType(value.EntityType), EntityId: value.EntityID, BlockId: value.BlockID, ReferencePath: value.ReferencePath, FileId: value.FileID, Access: access}
+	if value.MemberCriteria != nil {
+		result.MemberCriteria = make([]*managev1.MemberCriteriaSummary, len(value.MemberCriteria))
+		for i, criteria := range value.MemberCriteria {
+			if criteria != nil {
+				result.MemberCriteria[i] = &managev1.MemberCriteriaSummary{Id: criteria.ID, Name: criteria.Name, Description: criteria.Description, Kind: managev1.MemberCriteriaKind(managev1.MemberCriteriaKind_value[criteria.Kind])}
 			}
 		}
 	}
 	return result
 }
 
-func manageFileDownloadAudience(audience mediaasset.FileDownloadAudience) (managev1.FileDownloadAudience, bool) {
-	switch audience {
-	case mediaasset.FileDownloadAudienceDisabled:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, true
-	case mediaasset.FileDownloadAudiencePublic:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC, true
-	case mediaasset.FileDownloadAudienceAuthenticated:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_AUTHENTICATED, true
-	case mediaasset.FileDownloadAudienceRestricted:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, true
+func manageFileDownloadAccess(access mediaasset.FileDownloadAccess) (managev1.FileDownloadAccess, bool) {
+	switch access {
+	case mediaasset.FileDownloadAccessDisabled:
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_DISABLED, true
+	case mediaasset.FileDownloadAccessPublic:
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC, true
+	case mediaasset.FileDownloadAccessAuthenticated:
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_AUTHENTICATED, true
+	case mediaasset.FileDownloadAccessRestricted:
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED, true
 	default:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_UNSPECIFIED, false
+		return managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_UNSPECIFIED, false
 	}
 }

@@ -43,7 +43,7 @@ func integrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, 
 		audit = &audittest.Recorder{}
 	}
 	runtime := campaignadapter.NewRuntime(unusedPublisher{}, &audittest.Recorder{})
-	units, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{ContentBlocks: contenttest.NewEmailContentBlockStore(t), Publisher: runtime, Routes: runtime, SpiceDB: spiceDB, EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(), Members: memberadapter.ContributorMembers{}, Checkpoints: unusedCheckpoint{}})
+	units, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{ContentBlocks: contenttest.NewEmailContentBlockStore(t), Publisher: runtime, Routes: runtime, SpiceDB: spiceDB, EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), CriteriaTargets: campaignadapter.NewCriteriaTargets(), Members: memberadapter.ContributorMembers{}, Checkpoints: unusedCheckpoint{}})
 	require.NoError(t, err)
 	for _, transform := range transforms {
 		units = transform(units)

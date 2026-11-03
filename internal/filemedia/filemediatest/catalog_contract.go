@@ -23,7 +23,7 @@ type CatalogHarness struct {
 	IngestCommands   func(*testing.T) []domain.IngestTranscodeCommand
 	SeedScoped       func(*testing.T, string, string, ScopedOwner, domain.ScopedAttachment)
 	SeedPolicy       func(*testing.T, domain.PolicyRelation, []string)
-	SeedSegment      func(*testing.T, domain.PolicySegment)
+	SeedCriteria     func(*testing.T, domain.PolicyCriteria)
 	Audit            domainaudit.Appender
 	SeedAssetBinding func(*testing.T, string, string)
 	Asset            func(*testing.T, string) mediaasset.Asset

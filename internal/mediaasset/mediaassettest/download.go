@@ -9,16 +9,16 @@ import (
 )
 
 type DownloadStore struct {
-	Sources     []mediaasset.FileDownloadSource
-	SegmentRows map[string]mediaasset.DownloadSegment
-	Links       []mediaasset.DownloadAssociation
-	Members     map[string]mediaasset.DownloadMemberFacts
-	Tags        map[string]map[string]bool
-	Fail        error
+	Sources      []mediaasset.FileDownloadSource
+	CriteriaRows map[string]mediaasset.DownloadCriteria
+	Links        []mediaasset.DownloadAssociation
+	Members      map[string]mediaasset.DownloadMemberFacts
+	Tags         map[string]map[string]bool
+	Fail         error
 }
 
 func NewDownload() *DownloadStore {
-	return &DownloadStore{SegmentRows: map[string]mediaasset.DownloadSegment{}, Members: map[string]mediaasset.DownloadMemberFacts{}, Tags: map[string]map[string]bool{}}
+	return &DownloadStore{CriteriaRows: map[string]mediaasset.DownloadCriteria{}, Members: map[string]mediaasset.DownloadMemberFacts{}, Tags: map[string]map[string]bool{}}
 }
 func (s *DownloadStore) ContentSources(_ context.Context, ids []string) ([]mediaasset.FileDownloadSource, error) {
 	if s.Fail != nil {
@@ -54,8 +54,8 @@ func (s *DownloadStore) Associations(_ context.Context, sources map[string]media
 			continue
 		}
 		if activeOnly {
-			segment, exists := s.SegmentRows[link.AudienceSegmentID]
-			if !exists || segment.ArchivedAt != nil {
+			criteria, exists := s.CriteriaRows[link.MemberCriteriaID]
+			if !exists || criteria.ArchivedAt != nil {
 				continue
 			}
 		}
@@ -63,13 +63,13 @@ func (s *DownloadStore) Associations(_ context.Context, sources map[string]media
 	}
 	return rows, nil
 }
-func (s *DownloadStore) Segments(_ context.Context, ids []string, activeOnly bool) ([]mediaasset.DownloadSegment, error) {
+func (s *DownloadStore) CriteriaSet(_ context.Context, ids []string, activeOnly bool) ([]mediaasset.DownloadCriteria, error) {
 	if s.Fail != nil {
 		return nil, s.Fail
 	}
-	var rows []mediaasset.DownloadSegment
+	var rows []mediaasset.DownloadCriteria
 	for _, id := range ids {
-		if row, exists := s.SegmentRows[id]; exists && (!activeOnly || row.ArchivedAt == nil) {
+		if row, exists := s.CriteriaRows[id]; exists && (!activeOnly || row.ArchivedAt == nil) {
 			row.Config.MemberTagIDs = slices.Clone(row.Config.MemberTagIDs)
 			row.Config.AccountRoles = slices.Clone(row.Config.AccountRoles)
 			row.Config.ExcludeMemberIDs = slices.Clone(row.Config.ExcludeMemberIDs)
@@ -113,7 +113,7 @@ func (s *DownloadStore) ViewerTagIDs(_ context.Context, memberID string) ([]stri
 	}
 	return ids, nil
 }
-func (s *DownloadStore) LockSegments(context.Context, []string) error { return s.Fail }
+func (s *DownloadStore) LockCriteriaSet(context.Context, []string) error { return s.Fail }
 func (s *DownloadStore) LockViewer(ctx context.Context, user *auth.UserInfo, _ bool) (bool, error) {
 	_, found, err := s.MemberFacts(ctx, user.MemberID.String(), user.IdentityID.String())
 	return found, err

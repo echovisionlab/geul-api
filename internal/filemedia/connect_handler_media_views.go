@@ -93,9 +93,9 @@ func libraryItemsMessage(values []*LibraryItem) []*managev1.FileManagerItem {
 		}
 		if value.FolderPath != nil {
 			item.FolderPath = make([]*managev1.FileManagerPathSegment, len(value.FolderPath))
-			for j, segment := range value.FolderPath {
-				if segment != nil {
-					item.FolderPath[j] = &managev1.FileManagerPathSegment{Id: segment.ID, Name: segment.Name}
+			for j, criteria := range value.FolderPath {
+				if criteria != nil {
+					item.FolderPath[j] = &managev1.FileManagerPathSegment{Id: criteria.ID, Name: criteria.Name}
 				}
 			}
 		}

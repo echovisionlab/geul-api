@@ -38,7 +38,7 @@ func (l *releaseDownloadPhaseOneBlockingLogger) Trace(
 	err error,
 ) {
 	sql, rows := fc()
-	if strings.Contains(sql, "track.download_audience") {
+	if strings.Contains(sql, "track.download_access") {
 		l.once.Do(func() {
 			close(l.loaded)
 			<-l.release
@@ -84,7 +84,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'compact', ?::uuid)`, documentID, uuid.NewString()).Error)
 			require.NoError(t, db.Exec(`INSERT INTO release (id, type, status, content_document_id) VALUES (?::uuid, ?::release_type, ?, ?::uuid)`, releaseID, managev1.ReleaseType_RELEASE_TYPE_ALBUM.String(), testCase.status, documentID).Error)
 			require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256) VALUES (?::uuid, 'release-original', 'wav', 'audio/wav', 4096, ?)`, fileID, make([]byte, 32)).Error)
-			require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, track_number, title, audio_original_file_id, download_audience) VALUES (?::uuid, ?::uuid, 1, 'Original', ?::uuid, 'public')`, trackID, releaseID, fileID).Error)
+			require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, track_number, title, audio_original_file_id, download_access) VALUES (?::uuid, ?::uuid, 1, 'Original', ?::uuid, 'public')`, trackID, releaseID, fileID).Error)
 
 			authorization := mediaasset.ContentDownloadOwnerAuthorization{
 				ResourceType: "release", ResourceID: releaseID, Status: testCase.status, DocumentID: documentID,
@@ -105,7 +105,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 			serviceDB := db.Session(&gorm.Session{Logger: &releaseDownloadPhaseOneBlockingLogger{
 				Interface: db.Logger, loaded: loaded, release: releasePhase,
 			}})
-			resolver := NewDownloadAccess(serviceDB, &auth.SpiceDBClient{}, noOpSegmentConfigs{})
+			resolver := NewDownloadAccess(serviceDB, &auth.SpiceDBClient{}, noOpCriteriaConfigs{})
 			type resolveResult struct {
 				authorizations map[string]releasepublic.TrackDownloadAuthorization
 				err            error
@@ -167,7 +167,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 			status: managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(),
 			mode:   mediaasset.ContentDownloadOwnerAccessPublic,
 			mutate: func(db *gorm.DB, _, _, trackID, replacementFileID string) error {
-				return db.Exec(`UPDATE track SET audio_original_file_id = ?::uuid, download_audience = 'disabled' WHERE id = ?::uuid`, replacementFileID, trackID).Error
+				return db.Exec(`UPDATE track SET audio_original_file_id = ?::uuid, download_access = 'disabled' WHERE id = ?::uuid`, replacementFileID, trackID).Error
 			},
 		},
 	} {
@@ -179,7 +179,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'compact', ?::uuid)`, documentID, uuid.NewString()).Error)
 			require.NoError(t, db.Exec(`INSERT INTO release (id, type, status, content_document_id) VALUES (?::uuid, ?::release_type, ?, ?::uuid)`, releaseID, managev1.ReleaseType_RELEASE_TYPE_ALBUM.String(), testCase.status, documentID).Error)
 			require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256) VALUES (?::uuid, 'original', 'wav', 'audio/wav', 4096, ?), (?::uuid, 'replacement', 'wav', 'audio/wav', 4096, ?)`, fileID, make([]byte, 32), replacementFileID, make([]byte, 32)).Error)
-			require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, track_number, title, audio_original_file_id, download_audience) VALUES (?::uuid, ?::uuid, 1, 'Original', ?::uuid, 'public')`, trackID, releaseID, fileID).Error)
+			require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, track_number, title, audio_original_file_id, download_access) VALUES (?::uuid, ?::uuid, 1, 'Original', ?::uuid, 'public')`, trackID, releaseID, fileID).Error)
 
 			authorization := mediaasset.ContentDownloadOwnerAuthorization{
 				ResourceType: "release", ResourceID: releaseID, Status: testCase.status, DocumentID: documentID,
@@ -196,7 +196,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 				}
 			}
 
-			resolver := NewDownloadAccess(db, &auth.SpiceDBClient{}, noOpSegmentConfigs{})
+			resolver := NewDownloadAccess(db, &auth.SpiceDBClient{}, noOpCriteriaConfigs{})
 			signing, releaseSigning := make(chan struct{}), make(chan struct{})
 			type resolveResult struct {
 				authorizations map[string]releasepublic.TrackDownloadAuthorization

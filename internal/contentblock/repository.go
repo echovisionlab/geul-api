@@ -620,14 +620,14 @@ func replaceBlockAttachments(
 			ID string `gorm:"column:id"`
 		}
 		if err := tx.WithContext(ctx).
-			Table("audience_segment AS segment").
-			Select("segment.id").
-			Joins("JOIN content_block_attachment_download_audience_segment AS association ON association.audience_segment_id = segment.id").
+			Table("member_criteria AS criteria").
+			Select("criteria.id").
+			Joins("JOIN content_block_attachment_download_member_criteria AS association ON association.member_criteria_id = criteria.id").
 			Where("association.block_id IN ?", upsertOrder).
-			Order("segment.id").
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
+			Order("criteria.id").
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "criteria"}}).
 			Find(&locked).Error; err != nil {
-			return fmt.Errorf("lock content Block attachment audience segments: %w", err)
+			return fmt.Errorf("lock content Block attachment Member criteria: %w", err)
 		}
 	}
 	desired := make(map[uuid.UUID]map[string]blockAttachmentRow, len(upsertOrder))
@@ -636,7 +636,7 @@ func replaceBlockAttachments(
 		for _, reference := range after.blocks[blockID].FileReferences {
 			row := blockAttachmentRow{
 				BlockID: blockID, ReferencePath: reference.ReferencePath,
-				DownloadAudience: "disabled",
+				DownloadAccess: "disabled",
 			}
 			if reference.Missing {
 				missingKind := reference.MissingMediaKind
@@ -675,16 +675,16 @@ func replaceBlockAttachments(
 			}
 			if err := tx.WithContext(ctx).
 				Where("block_id = ? AND reference_path = ?", current.BlockID, current.ReferencePath).
-				Delete(&blockAttachmentDownloadAudienceSegmentRow{}).Error; err != nil {
-				return fmt.Errorf("reset content Block attachment audience segments: %w", err)
+				Delete(&blockAttachmentDownloadMemberCriteriaRow{}).Error; err != nil {
+				return fmt.Errorf("reset content Block attachment Member criteria: %w", err)
 			}
 			result := tx.WithContext(ctx).Model(&blockAttachmentRow{}).
 				Where("block_id = ? AND reference_path = ?", current.BlockID, current.ReferencePath).
 				Updates(map[string]any{
-					"selector_kind":     next.SelectorKind,
-					"file_id":           next.FileID,
-					"missing_kind":      next.MissingKind,
-					"download_audience": "disabled",
+					"selector_kind":   next.SelectorKind,
+					"file_id":         next.FileID,
+					"missing_kind":    next.MissingKind,
+					"download_access": "disabled",
 				})
 			if result.Error != nil {
 				return fmt.Errorf("replace content Block attachment: %w", result.Error)

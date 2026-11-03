@@ -189,7 +189,7 @@ func (s *Service) UpdateTrack(ctx context.Context, command UpdateTrackCommand) (
 	var locked Track
 	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[trackUpdate, Store]{
 		Lock: func(ctx context.Context, store Store) error {
-			if err := store.LockTrackDownloadSegments(ctx, command.ID); err != nil {
+			if err := store.LockTrackDownloadCriteriaSet(ctx, command.ID); err != nil {
 				return err
 			}
 			return lockTrackRow(ctx, store, command.ID, &locked)
@@ -244,7 +244,7 @@ func (command UpdateTrackCommand) apply(track Track) Track {
 }
 
 // saveTrackUpdate stores the updated row. Another original audio file is
-// a different download, so its audience starts disabled again.
+// a different download, so its access starts disabled again.
 func saveTrackUpdate(ctx context.Context, store Store, update *trackUpdate) error {
 	if err := store.SaveTrack(ctx, update.after); err != nil {
 		return err
@@ -255,7 +255,7 @@ func saveTrackUpdate(ctx context.Context, store Store, update *trackUpdate) erro
 	if err := store.DisableTrackDownload(ctx, update.after.ID); err != nil {
 		return err
 	}
-	update.after.DownloadAudience = DownloadAudienceDisabled
+	update.after.DownloadAccess = DownloadAccessDisabled
 	return nil
 }
 

@@ -32,15 +32,15 @@ import (
 
 const publicDownloadUnitSecret = "public-download-unit-secret"
 
-func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
+func TestFileServiceAuthorizeDownloadPostAccessAndScopeUnit(t *testing.T) {
 	db := newPublicFileDownloadUnitDB(t)
 	postID := uuid.NewString()
 	fileID := uuid.NewString()
 	fileName := "간월재 원본.wav"
 	seedPublicDownloadPost(t, db, postID, managev1.PostStatus_POST_STATUS_PUBLISHED, fileID)
-	seedPublicDownloadFile(t, db, fileID, fileName, "wav", "audio/wav", mediaasset.FileDownloadAudienceAuthenticated)
+	seedPublicDownloadFile(t, db, fileID, fileName, "wav", "audio/wav", mediaasset.FileDownloadAccessAuthenticated)
 
-	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: 24 * time.Hour, Segments: mediaassetadapter.NewSegmentConfigs()})
+	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: 24 * time.Hour, CriteriaSet: mediaassetadapter.NewCriteriaConfigs()})
 	anonymous := context.Background()
 	memberID := uuid.NewString()
 	memberIdentityID := uuid.NewString()
@@ -107,7 +107,7 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 		false,
 	)
 
-	setPublicDownloadAudience(t, db, fileID, mediaasset.FileDownloadAudienceDisabled)
+	setPublicDownloadAccess(t, db, fileID, mediaasset.FileDownloadAccessDisabled)
 	response = authorizePostDownload(t, db, svc, adminCtx, postID, fileID, nil)
 	assertFileDownloadAccess(
 		t,
@@ -117,7 +117,7 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 		false,
 	)
 
-	setPublicDownloadAudience(t, db, fileID, mediaasset.FileDownloadAudiencePublic)
+	setPublicDownloadAccess(t, db, fileID, mediaasset.FileDownloadAccessPublic)
 	response = authorizePostDownload(t, db, svc, anonymous, postID, fileID, nil)
 	assertFileDownloadAccess(
 		t,
@@ -128,7 +128,7 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 	)
 
 	tagID := uuid.NewString()
-	segmentID := uuid.NewString()
+	criteriaID := uuid.NewString()
 	expiredMemberID := uuid.NewString()
 	require.NoError(t, db.Exec(
 		`INSERT INTO user_tag (id, name, created_at) VALUES (?, 'Members', ?)`,
@@ -142,28 +142,28 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 		time.Now().UTC(),
 	).Error)
 	require.NoError(t, db.Exec(
-		`INSERT INTO audience_segment (
-			id, name, segment_type, created_at, updated_at
-		) VALUES (?, 'Members', 'SEGMENT_TYPE_MEMBER_TAGS', ?, ?)`,
-		segmentID,
+		`INSERT INTO member_criteria (
+			id, name, kind, created_at, updated_at
+		) VALUES (?, 'Members', 'MEMBER_CRITERIA_KIND_MEMBER_TAGS', ?, ?)`,
+		criteriaID,
 		time.Now().UTC(),
 		time.Now().UTC(),
 	).Error)
 	require.NoError(t, db.Exec(
-		`INSERT INTO audience_segment_user_tag (
-			audience_segment_id, user_tag_id
+		`INSERT INTO member_criteria_tag (
+			member_criteria_id, user_tag_id
 		) VALUES (?, ?)`,
-		segmentID,
+		criteriaID,
 		tagID,
 	).Error)
 	require.NoError(t, db.Exec(`
-		INSERT INTO content_block_attachment_download_audience_segment (
-			block_id, reference_path, audience_segment_id, created_at
+		INSERT INTO content_block_attachment_download_member_criteria (
+			block_id, reference_path, member_criteria_id, created_at
 		)
 		SELECT block_id, reference_path, ?, ?
 		FROM content_block_attachment WHERE file_id = ?
-	`, segmentID, time.Now().UTC(), fileID).Error)
-	setPublicDownloadAudience(t, db, fileID, mediaasset.FileDownloadAudienceRestricted)
+	`, criteriaID, time.Now().UTC(), fileID).Error)
+	setPublicDownloadAccess(t, db, fileID, mediaasset.FileDownloadAccessRestricted)
 
 	response = authorizePostDownload(t, db, svc, anonymous, postID, fileID, nil)
 	assertFileDownloadAccess(
@@ -236,7 +236,7 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 	)
 
 	require.NoError(t, db.Exec(`
-		DELETE FROM content_block_attachment_download_audience_segment
+		DELETE FROM content_block_attachment_download_member_criteria
 		WHERE block_id IN (SELECT block_id FROM content_block_attachment WHERE file_id = ?)
 	`, fileID).Error)
 	response = authorizePostDownload(t, db, svc, anonymous, postID, fileID, nil)
@@ -258,8 +258,8 @@ func TestAuthorizedPostDownloadRejectsDetachedFilesUnit(t *testing.T) {
 
 	seedPublicDownloadPost(t, db, publishedPostID, managev1.PostStatus_POST_STATUS_PUBLISHED, fileID)
 	seedPublicDownloadPost(t, db, otherPostID, managev1.PostStatus_POST_STATUS_PUBLISHED, "")
-	seedPublicDownloadFile(t, db, fileID, "public.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
-	seedPublicDownloadFile(t, db, detachedFileID, "detached.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
+	seedPublicDownloadFile(t, db, fileID, "public.wav", "wav", "audio/wav", mediaasset.FileDownloadAccessPublic)
+	seedPublicDownloadFile(t, db, detachedFileID, "detached.wav", "wav", "audio/wav", mediaasset.FileDownloadAccessPublic)
 
 	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 	for name, scope := range map[string][2]string{
@@ -294,9 +294,9 @@ func TestFileServiceAuthorizeDownloadUsesExactReleaseTrackRelationUnit(t *testin
 	releaseID := uuid.NewString()
 	trackID := uuid.NewString()
 	fileID := uuid.NewString()
-	seedPublicDownloadFile(t, db, fileID, "original.wav", "wav", "audio/wav", mediaasset.FileDownloadAudienceDisabled)
+	seedPublicDownloadFile(t, db, fileID, "original.wav", "wav", "audio/wav", mediaasset.FileDownloadAccessDisabled)
 	require.NoError(t, db.Exec(`INSERT INTO release (id, status) VALUES (?, ?)`, releaseID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).Error)
-	require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, audio_original_file_id, download_audience) VALUES (?, ?, ?, 'public')`, trackID, releaseID, fileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, audio_original_file_id, download_access) VALUES (?, ?, ?, 'public')`, trackID, releaseID, fileID).Error)
 	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 	response, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType:     openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_RELEASE,
@@ -320,7 +320,7 @@ func TestAuthorizedPostDownloadRejectsDraftWithoutAuthenticatedViewUnit(t *testi
 	postID := uuid.NewString()
 	fileID := uuid.NewString()
 	seedPublicDownloadPost(t, db, postID, managev1.PostStatus_POST_STATUS_DRAFT, fileID)
-	seedPublicDownloadFile(t, db, fileID, "draft.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
+	seedPublicDownloadFile(t, db, fileID, "draft.wav", "wav", "audio/wav", mediaasset.FileDownloadAccessPublic)
 	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Hour})
 
 	response := authorizePostDownload(
@@ -387,7 +387,7 @@ func TestFileServiceAuthorizeDownloadUsesFallbackForHistoricalInvalidFilenameUni
 		"../source.wav",
 		"wav",
 		"audio/wav",
-		mediaasset.FileDownloadAudiencePublic,
+		mediaasset.FileDownloadAccessPublic,
 	)
 	svc := newTestService(testDeps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 
@@ -419,7 +419,7 @@ func newPublicFileDownloadUnitDB(t *testing.T) *gorm.DB {
 			selector_kind TEXT NOT NULL,
 			file_id TEXT,
 			missing_kind TEXT,
-			download_audience TEXT NOT NULL DEFAULT 'disabled',
+			download_access TEXT NOT NULL DEFAULT 'disabled',
 			PRIMARY KEY (block_id, reference_path)
 		);
 		CREATE TABLE post (
@@ -433,13 +433,13 @@ func newPublicFileDownloadUnitDB(t *testing.T) *gorm.DB {
 			id TEXT PRIMARY KEY,
 			release_id TEXT NOT NULL,
 			audio_original_file_id TEXT,
-			download_audience TEXT NOT NULL DEFAULT 'disabled'
+			download_access TEXT NOT NULL DEFAULT 'disabled'
 		);
-		CREATE TABLE track_download_audience_segment (
+		CREATE TABLE track_download_member_criteria (
 			track_id TEXT NOT NULL,
-			audience_segment_id TEXT NOT NULL,
+			member_criteria_id TEXT NOT NULL,
 			created_at DATETIME NOT NULL,
-			PRIMARY KEY (track_id, audience_segment_id)
+			PRIMARY KEY (track_id, member_criteria_id)
 		);
 		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
@@ -450,38 +450,38 @@ func newPublicFileDownloadUnitDB(t *testing.T) *gorm.DB {
  duration_seconds INTEGER,
 			delete_requested_at DATETIME
 		);
-		CREATE TABLE audience_segment (
+		CREATE TABLE member_criteria (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			description TEXT,
-			segment_type TEXT NOT NULL,
+			kind TEXT NOT NULL,
 			created_after DATETIME,
 			created_before DATETIME,
 			archived_at DATETIME,
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME
 		);
-		CREATE TABLE audience_segment_user_tag (
-			audience_segment_id TEXT NOT NULL,
+		CREATE TABLE member_criteria_tag (
+			member_criteria_id TEXT NOT NULL,
 			user_tag_id TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, user_tag_id)
+			PRIMARY KEY (member_criteria_id, user_tag_id)
 		);
-		CREATE TABLE audience_segment_user_role (
-			audience_segment_id TEXT NOT NULL,
+		CREATE TABLE member_criteria_role (
+			member_criteria_id TEXT NOT NULL,
 			role TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, role)
+			PRIMARY KEY (member_criteria_id, role)
 		);
-		CREATE TABLE audience_segment_excluded_member (
-			audience_segment_id TEXT NOT NULL,
+		CREATE TABLE member_criteria_excluded_member (
+			member_criteria_id TEXT NOT NULL,
 			member_id TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, member_id)
+			PRIMARY KEY (member_criteria_id, member_id)
 		);
-		CREATE TABLE content_block_attachment_download_audience_segment (
+		CREATE TABLE content_block_attachment_download_member_criteria (
 			block_id TEXT NOT NULL,
 			reference_path TEXT NOT NULL,
-			audience_segment_id TEXT NOT NULL,
+			member_criteria_id TEXT NOT NULL,
 			created_at DATETIME NOT NULL,
-			PRIMARY KEY (block_id, reference_path, audience_segment_id)
+			PRIMARY KEY (block_id, reference_path, member_criteria_id)
 		);
 		CREATE TABLE user_tag (
 			id TEXT PRIMARY KEY,
@@ -569,7 +569,7 @@ func seedPublicDownloadFile(
 	fileName string,
 	extension string,
 	mimeType string,
-	audience mediaasset.FileDownloadAudience,
+	access mediaasset.FileDownloadAccess,
 ) {
 	t.Helper()
 	require.NoError(t, db.Exec(
@@ -580,19 +580,19 @@ func seedPublicDownloadFile(
 		extension,
 		mimeType,
 	).Error)
-	setPublicDownloadAudience(t, db, fileID, audience)
+	setPublicDownloadAccess(t, db, fileID, access)
 }
 
-func setPublicDownloadAudience(
+func setPublicDownloadAccess(
 	t *testing.T,
 	db *gorm.DB,
 	fileID string,
-	audience mediaasset.FileDownloadAudience,
+	access mediaasset.FileDownloadAccess,
 ) {
 	t.Helper()
 	require.NoError(t, db.Exec(
-		`UPDATE content_block_attachment SET download_audience = ? WHERE file_id = ?`,
-		string(audience),
+		`UPDATE content_block_attachment SET download_access = ? WHERE file_id = ?`,
+		string(access),
 		fileID,
 	).Error)
 }

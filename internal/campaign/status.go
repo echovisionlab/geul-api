@@ -8,5 +8,5 @@ const (
 	msgCampaignOnlyCancelScheduled = "can only cancel scheduled campaigns"
 	msgCampaignAlreadySent         = "only draft campaigns can be sent"
 	msgCampaignNoRecipients        = "no eligible recipients to send to"
-	msgCampaignSegmentNotFound     = "campaign segment not found"
+	msgCampaignCriteriaNotFound    = "campaign criteria not found"
 )

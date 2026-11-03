@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	CampaignTargetModeAll     = "all"
-	CampaignTargetModeSegment = "segment"
+	CampaignTargetModeAll            = "all"
+	CampaignTargetModeMemberCriteria = "member_criteria"
 )
 
 // CampaignStatus is the stored lifecycle state of a campaign. The values are
@@ -32,7 +32,7 @@ type Campaign struct {
 	ContentHTML       *string    `gorm:"-"`
 	Status            string     `gorm:"column:status;type:varchar(50);not null;default:CAMPAIGN_STATUS_DRAFT"`
 	TargetMode        string     `gorm:"column:target_mode;type:varchar(16);not null"`
-	SegmentID         *string    `gorm:"column:segment_id;type:uuid"`
+	CriteriaID        *string    `gorm:"column:criteria_id;type:uuid"`
 	LayoutID          *string    `gorm:"column:layout_id;type:uuid"`
 	ScheduledAt       *time.Time `gorm:"column:scheduled_at;type:timestamptz"`
 	SentAt            *time.Time `gorm:"column:sent_at;type:timestamptz"`

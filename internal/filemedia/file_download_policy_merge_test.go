@@ -19,7 +19,7 @@ func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
 			EntityType:     managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
 			EntityId:       uuid.NewString(),
 			ExpectedFileId: uuid.NewString(),
-			Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
+			Access:         managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC,
 		},
 	))
 	if errs.CodeOf(err) != connect.CodeInvalidArgument {
@@ -28,52 +28,52 @@ func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
 }
 
 func TestMergeObservedFileDownloadPolicyPreservesIndependentChanges(t *testing.T) {
-	currentAudience, segmentIDs := mergeObservedFileDownloadPolicy(
-		mediaasset.FileDownloadAudienceRestricted,
-		mediaasset.FileDownloadAudienceRestricted,
-		mediaasset.FileDownloadAudienceRestricted,
-		[]string{"segment-a", "segment-c"},
-		[]string{"segment-a", "segment-b"},
-		[]string{"segment-b", "segment-d"},
+	currentAccess, criteriaIDs := mergeObservedFileDownloadPolicy(
+		mediaasset.FileDownloadAccessRestricted,
+		mediaasset.FileDownloadAccessRestricted,
+		mediaasset.FileDownloadAccessRestricted,
+		[]string{"criteria-a", "criteria-c"},
+		[]string{"criteria-a", "criteria-b"},
+		[]string{"criteria-b", "criteria-d"},
 	)
 
-	if currentAudience != mediaasset.FileDownloadAudienceRestricted {
-		t.Fatalf("audience = %q, want restricted", currentAudience)
+	if currentAccess != mediaasset.FileDownloadAccessRestricted {
+		t.Fatalf("access = %q, want restricted", currentAccess)
 	}
-	if want := []string{"segment-c", "segment-d"}; !reflect.DeepEqual(segmentIDs, want) {
-		t.Fatalf("segment IDs = %v, want %v", segmentIDs, want)
+	if want := []string{"criteria-c", "criteria-d"}; !reflect.DeepEqual(criteriaIDs, want) {
+		t.Fatalf("criteria IDs = %v, want %v", criteriaIDs, want)
 	}
 }
 
-func TestMergeObservedFileDownloadPolicyAppliesTouchedAudienceAndClearsSegments(t *testing.T) {
-	currentAudience, segmentIDs := mergeObservedFileDownloadPolicy(
-		mediaasset.FileDownloadAudienceRestricted,
-		mediaasset.FileDownloadAudienceRestricted,
-		mediaasset.FileDownloadAudiencePublic,
-		[]string{"segment-a", "segment-peer"},
-		[]string{"segment-a"},
+func TestMergeObservedFileDownloadPolicyAppliesTouchedAccessAndClearsCriteriaSet(t *testing.T) {
+	currentAccess, criteriaIDs := mergeObservedFileDownloadPolicy(
+		mediaasset.FileDownloadAccessRestricted,
+		mediaasset.FileDownloadAccessRestricted,
+		mediaasset.FileDownloadAccessPublic,
+		[]string{"criteria-a", "criteria-peer"},
+		[]string{"criteria-a"},
 		nil,
 	)
 
-	if currentAudience != mediaasset.FileDownloadAudiencePublic {
-		t.Fatalf("audience = %q, want public", currentAudience)
+	if currentAccess != mediaasset.FileDownloadAccessPublic {
+		t.Fatalf("access = %q, want public", currentAccess)
 	}
-	if len(segmentIDs) != 0 {
-		t.Fatalf("segment IDs = %v, want none for non-restricted audience", segmentIDs)
+	if len(criteriaIDs) != 0 {
+		t.Fatalf("criteria IDs = %v, want none for non-restricted access", criteriaIDs)
 	}
 }
 
-func TestMergeObservedFileDownloadPolicyKeepsUntouchedAudience(t *testing.T) {
-	currentAudience, _ := mergeObservedFileDownloadPolicy(
-		mediaasset.FileDownloadAudienceAuthenticated,
-		mediaasset.FileDownloadAudienceRestricted,
-		mediaasset.FileDownloadAudienceRestricted,
-		[]string{"segment-a"},
-		[]string{"segment-a"},
-		[]string{"segment-a"},
+func TestMergeObservedFileDownloadPolicyKeepsUntouchedAccess(t *testing.T) {
+	currentAccess, _ := mergeObservedFileDownloadPolicy(
+		mediaasset.FileDownloadAccessAuthenticated,
+		mediaasset.FileDownloadAccessRestricted,
+		mediaasset.FileDownloadAccessRestricted,
+		[]string{"criteria-a"},
+		[]string{"criteria-a"},
+		[]string{"criteria-a"},
 	)
 
-	if currentAudience != mediaasset.FileDownloadAudienceAuthenticated {
-		t.Fatalf("audience = %q, want current authenticated audience", currentAudience)
+	if currentAccess != mediaasset.FileDownloadAccessAuthenticated {
+		t.Fatalf("access = %q, want current authenticated access", currentAccess)
 	}
 }

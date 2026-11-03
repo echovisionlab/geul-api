@@ -19,9 +19,9 @@ import (
 	"gorm.io/gorm"
 )
 
-type noOpSegmentConfigs struct{}
+type noOpCriteriaConfigs struct{}
 
-func (noOpSegmentConfigs) LoadSegmentConfigs(context.Context, *gorm.DB, []*model.AudienceSegment) error {
+func (noOpCriteriaConfigs) LoadCriteriaConfigs(context.Context, *gorm.DB, []*model.MemberCriteria) error {
 	return nil
 }
 
@@ -41,17 +41,17 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 			created_at DATETIME NOT NULL
 		);
 		CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, extension TEXT NOT NULL, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL, file_name TEXT, delete_requested_at DATETIME);
-		CREATE TABLE track (id TEXT PRIMARY KEY, release_id TEXT NOT NULL, audio_original_file_id TEXT, download_audience TEXT NOT NULL DEFAULT 'disabled');
-		CREATE TABLE track_download_audience_segment (track_id TEXT NOT NULL, audience_segment_id TEXT NOT NULL, PRIMARY KEY (track_id, audience_segment_id));
-		CREATE TABLE audience_segment (id TEXT PRIMARY KEY);
+		CREATE TABLE track (id TEXT PRIMARY KEY, release_id TEXT NOT NULL, audio_original_file_id TEXT, download_access TEXT NOT NULL DEFAULT 'disabled');
+		CREATE TABLE track_download_member_criteria (track_id TEXT NOT NULL, member_criteria_id TEXT NOT NULL, PRIMARY KEY (track_id, member_criteria_id));
+		CREATE TABLE member_criteria (id TEXT PRIMARY KEY);
 	`).Error)
 	releaseID, fileID := uuid.NewString(), uuid.NewString()
 	publicTrackID, disabledTrackID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO release (id, status) VALUES (?, 'RELEASE_STATUS_PUBLISHED')`, releaseID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO file (id, extension, mime_type, file_size, file_name) VALUES (?, 'wav', 'audio/wav', 1, 'same.wav')`, fileID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, audio_original_file_id, download_audience) VALUES (?, ?, ?, 'public'), (?, ?, ?, 'disabled')`, publicTrackID, releaseID, fileID, disabledTrackID, releaseID, fileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, audio_original_file_id, download_access) VALUES (?, ?, ?, 'public'), (?, ?, ?, 'disabled')`, publicTrackID, releaseID, fileID, disabledTrackID, releaseID, fileID).Error)
 
-	resolver := NewDownloadAccess(db, &auth.SpiceDBClient{}, noOpSegmentConfigs{})
+	resolver := NewDownloadAccess(db, &auth.SpiceDBClient{}, noOpCriteriaConfigs{})
 	result, err := resolver.Resolve(t.Context(), releaseID, "RELEASE_STATUS_PUBLISHED", mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "release", ResourceID: releaseID, Status: "RELEASE_STATUS_PUBLISHED",
 		Mode: mediaasset.ContentDownloadOwnerAccessPublic,

@@ -23,7 +23,7 @@ const (
 	fileBlockTestBlockID    = "55555555-5555-4555-8555-555555555555"
 	fileBlockTestFileID     = "66666666-6666-4666-8666-666666666666"
 	fileBlockReplacementID  = "77777777-7777-4777-8777-777777777777"
-	fileBlockSegmentID      = "88888888-8888-4888-8888-888888888888"
+	fileBlockCriteriaID     = "88888888-8888-4888-8888-888888888888"
 )
 
 func TestFileBlockToolDescriptorsAreFocusedAndAnnotated(t *testing.T) {
@@ -301,7 +301,7 @@ func TestDocumentFileToolsRejectUnsupportedDocumentTypeBeforeReadOrMutation(t *t
 }
 
 func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testing.T) {
-	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC)}
+	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC)}
 	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
 
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyGet, toolArguments(t, `{
@@ -314,16 +314,16 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 		manager.getRequest.Msg.ReferencePath == nil || *manager.getRequest.Msg.ReferencePath != "file" {
 		t.Fatalf("policy selector = %+v", manager.getRequest.Msg)
 	}
-	if result.StructuredContent["file_id"] != fileBlockTestFileID || result.StructuredContent["audience"] != "public" {
+	if result.StructuredContent["file_id"] != fileBlockTestFileID || result.StructuredContent["access"] != "public" {
 		t.Fatalf("policy result = %+v", result.StructuredContent)
 	}
 
-	manager.policy = testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED)
-	manager.policy.AudienceSegments = []*filemediadomain.PolicySegment{{ID: fileBlockSegmentID, Name: "Members"}}
+	manager.policy = testFileBlockPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED)
+	manager.policy.MemberCriteria = []*filemediadomain.PolicyCriteria{{ID: fileBlockCriteriaID, Name: "Members"}}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"],
-		"observed_policy":{"audience":"public","audience_segment_ids":[]}
+		"expected_file_id":"`+fileBlockTestFileID+`","access":"restricted","member_criteria_ids":["`+fileBlockCriteriaID+`"],
+		"observed_policy":{"access":"public","member_criteria_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("policy update = %+v, %v", result, err)
@@ -331,22 +331,22 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	request := manager.updateRequest.Msg
 	if request.ExpectedFileId != fileBlockTestFileID || request.BlockId == nil || *request.BlockId != fileBlockTestBlockID ||
 		request.ReferencePath == nil || *request.ReferencePath != "file" ||
-		request.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED ||
-		!reflect.DeepEqual(request.AudienceSegmentIds, []string{fileBlockSegmentID}) ||
-		request.ObservedPolicy == nil || request.ObservedPolicy.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC ||
-		len(request.ObservedPolicy.AudienceSegmentIds) != 0 {
+		request.Access != managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED ||
+		!reflect.DeepEqual(request.MemberCriteriaIds, []string{fileBlockCriteriaID}) ||
+		request.ObservedPolicy == nil || request.ObservedPolicy.Access != managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC ||
+		len(request.ObservedPolicy.MemberCriteriaIds) != 0 {
 		t.Fatalf("policy update request = %+v", request)
 	}
-	if result.StructuredContent["audience"] != "restricted" {
+	if result.StructuredContent["access"] != "restricted" {
 		t.Fatalf("policy update result = %+v", result.StructuredContent)
 	}
 }
 
-func TestDocumentFileDownloadPolicyRejectsInvalidAudienceShapeBeforeCall(t *testing.T) {
+func TestDocumentFileDownloadPolicyRejectsInvalidAccessShapeBeforeCall(t *testing.T) {
 	manager := &recordingFileBlockManagement{}
 	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
 	for _, tail := range []string{
-		`"audience":"public","audience_segment_ids":["` + fileBlockSegmentID + `"]`,
+		`"access":"public","member_criteria_ids":["` + fileBlockCriteriaID + `"]`,
 	} {
 		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 			"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
@@ -363,7 +363,7 @@ func TestDocumentFileDownloadPolicyRejectsInvalidAudienceShapeBeforeCall(t *test
 }
 
 func TestDocumentFileDownloadPolicyReturnsRestrictedEmptyFailClosedState(t *testing.T) {
-	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED)}
+	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED)}
 	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyGet, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`"
@@ -371,36 +371,36 @@ func TestDocumentFileDownloadPolicyReturnsRestrictedEmptyFailClosedState(t *test
 	if err != nil || result.IsError {
 		t.Fatalf("restricted-empty policy get = %+v, %v", result, err)
 	}
-	if result.StructuredContent["audience"] != "restricted" || len(result.StructuredContent["audience_segments"].([]any)) != 0 {
+	if result.StructuredContent["access"] != "restricted" || len(result.StructuredContent["member_criteria"].([]any)) != 0 {
 		t.Fatalf("restricted-empty result = %+v", result.StructuredContent)
 	}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted",
-		"observed_policy":{"audience":"restricted","audience_segment_ids":[]}
+		"expected_file_id":"`+fileBlockTestFileID+`","access":"restricted",
+		"observed_policy":{"access":"restricted","member_criteria_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("restricted-empty policy update = %+v, %v", result, err)
 	}
-	if manager.updateRequest == nil || manager.updateRequest.Msg.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED || len(manager.updateRequest.Msg.AudienceSegmentIds) != 0 {
+	if manager.updateRequest == nil || manager.updateRequest.Msg.Access != managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED || len(manager.updateRequest.Msg.MemberCriteriaIds) != 0 {
 		t.Fatalf("restricted-empty update request = %+v", manager.updateRequest)
 	}
 }
 
 func TestDocumentFileDownloadPolicyPreservesExactObservedBaseline(t *testing.T) {
-	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC)}
+	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_PUBLIC)}
 	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
-		"observed_policy":{"audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"]}
+		"expected_file_id":"`+fileBlockTestFileID+`","access":"public",
+		"observed_policy":{"access":"restricted","member_criteria_ids":["`+fileBlockCriteriaID+`"]}
 	}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := &managev1.FileDownloadPolicyObservedState{
-		Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
-		AudienceSegmentIds: []string{fileBlockSegmentID},
+		Access:            managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED,
+		MemberCriteriaIds: []string{fileBlockCriteriaID},
 	}
 	if !reflect.DeepEqual(manager.updateRequest.Msg.ObservedPolicy, want) || manager.getRequest != nil {
 		t.Fatalf("observed baseline was replaced or reread: request=%+v get=%+v", manager.updateRequest.Msg, manager.getRequest)
@@ -411,19 +411,19 @@ func TestDocumentFileDownloadPolicyRejectsMissingOrInvalidObservedBaseline(t *te
 	for _, baseline := range []string{
 		``,
 		`,"observed_policy":null`,
-		`,"observed_policy":{"audience":"disabled"}`,
-		`,"observed_policy":{"audience":"disabled","audience_segment_ids":null}`,
-		`,"observed_policy":{"audience":"unknown","audience_segment_ids":[]}`,
-		`,"observed_policy":{"audience":"public","audience_segment_ids":["` + fileBlockSegmentID + `"]}`,
-		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["` + fileBlockSegmentID + `","` + fileBlockSegmentID + `"]}`,
-		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["not-a-uuid"]}`,
+		`,"observed_policy":{"access":"disabled"}`,
+		`,"observed_policy":{"access":"disabled","member_criteria_ids":null}`,
+		`,"observed_policy":{"access":"unknown","member_criteria_ids":[]}`,
+		`,"observed_policy":{"access":"public","member_criteria_ids":["` + fileBlockCriteriaID + `"]}`,
+		`,"observed_policy":{"access":"restricted","member_criteria_ids":["` + fileBlockCriteriaID + `","` + fileBlockCriteriaID + `"]}`,
+		`,"observed_policy":{"access":"restricted","member_criteria_ids":["not-a-uuid"]}`,
 	} {
 		t.Run(baseline, func(t *testing.T) {
 			manager := &recordingFileBlockManagement{}
 			tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
 			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 				"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-				"expected_file_id":"`+fileBlockTestFileID+`","audience":"disabled"`+baseline+`
+				"expected_file_id":"`+fileBlockTestFileID+`","access":"disabled"`+baseline+`
 			}`))
 			var executionErr *mcpserver.ToolExecutionError
 			if !errors.As(err, &executionErr) || manager.updateRequest != nil {
@@ -437,8 +437,8 @@ func TestDocumentFileDownloadPolicySatisfiesRealServiceInputContract(t *testing.
 	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.Service{})
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
-		"observed_policy":{"audience":"disabled","audience_segment_ids":[]}
+		"expected_file_id":"`+fileBlockTestFileID+`","access":"public",
+		"observed_policy":{"access":"disabled","member_criteria_ids":[]}
 	}`))
 	var executionErr *mcpserver.ToolExecutionError
 	// The actual service validates the policy input before checking its actor.
@@ -508,13 +508,13 @@ func fileBlockMutationArguments(t *testing.T, suffix string) mcpserver.ToolArgum
 	}`)
 }
 
-func testFileBlockPolicy(audience managev1.FileDownloadAudience) *fileauthority.DownloadPolicy {
+func testFileBlockPolicy(access managev1.FileDownloadAccess) *fileauthority.DownloadPolicy {
 	blockID := fileBlockTestBlockID
 	referencePath := "file"
 	return &fileauthority.DownloadPolicy{
 		EntityType: int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST),
 		EntityID:   fileBlockTestDocumentID, BlockID: &blockID, ReferencePath: &referencePath,
-		FileID: fileBlockTestFileID, Audience: mediaasset.FileDownloadAudience(strings.ToLower(strings.TrimPrefix(audience.String(), "FILE_DOWNLOAD_AUDIENCE_"))),
+		FileID: fileBlockTestFileID, Access: mediaasset.FileDownloadAccess(strings.ToLower(strings.TrimPrefix(access.String(), "FILE_DOWNLOAD_ACCESS_"))),
 	}
 }
 
@@ -543,10 +543,10 @@ func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.
 	request := &managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: managev1.TranscodeEntityType(command.Target.EntityType), EntityId: command.Target.EntityID,
 		BlockId: command.Target.BlockID, ReferencePath: command.Target.ReferencePath,
-		ExpectedFileId: command.ExpectedFileID, Audience: managev1.FileDownloadAudience(command.Policy.Audience), AudienceSegmentIds: command.Policy.AudienceSegmentIDs,
+		ExpectedFileId: command.ExpectedFileID, Access: managev1.FileDownloadAccess(command.Policy.Access), MemberCriteriaIds: command.Policy.MemberCriteriaIDs,
 	}
 	if observed := command.Observed; observed != nil {
-		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Audience: managev1.FileDownloadAudience(observed.Audience), AudienceSegmentIds: observed.AudienceSegmentIDs}
+		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Access: managev1.FileDownloadAccess(observed.Access), MemberCriteriaIds: observed.MemberCriteriaIDs}
 	}
 	manager.updateRequest = connect.NewRequest(request)
 	return manager.policy, manager.err

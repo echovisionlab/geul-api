@@ -17,15 +17,15 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type SegmentConfigLoader interface {
-	LoadSegmentConfigs(context.Context, *gorm.DB, []*model.AudienceSegment) error
+type CriteriaConfigLoader interface {
+	LoadCriteriaConfigs(context.Context, *gorm.DB, []*model.MemberCriteria) error
 }
 type downloadStore struct {
 	db     *gorm.DB
-	loader SegmentConfigLoader
+	loader CriteriaConfigLoader
 }
 
-func NewDownloadStore(tx *gorm.DB, loader SegmentConfigLoader) mediaasset.DownloadStore {
+func NewDownloadStore(tx *gorm.DB, loader CriteriaConfigLoader) mediaasset.DownloadStore {
 	if tx == nil {
 		panic("media asset download store: database is required")
 	}
@@ -35,26 +35,26 @@ func NewDownloadStore(tx *gorm.DB, loader SegmentConfigLoader) mediaasset.Downlo
 type downloadSourceRow struct {
 	PolicyKey     string
 	PolicyKind    mediaasset.FileDownloadPolicyKind
-	BlockID       string                          `gorm:"column:block_id"`
-	ReferencePath string                          `gorm:"column:reference_path"`
-	TrackID       string                          `gorm:"column:track_id"`
-	FileID        string                          `gorm:"column:id"`
-	Extension     string                          `gorm:"column:extension"`
-	MimeType      string                          `gorm:"column:mime_type"`
-	FileSize      int64                           `gorm:"column:file_size"`
-	FileName      *string                         `gorm:"column:file_name"`
-	Audience      mediaasset.FileDownloadAudience `gorm:"column:download_audience"`
+	BlockID       string                        `gorm:"column:block_id"`
+	ReferencePath string                        `gorm:"column:reference_path"`
+	TrackID       string                        `gorm:"column:track_id"`
+	FileID        string                        `gorm:"column:id"`
+	Extension     string                        `gorm:"column:extension"`
+	MimeType      string                        `gorm:"column:mime_type"`
+	FileSize      int64                         `gorm:"column:file_size"`
+	FileName      *string                       `gorm:"column:file_name"`
+	Access        mediaasset.FileDownloadAccess `gorm:"column:download_access"`
 }
 
 func downloadSource(row downloadSourceRow) mediaasset.FileDownloadSource {
-	return mediaasset.FileDownloadSource{PolicyKey: row.PolicyKey, PolicyKind: row.PolicyKind, BlockID: row.BlockID, ReferencePath: row.ReferencePath, TrackID: row.TrackID, FileID: row.FileID, Extension: row.Extension, MimeType: row.MimeType, FileSize: row.FileSize, FileName: row.FileName, Audience: row.Audience}
+	return mediaasset.FileDownloadSource{PolicyKey: row.PolicyKey, PolicyKind: row.PolicyKind, BlockID: row.BlockID, ReferencePath: row.ReferencePath, TrackID: row.TrackID, FileID: row.FileID, Extension: row.Extension, MimeType: row.MimeType, FileSize: row.FileSize, FileName: row.FileName, Access: row.Access}
 }
 func (s *downloadStore) ContentSources(ctx context.Context, blockIDs []string) ([]mediaasset.FileDownloadSource, error) {
 	var rows []downloadSourceRow
 	err := s.db.WithContext(ctx).Raw(`
 		SELECT attachment.block_id, attachment.reference_path,
 		       file.id, file.extension, file.mime_type, file.file_size, file.file_name,
-		       attachment.download_audience
+		       attachment.download_access
 		FROM content_block_attachment AS attachment
 		JOIN content_block AS block ON block.id = attachment.block_id
 		JOIN file ON file.id = attachment.file_id
@@ -78,7 +78,7 @@ func (s *downloadStore) TrackSources(ctx context.Context, trackIDs []string) ([]
 	var rows []downloadSourceRow
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT track.id AS track_id, file.id, file.extension, file.mime_type,
-		       file.file_size, file.file_name, track.download_audience
+		       file.file_size, file.file_name, track.download_access
 		FROM track
 		JOIN file ON file.id = track.audio_original_file_id
 		WHERE track.id IN ? AND file.delete_requested_at IS NULL
@@ -112,17 +112,17 @@ func (s *downloadStore) Associations(
 	associations := make([]mediaasset.DownloadAssociation, 0)
 	if blockIDs = sliceutil.SortedUniqueTrimmed(blockIDs); len(blockIDs) > 0 {
 		var rows []struct {
-			BlockID           string `gorm:"column:block_id"`
-			ReferencePath     string `gorm:"column:reference_path"`
-			AudienceSegmentID string `gorm:"column:audience_segment_id"`
+			BlockID          string `gorm:"column:block_id"`
+			ReferencePath    string `gorm:"column:reference_path"`
+			MemberCriteriaID string `gorm:"column:member_criteria_id"`
 		}
 		query := s.db.WithContext(ctx).
-			Table("content_block_attachment_download_audience_segment AS association").
-			Select("association.block_id, association.reference_path, association.audience_segment_id").
+			Table("content_block_attachment_download_member_criteria AS association").
+			Select("association.block_id, association.reference_path, association.member_criteria_id").
 			Where("association.block_id IN ?", blockIDs)
 		if activeOnly {
-			query = query.Joins("JOIN audience_segment AS segment ON segment.id = association.audience_segment_id").
-				Where("segment.archived_at IS NULL")
+			query = query.Joins("JOIN member_criteria AS criteria ON criteria.id = association.member_criteria_id").
+				Where("criteria.archived_at IS NULL")
 		}
 		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
@@ -130,32 +130,32 @@ func (s *downloadStore) Associations(
 		for _, row := range rows {
 			key := mediaasset.ContentBlockDownloadPolicyKey(row.BlockID, row.ReferencePath)
 			if _, ok := contentSources[key]; ok {
-				associations = append(associations, mediaasset.DownloadAssociation{PolicyKey: key, AudienceSegmentID: row.AudienceSegmentID})
+				associations = append(associations, mediaasset.DownloadAssociation{PolicyKey: key, MemberCriteriaID: row.MemberCriteriaID})
 			}
 		}
 	}
 	if trackIDs = sliceutil.SortedUniqueTrimmed(trackIDs); len(trackIDs) > 0 {
-		var rows []model.TrackDownloadAudienceSegment
+		var rows []model.TrackDownloadMemberCriteria
 		query := s.db.WithContext(ctx).
-			Table("track_download_audience_segment AS association").
-			Select("association.track_id, association.audience_segment_id").
+			Table("track_download_member_criteria AS association").
+			Select("association.track_id, association.member_criteria_id").
 			Where("association.track_id IN ?", trackIDs)
 		if activeOnly {
-			query = query.Joins("JOIN audience_segment AS segment ON segment.id = association.audience_segment_id").
-				Where("segment.archived_at IS NULL")
+			query = query.Joins("JOIN member_criteria AS criteria ON criteria.id = association.member_criteria_id").
+				Where("criteria.archived_at IS NULL")
 		}
 		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			associations = append(associations, mediaasset.DownloadAssociation{PolicyKey: row.TrackID, AudienceSegmentID: row.AudienceSegmentID})
+			associations = append(associations, mediaasset.DownloadAssociation{PolicyKey: row.TrackID, MemberCriteriaID: row.MemberCriteriaID})
 		}
 	}
 	return associations, nil
 }
 
-func (s *downloadStore) Segments(ctx context.Context, ids []string, activeOnly bool) ([]mediaasset.DownloadSegment, error) {
-	var rows []model.AudienceSegment
+func (s *downloadStore) CriteriaSet(ctx context.Context, ids []string, activeOnly bool) ([]mediaasset.DownloadCriteria, error) {
+	var rows []model.MemberCriteria
 	q := s.db.WithContext(ctx).Where("id IN ?", ids)
 	if activeOnly {
 		q = q.Where("archived_at IS NULL")
@@ -164,18 +164,18 @@ func (s *downloadStore) Segments(ctx context.Context, ids []string, activeOnly b
 		return nil, err
 	}
 	if s.loader == nil {
-		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
+		return nil, domainerr.DependencyUnavailable("Access criteria configuration")
 	}
-	pointers := make([]*model.AudienceSegment, 0, len(rows))
+	pointers := make([]*model.MemberCriteria, 0, len(rows))
 	for i := range rows {
 		pointers = append(pointers, &rows[i])
 	}
-	if err := s.loader.LoadSegmentConfigs(ctx, s.db, pointers); err != nil {
+	if err := s.loader.LoadCriteriaConfigs(ctx, s.db, pointers); err != nil {
 		return nil, err
 	}
-	result := make([]mediaasset.DownloadSegment, len(rows))
+	result := make([]mediaasset.DownloadCriteria, len(rows))
 	for i, row := range rows {
-		result[i] = mediaasset.DownloadSegment{ID: row.ID, SegmentType: mediaasset.DownloadSegmentType(row.SegmentType), ArchivedAt: row.ArchivedAt, UpdatedAt: row.UpdatedAt, Config: mediaasset.DownloadSegmentConfig{MemberTagIDs: row.Config.MemberTagIDs, AccountRoles: row.Config.AccountRoles, CreatedAfter: row.Config.CreatedAfter, CreatedBefore: row.Config.CreatedBefore, ExcludeMemberIDs: row.Config.ExcludeMemberIDs}}
+		result[i] = mediaasset.DownloadCriteria{ID: row.ID, Kind: mediaasset.DownloadKind(row.Kind), ArchivedAt: row.ArchivedAt, UpdatedAt: row.UpdatedAt, Config: mediaasset.DownloadCriteriaConfig{MemberTagIDs: row.Config.MemberTagIDs, AccountRoles: row.Config.AccountRoles, CreatedAfter: row.Config.CreatedAfter, CreatedBefore: row.Config.CreatedBefore, ExcludeMemberIDs: row.Config.ExcludeMemberIDs}}
 	}
 	return result, nil
 }
@@ -262,21 +262,21 @@ func (s *downloadStore) ViewerTagIDs(ctx context.Context, id string) ([]string, 
 	err := s.db.WithContext(ctx).Table("user_tag_mapping AS mapping").Joins("JOIN user_tag AS tag ON tag.id = mapping.tag_id").Where("mapping.member_id = ?", id).Pluck("mapping.tag_id", &ids).Error
 	return ids, err
 }
-func (s *downloadStore) LockSegments(ctx context.Context, segmentIDs []string) error {
+func (s *downloadStore) LockCriteriaSet(ctx context.Context, criteriaIDs []string) error {
 	var locked []struct {
 		ID string `gorm:"column:id"`
 	}
 	return s.db.WithContext(ctx).
-		Table("audience_segment").
+		Table("member_criteria").
 		Select("id").
-		Where("id IN ?", segmentIDs).
+		Where("id IN ?", criteriaIDs).
 		Order("id").
 		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Find(&locked).Error
 }
 
 // LockFileDownloadViewerFacts locks the database-owned authenticated viewer
-// witness after Segment locks and before the exact relation lock. The boolean
+// witness after Criteria locks and before the exact relation lock. The boolean
 // reports whether the exact Member and Identity pair remains active.
 func (s *downloadStore) LockViewer(ctx context.Context, user *auth.UserInfo, restricted bool) (bool, error) {
 	var active bool

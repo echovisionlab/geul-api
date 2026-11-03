@@ -22,39 +22,39 @@ type DownloadTagFact struct {
 	MappedMemberID *string
 }
 type DownloadAssociation struct {
-	PolicyKey         string
-	AudienceSegmentID string
+	PolicyKey        string
+	MemberCriteriaID string
 }
-type DownloadSegmentConfig struct {
+type DownloadCriteriaConfig struct {
 	MemberTagIDs     []string `json:"member_tag_ids,omitempty"`
 	AccountRoles     []string `json:"account_roles,omitempty"`
 	CreatedAfter     *time.Time
 	CreatedBefore    *time.Time
 	ExcludeMemberIDs []string `json:"exclude_member_ids,omitempty"`
 }
-type DownloadSegmentType string
+type DownloadKind string
 
 const (
-	DownloadAllMembers      DownloadSegmentType = "SEGMENT_TYPE_ALL_MEMBERS"
-	DownloadMemberTags      DownloadSegmentType = "SEGMENT_TYPE_MEMBER_TAGS"
-	DownloadMembersByFilter DownloadSegmentType = "SEGMENT_TYPE_MEMBERS_BY_FILTER"
+	DownloadAllMembers      DownloadKind = "MEMBER_CRITERIA_KIND_ALL_MEMBERS"
+	DownloadMemberTags      DownloadKind = "MEMBER_CRITERIA_KIND_MEMBER_TAGS"
+	DownloadMembersByFilter DownloadKind = "MEMBER_CRITERIA_KIND_FILTER"
 )
 
-type DownloadSegment struct {
-	ID          string
-	SegmentType DownloadSegmentType
-	ArchivedAt  *time.Time
-	UpdatedAt   *time.Time
-	Config      DownloadSegmentConfig
+type DownloadCriteria struct {
+	ID         string
+	Kind       DownloadKind
+	ArchivedAt *time.Time
+	UpdatedAt  *time.Time
+	Config     DownloadCriteriaConfig
 }
 type DownloadStore interface {
 	ContentSources(context.Context, []string) ([]FileDownloadSource, error)
 	TrackSources(context.Context, []string) ([]FileDownloadSource, error)
 	Associations(context.Context, map[string]FileDownloadSource, bool) ([]DownloadAssociation, error)
-	Segments(context.Context, []string, bool) ([]DownloadSegment, error)
+	CriteriaSet(context.Context, []string, bool) ([]DownloadCriteria, error)
 	MemberFacts(context.Context, string, string) (DownloadMemberFacts, bool, error)
 	TagFacts(context.Context, string, []string) ([]DownloadTagFact, error)
 	ViewerTagIDs(context.Context, string) ([]string, error)
-	LockSegments(context.Context, []string) error
+	LockCriteriaSet(context.Context, []string) error
 	LockViewer(context.Context, *auth.UserInfo, bool) (bool, error)
 }

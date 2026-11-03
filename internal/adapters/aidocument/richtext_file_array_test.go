@@ -54,7 +54,7 @@ func newCubemapCodecFixture(t *testing.T, withFaces bool) cubemapCodecFixture {
 	channel.Kind = contentv1.ShaderProps_StagesItem_ChannelsItem_KIND_CUBEMAP_FILES
 	db, store, created := newCodecStoreForTest(t, "post")
 	require.NoError(t, db.Exec("CREATE TABLE file (id TEXT PRIMARY KEY, mime_type TEXT, delete_requested_at DATETIME)").Error)
-	require.NoError(t, db.Exec("CREATE TABLE content_block_attachment_download_audience_segment (block_id TEXT, reference_path TEXT, audience_segment_id TEXT, PRIMARY KEY (block_id,reference_path,audience_segment_id))").Error)
+	require.NoError(t, db.Exec("CREATE TABLE content_block_attachment_download_member_criteria (block_id TEXT, reference_path TEXT, member_criteria_id TEXT, PRIMARY KEY (block_id,reference_path,member_criteria_id))").Error)
 	files := make([]string, len(cubemapFaceHandles))
 	for index := range files {
 		files[index] = uuid.NewString()

@@ -196,10 +196,10 @@ func (s *Service) ListCampaigns(ctx context.Context, query ListCampaignsQuery) (
 }
 
 // CreateCampaignTarget is a new Campaign's recipients: every eligible
-// Member, or one audience segment.
+// Member, or one Member criteria.
 type CreateCampaignTarget struct {
-	All       bool
-	SegmentID *string
+	All        bool
+	CriteriaID *string
 	// allMissing marks a request that chose the all target without its
 	// value, which validation rejects in its own words.
 	allMissing bool
@@ -223,8 +223,8 @@ func (s *Service) CreateCampaign(ctx context.Context, command CreateCampaignComm
 			if err != nil {
 				return Campaign{}, err
 			}
-			if campaign.SegmentID != nil {
-				if err := s.requireAssignableSegment(ctx, tx, *campaign.SegmentID); err != nil {
+			if campaign.CriteriaID != nil {
+				if err := s.requireAssignableCriteria(ctx, tx, *campaign.CriteriaID); err != nil {
 					return Campaign{}, err
 				}
 			}
@@ -255,13 +255,13 @@ func (s *Service) newCampaign(command CreateCampaignCommand) (Campaign, error) {
 	if err != nil {
 		return Campaign{}, err
 	}
-	targetMode, segmentID, err := createCampaignTargetDefinition(command.Target)
+	targetMode, criteriaID, err := createCampaignTargetDefinition(command.Target)
 	if err != nil {
 		return Campaign{}, err
 	}
 	return Campaign{
 		Name: name, Subject: subject, SourceLocale: sourceLocale, Status: CampaignStatusDraft,
-		TargetMode: targetMode, SegmentID: segmentID,
+		TargetMode: targetMode, CriteriaID: criteriaID,
 	}, nil
 }
 
@@ -286,18 +286,18 @@ func (s *Service) persistNewCampaign(ctx context.Context, store Store, campaign 
 	return err
 }
 
-// requireAssignableSegment locks the audience segment a Campaign is
+// requireAssignableCriteria locks the Member criteria a Campaign is
 // assigned to and rejects a missing or archived one.
-func (s *Service) requireAssignableSegment(ctx context.Context, tx Store, segmentID string) error {
-	target, err := tx.LockAudienceTarget(ctx, segmentID)
-	if errors.Is(err, ErrAudienceNotFound) {
-		return domainerr.ResourceNotFound("audience_segment", segmentID)
+func (s *Service) requireAssignableCriteria(ctx context.Context, tx Store, criteriaID string) error {
+	target, err := tx.LockCriteriaTarget(ctx, criteriaID)
+	if errors.Is(err, ErrCriteriaNotFound) {
+		return domainerr.ResourceNotFound("member_criteria", criteriaID)
 	}
 	if err != nil {
 		return err
 	}
 	if target.Archived {
-		return domainerr.Precondition("archived audience segment cannot be assigned to a campaign")
+		return domainerr.Precondition("archived Member criteria cannot be assigned to a campaign")
 	}
 	return nil
 }
@@ -322,15 +322,15 @@ func createCampaignTargetDefinition(target CreateCampaignTarget) (string, *strin
 		return "", nil, domainerr.InvalidField("target", "all target is required")
 	case target.All:
 		return CampaignTargetModeAll, nil, nil
-	case target.SegmentID != nil:
-		segmentID := strings.TrimSpace(*target.SegmentID)
-		if segmentID == "" {
-			return "", nil, domainerr.InvalidField("target", "segment_id is required")
+	case target.CriteriaID != nil:
+		criteriaID := strings.TrimSpace(*target.CriteriaID)
+		if criteriaID == "" {
+			return "", nil, domainerr.InvalidField("target", "criteria_id is required")
 		}
-		if _, err := uuid.Parse(segmentID); err != nil {
-			return "", nil, domainerr.InvalidField("target", "segment_id must be a UUID")
+		if _, err := uuid.Parse(criteriaID); err != nil {
+			return "", nil, domainerr.InvalidField("target", "criteria_id must be a UUID")
 		}
-		return CampaignTargetModeSegment, &segmentID, nil
+		return CampaignTargetModeMemberCriteria, &criteriaID, nil
 	default:
 		return "", nil, domainerr.InvalidField("target", "target is required")
 	}

@@ -57,7 +57,7 @@ const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=
 	"expected_file_id guards the exact attachment. Preserve returned handles and browser media bundles. " +
 	"document_file_add/replace/remove handle document images and attachments, document_file_caption_update localized captions; " +
 	"removing a Block keeps File bytes; Page placements need a rich-text parent. " +
-	"Read document_file_download_policy_get before updating and copy its IDs into observed_policy.audience and observed_policy.audience_segment_ids. " +
+	"Read document_file_download_policy_get before updating and copy its IDs into observed_policy.access and observed_policy.member_criteria_ids. " +
 	"For Track audio use file_transfer k=track_audio with the current audio_original_file_id as expected_current_file_id. " +
 	"Program Event media: read program_event_media_list first; " +
 	"adding the same event/role/file upserts alt/caption and omitted values clear them."

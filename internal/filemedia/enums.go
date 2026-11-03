@@ -115,12 +115,12 @@ const (
 	SortDesc        = domain.SortDesc
 )
 
-type DownloadAudience = domain.DownloadAudience
+type DownloadAccess = domain.DownloadAccess
 
 const (
-	DownloadAudienceUnspecified   = domain.DownloadAudienceUnspecified
-	DownloadAudienceDisabled      = domain.DownloadAudienceDisabled
-	DownloadAudiencePublic        = domain.DownloadAudiencePublic
-	DownloadAudienceAuthenticated = domain.DownloadAudienceAuthenticated
-	DownloadAudienceRestricted    = domain.DownloadAudienceRestricted
+	DownloadAccessUnspecified   = domain.DownloadAccessUnspecified
+	DownloadAccessDisabled      = domain.DownloadAccessDisabled
+	DownloadAccessPublic        = domain.DownloadAccessPublic
+	DownloadAccessAuthenticated = domain.DownloadAccessAuthenticated
+	DownloadAccessRestricted    = domain.DownloadAccessRestricted
 )

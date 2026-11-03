@@ -85,7 +85,7 @@ func createCampaignDeliveryRun(
 			SnapshotSchemaVersion:   CampaignDeliverySnapshotSchemaVersion,
 			Snapshot:                snapshot,
 			SourceLayoutID:          sourceLayoutID,
-			AudienceSegmentID:       campaign.SegmentID,
+			MemberCriteriaID:        campaign.CriteriaID,
 			SourceCampaignUpdatedAt: sourceCampaignUpdatedAt,
 			SourceLayoutUpdatedAt:   sourceLayoutUpdatedAt,
 			Target:                  target,

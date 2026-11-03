@@ -181,7 +181,7 @@ func (m musicServiceRegistration) registerRelease() (*releasepkg.Service, error)
 	}
 	publicReleaseService, err := publicrelease.NewService(publicrelease.Deps{
 		Units: publicReleaseUnits, SpiceDB: deps.spicedbClient, Signer: publicMedia,
-		Downloads: releaseadapter.NewDownloadAccess(deps.db, deps.spicedbClient, mediaassetadapter.NewSegmentConfigs()),
+		Downloads: releaseadapter.NewDownloadAccess(deps.db, deps.spicedbClient, mediaassetadapter.NewCriteriaConfigs()),
 		Members:   memberSummaries,
 	})
 	if err != nil {

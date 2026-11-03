@@ -29,8 +29,8 @@ func toProtoCampaign(c *CampaignDocument) (*managev1.Campaign, error) {
 	if c.SentAt != nil {
 		campaign.SentAt = timestamppb.New(*c.SentAt)
 	}
-	if c.SegmentID != nil {
-		campaign.SegmentId = c.SegmentID
+	if c.CriteriaID != nil {
+		campaign.MemberCriteriaId = c.CriteriaID
 	}
 	if c.LayoutID != nil {
 		campaign.LayoutId = c.LayoutID
@@ -47,8 +47,8 @@ func campaignTargetModeToProto(
 	switch strings.TrimSpace(mode) {
 	case CampaignTargetModeAll:
 		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
-	case CampaignTargetModeSegment:
-		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT
+	case CampaignTargetModeMemberCriteria:
+		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_MEMBER_CRITERIA
 	default:
 		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_UNSPECIFIED
 	}

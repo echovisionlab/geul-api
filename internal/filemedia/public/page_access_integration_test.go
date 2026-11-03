@@ -29,12 +29,12 @@ func seedPublicPageDownload(t *testing.T, db *gorm.DB) (string, string, string, 
 	require.NoError(t, db.Exec(`INSERT INTO page(id,status,content_document_id) VALUES (?::uuid,'PAGE_STATUS_PUBLISHED',?::uuid)`, pageID, documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO file(id,file_name,extension,mime_type,file_size,sha256) VALUES (?::uuid,'private-page-file','wav','audio/wav',4096,?)`, fileID, make([]byte, 32)).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block(id,document_id,container_slot,position,kind,shared_data) VALUES (?::uuid,?::uuid,'root',0,'file','{}'::jsonb)`, blockID, documentID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_audience) VALUES (?::uuid,'file','active',?::uuid,'public')`, blockID, fileID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_access) VALUES (?::uuid,'file','active',?::uuid,'public')`, blockID, fileID).Error)
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE, EntityId: pageID, RelationTarget: &openv1.AuthorizeDownloadRequest_ContentBlock{ContentBlock: &contentv1.ContentBlockMediaSelector{BlockId: blockID, ReferencePath: "file"}}})
 	return pageID, documentID, fileID, request
 }
 
-func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
+func TestPageAccessOverridesPublicFileAccessIntegration(t *testing.T) {
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, documentID, _, request := seedPublicPageDownload(t, db)
@@ -53,7 +53,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	hydrated, err := svc.HydrateAuthorizedContentBlockMedia(ownerContext, items)
 	require.NoError(t, err)
 	for _, item := range hydrated {
-		require.Nil(t, optional.Value(item).Delivery, "old public owner witness must not issue inline or download media after audience changes")
+		require.Nil(t, optional.Value(item).Delivery, "old public owner witness must not issue inline or download media after access changes")
 	}
 	require.NoError(t, db.Exec(`UPDATE page SET access_policy='{}'::jsonb WHERE id=?::uuid`, pageID).Error)
 	reopened, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
@@ -61,7 +61,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	require.NotEmpty(t, reopened.Msg.GetDownload().GetUrl())
 }
 
-func TestPageAudienceChangeBetweenSigningPhasesIntegration(t *testing.T) {
+func TestPageAccessChangeBetweenSigningPhasesIntegration(t *testing.T) {
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, _, _, request := seedPublicPageDownload(t, db)
@@ -97,7 +97,7 @@ func TestPageAudienceChangeBetweenSigningPhasesIntegration(t *testing.T) {
 	case err := <-changed:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Page audience update could not commit between signing phases")
+		t.Fatal("Page access update could not commit between signing phases")
 	}
 	close(release)
 	select {

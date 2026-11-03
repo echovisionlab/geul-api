@@ -58,7 +58,7 @@ func newPublicFixture(t *testing.T) *publicFixture {
 	owner := publictest.Owner("post")
 	h.SeedFile(t, file)
 	h.SeedOwner(t, owner)
-	relation := publictest.Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: file.ID, Kind: "file", Owner: owner, Audience: mediaasset.FileDownloadAudiencePublic}
+	relation := publictest.Relation{BlockID: uuid.NewString(), ReferencePath: "file", FileID: file.ID, Kind: "file", Owner: owner, Access: mediaasset.FileDownloadAccessPublic}
 	h.SeedRelation(t, relation)
 	units := &publicReadPhases{UnitOfWork: h.Units}
 	service, err := public.NewService(public.Deps{Units: units, SpiceDB: publicAuthorization{allowed: true}, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: "unit-media-secret", DownloadTTL: mediaauth.DownloadTTL})
@@ -70,43 +70,43 @@ func newPublicFixture(t *testing.T) *publicFixture {
 }
 func (f *publicFixture) member() { f.ctx = auth.WithUser(f.ctx, f.user) }
 func (f *publicFixture) restricted() {
-	f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceRestricted
+	f.store.Relations[0].Access = mediaasset.FileDownloadAccessRestricted
 	id := uuid.NewString()
-	f.store.SegmentRows[id] = mediaasset.DownloadSegment{ID: id, SegmentType: mediaasset.DownloadAllMembers}
-	f.store.Links = []mediaasset.DownloadAssociation{{PolicyKey: mediaasset.ContentBlockDownloadPolicyKey(f.relation.BlockID, "file"), AudienceSegmentID: id}}
+	f.store.CriteriaRows[id] = mediaasset.DownloadCriteria{ID: id, Kind: mediaasset.DownloadAllMembers}
+	f.store.Links = []mediaasset.DownloadAssociation{{PolicyKey: mediaasset.ContentBlockDownloadPolicyKey(f.relation.BlockID, "file"), MemberCriteriaID: id}}
 }
-func TestPublicDownloadAudienceDecisionsOnStore(t *testing.T) {
+func TestPublicDownloadAccessDecisionsOnStore(t *testing.T) {
 	cases := map[string]struct {
 		setup  func(*publicFixture)
 		action public.DownloadAction
 	}{
 		"public anonymous":        {action: public.ActionDownload},
-		"disabled":                {setup: func(f *publicFixture) { f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceDisabled }, action: public.ActionNone},
-		"authenticated anonymous": {setup: func(f *publicFixture) { f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceAuthenticated }, action: public.ActionSignIn},
+		"disabled":                {setup: func(f *publicFixture) { f.store.Relations[0].Access = mediaasset.FileDownloadAccessDisabled }, action: public.ActionNone},
+		"authenticated anonymous": {setup: func(f *publicFixture) { f.store.Relations[0].Access = mediaasset.FileDownloadAccessAuthenticated }, action: public.ActionSignIn},
 		"authenticated active member": {setup: func(f *publicFixture) {
 			f.member()
-			f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceAuthenticated
+			f.store.Relations[0].Access = mediaasset.FileDownloadAccessAuthenticated
 		}, action: public.ActionDownload},
 		"authenticated inactive member": {setup: func(f *publicFixture) {
 			f.member()
-			f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceAuthenticated
+			f.store.Relations[0].Access = mediaasset.FileDownloadAccessAuthenticated
 			delete(f.store.Members, f.user.MemberID.String())
 		}, action: public.ActionNone},
 		"authenticated banned member": {setup: func(f *publicFixture) {
 			f.user.Banned = true
 			f.member()
-			f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceAuthenticated
+			f.store.Relations[0].Access = mediaasset.FileDownloadAccessAuthenticated
 		}, action: public.ActionNone},
-		"restricted anonymous with segment": {setup: func(f *publicFixture) { f.restricted() }, action: public.ActionSignIn},
-		"restricted active member":          {setup: func(f *publicFixture) { f.member(); f.restricted() }, action: public.ActionDownload},
-		"restricted no segment":             {setup: func(f *publicFixture) { f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceRestricted }, action: public.ActionNone},
-		"restricted archived segment": {setup: func(f *publicFixture) {
+		"restricted anonymous with criteria": {setup: func(f *publicFixture) { f.restricted() }, action: public.ActionSignIn},
+		"restricted active member":           {setup: func(f *publicFixture) { f.member(); f.restricted() }, action: public.ActionDownload},
+		"restricted no criteria":             {setup: func(f *publicFixture) { f.store.Relations[0].Access = mediaasset.FileDownloadAccessRestricted }, action: public.ActionNone},
+		"restricted archived criteria": {setup: func(f *publicFixture) {
 			f.member()
 			f.restricted()
-			for id, row := range f.store.SegmentRows {
+			for id, row := range f.store.CriteriaRows {
 				now := time.Now()
 				row.ArchivedAt = &now
-				f.store.SegmentRows[id] = row
+				f.store.CriteriaRows[id] = row
 			}
 		}, action: public.ActionNone},
 	}
@@ -149,9 +149,9 @@ func TestPublicDownloadRejectsChangesBetweenPasses(t *testing.T) {
 			row.PendingDeletion = true
 			f.store.Files[f.file.ID] = row
 		},
-		"download policy":     func(f *publicFixture) { f.store.Relations[0].Audience = mediaasset.FileDownloadAudienceDisabled },
+		"download policy":     func(f *publicFixture) { f.store.Relations[0].Access = mediaasset.FileDownloadAccessDisabled },
 		"member deactivation": func(f *publicFixture) { delete(f.store.Members, f.user.MemberID.String()) },
-		"segment revocation":  func(f *publicFixture) { f.store.Links = nil },
+		"criteria revocation": func(f *publicFixture) { f.store.Links = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -174,7 +174,7 @@ func TestPublicDownloadPreservesLockOrder(t *testing.T) {
 	result, err := f.service.AuthorizeDownload(f.ctx, f.query)
 	require.NoError(t, err)
 	require.NotNil(t, result.Download)
-	require.Equal(t, []string{"segments", "owner", "viewer", "relation"}, f.store.Locks)
+	require.Equal(t, []string{"criteria", "owner", "viewer", "relation"}, f.store.Locks)
 }
 func TestPublicDraftDownloadRequiresCurrentPrincipalAndCapsLifetime(t *testing.T) {
 	for _, active := range []bool{true, false} {
@@ -202,7 +202,7 @@ func TestPublicHydrationKeepsExactRelationPolicyAndIndependentDeliveries(t *test
 	f := newPublicFixture(t)
 	second := f.relation
 	second.BlockID = uuid.NewString()
-	second.Audience = mediaasset.FileDownloadAudienceDisabled
+	second.Access = mediaasset.FileDownloadAccessDisabled
 	f.store.Relations = append(f.store.Relations, second)
 	f.store.BlockOwners[second.BlockID] = []public.OwnerWitness{f.owner}
 	ctx := mediaasset.WithContentDownloadOwnerAuthorization(f.ctx, mediaasset.ContentDownloadOwnerAuthorization{ResourceType: f.owner.ResourceType, ResourceID: f.owner.ResourceID, DocumentID: f.owner.DocumentID, Status: f.owner.Status, Mode: mediaasset.ContentDownloadOwnerAccessPublic})
