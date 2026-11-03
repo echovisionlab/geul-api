@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.2.1](https://github.com/echovisionlab/geul-api/compare/v4.2.0...v4.2.1) (2026-11-03)
+
+### Bug Fixes
+
+* **authentication:** restore email OTP delivery during reauthentication with an existing session ([#215](https://github.com/echovisionlab/geul-api/pull/215))
+
 ## [4.2.0](https://github.com/echovisionlab/geul-api/compare/v4.1.8...v4.2.0) (2026-11-02)
 
 
