@@ -1,13 +1,21 @@
 package aidocument
 
 import (
+	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 // outlinePreviewRunes bounds each outline preview so an outline of every
 // block stays small enough to read in one page.
 const outlinePreviewRunes = 80
+
+// searchContextRunes is how much text a search preview keeps before a match.
+const searchContextRunes = 20
+
+// MaxReadQueryRunes bounds an outline search query.
+const MaxReadQueryRunes = 200
 
 // outlinePreviews returns the start of each node's locale-owned text, so an
 // outline can locate the block to read or edit without reading every block.
@@ -16,14 +24,7 @@ const outlinePreviewRunes = 80
 func outlinePreviews(nodes []Node) map[BlockID]string {
 	previews := make(map[BlockID]string)
 	for _, node := range nodes {
-		var text strings.Builder
-		for _, field := range node.Localized {
-			appendValueText(&text, field.Value)
-			if utf8.RuneCountInString(text.String()) > outlinePreviewRunes {
-				break
-			}
-		}
-		if preview := truncateRunes(strings.Join(strings.Fields(text.String()), " "), outlinePreviewRunes); preview != "" {
+		if preview := truncateRunes(nodeLocaleText(node, outlinePreviewRunes), outlinePreviewRunes); preview != "" {
 			previews[node.ID] = preview
 		}
 	}
@@ -31,6 +32,79 @@ func outlinePreviews(nodes []Node) map[BlockID]string {
 		return nil
 	}
 	return previews
+}
+
+// searchNodes returns, for each node whose locale-owned text contains query,
+// a preview that starts shortly before the first match. Matching ignores case
+// and collapses whitespace, so text copied from a preview finds its block.
+func searchNodes(nodes []Node, query string) map[BlockID]string {
+	needle := lowerRunes([]rune(strings.Join(strings.Fields(query), " ")))
+	matches := make(map[BlockID]string)
+	for _, node := range nodes {
+		text := []rune(nodeLocaleText(node, 0))
+		index := runeIndex(lowerRunes(text), needle)
+		if index < 0 {
+			continue
+		}
+		start := max(0, index-searchContextRunes)
+		end := min(len(text), start+outlinePreviewRunes)
+		preview := strings.TrimSpace(string(text[start:end]))
+		if start > 0 {
+			preview = "…" + preview
+		}
+		if end < len(text) {
+			preview += "…"
+		}
+		matches[node.ID] = preview
+	}
+	return matches
+}
+
+// lowerRunes lowers each rune on its own so indexes into the result are
+// indexes into the original text.
+func lowerRunes(text []rune) []rune {
+	lowered := make([]rune, len(text))
+	for index, r := range text {
+		lowered[index] = unicode.ToLower(r)
+	}
+	return lowered
+}
+
+func runeIndex(haystack, needle []rune) int {
+	if len(needle) == 0 {
+		return -1
+	}
+	for index := 0; index+len(needle) <= len(haystack); index++ {
+		if slices.Equal(haystack[index:index+len(needle)], needle) {
+			return index
+		}
+	}
+	return -1
+}
+
+// nodeLocaleText joins a node's locale-owned text, including relation item
+// text, with whitespace collapsed. A positive limit stops collecting once the
+// text is longer than limit runes.
+func nodeLocaleText(node Node, limit int) string {
+	var text strings.Builder
+	full := func() bool { return limit > 0 && utf8.RuneCountInString(text.String()) > limit }
+	for _, field := range node.Localized {
+		if full() {
+			break
+		}
+		appendValueText(&text, field.Value)
+	}
+	for _, relation := range node.Relations {
+		for _, item := range relation.Items {
+			for _, field := range item.Localized {
+				if full() {
+					break
+				}
+				appendValueText(&text, field.Value)
+			}
+		}
+	}
+	return strings.Join(strings.Fields(text.String()), " ")
 }
 
 func appendValueText(text *strings.Builder, value Value) {

@@ -25,9 +25,9 @@ var documentDiscoveryTools = toolRegistry[DocumentDiscoveryTools]{
 	defineTool(mcpserver.Tool{
 		Name:  ToolDocumentList,
 		Title: "List accessible documents",
-		Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
-			"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
-			"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
+		Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. " +
+			"Search source titles, or Artist source names and real names. Use this when the document UUID is unknown. " +
+			"Pass the returned d unchanged, with source_locale as l, to document_read; a slug or URL is not a document ID.",
 		InputSchema:     json.RawMessage(documentListInputJSONSchema),
 		OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),

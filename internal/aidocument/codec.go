@@ -22,11 +22,45 @@ type Projection struct {
 	LocaleRole       LocaleRole        `json:"lr"`
 	LocaleExists     bool              `json:"le"`
 	Mode             ReadMode          `json:"m"`
-	Nodes            []Node            `json:"n"`
-	// Previews holds the start of each outline node's locale text; other read
-	// modes return full values instead.
-	Previews map[BlockID]string `json:"pv,omitempty"`
+	// Query is the outline search that selected Nodes, if any.
+	Query string `json:"q,omitempty"`
+	Nodes []Node `json:"n"`
+	// Previews holds each outline node's locale text preview: its start, or
+	// the text around the match for a search. EncodeProjection writes it into
+	// the compact outline node; other read modes return full values instead.
+	Previews map[BlockID]string `json:"-"`
 	Next     *Cursor            `json:"next"`
+}
+
+// projectionFields is Projection without its methods, for encoding outline
+// nodes in their own compact shape.
+type projectionFields Projection
+
+// outlineNode is the compact outline wire shape: [handle, kind, parent,
+// order, preview, relations]. Trailing empty values are left out, so most
+// nodes are four or five items.
+type outlineNode struct {
+	node    Node
+	preview string
+}
+
+func (n outlineNode) MarshalJSON() ([]byte, error) {
+	parts := []any{n.node.ID, n.node.Kind, n.node.Parent, n.node.Order}
+	if n.preview != "" || len(n.node.Relations) != 0 {
+		parts = append(parts, n.preview)
+	}
+	if len(n.node.Relations) != 0 {
+		relations := make([]any, 0, len(n.node.Relations))
+		for _, relation := range n.node.Relations {
+			items := make([]any, 0, len(relation.Items))
+			for _, item := range relation.Items {
+				items = append(items, []any{item.ID, item.Kind, item.Order})
+			}
+			relations = append(relations, []any{relation.ID, items})
+		}
+		parts = append(parts, relations)
+	}
+	return json.Marshal(parts)
 }
 
 func EncodeOpenMetadata(metadata OpenMetadata) ([]byte, error) {
@@ -86,7 +120,17 @@ func EncodeProjection(projection Projection) ([]byte, error) {
 		return nil, err
 	}
 	projection.Nodes = canonicalNodes(projection.Nodes)
-	return json.Marshal(projection)
+	if projection.Mode != ReadOutline {
+		return json.Marshal(projection)
+	}
+	nodes := make([]outlineNode, len(projection.Nodes))
+	for index, node := range projection.Nodes {
+		nodes[index] = outlineNode{node: node, preview: projection.Previews[node.ID]}
+	}
+	return json.Marshal(struct {
+		projectionFields
+		Nodes []outlineNode `json:"n"`
+	}{projectionFields(projection), nodes})
 }
 
 func EncodeApplyRequest(request ApplyRequest) ([]byte, error) {

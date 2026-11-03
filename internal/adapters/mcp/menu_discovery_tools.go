@@ -27,7 +27,7 @@ type MenuLocationReader interface {
 }
 
 var menuDiscoveryTools = toolRegistry[MenuDiscoveryTools]{
-	defineTool(oauthTool(ToolMenuList, "List menus", "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_open/read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.", menuListInputJSONSchema, menuListOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[menuListArguments]) (mcpserver.ToolResult, error) {
+	defineTool(oauthTool(ToolMenuList, "List menus", "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.", menuListInputJSONSchema, menuListOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[menuListArguments]) (mcpserver.ToolResult, error) {
 		arguments := call.Arguments
 
 		if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
@@ -61,7 +61,7 @@ var menuDiscoveryTools = toolRegistry[MenuDiscoveryTools]{
 		}
 		return contentResult(output)
 	}),
-	defineTool(oauthTool(ToolMenuLocationsGet, "Get site menu locations", "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_open/read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.", menuLocationsInputJSONSchema, menuLocationsOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[struct{}]) (mcpserver.ToolResult, error) {
+	defineTool(oauthTool(ToolMenuLocationsGet, "Get site menu locations", "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.", menuLocationsInputJSONSchema, menuLocationsOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[struct{}]) (mcpserver.ToolResult, error) {
 		if err := call.Decode(&struct{}{}); err != nil {
 			return executionError(err)
 		}

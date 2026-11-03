@@ -17,7 +17,7 @@ const menuListOutputJSONSchema = `{
 }`
 
 const menuLocationsInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{}}`
-const menuLocationIDJSONSchema = `{"type":["string","null"],"format":"uuid","description":"Assigned Menu UUID, or null when unassigned. Read with document_open using p=menu."}`
+const menuLocationIDJSONSchema = `{"type":["string","null"],"format":"uuid","description":"Assigned Menu UUID, or null when unassigned. Read with document_read using p=menu."}`
 const menuLocationsOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["menu_header_id","menu_secondary_id","menu_footer_id","menu_avatar_dropdown_id"],
   "properties":{

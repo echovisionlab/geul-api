@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
@@ -100,6 +102,9 @@ type ReadRequest struct {
 	Fields   []FieldSelection
 	Limit    int
 	Cursor   Cursor
+	// Query keeps only outline nodes whose locale-owned text contains it,
+	// ignoring case and collapsed whitespace.
+	Query string
 }
 
 type Change struct {
@@ -320,6 +325,14 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 	if err != nil {
 		return Projection{}, &InputError{Message: err.Error()}
 	}
+	var matches map[BlockID]string
+	if request.Query != "" {
+		matches = searchNodes(document.Nodes, request.Query)
+		nodes = slices.DeleteFunc(nodes, func(node Node) bool {
+			_, matched := matches[node.ID]
+			return !matched
+		})
+	}
 	nodes = canonicalNodes(nodes)
 	offset := 0
 	fingerprint := readCursorFingerprint(document, request)
@@ -342,7 +355,13 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 	end := min(offset+limit, len(nodes))
 	page := nodes[offset:end]
 	var previews map[BlockID]string
-	if request.Mode == ReadOutline {
+	switch {
+	case request.Query != "":
+		previews = make(map[BlockID]string, len(page))
+		for _, node := range page {
+			previews[node.ID] = matches[node.ID]
+		}
+	case request.Mode == ReadOutline:
 		previews = outlinePreviews(selectedSourceNodes(document.Nodes, page))
 	}
 	var next *Cursor
@@ -362,6 +381,7 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 		LocaleRole:       document.Role(),
 		LocaleExists:     document.LocaleExists,
 		Mode:             request.Mode,
+		Query:            request.Query,
 		Nodes:            page,
 		Previews:         previews,
 		Next:             next,
@@ -521,6 +541,14 @@ func validateReadRequest(request ReadRequest) error {
 	}
 	if request.Limit < 0 || request.Limit > 256 {
 		return errors.New("read limit must be between 0 and 256")
+	}
+	if request.Query != "" {
+		if request.Mode != ReadOutline {
+			return errors.New("q searches only an outline read; use m=outline")
+		}
+		if strings.TrimSpace(request.Query) == "" || utf8.RuneCountInString(request.Query) > MaxReadQueryRunes {
+			return fmt.Errorf("q must contain 1 to %d characters of text", MaxReadQueryRunes)
+		}
 	}
 	switch request.Mode {
 	case ReadOutline:
@@ -785,11 +813,15 @@ func readCursorFingerprint(document Document, request ReadRequest) string {
 		}
 		return fields[a].Field < fields[b].Field
 	})
-	payload, _ := json.Marshal([]any{
+	parts := []any{
 		document.Identity.Domain, document.Identity.Reference, document.DocumentRevision,
 		document.TargetRevision,
 		document.SourceLocale, document.Locale, request.Mode, blocks, fields,
-	})
+	}
+	if request.Query != "" {
+		parts = append(parts, request.Query)
+	}
+	payload, _ := json.Marshal(parts)
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:12])
 }
