@@ -3688,7 +3688,7 @@
   {
     "name": "document_heading_update",
     "title": "Update document heading",
-    "description": "Replace an existing heading's text with plain text and optionally its level (1..3) and alignment, in a Page or Post. Refused when the heading has formatting; use document_apply for it. Omitted level and alignment are preserved. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Replace an existing heading's text with plain text and optionally its level (1..3) and alignment, in a Page or Post. Refused when the heading has formatting; use document_text_replace or document_apply for it. Omitted level and alignment are preserved. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -4093,7 +4093,7 @@
   {
     "name": "document_list",
     "title": "List accessible documents",
-    "description": "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
+    "description": "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. Search source titles, or Artist source names and real names. Use this when the document UUID is unknown. Pass the returned d unchanged, with source_locale as l, to document_read; a slug or URL is not a document ID.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -5257,7 +5257,7 @@
   {
     "name": "document_paragraph_update",
     "title": "Update document paragraph",
-    "description": "Replace the text of one existing Paragraph Block with plain text. Refused when the paragraph has marks, links, colors, breaks or site variables, because plain text would remove them; write that paragraph's full inline content with document_apply fs content [\"i\",...] instead. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Replace the text of one existing Paragraph Block with plain text. To change a word or sentence, document_text_replace is cheaper. Refused when the paragraph has marks, links, colors, breaks or site variables, because plain text would remove them; use document_text_replace, or write that paragraph's full inline content with document_apply fs content [\"i\",...]. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -5658,7 +5658,7 @@
   {
     "name": "document_read",
     "title": "Read AI document",
-    "description": "Read a document. m=outline lists every block's handle, kind, parent and order, with pv mapping handles to the start of their locale text: use it to find the blocks to read or change. m=blocks returns full values for the handles in b; m=fields returns selected values ([block,field] or [block,relation,item,field]). outline accepts no selectors. Pages default to 256 outline nodes or 128 blocks/fields; n sets up to 256. Follow next until it is null and do not mix pages from different revisions. Site variable atoms are [\"siteVariable\",key] or [\"siteVariable\",key,true]. Use d from document_list or another listing tool. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Read a document. m=outline lists blocks as [handle,kind,parent,order,preview,relations] (trailing empties left out); preview is the start of the block's locale text: use it to find the blocks to read or change. Add q=\u003ctext\u003e to an outline to list only blocks whose text contains it (case and spacing ignored), with the preview around the match: the fastest way to find a sentence. m=blocks returns full values for the handles in b; m=fields returns selected values ([block,field] or [block,relation,item,field]). outline accepts no selectors. Pages default to 256 outline nodes or 128 blocks/fields; n sets up to 256. Follow next until it is null and do not mix pages from different revisions. Site variable atoms are [\"siteVariable\",key] or [\"siteVariable\",key,true]. Use d from document_list or another listing tool. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -5768,6 +5768,12 @@
         "c": {
           "type": "string",
           "maxLength": 4096
+        },
+        "q": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Outline only: list just the blocks whose text in this locale contains q, ignoring case and spacing; each preview shows the text around the match."
         }
       }
     },
@@ -6244,6 +6250,64 @@
           "items": false,
           "minItems": 8,
           "maxItems": 8
+        },
+        "outlineNode": {
+          "type": "array",
+          "description": "Outline node [handle,kind,parent,order,preview,relations]; trailing empty items are left out.",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ],
+                      "items": false,
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  }
+                ],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 6
         }
       },
       "oneOf": [
@@ -6314,19 +6378,23 @@
                 "fields"
               ]
             },
+            "q": {
+              "type": "string"
+            },
             "n": {
               "type": [
                 "array",
                 "null"
               ],
               "items": {
-                "$ref": "#/$defs/node"
-              }
-            },
-            "pv": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/node"
+                  },
+                  {
+                    "$ref": "#/$defs/outlineNode"
+                  }
+                ]
               }
             },
             "next": {
@@ -7030,6 +7098,414 @@
     ],
     "annotations": {
       "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "document_text_replace",
+    "title": "Replace text in document",
+    "description": "Replace one exact piece of text (a word or sentence) inside existing blocks while keeping the marks, links and colors around it: the cheapest way to fix a sentence in a long or formatted block. find must occur exactly once in this locale's text, copied exactly (case and spacing matter), within block_id when given or else anywhere in the document; an empty replace deletes it. Locate it first with document_read m=outline q=\u003ctext\u003e, which also returns dr and tr. Works for every document type and translation. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_type",
+        "document_id",
+        "locale",
+        "expected_document_revision",
+        "find",
+        "replace"
+      ],
+      "properties": {
+        "document_type": {
+          "enum": [
+            "post",
+            "page",
+            "work",
+            "program_event",
+            "release",
+            "artist",
+            "label",
+            "menu",
+            "email_template",
+            "email_layout",
+            "campaign",
+            "form",
+            "privacy",
+            "terms",
+            "post_series"
+          ]
+        },
+        "document_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "description": "Canonical document UUID returned by document_list or another authenticated document surface; never a slug or URL."
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
+          "description": "Locale to edit."
+        },
+        "expected_document_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "dr from your latest document_read or the previous edit."
+        },
+        "expected_target_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Exact current target revision for a non-source locale; omit when none was returned."
+        },
+        "block_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Optional Block handle to search in; omit to search the whole document."
+        },
+        "find": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Exact text to replace, copied from document_read; must occur exactly once and sit inside one formatted run."
+        },
+        "replace": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "Replacement text; empty deletes find. It takes the formatting of the run it replaces."
+        }
+      }
+    },
+    "outputSchema": {
+      "oneOf": [
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "dr",
+                "c"
+              ],
+              "properties": {
+                "dr": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "Current document revision after the operation; unchanged for target-only changes and semantic no-ops."
+                },
+                "tr": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "Current target revision after the operation for an existing non-source locale; unchanged for semantic no-ops."
+                },
+                "block_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Canonical UUID assigned to the newly created Paragraph Block."
+                },
+                "c": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "enum": [
+                          "fs",
+                          "fu",
+                          "bi",
+                          "bd"
+                        ]
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "o": {
+                  "type": "array",
+                  "items": {
+                    "type": "array"
+                  }
+                },
+                "i": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 4,
+                    "maxItems": 4
+                  }
+                },
+                "x": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "enum": [
+                        "document_revision_conflict",
+                        "target_revision_conflict"
+                      ]
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 4,
+                  "maxItems": 4
+                }
+              }
+            }
+          ],
+          "type": "object"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "applied",
+            "current_document_revision",
+            "current_target_revision",
+            "affected_handles",
+            "discard_previous_pages",
+            "read",
+            "instructions"
+          ],
+          "properties": {
+            "status": {
+              "const": "sync_required"
+            },
+            "reason": {
+              "enum": [
+                "read_continuation_invalid",
+                "document_revision_changed",
+                "target_revision_changed"
+              ]
+            },
+            "applied": {
+              "const": false
+            },
+            "current_document_revision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "current_target_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "affected_handles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Pending operation targets from the conflict; not handles known to have changed."
+            },
+            "discard_previous_pages": {
+              "type": "boolean"
+            },
+            "read": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tool",
+                "arguments"
+              ],
+              "properties": {
+                "tool": {
+                  "const": "document_read"
+                },
+                "arguments": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "p",
+                    "d",
+                    "l",
+                    "m"
+                  ],
+                  "properties": {
+                    "p": {
+                      "enum": [
+                        "post",
+                        "page",
+                        "work",
+                        "program_event",
+                        "release",
+                        "artist",
+                        "label",
+                        "menu",
+                        "email_template",
+                        "email_layout",
+                        "campaign",
+                        "form",
+                        "privacy",
+                        "terms",
+                        "post_series"
+                      ]
+                    },
+                    "d": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "l": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 35,
+                      "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+                    },
+                    "m": {
+                      "enum": [
+                        "outline",
+                        "blocks",
+                        "fields"
+                      ]
+                    },
+                    "b": {
+                      "type": "array",
+                      "maxItems": 256,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160
+                      }
+                    },
+                    "f": {
+                      "type": "array",
+                      "maxItems": 256,
+                      "items": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ],
+                            "items": false,
+                            "minItems": 4,
+                            "maxItems": 4
+                          }
+                        ]
+                      }
+                    },
+                    "n": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 256
+                    }
+                  }
+                }
+              }
+            },
+            "instructions": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ],
+      "type": "object"
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": true,
       "openWorldHint": false,
       "readOnlyHint": false
     },
@@ -15298,7 +15774,7 @@
   {
     "name": "menu_list",
     "title": "List menus",
-    "description": "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_open/read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.",
+    "description": "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -15401,7 +15877,7 @@
   {
     "name": "menu_locations_get",
     "title": "Get site menu locations",
-    "description": "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_open/read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.",
+    "description": "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -15423,7 +15899,7 @@
             "null"
           ],
           "format": "uuid",
-          "description": "Assigned Menu UUID, or null when unassigned. Read with document_open using p=menu."
+          "description": "Assigned Menu UUID, or null when unassigned. Read with document_read using p=menu."
         },
         "menu_secondary_id": {
           "type": [
@@ -15431,7 +15907,7 @@
             "null"
           ],
           "format": "uuid",
-          "description": "Assigned Menu UUID, or null when unassigned. Read with document_open using p=menu."
+          "description": "Assigned Menu UUID, or null when unassigned. Read with document_read using p=menu."
         },
         "menu_footer_id": {
           "type": [
@@ -15439,7 +15915,7 @@
             "null"
           ],
           "format": "uuid",
-          "description": "Assigned Menu UUID, or null when unassigned. Read with document_open using p=menu."
+          "description": "Assigned Menu UUID, or null when unassigned. Read with document_read using p=menu."
         },
         "menu_avatar_dropdown_id": {
           "type": [
@@ -15447,7 +15923,7 @@
             "null"
           ],
           "format": "uuid",
-          "description": "Assigned Menu UUID, or null when unassigned. Read with document_open using p=menu."
+          "description": "Assigned Menu UUID, or null when unassigned. Read with document_read using p=menu."
         }
       }
     },
@@ -16870,7 +17346,7 @@
   {
     "name": "policy_get",
     "title": "Get legal policy",
-    "description": "Read legal policy metadata, lifecycle and current document_revision without returning the body. Read the body with document_open/read using the returned source_locale. Source title and body edits are allowed in every lifecycle with the required permissions; use document_metadata_update and document paragraph/block tools. Editing sends no notice email.",
+    "description": "Read legal policy metadata, lifecycle and current document_revision without returning the body. Read the body with document_read using the returned source_locale. Source title and body edits are allowed in every lifecycle with the required permissions; use document_metadata_update and document paragraph/block tools. Editing sends no notice email.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -17000,7 +17476,7 @@
   {
     "name": "policy_list",
     "title": "List legal policies",
-    "description": "List authorized Terms of Service or Privacy Policy versions, optionally filtered by lifecycle status. Use returned document_id UUIDs with policy_get or document_open/read (p=terms or p=privacy).",
+    "description": "List authorized Terms of Service or Privacy Policy versions, optionally filtered by lifecycle status. Use returned document_id UUIDs with policy_get or document_read (p=terms or p=privacy).",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -21448,7 +21924,7 @@
   {
     "name": "program_event_settings_get",
     "title": "Get Program Event settings",
-    "description": "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_open and document_read; use their exact revisions for document edits.",
+    "description": "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_read; use their exact revisions for document edits.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -22813,7 +23289,7 @@
   {
     "name": "release_create",
     "title": "Create Release",
-    "description": "Create a draft Release with an empty typed document in the explicit source locale. Use document_open and document_read before adding body text with document_apply. Edit the locale-owned title with document_metadata_update. Resolve related artist, label, genre, style, format, and credit references before using the Release relation tools.",
+    "description": "Create a draft Release with an empty typed document in the explicit source locale. Use document_read before adding body text with document_apply. Edit the locale-owned title with document_metadata_update. Resolve related artist, label, genre, style, format, and credit references before using the Release relation tools.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -24010,7 +24486,7 @@
   {
     "name": "release_settings_get",
     "title": "Get Release settings",
-    "description": "Read authorized Release root settings and its current content document revision without returning the body or media delivery URLs. Use document_open and document_read for localized title and body editing, and release_relations_get for relation observations.",
+    "description": "Read authorized Release root settings and its current content document revision without returning the body or media delivery URLs. Use document_read for localized title and body editing, and release_relations_get for relation observations.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -26277,7 +26753,7 @@
         },
         "d": {
           "type": "string",
-          "description": "Exact owning document reference, also used by document_open.",
+          "description": "Exact owning document reference, also used as d by document_read.",
           "minLength": 1,
           "maxLength": 256
         },
@@ -26733,7 +27209,7 @@
         },
         "d": {
           "type": "string",
-          "description": "Exact owning document reference, also used by document_open.",
+          "description": "Exact owning document reference, also used as d by document_read.",
           "minLength": 1,
           "maxLength": 256
         }

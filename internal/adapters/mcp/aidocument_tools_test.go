@@ -28,7 +28,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 	}
 	wantNames := []string{
 		ToolDocumentOpen, ToolDocumentRead,
-		ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTableCreate, ToolBlockDelete,
+		ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTextReplace, ToolTableCreate, ToolBlockDelete,
 		ToolMetadataUpdate,
 		ToolDocumentValidate, ToolDocumentApply,
 	}
@@ -39,6 +39,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 		ToolParagraphUpdate:  toolAnnotations(false, true, false),
 		ToolHeadingCreate:    toolAnnotations(false, false, false),
 		ToolHeadingUpdate:    toolAnnotations(false, true, false),
+		ToolTextReplace:      toolAnnotations(false, true, false),
 		ToolTableCreate:      toolAnnotations(false, false, false),
 		ToolBlockDelete:      toolAnnotations(false, true, false),
 		ToolMetadataUpdate:   toolAnnotations(false, true, false),

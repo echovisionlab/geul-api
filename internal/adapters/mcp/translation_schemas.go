@@ -47,12 +47,12 @@ const translationProfileJSONSchema = `{"description":"Document profile, paired w
 
 const translationTargetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["p","d"],
-  "properties":{"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Exact owning document reference, also used by document_open.","minLength":1,"maxLength":256}}
+  "properties":{"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Exact owning document reference, also used as d by document_read.","minLength":1,"maxLength":256}}
 }`
 
 const translationGetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["p","d","l"],
-  "properties":{"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Exact owning document reference, also used by document_open.","minLength":1,"maxLength":256},"l":` + localeJSONSchema + `}
+  "properties":{"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Exact owning document reference, also used as d by document_read.","minLength":1,"maxLength":256},"l":` + localeJSONSchema + `}
 }`
 
 const translationJobInputJSONSchema = `{

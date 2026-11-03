@@ -104,7 +104,8 @@ const readInputJSONSchema = `{
       {"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"string"},{"type":"string"}],"items":false,"minItems":4,"maxItems":4}
     ]}},
     "n":{"type":"integer","minimum":0,"maximum":256},
-    "c":{"type":"string","maxLength":4096}
+    "c":{"type":"string","maxLength":4096},
+    "q":{"type":"string","minLength":1,"maxLength":200,"description":"Outline only: list just the blocks whose text in this locale contains q, ignoring case and spacing; each preview shows the text around the match."}
   }
 }`
 
@@ -184,6 +185,22 @@ const paragraphCreateInputJSONSchema = `{
   }
 }`
 
+const textReplaceInputJSONSchema = `{
+  "type":"object",
+  "additionalProperties":false,
+  "required":["document_type","document_id","locale","expected_document_revision","find","replace"],
+  "properties":{
+    "document_type":` + domainJSONSchema + `,
+    "document_id":` + documentReferenceJSONSchema + `,
+    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
+    "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Optional Block handle to search in; omit to search the whole document."},
+    "find":{"type":"string","minLength":1,"maxLength":2000,"description":"Exact text to replace, copied from document_read; must occur exactly once and sit inside one formatted run."},
+    "replace":{"type":"string","maxLength":20000,"description":"Replacement text; empty deletes find. It takes the formatting of the run it replaces."}
+  }
+}`
+
 const paragraphUpdateInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
@@ -245,8 +262,8 @@ const projectionOutputJSONSchema = `{
     "lr":{"enum":["source","non_source"]},
     "le":{"type":"boolean"},
     "m":{"enum":["outline","blocks","fields"]},
-    "n":{"type":["array","null"],"items":{"$ref":"#/$defs/node"}},
-    "pv":{"type":"object","additionalProperties":{"type":"string"}},
+    "q":{"type":"string"},
+    "n":{"type":["array","null"],"items":{"anyOf":[{"$ref":"#/$defs/node"},{"$ref":"#/$defs/outlineNode"}]}},
     "next":{"type":["string","null"]}
   },
   "$defs":{
@@ -293,7 +310,14 @@ const projectionOutputJSONSchema = `{
       {"type":["array","null"],"items":{"$ref":"#/$defs/field"}},
       {"type":["array","null"],"items":{"$ref":"#/$defs/file"}},
       {"type":["array","null"],"items":{"$ref":"#/$defs/relation"}}
-    ],"items":false,"minItems":8,"maxItems":8}
+    ],"items":false,"minItems":8,"maxItems":8},
+    "outlineNode":{"type":"array","description":"Outline node [handle,kind,parent,order,preview,relations]; trailing empty items are left out.","prefixItems":[
+      {"type":"string"},{"type":"string"},{"type":"string"},{"type":"integer"},{"type":"string"},
+      {"type":"array","items":{"type":"array","prefixItems":[
+        {"type":"string"},
+        {"type":"array","items":{"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"integer"}],"items":false,"minItems":3,"maxItems":3}}
+      ],"items":false,"minItems":2,"maxItems":2}}
+    ],"items":false,"minItems":4,"maxItems":6}
   }
 }`
 

@@ -21,14 +21,13 @@ const mcpServerImplementationVersion = "19"
 
 const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=page, p=program_event, p=release or p=artist), policy_list (p=terms or p=privacy) " +
 	"and menu_list (p=menu; menu_locations_get for placement); pass d unchanged, never a slug or URL. " +
-	"Edit a document in three steps. 1) document_read m=outline: " +
-	"every block's handle, kind, parent and a pv text preview, one page for most documents. 2) " +
-	"document_read m=blocks with only the handles you will change. 3) " +
-	"Use focused tools for plain paragraphs, headings and tables, and document_apply for formatted text or other changes. " +
+	"Edit a document in two steps. 1) Locate with document_read m=outline: q=<text> lists only blocks containing it; " +
+	"without q every block comes with a text preview. 2) Change a word or sentence with document_text_replace, which keeps formatting. " +
+	"For other edits read only the target handles with m=blocks, then use focused tools for plain paragraphs, headings and tables, or document_apply. " +
 	"document_open is optional. Pass dr (and tr for a translation) " +
 	"from your latest read or the previous edit's result; consecutive edits need no reread. " +
 	"Plain-text paragraph/heading tools refuse a block with marks, links, colors or breaks: " +
-	"write its full inline content with document_apply to keep them. " +
+	"use document_text_replace or document_apply to keep them. " +
 	"Editing the source locale changes every translation's tr, so reread a translation before editing it afterwards. " +
 	"A sync_required result with isError=false and applied=false means no change was applied: " +
 	"run the returned read recipe, compare the latest values with the intended edit, keep concurrent values, and retry with the new revisions. " +
