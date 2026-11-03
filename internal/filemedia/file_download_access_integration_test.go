@@ -25,147 +25,120 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFileDownloadAccessPolicyIntegration(t *testing.T) {
-	t.Parallel()
-	db := orytest.NewIntegrationDB(t)
-	stack := orytest.SetupOryStack(t)
+// restrictedDownloadFixture is a Post File attachment owned by an Author, and
+// a Member who matches one Member criteria through a tag.
+type restrictedDownloadFixture struct {
+	db               *gorm.DB
+	stack            *orytest.OryStack
+	fileSvc          *Service
+	authorCtx        context.Context
+	authorMemberID   string
+	memberID         string
+	memberIdentityID string
+	criteriaID       string
+	postID, fileID   string
+	blockID          string
+}
+
+func newRestrictedDownloadFixture(t *testing.T) restrictedDownloadFixture {
+	t.Helper()
+	f := restrictedDownloadFixture{
+		db: orytest.NewIntegrationDB(t), stack: orytest.SetupOryStack(t),
+		authorMemberID: uuid.NewString(), memberID: uuid.NewString(), memberIdentityID: uuid.NewString(),
+		criteriaID: uuid.NewString(), postID: uuid.NewString(), fileID: uuid.NewString(),
+	}
 	authorIdentityID := uuid.NewString()
-	authorMemberID := uuid.NewString()
-	memberIdentityID := uuid.NewString()
-	memberID := uuid.NewString()
-	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
-		ID: authorIdentityID,
-	})
-	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
-		ID: memberIdentityID,
-	})
-	seedFileDownloadMember(t, db, authorIdentityID, authorMemberID, policyv1.Role.Author().ID())
-	seedFileDownloadMember(t, db, memberIdentityID, memberID, policyv1.Role.User().ID())
+	orytest.SeedKratosIdentityFixture(t, f.db, orytest.KratosIdentityFixture{ID: authorIdentityID})
+	orytest.SeedKratosIdentityFixture(t, f.db, orytest.KratosIdentityFixture{ID: f.memberIdentityID})
+	seedFileDownloadMember(t, f.db, authorIdentityID, f.authorMemberID, policyv1.Role.Author().ID())
+	seedFileDownloadMember(t, f.db, f.memberIdentityID, f.memberID, policyv1.Role.User().ID())
 	authorSubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(authorIdentityID))
 	require.NoError(t, err)
-	_, err = stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), authorSubject, policyv1.Role.Admin())
+	_, err = f.stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), authorSubject, policyv1.Role.Admin())
 	require.NoError(t, err)
-	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{MemberID: authorMemberID})
+	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{MemberID: f.authorMemberID})
 	require.NoError(t, err)
-	authorCtx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
-		IdentityID:    auth.IdentityID(authorIdentityID),
-		MemberID:      auth.MemberID(authorMemberID),
-		SessionID:     auth.SessionID(uuid.NewString()),
-		Authenticated: true, Onboarded: true,
+	f.authorCtx = auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
+		IdentityID: auth.IdentityID(authorIdentityID), MemberID: auth.MemberID(f.authorMemberID),
+		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
+
 	tagID := uuid.NewString()
-	require.NoError(t, db.Exec(
-		`INSERT INTO user_tag (id, name, created_at) VALUES (?::uuid, ?, NOW())`,
-		tagID, "Download members "+uuid.NewString(),
-	).Error)
-	require.NoError(t, db.Create(&model.UserTagMapping{
-		MemberID: memberID,
-		TagID:    tagID,
-	}).Error)
-
-	criteriaID := uuid.NewString()
 	now := time.Now().UTC()
-	require.NoError(t, db.Create(&model.MemberCriteria{
-		ID: criteriaID, Name: "Download access " + uuid.NewString(),
-		Kind:      model.MemberCriteriaKindMemberTags,
-		CreatedAt: now, UpdatedAt: &now,
+	require.NoError(t, f.db.Exec(`INSERT INTO user_tag (id, name, created_at) VALUES (?::uuid, ?, NOW())`, tagID, "Download members "+uuid.NewString()).Error)
+	require.NoError(t, f.db.Create(&model.UserTagMapping{MemberID: f.memberID, TagID: tagID}).Error)
+	require.NoError(t, f.db.Create(&model.MemberCriteria{
+		ID: f.criteriaID, Name: "Download access " + uuid.NewString(), Kind: model.MemberCriteriaKindMemberTags, CreatedAt: now, UpdatedAt: &now,
 	}).Error)
-	require.NoError(t, db.Create(&model.MemberCriteriaTag{
-		MemberCriteriaID: criteriaID,
-		UserTagID:        tagID,
-	}).Error)
+	require.NoError(t, f.db.Create(&model.MemberCriteriaTag{MemberCriteriaID: f.criteriaID, UserTagID: tagID}).Error)
 
-	fileID := uuid.NewString()
-	postID := uuid.NewString()
-	require.NoError(t, db.Exec(
-		`INSERT INTO file (
-			id, file_name, mime_type, file_size, extension, sha256
-		) VALUES (?, 'source', 'audio/wav', 4096, 'wav', ?)`,
-		fileID,
-		make([]byte, 32),
+	require.NoError(t, f.db.Exec(
+		`INSERT INTO file (id, file_name, mime_type, file_size, extension, sha256) VALUES (?, 'source', 'audio/wav', 4096, 'wav', ?)`,
+		f.fileID, make([]byte, 32),
 	).Error)
-	seedAccessPostFileAttachment(t, db, postID, fileID)
-	var blockID string
-	require.NoError(t, db.Table("content_block_attachment").Where("file_id = ?", fileID).Pluck("block_id", &blockID).Error)
-	require.NotEmpty(t, blockID)
-	require.NoError(t, db.Exec(`INSERT INTO post_author (post_id, member_id) VALUES (?, ?)`, postID, authorMemberID).Error)
-	postPolicy, err := policyv1.Post.TouchPolicy(postID)
+	seedAccessPostFileAttachment(t, f.db, f.postID, f.fileID)
+	require.NoError(t, f.db.Table("content_block_attachment").Where("file_id = ?", f.fileID).Pluck("block_id", &f.blockID).Error)
+	require.NotEmpty(t, f.blockID)
+	require.NoError(t, f.db.Exec(`INSERT INTO post_author (post_id, member_id) VALUES (?, ?)`, f.postID, f.authorMemberID).Error)
+	postPolicy, err := policyv1.Post.TouchPolicy(f.postID)
 	require.NoError(t, err)
-	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
+	_, err = f.stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient, auditWriter: apitelemetry.NewDurableWriter(db), asyncPublisher: &policySignalPublisher{}}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, stack.SpiceDBClient)}))
+	f.fileSvc = withTestMutations(withNativeFileUnits(&Service{spiceDB: f.stack.SpiceDBClient, auditWriter: apitelemetry.NewDurableWriter(f.db), asyncPublisher: &policySignalPublisher{}}, f.db, nativeFilePorts{Posts: newIntegrationPostAccess(f.db, f.stack.SpiceDBClient)}))
+	return f
+}
 
-	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
-		authorCtx,
-		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
-			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
-			EntityId:   postID,
-			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
-			Access:            managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED,
-			MemberCriteriaIds: []string{criteriaID},
-			ObservedPolicy:    observedFileDownloadPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_DISABLED),
-		}),
-	)
+// restrict sets the attachment to restricted access with criteriaIDs, after observing previous.
+func (f restrictedDownloadFixture) restrict(t *testing.T, previous *managev1.FileDownloadPolicyObservedState, criteriaIDs ...string) *managev1.FileDownloadPolicy {
+	t.Helper()
+	updated, err := NewConnectHandler(f.fileSvc).UpdateFileDownloadPolicy(f.authorCtx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
+		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: f.postID,
+		BlockId: managePolicyString(f.blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: f.fileID,
+		Access: managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED, MemberCriteriaIds: criteriaIDs, ObservedPolicy: previous,
+	}))
 	require.NoError(t, err)
-	require.Len(t, updated.Msg.Policy.MemberCriteria, 1)
+	return updated.Msg.Policy
+}
 
-	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), mediaassetpostgres.NewDownloadStore(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+// memberMayDownload evaluates the attachment's current policy for the fixture Member.
+func (f restrictedDownloadFixture) memberMayDownload(t *testing.T) bool {
+	t.Helper()
+	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), mediaassetpostgres.NewDownloadStore(f.db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: f.blockID, ReferencePath: "file"}})
 	require.NoError(t, err)
-	source := sources[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")]
-	allowed, err := mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewCriteriaConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
-		IdentityID:    auth.IdentityID(memberIdentityID),
-		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(uuid.NewString()),
-		Authenticated: true,
-	})
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(f.db, mediaassetadapter.NewCriteriaConfigs()), f.stack.SpiceDBClient,
+		sources[mediaasset.ContentBlockDownloadPolicyKey(f.blockID, "file")], &auth.UserInfo{
+			IdentityID: auth.IdentityID(f.memberIdentityID), MemberID: auth.MemberID(f.memberID), SessionID: auth.SessionID(uuid.NewString()), Authenticated: true,
+		})
 	require.NoError(t, err)
-	require.True(t, allowed)
+	return allowed
+}
 
-	require.NoError(t, db.Where("member_id = ?", memberID).
-		Delete(&model.UserTagMapping{}).Error)
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewCriteriaConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
-		IdentityID:    auth.IdentityID(memberIdentityID),
-		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(uuid.NewString()),
-		Authenticated: true,
-	})
-	require.NoError(t, err)
-	require.False(t, allowed)
+func TestFileDownloadAccessPolicyIntegration(t *testing.T) {
+	t.Parallel()
+	f := newRestrictedDownloadFixture(t)
 
-	zeroCriteriaPolicy, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
-		authorCtx,
-		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
-			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
-			EntityId:   postID,
-			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
-			Access: managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED,
-			ObservedPolicy: observedFileDownloadPolicy(
-				managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED,
-				criteriaID,
-			),
-		}),
-	)
-	require.NoError(t, err)
-	require.Empty(t, zeroCriteriaPolicy.Msg.Policy.MemberCriteria)
+	policy := f.restrict(t, observedFileDownloadPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_DISABLED), f.criteriaID)
+	require.Len(t, policy.MemberCriteria, 1)
+	require.True(t, f.memberMayDownload(t), "a Member matching the criteria tag may download")
+
+	require.NoError(t, f.db.Where("member_id = ?", f.memberID).Delete(&model.UserTagMapping{}).Error)
+	require.False(t, f.memberMayDownload(t), "removing the tag removes the grant")
+
+	policy = f.restrict(t, observedFileDownloadPolicy(managev1.FileDownloadAccess_FILE_DOWNLOAD_ACCESS_RESTRICTED, f.criteriaID))
+	require.Empty(t, policy.MemberCriteria)
+	require.False(t, f.memberMayDownload(t), "restricted access without criteria denies everyone")
+
 	var auditRows []postSeriesAuditRow
-	require.NoError(t, db.Raw(`SELECT action, target_type, target_id, actor_member_id::text AS actor_member_id, request_id::text AS request_id, attributes FROM domain_audit WHERE target_type = 'post' AND target_id = ? ORDER BY occurred_at, audit_id`, postID).Scan(&auditRows).Error)
+	require.NoError(t, f.db.Raw(`SELECT action, target_type, target_id, actor_member_id::text AS actor_member_id, request_id::text AS request_id, attributes FROM domain_audit WHERE target_type = 'post' AND target_id = ? ORDER BY occurred_at, audit_id`, f.postID).Scan(&auditRows).Error)
 	require.Len(t, auditRows, 2)
 	for _, row := range auditRows {
 		require.Equal(t, "post.updated", row.Action)
-		require.Equal(t, authorMemberID, row.ActorMemberID)
-		require.Equal(t, sharedtelemetry.RequestIDFromContext(authorCtx), row.RequestID)
+		require.Equal(t, f.authorMemberID, row.ActorMemberID)
+		require.Equal(t, sharedtelemetry.RequestIDFromContext(f.authorCtx), row.RequestID)
 	}
-	require.JSONEq(t, `{"changed_fields":["file_download_access","file_download_member_criteria_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_state":"disabled","new_state":"restricted","previous_item_ids":[],"item_ids":["`+criteriaID+`"]}`, string(auditRows[0].Attributes))
-	require.JSONEq(t, `{"changed_fields":["file_download_member_criteria_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_item_ids":["`+criteriaID+`"],"item_ids":[]}`, string(auditRows[1].Attributes))
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.NewDownloadStore(db, mediaassetadapter.NewCriteriaConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
-		IdentityID:    auth.IdentityID(memberIdentityID),
-		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(uuid.NewString()),
-		Authenticated: true,
-	})
-	require.NoError(t, err)
-	require.False(t, allowed)
+	require.JSONEq(t, `{"changed_fields":["file_download_access","file_download_member_criteria_ids"],"item_id":"`+f.blockID+`","file_id":"`+f.fileID+`","previous_state":"disabled","new_state":"restricted","previous_item_ids":[],"item_ids":["`+f.criteriaID+`"]}`, string(auditRows[0].Attributes))
+	require.JSONEq(t, `{"changed_fields":["file_download_member_criteria_ids"],"item_id":"`+f.blockID+`","file_id":"`+f.fileID+`","previous_item_ids":["`+f.criteriaID+`"],"item_ids":[]}`, string(auditRows[1].Attributes))
 }
 
 func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration(t *testing.T) {

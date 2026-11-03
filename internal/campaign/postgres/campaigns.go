@@ -61,7 +61,7 @@ func (s *store) UpdateCampaign(ctx context.Context, value campaigndomain.Campaig
 			updates["target_mode"] = next.TargetMode
 		}
 		if ptrStringValue(value.CriteriaID) != ptrStringValue(next.CriteriaID) {
-			updates["criteria_id"] = next.CriteriaID
+			updates["member_criteria_id"] = next.CriteriaID
 		}
 		if ptrStringValue(value.LayoutID) != ptrStringValue(next.LayoutID) {
 			updates["layout_id"] = next.LayoutID

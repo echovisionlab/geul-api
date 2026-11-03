@@ -325,10 +325,10 @@ func createCampaignTargetDefinition(target CreateCampaignTarget) (string, *strin
 	case target.CriteriaID != nil:
 		criteriaID := strings.TrimSpace(*target.CriteriaID)
 		if criteriaID == "" {
-			return "", nil, domainerr.InvalidField("target", "criteria_id is required")
+			return "", nil, domainerr.InvalidField("target", "member_criteria_id is required")
 		}
 		if _, err := uuid.Parse(criteriaID); err != nil {
-			return "", nil, domainerr.InvalidField("target", "criteria_id must be a UUID")
+			return "", nil, domainerr.InvalidField("target", "member_criteria_id must be a UUID")
 		}
 		return CampaignTargetModeMemberCriteria, &criteriaID, nil
 	default:

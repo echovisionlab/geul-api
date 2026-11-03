@@ -46,7 +46,7 @@ func (s *Service) GetCriteria(ctx context.Context, query GetCriteriaQuery) (Crit
 	if count, err := s.estimateCount(ctx, view.Criteria); err == nil {
 		view.EstimatedCount = &count
 	} else {
-		slog.ErrorContext(ctx, "Criteria criteria count estimate failed; returning criteria without a count", "domain", "criteria", "event", "criteria.operation_failed", "operation", "estimate_criteria_count", "outcome", "failed", "criteria_id", view.Criteria.ID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Member criteria count failed; returning the criteria without a count", "domain", "member_criteria", "event", "member_criteria.operation_failed", "operation", "count_matching_members", "outcome", "failed", "member_criteria_id", view.Criteria.ID, failurecause.Attr(err))
 	}
 	return view, nil
 }

@@ -22,7 +22,7 @@ var activeCriteriaRunStatuses = []string{campaigndomain.CampaignDeliveryRunStatu
 // CountCriteriaUsage counts the campaigns and delivery runs of each criteria.
 // A criteria nothing uses is absent from both maps.
 func (CriteriaUsage) CountCriteriaUsage(ctx context.Context, db *gorm.DB, criteriaIDs []string) (map[string]int32, map[string]int32, error) {
-	campaigns, err := countByCriteria(ctx, db, "campaign", "criteria_id", criteriaIDs)
+	campaigns, err := countByCriteria(ctx, db, "campaign", "member_criteria_id", criteriaIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -57,7 +57,7 @@ func countByCriteria(ctx context.Context, db *gorm.DB, table, column string, cri
 // whether a scheduled or sending delivery run, targets the criteria.
 func (CriteriaUsage) CriteriaInActiveUse(ctx context.Context, tx *gorm.DB, criteriaID string) (bool, bool, error) {
 	var activeCampaigns int64
-	if err := tx.WithContext(ctx).Model(&model.Campaign{}).Where("criteria_id = ? AND status IN ?", criteriaID, []model.CampaignStatus{
+	if err := tx.WithContext(ctx).Model(&model.Campaign{}).Where("member_criteria_id = ? AND status IN ?", criteriaID, []model.CampaignStatus{
 		model.CampaignStatusScheduled, model.CampaignStatusSending,
 	}).Count(&activeCampaigns).Error; err != nil {
 		return false, false, err
@@ -112,7 +112,7 @@ func criteriaCampaignIDs(ctx context.Context, db *gorm.DB, criteriaID string, lo
 		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	ids := []string{}
-	err := query.Where("criteria_id = ?", criteriaID).Order("id ASC").Pluck("id", &ids).Error
+	err := query.Where("member_criteria_id = ?", criteriaID).Order("id ASC").Pluck("id", &ids).Error
 	return ids, err
 }
 
@@ -133,7 +133,7 @@ func activeCriteriaRunIDs(ctx context.Context, db *gorm.DB, criteriaID string, l
 func (CriteriaUsage) ReleaseCriteriaForArchive(ctx context.Context, tx *gorm.DB, criteriaID string, now time.Time) ([]string, error) {
 	scheduled := []string{}
 	if err := tx.WithContext(ctx).Table("campaign").
-		Where("criteria_id = ? AND status = ?", criteriaID, model.CampaignStatusScheduled).
+		Where("member_criteria_id = ? AND status = ?", criteriaID, model.CampaignStatusScheduled).
 		Order("id ASC").Pluck("id", &scheduled).Error; err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (CriteriaUsage) ReleaseCriteriaForArchive(ctx context.Context, tx *gorm.DB,
 	}
 	if err := tx.WithContext(ctx).
 		Model(&model.Campaign{}).
-		Where("criteria_id = ? AND status = ?", criteriaID, model.CampaignStatusScheduled).
+		Where("member_criteria_id = ? AND status = ?", criteriaID, model.CampaignStatusScheduled).
 		Updates(structured.Fields{
 			"status":       model.CampaignStatusDraft,
 			"scheduled_at": nil,

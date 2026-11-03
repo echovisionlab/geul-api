@@ -681,7 +681,7 @@ func resolveRestrictedFileDownloadPermissions(
 			// The permissions come from a stored criteria, not from this request.
 			return nil, failurecause.WithAttrs(
 				fmt.Errorf("read stored File download criteria: %w", err),
-				slog.String("criteria_id", criteria.ID),
+				slog.String("member_criteria_id", criteria.ID),
 			)
 		}
 		for _, permission := range permissions {

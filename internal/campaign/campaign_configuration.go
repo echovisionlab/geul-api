@@ -102,7 +102,7 @@ func requestedCampaignConfiguration(campaign Campaign, command UpdateCampaignCon
 		next.CriteriaID = nullableTrimmedString(ptrStringValue(command.CriteriaID))
 		touched = true
 	} else if command.CriteriaID != nil {
-		return next, domainerr.InvalidField("criteria_id", "must be updated together with target_mode")
+		return next, domainerr.InvalidField("member_criteria_id", "must be updated together with target_mode")
 	}
 	if command.RecipientScope != nil {
 		parsedScope, err := campaignRecipientScopeValue(*command.RecipientScope)
