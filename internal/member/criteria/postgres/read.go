@@ -140,6 +140,15 @@ func (s store) CriteriaReferences(ctx context.Context, ids []string) (map[string
 		counted.DownloadPolicies = int32(row.Count)
 		references[row.ID] = counted
 	}
+	signInApps, err := s.signInApps.CountSignInApps(ctx, s.tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id, count := range signInApps {
+		counted := references[id]
+		counted.SignInApps = count
+		references[id] = counted
+	}
 	return references, nil
 }
 

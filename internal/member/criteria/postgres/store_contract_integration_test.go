@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	oauthappadapter "github.com/echovisionlab/geul-api/internal/adapters/oauthapp"
+
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
 	"github.com/google/uuid"
@@ -27,7 +29,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	criteriatest.RunStoreContract(t, func(t *testing.T) criteriatest.Harness {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		return criteriatest.Harness{
-			Harness:  mutationtest.PostgresHarness(db, criteriapostgres.NewUnits(db, campaignpostgres.CriteriaUsage{})),
+			Harness:  mutationtest.PostgresHarness(db, criteriapostgres.NewUnits(db, campaignpostgres.CriteriaUsage{}, oauthappadapter.SignInAppUsage{})),
 			Fixtures: postgresFixtures{db: db},
 		}
 	})

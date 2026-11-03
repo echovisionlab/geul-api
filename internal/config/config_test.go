@@ -380,6 +380,7 @@ func setRequiredConfigEnv(t *testing.T) {
 		"SPICEDB_GRPC_PRESHARED_KEY":   "spicedb-test-token",
 		"KRATOS_URL":                   "https://identity.example.com",
 		"KRATOS_ADMIN_URL":             "http://kratos:4434",
+		"HYDRA_ADMIN_URL":              "http://hydra:4445",
 		"EDITOR_COLLAB_URL":            "http://collab:3003",
 		"SITE_ORIGIN":                  "https://studio.example.com",
 		"GOOGLE_AI_API_KEY":            "google-key",

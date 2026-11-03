@@ -567,6 +567,7 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 		"MEDIA_URL":                    mediaURL,
 		"KRATOS_URL":                   s.KratosPublicURL,
 		"KRATOS_ADMIN_URL":             s.KratosAdminURL,
+		"HYDRA_ADMIN_URL":              "http://hydra.invalid:4445",
 		"SPICEDB_ENDPOINT":             s.SpiceDBEndpoint,
 		"SPICEDB_GRPC_PRESHARED_KEY":   s.SpiceDBToken,
 		"SPICEDB_ALLOW_INSECURE":       "true",

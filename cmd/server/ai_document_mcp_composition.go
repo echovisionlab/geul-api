@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
-const mcpServerImplementationVersion = "19"
+const mcpServerImplementationVersion = "20"
 
 const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=page, p=program_event, p=release or p=artist), policy_list (p=terms or p=privacy) " +
 	"and menu_list (p=menu; menu_locations_get for placement); pass d unchanged, never a slug or URL. " +
@@ -50,7 +50,9 @@ const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=
 	"Resolve references with reference_search and the label, event type/series, genre/style/format, form, post_series, map_theme and member_tag lists. " +
 	"Use member_admin_list/get for audited member data. " +
 	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; " +
-	"sender changes keep credentials and may send verification email. File work: " +
+	"sender changes keep credentials and may send verification email. " +
+	"Pass oauth_app_get's revision to oauth_app_update/delete/secret_rotate; updates replace all settings; " +
+	"a client_secret is shown once. File work: " +
 	"file_upload for chat attachments, keeping correlation_id on retries; " +
 	"only the returned File UUID can be attached. file_list browses folders. " +
 	"Read deletion impacts before file_delete; referenced Files are rejected. " +
@@ -151,6 +153,8 @@ type contentMCPApplications struct {
 	siteSettings mcpadapter.SiteSettingsAdminApplication
 	mailAdapters mcpadapter.MailAdapterAdminApplication
 	emailLayouts mcpadapter.EmailLayoutSourceApplication
+	oauthApps    mcpadapter.OAuthAppAdminApplication
+	criteria     mcpadapter.MemberCriteriaReader
 }
 
 func newAIDocumentMCPComposition(
@@ -307,6 +311,10 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP administrator settings tools: %w", err)
 	}
+	oauthAppTools, err := mcpadapter.NewOAuthAppTools(references.oauthApps, references.criteria)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP OAuth app tools: %w", err)
+	}
 	relatedTools, err := mcpadapter.NewContentRelatedTools(posts, works, pages)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP related content tools: %w", err)
@@ -351,7 +359,7 @@ func newAIDocumentMCPComposition(
 		discoveryTools, menuTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
 		managementTools, policyTools, emailLayoutSourceTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
 		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools, adminSettingsTools,
-		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
+		oauthAppTools, relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
 	)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP tool set: %w", err)

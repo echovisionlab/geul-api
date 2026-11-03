@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/criteriamatch"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -25,19 +26,17 @@ type DownloadAssociation struct {
 	PolicyKey        string
 	MemberCriteriaID string
 }
-type DownloadCriteriaConfig struct {
-	MemberTagIDs     []string `json:"member_tag_ids,omitempty"`
-	AccountRoles     []string `json:"account_roles,omitempty"`
-	CreatedAfter     *time.Time
-	CreatedBefore    *time.Time
-	ExcludeMemberIDs []string `json:"exclude_member_ids,omitempty"`
-}
-type DownloadKind string
+
+// DownloadCriteriaConfig is the stored selection of a Member criteria.
+type DownloadCriteriaConfig = criteriamatch.Config
+
+// DownloadKind is a stored Member criteria kind.
+type DownloadKind = criteriamatch.Kind
 
 const (
-	DownloadAllMembers      DownloadKind = "MEMBER_CRITERIA_KIND_ALL_MEMBERS"
-	DownloadMemberTags      DownloadKind = "MEMBER_CRITERIA_KIND_MEMBER_TAGS"
-	DownloadMembersByFilter DownloadKind = "MEMBER_CRITERIA_KIND_FILTER"
+	DownloadAllMembers      = criteriamatch.KindAllMembers
+	DownloadMemberTags      = criteriamatch.KindMemberTags
+	DownloadMembersByFilter = criteriamatch.KindFilter
 )
 
 type DownloadCriteria struct {

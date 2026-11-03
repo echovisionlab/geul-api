@@ -31,7 +31,7 @@ func allToolProviders() []ToolProvider {
 		&MusicReferenceTools{}, &PageReferenceTools{}, &ContentManagementTools{}, &LegalPolicyTools{}, &EmailLayoutSourceTools{},
 		&ProgramEventManagementTools{}, &ProgramEventMediaTools{}, &ReleaseManagementTools{}, &ReleaseRelationTools{},
 		&TrackManagementTools{}, &MapPlaceManagementTools{}, &MapThemeManagementTools{}, &MemberAdminTools{},
-		&MemberTagTools{}, &AdminSettingsTools{}, &ContentRelatedTools{}, &AIDocumentTools{},
+		&MemberTagTools{}, &AdminSettingsTools{}, &OAuthAppTools{}, &ContentRelatedTools{}, &AIDocumentTools{},
 		&DocumentCatalogTools{}, &TranslationTools{}, &FileTools{}, &FileBlockTools{}, &FileManagerTools{},
 	}
 }

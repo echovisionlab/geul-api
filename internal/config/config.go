@@ -47,11 +47,14 @@ type Config struct {
 	CloudflareAPIURL            string `envconfig:"CLOUDFLARE_API_URL" default:"https://api.cloudflare.com/client/v4"`
 	// SpiceDB is the authorization authority for the target runtime. The
 	// preshared key name matches the deployment Secret contract.
-	SpiceDBEndpoint               string `envconfig:"SPICEDB_ENDPOINT" required:"true"`
-	SpiceDBToken                  string `envconfig:"SPICEDB_GRPC_PRESHARED_KEY" required:"true"`
-	SpiceDBAllowInsecure          bool   `envconfig:"SPICEDB_ALLOW_INSECURE" default:"false"`
-	KratosPublicURL               string `envconfig:"KRATOS_URL" required:"true"`
-	KratosAdminURL                string `envconfig:"KRATOS_ADMIN_URL" required:"true"`
+	SpiceDBEndpoint      string `envconfig:"SPICEDB_ENDPOINT" required:"true"`
+	SpiceDBToken         string `envconfig:"SPICEDB_GRPC_PRESHARED_KEY" required:"true"`
+	SpiceDBAllowInsecure bool   `envconfig:"SPICEDB_ALLOW_INSECURE" default:"false"`
+	KratosPublicURL      string `envconfig:"KRATOS_URL" required:"true"`
+	KratosAdminURL       string `envconfig:"KRATOS_ADMIN_URL" required:"true"`
+	// HydraAdminURL is the private Hydra Admin API that manages sign-in
+	// apps and connected AI tools.
+	HydraAdminURL                 string `envconfig:"HYDRA_ADMIN_URL" required:"true"`
 	EditorCollabURL               string `envconfig:"EDITOR_COLLAB_URL" required:"true"`
 	SESEventSNSTopicARN           string `envconfig:"SES_EVENT_SNS_TOPIC_ARN"`
 	SiteOrigin                    string `envconfig:"SITE_ORIGIN" required:"true"`
@@ -151,6 +154,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.EditorCollabURL = editorCollabURL
+	hydraAdminURL, err := normalizeAbsoluteOrigin("HYDRA_ADMIN_URL", cfg.HydraAdminURL)
+	if err != nil {
+		return nil, err
+	}
+	cfg.HydraAdminURL = hydraAdminURL
 	s3PublicEndpoint, err := normalizeAbsoluteOrigin("S3_PUBLIC_ENDPOINT", cfg.S3PublicEndpoint)
 	if err != nil {
 		return nil, err
