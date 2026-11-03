@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.0](https://github.com/echovisionlab/geul-api/compare/v4.3.0...v4.4.0) (2026-11-03)
+
+
+### Features
+
+* **mcp:** read documents in one page and keep formatting on plain-text edits ([#219](https://github.com/echovisionlab/geul-api/issues/219)) ([5ea3f9e](https://github.com/echovisionlab/geul-api/commit/5ea3f9e01e7900454793ed9cb415a4741ddc7744))
+
 ## [4.3.0](https://github.com/echovisionlab/geul-api/compare/v4.2.1...v4.3.0) (2026-11-03)
 
 
