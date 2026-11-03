@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/echovisionlab/geul-api/compare/v4.5.0...v5.0.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* move audience segments into the member domain as Member criteria ([#223](https://github.com/echovisionlab/geul-api/issues/223))
+
+### Code Refactoring
+
+* move audience segments into the member domain as Member criteria ([#223](https://github.com/echovisionlab/geul-api/issues/223)) ([d7d280d](https://github.com/echovisionlab/geul-api/commit/d7d280df2e1b335e8e88824e87b84944d647ba7c))
+
 ## [4.5.0](https://github.com/echovisionlab/geul-api/compare/v4.4.0...v4.5.0) (2026-11-03)
 
 
