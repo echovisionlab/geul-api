@@ -7,14 +7,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the Post management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedPostServiceHandler
 	posts *Service
 }
 
@@ -182,7 +179,6 @@ func (h *ConnectHandler) CheckSlugAvailable(ctx context.Context, req *connect.Re
 // InternalConnectHandler serves the Post collaboration RPCs editor-collab
 // calls.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalPostServiceHandler
 	posts *Service
 }
 
@@ -247,7 +243,6 @@ func (h *InternalConnectHandler) CreatePostVersionCheckpoint(ctx context.Context
 
 // CommentConnectHandler serves the Post comment RPCs.
 type CommentConnectHandler struct {
-	managev1connect.UnimplementedCommentServiceHandler
 	comments *CommentService
 }
 

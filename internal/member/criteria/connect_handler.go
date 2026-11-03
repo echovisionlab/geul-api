@@ -8,7 +8,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -17,7 +16,6 @@ import (
 // request into a use-case command or query, and the result into the
 // response; errs.Wrap maps use-case errors to Connect codes.
 type ConnectHandler struct {
-	managev1connect.UnimplementedMemberCriteriaServiceHandler
 	criteriaSet *Service
 }
 
@@ -81,21 +79,21 @@ func criteriaConfigInput(config *managev1.MemberCriteriaConfig) *CriteriaConfigI
 	return input
 }
 
-func (h *ConnectHandler) CreateCriteria(ctx context.Context, req *connect.Request[managev1.CreateMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
+func (h *ConnectHandler) CreateMemberCriteria(ctx context.Context, req *connect.Request[managev1.CreateMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
 	return respondCriteria(h.criteriaSet.CreateCriteria(ctx, CreateCriteriaCommand{
 		Name: req.Msg.Name, Description: req.Msg.Description,
 		Kind: kindFromProto(req.Msg.Kind), Config: criteriaConfigInput(req.Msg.Config),
 	}))
 }
 
-func (h *ConnectHandler) EstimateCriteriaCount(ctx context.Context, req *connect.Request[managev1.CountMatchingMembersRequest]) (*connect.Response[managev1.CountMatchingMembersResponse], error) {
+func (h *ConnectHandler) CountMatchingMembers(ctx context.Context, req *connect.Request[managev1.CountMatchingMembersRequest]) (*connect.Response[managev1.CountMatchingMembersResponse], error) {
 	count, err := h.criteriaSet.EstimateCriteriaCount(ctx, EstimateCriteriaCountQuery{
 		Kind: kindFromProto(req.Msg.Kind), Config: criteriaConfigInput(req.Msg.Config),
 	})
 	return respond(&managev1.CountMatchingMembersResponse{Count: count}, err)
 }
 
-func (h *ConnectHandler) UpdateCriteria(ctx context.Context, req *connect.Request[managev1.UpdateMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
+func (h *ConnectHandler) UpdateMemberCriteria(ctx context.Context, req *connect.Request[managev1.UpdateMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
 	command := UpdateCriteriaCommand{
 		ID: req.Msg.Id, Name: req.Msg.Name, Description: req.Msg.Description, Config: criteriaConfigInput(req.Msg.Config),
 	}
@@ -111,19 +109,19 @@ func (h *ConnectHandler) UpdateCriteria(ctx context.Context, req *connect.Reques
 	return respondCriteria(h.criteriaSet.UpdateCriteria(ctx, command))
 }
 
-func (h *ConnectHandler) ArchiveCriteria(ctx context.Context, req *connect.Request[managev1.ArchiveMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
+func (h *ConnectHandler) ArchiveMemberCriteria(ctx context.Context, req *connect.Request[managev1.ArchiveMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
 	return respondCriteria(h.criteriaSet.ArchiveCriteria(ctx, ArchiveCriteriaCommand{ID: req.Msg.Id}))
 }
 
-func (h *ConnectHandler) RestoreCriteria(ctx context.Context, req *connect.Request[managev1.RestoreMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
+func (h *ConnectHandler) RestoreMemberCriteria(ctx context.Context, req *connect.Request[managev1.RestoreMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
 	return respondCriteria(h.criteriaSet.RestoreCriteria(ctx, RestoreCriteriaCommand{ID: req.Msg.Id}))
 }
 
-func (h *ConnectHandler) GetCriteria(ctx context.Context, req *connect.Request[managev1.GetMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
+func (h *ConnectHandler) GetMemberCriteria(ctx context.Context, req *connect.Request[managev1.GetMemberCriteriaRequest]) (*connect.Response[managev1.MemberCriteria], error) {
 	return respondCriteria(h.criteriaSet.GetCriteria(ctx, GetCriteriaQuery{ID: req.Msg.Id}))
 }
 
-func (h *ConnectHandler) ListCriteriaSetAdmin(ctx context.Context, req *connect.Request[managev1.ListMemberCriteriaAdminRequest]) (*connect.Response[managev1.ListMemberCriteriaAdminResponse], error) {
+func (h *ConnectHandler) ListMemberCriteriaAdmin(ctx context.Context, req *connect.Request[managev1.ListMemberCriteriaAdminRequest]) (*connect.Response[managev1.ListMemberCriteriaAdminResponse], error) {
 	page, err := h.criteriaSet.ListCriteriaSet(ctx, ListCriteriaSetQuery{
 		IncludeArchived: req.Msg.IncludeArchived,
 		Limit:           req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
@@ -142,7 +140,7 @@ func (h *ConnectHandler) ListCriteriaSetAdmin(ctx context.Context, req *connect.
 	}), nil
 }
 
-func (h *ConnectHandler) ListCriteriaSetForAuthenticatedAccess(ctx context.Context, req *connect.Request[managev1.ListMemberCriteriaForAuthenticatedAccessRequest]) (*connect.Response[managev1.ListMemberCriteriaForAuthenticatedAccessResponse], error) {
+func (h *ConnectHandler) ListMemberCriteriaForAuthenticatedAccess(ctx context.Context, req *connect.Request[managev1.ListMemberCriteriaForAuthenticatedAccessRequest]) (*connect.Response[managev1.ListMemberCriteriaForAuthenticatedAccessResponse], error) {
 	page, err := h.criteriaSet.ListAuthenticatedAccessCriteriaSet(ctx, ListAuthenticatedAccessCriteriaSetQuery{
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,

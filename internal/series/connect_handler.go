@@ -6,14 +6,11 @@ import (
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // ConnectHandler serves the Series management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedSeriesServiceHandler
 	series *Service
 }
 
@@ -126,7 +123,6 @@ func (h *ConnectHandler) ReorderSeriesPosts(ctx context.Context, req *connect.Re
 // InternalConnectHandler serves the Post Series collaboration RPCs
 // editor-collab calls.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalPostSeriesServiceHandler
 	series *Service
 }
 

@@ -7,14 +7,12 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public File RPCs. It translates the request into
 // the use-case query and the result into the response; errs.Wrap maps
 // use-case errors to Connect codes.
 type ConnectHandler struct {
-	openv1connect.UnimplementedFileServiceHandler
 	files *Service
 }
 

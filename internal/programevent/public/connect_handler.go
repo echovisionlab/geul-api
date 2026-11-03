@@ -9,12 +9,10 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public Program Event RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedProgramEventServiceHandler
 	events *Service
 }
 
@@ -25,7 +23,6 @@ func NewConnectHandler(events *Service) *ConnectHandler {
 
 // SeriesConnectHandler serves the public Program Event series RPCs.
 type SeriesConnectHandler struct {
-	openv1connect.UnimplementedProgramEventSeriesServiceHandler
 	events *Service
 }
 
@@ -36,7 +33,6 @@ func NewSeriesConnectHandler(events *Service) *SeriesConnectHandler {
 
 // TypeConnectHandler serves the public Program Event type RPCs.
 type TypeConnectHandler struct {
-	openv1connect.UnimplementedProgramEventTypeServiceHandler
 	events *Service
 }
 

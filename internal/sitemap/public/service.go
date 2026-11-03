@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sitemapdomain "github.com/echovisionlab/geul-api/internal/sitemap"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -79,7 +78,6 @@ type sitemapMetrics struct {
 
 // SitemapService generates crawler-facing sitemap documents and owns stale snapshot policy.
 type SitemapService struct {
-	openv1connect.UnimplementedSitemapServiceHandler
 	store           sitemapdomain.Store
 	canonicalOrigin string
 	metrics         sitemapMetrics

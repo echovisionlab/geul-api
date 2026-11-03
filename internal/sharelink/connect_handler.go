@@ -7,13 +7,11 @@ import (
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ConnectHandler serves the Share Link management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedShareLinkServiceHandler
 	links *Service
 }
 

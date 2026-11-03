@@ -7,12 +7,10 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
 // ConnectHandler serves the public Share Link RPC.
 type ConnectHandler struct {
-	openv1connect.UnimplementedShareLinkServiceHandler
 	links *Service
 }
 

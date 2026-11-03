@@ -19,17 +19,14 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ConnectHandler serves the Work management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedWorkServiceHandler
 	works *Service
 }
 
@@ -508,7 +505,6 @@ func (h *ConnectHandler) CheckWorkSlugAvailable(ctx context.Context, req *connec
 // InternalConnectHandler serves the Work collaboration RPCs editor-collab
 // calls.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalWorkServiceHandler
 	works *Service
 }
 

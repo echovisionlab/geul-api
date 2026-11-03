@@ -23,7 +23,7 @@ func TestListCriteriaSetForAuthenticatedAccessHasNoMoreBeyondTheLastPage(t *test
 		"first page":     {&commonv1.PaginationRequest{Limit: 1}, false},
 		"largest offset": {&commonv1.PaginationRequest{Limit: 100, Offset: math.MaxInt32 - 10}, false},
 	} {
-		response, err := handler.ListCriteriaSetForAuthenticatedAccess(h.admin, connect.NewRequest(&managev1.ListMemberCriteriaForAuthenticatedAccessRequest{Pagination: test.pagination}))
+		response, err := handler.ListMemberCriteriaForAuthenticatedAccess(h.admin, connect.NewRequest(&managev1.ListMemberCriteriaForAuthenticatedAccessRequest{Pagination: test.pagination}))
 		require.NoError(t, err, name)
 		require.EqualValues(t, 1, response.Msg.GetPagination().GetTotal(), name)
 		require.Equal(t, test.hasMore, response.Msg.GetPagination().GetHasMore(), name)

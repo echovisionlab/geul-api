@@ -11,7 +11,6 @@ import (
 
 // ConnectHandler serves the public Post RPCs.
 type ConnectHandler struct {
-	openv1connect.UnimplementedPostServiceHandler
 	posts *Service
 }
 

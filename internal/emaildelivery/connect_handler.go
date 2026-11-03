@@ -10,9 +10,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 func respond[T any](message *T, err error) (*connect.Response[T], error) {
@@ -26,7 +24,6 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 // method translates the request into a use-case command or query, and the
 // result into the response; errs.Wrap maps use-case errors to Connect codes.
 type MailAdapterConnectHandler struct {
-	managev1connect.UnimplementedMailAdapterServiceHandler
 	delivery *Service
 }
 
@@ -206,7 +203,6 @@ func (h *MailAdapterConnectHandler) Test(ctx context.Context, req *connect.Reque
 
 // EmailSuppressionConnectHandler serves the Email Suppression Connect RPCs.
 type EmailSuppressionConnectHandler struct {
-	managev1connect.UnimplementedEmailSuppressionServiceHandler
 	delivery *Service
 }
 
@@ -261,7 +257,6 @@ func emailSuppressionMessage(s Suppression) *managev1.EmailSuppression {
 // CourierConnectHandler serves the internal Email Courier RPC that the
 // Kratos HTTP courier calls.
 type CourierConnectHandler struct {
-	intrav1connect.UnimplementedEmailCourierServiceHandler
 	courier *EmailCourierService
 }
 

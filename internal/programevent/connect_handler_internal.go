@@ -8,13 +8,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
 // InternalConnectHandler serves the collaboration service's typed Program
 // Event Block boundary. Yjs state stays in editor-collab and never crosses it.
 type InternalConnectHandler struct {
-	intrav1connect.UnimplementedInternalProgramEventServiceHandler
 	events *Service
 }
 

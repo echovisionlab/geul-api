@@ -110,8 +110,6 @@ type activeTurn struct {
 // Service implements the generated first-party Browser Session RPC surface.
 // All turn state is process-local and removed when the stream terminates.
 type Service struct {
-	managev1connect.UnimplementedAIEditorOrchestrationServiceHandler
-
 	document DocumentService
 	provider Provider
 

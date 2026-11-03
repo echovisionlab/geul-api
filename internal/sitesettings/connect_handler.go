@@ -9,13 +9,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // ConnectHandler serves the Site Settings management RPCs.
 type ConnectHandler struct {
-	managev1connect.UnimplementedSiteSettingServiceHandler
 	settings *Service
 }
 

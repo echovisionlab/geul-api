@@ -9,9 +9,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -45,7 +43,6 @@ func optionalTime(value *timestamppb.Timestamp) *time.Time {
 // TermsConnectHandler serves the Terms management RPCs through the shared
 // legal policy use cases.
 type TermsConnectHandler struct {
-	managev1connect.UnimplementedTermsServiceHandler
 	policies *Service
 }
 
@@ -143,7 +140,6 @@ func (h *TermsConnectHandler) RegenerateTermsDerivedContent(ctx context.Context,
 // PrivacyConnectHandler serves the Privacy management RPCs through the
 // shared legal policy use cases.
 type PrivacyConnectHandler struct {
-	managev1connect.UnimplementedPrivacyServiceHandler
 	policies *Service
 }
 
@@ -241,7 +237,6 @@ func (h *PrivacyConnectHandler) RegeneratePrivacyDerivedContent(ctx context.Cont
 // InternalTermsConnectHandler serves the Terms collaboration RPCs through the
 // shared legal document use cases.
 type InternalTermsConnectHandler struct {
-	intrav1connect.UnimplementedInternalTermsServiceHandler
 	documents *InternalService
 }
 
@@ -311,7 +306,6 @@ func (h *InternalTermsConnectHandler) UpdateTermsLocaleMetadata(ctx context.Cont
 // InternalPrivacyConnectHandler serves the Privacy collaboration RPCs through
 // the shared legal document use cases.
 type InternalPrivacyConnectHandler struct {
-	intrav1connect.UnimplementedInternalPrivacyServiceHandler
 	documents *InternalService
 }
 
