@@ -3,7 +3,6 @@ package formog
 import (
 	"context"
 	"strings"
-	"time"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
 // Projection owns Form's locale-scoped current OG pointer and public binding.
@@ -43,7 +41,6 @@ func (p *Projection) Complete(
 	tx *gorm.DB,
 	target og.Target,
 	assetID string,
-	now time.Time,
 	cdnDomain string,
 ) error {
 	if !p.Handles(target) {
@@ -55,7 +52,7 @@ func (p *Projection) Complete(
 	}
 	result := tx.WithContext(ctx).Table("form_translation").
 		Where("entity_id = ? AND locale = ?", target.EntityID, locale).
-		Updates(structured.Fields{"og_asset_id": assetID, "updated_at": now})
+		Update("og_asset_id", assetID)
 	if result.Error != nil {
 		return result.Error
 	}

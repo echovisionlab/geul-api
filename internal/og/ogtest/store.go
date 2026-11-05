@@ -645,7 +645,7 @@ func (s *Store) ReleasePendingProjection(_ context.Context, target og.Target) er
 	return nil
 }
 
-func (s *Store) CompleteProjection(_ context.Context, target og.Target, assetID string, _ time.Time) error {
+func (s *Store) CompleteProjection(_ context.Context, target og.Target, assetID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := projectionKey(target)

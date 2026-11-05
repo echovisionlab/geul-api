@@ -3,7 +3,6 @@ package ogpostgres
 import (
 	"context"
 	"strings"
-	"time"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
@@ -13,7 +12,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
 // entityBindingKey is the public binding of an entity-row OG image.
@@ -76,7 +74,6 @@ func (p *TranslationProjection) Complete(
 	tx *gorm.DB,
 	target og.Target,
 	assetID string,
-	now time.Time,
 	cdnDomain string,
 ) error {
 	locale, err := p.locale(target)
@@ -85,9 +82,9 @@ func (p *TranslationProjection) Complete(
 	}
 	switch {
 	case locale != "":
-		err = updateOGPointer(ctx, tx, p.translationTable(), "entity_id = ? AND locale = ?", assetID, now, og.ErrTranslationTargetMissing, target.EntityID, locale)
+		err = updateOGPointer(ctx, tx, p.translationTable(), "entity_id = ? AND locale = ?", assetID, og.ErrTranslationTargetMissing, target.EntityID, locale)
 	case p.spec.Localeless == LocalelessEntityRow:
-		err = updateOGPointer(ctx, tx, p.spec.EntityType, "id = ?", assetID, now, gorm.ErrRecordNotFound, target.EntityID)
+		err = updateOGPointer(ctx, tx, p.spec.EntityType, "id = ?", assetID, gorm.ErrRecordNotFound, target.EntityID)
 	default:
 		return gorm.ErrRecordNotFound
 	}
@@ -167,7 +164,6 @@ func (p *EntityProjection) Complete(
 	tx *gorm.DB,
 	target og.Target,
 	assetID string,
-	now time.Time,
 	cdnDomain string,
 ) error {
 	if !p.Handles(target) {
@@ -176,7 +172,7 @@ func (p *EntityProjection) Complete(
 	if target.Locale != nil && strings.TrimSpace(*target.Locale) != "" {
 		return gorm.ErrRecordNotFound
 	}
-	if err := updateOGPointer(ctx, tx, p.entityType, "id = ?", assetID, now, gorm.ErrRecordNotFound, target.EntityID); err != nil {
+	if err := updateOGPointer(ctx, tx, p.entityType, "id = ?", assetID, gorm.ErrRecordNotFound, target.EntityID); err != nil {
 		return err
 	}
 	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
@@ -199,19 +195,19 @@ func pointsAt(ctx context.Context, tx *gorm.DB, table, column, assetID string) (
 }
 
 // updateOGPointer points one projection row at the generated asset and
-// answers missing when no row matched.
+// answers missing when no row matched. The image is derived from the row, so
+// the pointer leaves updated_at, and every revision derived from it, alone.
 func updateOGPointer(
 	ctx context.Context,
 	tx *gorm.DB,
 	table string,
 	where string,
 	assetID string,
-	now time.Time,
 	missing error,
 	args ...any,
 ) error {
 	result := tx.WithContext(ctx).Table(table).Where(where, args...).
-		Updates(structured.Fields{"og_asset_id": assetID, "updated_at": now})
+		Update("og_asset_id", assetID)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -259,7 +259,7 @@ func finalizeNewOgGenerationCompletion(
 	if !claimed {
 		return StatusReady, domainerr.Precondition("OG generation is no longer the latest target")
 	}
-	if err := bindCompletedOgAsset(ctx, store, *generation, target, asset, now); err != nil {
+	if err := bindCompletedOgAsset(ctx, store, *generation, target, asset); err != nil {
 		if errors.Is(err, ErrTranslationTargetMissing) {
 			slog.WarnContext(ctx, "OG completion target missing", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID)
 			// No replacement exists when a locale was removed. Superseded
@@ -291,7 +291,6 @@ func bindCompletedOgAsset(
 	generation Generation,
 	target GenerationTarget,
 	asset Asset,
-	now time.Time,
 ) error {
 	var snapshot ogEntitySnapshot
 	if err := json.Unmarshal(generation.EntitySnapshot, &snapshot); err != nil {
@@ -303,7 +302,7 @@ func bindCompletedOgAsset(
 		EntityID:   target.EntityID,
 		Locale:     target.Locale,
 		Kind:       target.TargetKind,
-	}, asset.ID, now)
+	}, asset.ID)
 }
 
 // Fail records the renderer's bounded failure code for a leased generation.

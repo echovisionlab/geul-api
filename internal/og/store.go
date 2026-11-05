@@ -236,7 +236,7 @@ type Store interface {
 	ReleasePendingProjection(ctx context.Context, target Target) error
 	// CompleteProjection points the target's projection at assetID and binds
 	// it; a removed locale answers ErrTranslationTargetMissing.
-	CompleteProjection(ctx context.Context, target Target, assetID string, now time.Time) error
+	CompleteProjection(ctx context.Context, target Target, assetID string) error
 
 	CompleteAsset(ctx context.Context, written WrittenAsset) (Asset, error)
 	AssetRef(asset Asset) (AssetRef, error)

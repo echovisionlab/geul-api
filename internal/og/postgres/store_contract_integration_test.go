@@ -86,7 +86,7 @@ func (projection) Handles(og.Target) bool { return true }
 func (projection) ReleasePending(context.Context, *gorm.DB, og.Target, string) error {
 	return nil
 }
-func (projection) Complete(context.Context, *gorm.DB, og.Target, string, time.Time, string) error {
+func (projection) Complete(context.Context, *gorm.DB, og.Target, string, string) error {
 	return nil
 }
 

@@ -49,7 +49,7 @@ func TestProjectionPreservesLegacyReleaseBindingIntegration(t *testing.T) {
 	}).Error)
 	require.NoError(t, NewProjection().Complete(t.Context(), db, og.Target{
 		EntityType: "release", EntityID: releaseID, Kind: "entity",
-	}, assetID, now, "https://cdn.example.com"))
+	}, assetID, "https://cdn.example.com"))
 
 	var releaseAssetID *string
 	require.NoError(t, db.Table("release").Select("og_asset_id").Where("id = ?", releaseID).Scan(&releaseAssetID).Error)

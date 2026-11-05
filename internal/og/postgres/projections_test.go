@@ -23,20 +23,19 @@ func TestTranslationProjectionAnswersLocalelessTargetsPerFamily(t *testing.T) {
 	seedProjectionReadyAsset(t, db, assetID)
 	require.NoError(t, db.Exec("INSERT INTO page (id) VALUES (?)", entityID).Error)
 	localeless := og.Target{EntityType: "page", EntityID: entityID, Kind: "entity"}
-	now := time.Now().UTC()
 
 	rejected := NewTranslationProjection(TranslationProjectionSpec{EntityType: "page", EntityTitle: "Page", Localeless: LocalelessRejected})
-	err := rejected.Complete(t.Context(), db, localeless, assetID, now, projectionTestCDN)
+	err := rejected.Complete(t.Context(), db, localeless, assetID, projectionTestCDN)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.ErrorContains(t, err, "Page OG target locale is required")
 	err = rejected.ReleasePending(t.Context(), db, localeless, projectionTestCDN)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	missing := NewTranslationProjection(TranslationProjectionSpec{EntityType: "page", Localeless: LocalelessMissing})
-	require.ErrorIs(t, missing.Complete(t.Context(), db, localeless, assetID, now, projectionTestCDN), gorm.ErrRecordNotFound)
+	require.ErrorIs(t, missing.Complete(t.Context(), db, localeless, assetID, projectionTestCDN), gorm.ErrRecordNotFound)
 
 	entityRow := NewTranslationProjection(TranslationProjectionSpec{EntityType: "page", Localeless: LocalelessEntityRow})
-	require.NoError(t, entityRow.Complete(t.Context(), db, localeless, assetID, now, projectionTestCDN))
+	require.NoError(t, entityRow.Complete(t.Context(), db, localeless, assetID, projectionTestCDN))
 	require.Equal(t, assetID, projectionPointer(t, db, "page", entityID))
 	require.Equal(t, []string{"og"}, projectionBindingKeys(t, db, entityID))
 }
@@ -45,23 +44,27 @@ func TestTranslationProjectionBindsLocaleRows(t *testing.T) {
 	db := projectionUnitDB(t)
 	entityID, assetID := uuid.NewString(), uuid.NewString()
 	seedProjectionReadyAsset(t, db, assetID)
-	require.NoError(t, db.Exec("INSERT INTO page_translation (entity_id, locale) VALUES (?, 'ko')", entityID).Error)
+	authoredAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, db.Exec("INSERT INTO page_translation (entity_id, locale, updated_at) VALUES (?, 'ko', ?)", entityID, authoredAt).Error)
 	projection := NewTranslationProjection(TranslationProjectionSpec{EntityType: "page", Localeless: LocalelessEntityRow})
 
 	err := projection.Complete(t.Context(), db, og.Target{
 		EntityType: "page", EntityID: entityID, Locale: new("ko"), Kind: "locale",
-	}, assetID, time.Now().UTC(), projectionTestCDN)
+	}, assetID, projectionTestCDN)
 	require.NoError(t, err)
 	var stored *string
 	require.NoError(t, db.Table("page_translation").Select("og_asset_id").Where("entity_id = ?", entityID).Scan(&stored).Error)
 	require.Equal(t, assetID, *stored)
 	require.Equal(t, []string{"og_ko"}, projectionBindingKeys(t, db, entityID))
+	var updatedAt time.Time
+	require.NoError(t, db.Table("page_translation").Select("updated_at").Where("entity_id = ?", entityID).Scan(&updatedAt).Error)
+	require.True(t, authoredAt.Equal(updatedAt), "a derived OG image must not change the translation revision")
 
 	err = projection.Complete(t.Context(), db, og.Target{
 		EntityType: "page", EntityID: entityID, Locale: new("en"), Kind: "locale",
-	}, assetID, time.Now().UTC(), projectionTestCDN)
+	}, assetID, projectionTestCDN)
 	require.ErrorIs(t, err, og.ErrTranslationTargetMissing)
-	err = projection.Complete(t.Context(), db, og.Target{EntityType: "post", EntityID: entityID}, assetID, time.Now().UTC(), projectionTestCDN)
+	err = projection.Complete(t.Context(), db, og.Target{EntityType: "post", EntityID: entityID}, assetID, projectionTestCDN)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
@@ -74,12 +77,12 @@ func TestEntityProjectionOwnsOnlyTheEntityRow(t *testing.T) {
 
 	err := projection.Complete(t.Context(), db, og.Target{
 		EntityType: "page", EntityID: entityID, Locale: new("ko"), Kind: "locale",
-	}, assetID, time.Now().UTC(), projectionTestCDN)
+	}, assetID, projectionTestCDN)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-	err = projection.Complete(t.Context(), db, og.Target{EntityType: "page", EntityID: uuid.NewString()}, assetID, time.Now().UTC(), projectionTestCDN)
+	err = projection.Complete(t.Context(), db, og.Target{EntityType: "page", EntityID: uuid.NewString()}, assetID, projectionTestCDN)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 
-	require.NoError(t, projection.Complete(t.Context(), db, og.Target{EntityType: "page", EntityID: entityID}, assetID, time.Now().UTC(), projectionTestCDN))
+	require.NoError(t, projection.Complete(t.Context(), db, og.Target{EntityType: "page", EntityID: entityID}, assetID, projectionTestCDN))
 	require.Equal(t, assetID, projectionPointer(t, db, "page", entityID))
 	require.Equal(t, []string{"og"}, projectionBindingKeys(t, db, entityID))
 }

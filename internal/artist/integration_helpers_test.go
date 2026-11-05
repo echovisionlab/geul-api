@@ -209,7 +209,7 @@ func (artistOGProjection) Handles(target og.Target) bool { return target.EntityT
 func (artistOGProjection) ReleasePending(context.Context, *gorm.DB, og.Target, string) error {
 	return nil
 }
-func (artistOGProjection) Complete(context.Context, *gorm.DB, og.Target, string, time.Time, string) error {
+func (artistOGProjection) Complete(context.Context, *gorm.DB, og.Target, string, string) error {
 	return nil
 }
 
