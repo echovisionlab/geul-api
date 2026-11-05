@@ -15,7 +15,6 @@ const modulePath = "github.com/echovisionlab/geul-api"
 
 var migratedDomainRoots = []string{
 	"internal/account",
-	"internal/ai",
 	"internal/artist",
 	"internal/authentication",
 	"internal/campaign",
@@ -44,7 +43,6 @@ var migratedDomainRoots = []string{
 
 var guardedPackageRoots = []string{
 	"internal/account",
-	"internal/ai",
 	"internal/aidocument",
 	"internal/artist",
 	"internal/authentication",
@@ -107,21 +105,6 @@ func TestMigratedPackagesDoNotDependOnLegacyOrRuntimePackages(t *testing.T) {
 				visitLocalDependencies(t, repositoryRoot, ownerRoot, packagePath, visited)
 			}
 		})
-	}
-}
-
-// LLM consumers depend on contracts; SDK and HTTP adapters are leaf packages.
-func TestLLMContractsDoNotImportProviderImplementations(t *testing.T) {
-	t.Parallel()
-	root := filepath.Join(findRepositoryRoot(t), "internal", "llm")
-	for _, imported := range productionImports(t, root) {
-		if imported == modulePath+"/internal/structured" {
-			continue
-		}
-		first, _, _ := strings.Cut(imported, "/")
-		if strings.Contains(first, ".") {
-			t.Errorf("llm contracts import provider or external implementation %s", imported)
-		}
 	}
 }
 

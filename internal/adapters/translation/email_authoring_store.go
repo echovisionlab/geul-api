@@ -6,8 +6,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 // emailAuthoringPorts are the ports a translation step drives in the
@@ -20,11 +18,4 @@ func emailAuthoringPorts(contents *contentblock.Store, references emailauthoring
 // domain's database handle.
 func emailAuthoringStore(db *gorm.DB, contents *contentblock.Store, references emailauthoringpostgres.DeliveryReferences) emailauthoring.Store {
 	return emailauthoringpostgres.NewStore(db, emailAuthoringPorts(contents, references))
-}
-
-func emailContentTranslationJob(job *model.TranslationJob) emailcontent.TranslationJob {
-	return emailcontent.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
-	}
 }

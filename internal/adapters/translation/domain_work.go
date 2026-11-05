@@ -31,16 +31,8 @@ func workDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			}
 			return work.LoadTypedTranslationSourceDocument(ctx, workStore(db, store), workID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return work.BuildTranslationExtractionPlan(workTranslationJob(job), source)
-		},
-		buildCandidate: work.BuildTranslationCandidate,
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if store == nil || job == nil {
-				return errors.New("typed Work translation candidate and content Block store are required")
-			}
-			joined := workpostgres.Bind(tx, workpostgres.Ports{ContentBlocks: store}, audit)
-			return work.ApplyTypedTranslationCandidate(ctx, joined, *workTranslationJob(job), candidate, input)
 		},
 		requestLocaleOG:   localeAwareOG(core.KindWork),
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditWorkUpdated, sharedtelemetry.NewWorkSourceLocaleAuditRecord),
@@ -52,7 +44,7 @@ func workDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		},
 		requireInterchangeView:  genericInterchangeView(core.KindWork, permissions, archivedStatus),
 		requireSourceLocaleEdit: genericSourceLocaleEdit(core.KindWork, permissions, archivedStatus),
-		requireJobRead:          requireJobEdit(policyv1.Work.Edit),
+		requireTranslationRead:  requireTranslationEdit(policyv1.Work.Edit),
 	})
 }
 
@@ -62,12 +54,9 @@ func workStore(db *gorm.DB, contents *contentblock.Store) work.Store {
 	return workpostgres.Bind(db, workpostgres.Ports{ContentBlocks: contents}, nil).Store
 }
 
-func workTranslationJob(job *model.TranslationJob) *work.TranslationJob {
-	if job == nil {
-		return nil
-	}
+func workTranslationJob(job core.PlanTarget) *work.TranslationJob {
 	return &work.TranslationJob{
 		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
+		TargetLocale: job.TargetLocale,
 	}
 }

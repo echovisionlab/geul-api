@@ -49,13 +49,12 @@ func BuildTranslationExtractionPlan(
 	contextTitle := trimmedStringPointer(source.Title)
 	contextText := trimmedStringPointer(derefString(source.Summary))
 	return &translation.ExtractionPlan{
-		EntityType:     "series",
-		EntityID:       seriesID,
-		SourceLocale:   sourceLocale,
-		TargetLocale:   targetLocale,
-		ContextTitle:   contextTitle,
-		ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
+		EntityType:   "series",
+		EntityID:     seriesID,
+		SourceLocale: sourceLocale,
+		TargetLocale: targetLocale,
+		ContextTitle: contextTitle,
+		Units:        units,
 		Bundles: translation.BuildBundles(
 			"series", seriesID, sourceLocale, targetLocale, units, contextText,
 		),

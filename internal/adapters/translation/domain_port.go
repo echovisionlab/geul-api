@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -21,33 +20,29 @@ type domainRegistration struct {
 	port   domainPortFunctions
 }
 
-// domainPortFunctions is the owning-domain side of provider translation,
+// domainPortFunctions is the owning-domain side of extraction,
 // source-locale mutation, XLIFF authorization, and management projection. The
 // common registry routes by the stable Translation catalog; it does not select
 // domain SQL, lifecycle, or SpiceDB keys.
 type domainPortFunctions struct {
 	loadSourceDocument        func(context.Context, *gorm.DB, *contentblock.Store, string) (*core.SourceDocument, error)
-	buildExtractionPlan       func(*model.TranslationJob, *core.SourceDocument) (*core.ExtractionPlan, error)
-	buildCandidate            func(*core.ExtractionPlan, *core.SourceDocument, map[string]core.UnitResult) (*core.Candidate, error)
-	applyCandidate            func(context.Context, *gorm.DB, *contentblock.Store, *model.TranslationJob, *core.Candidate, core.EntryWrite) error
+	buildExtractionPlan       func(core.PlanTarget, *core.SourceDocument) (*core.ExtractionPlan, error)
 	requestLocaleOG           func(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string) (bool, error)
 	translationEntrySelectSQL func(string) string
 	requireEditable           func(context.Context, *gorm.DB, string) error
 	requireInterchangeView    func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	requireInterchangeEdit    func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
-	requireJobRead            func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
+	requireTranslationRead    func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	requireSourceLocaleEdit   func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	prepareSourceLocale       func(context.Context, *gorm.DB, string, string, string, time.Time) error
 	sourceLocaleAudit         func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error)
-	requireRegeneration       func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	requireSourceMutable      func(context.Context, *gorm.DB, string) error
 }
 
 func newConfiguredDomainPort(domain core.Kind, functions domainPortFunctions) domainRegistration {
 	if functions.loadSourceDocument == nil || functions.buildExtractionPlan == nil ||
-		functions.buildCandidate == nil || functions.applyCandidate == nil ||
 		functions.translationEntrySelectSQL == nil || functions.requireInterchangeView == nil ||
-		functions.requireSourceLocaleEdit == nil || functions.requireJobRead == nil ||
+		functions.requireSourceLocaleEdit == nil || functions.requireTranslationRead == nil ||
 		functions.sourceLocaleAudit == nil {
 		panic(fmt.Sprintf("translation domain %q port is incomplete", domain))
 	}
@@ -62,9 +57,6 @@ func newConfiguredDomainPort(domain core.Kind, functions domainPortFunctions) do
 	}
 	if functions.prepareSourceLocale == nil {
 		functions.prepareSourceLocale = prepareScalarSourceLocale(domain)
-	}
-	if functions.requireRegeneration == nil {
-		functions.requireRegeneration = functions.requireSourceLocaleEdit
 	}
 	if functions.requireSourceMutable == nil {
 		functions.requireSourceMutable = noDomainRequirement
@@ -123,13 +115,3 @@ func noLocaleOG(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refr
 }
 
 func noDomainRequirement(context.Context, *gorm.DB, string) error { return nil }
-
-func jobIdentity(job *model.TranslationJob) *core.JobIdentity {
-	if job == nil {
-		return nil
-	}
-	return &core.JobIdentity{
-		EntityType: job.EntityType, EntityID: job.EntityID,
-		SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
-	}
-}

@@ -8,7 +8,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/artist/artisttest"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -259,31 +258,6 @@ func TestLoadArtistBlockDocumentShowsTheRoomOfTheSessionPrincipal(t *testing.T) 
 		ArtistID: f.artist.ID, Locale: "ja", SessionID: sessionID,
 	})
 	requireCode(t, err, connect.CodePermissionDenied, "account is banned")
-}
-
-func TestApplyTypedTranslationCandidateRequiresTheLockedSourceRevision(t *testing.T) {
-	f := newRoomFixture(t)
-	title := "Traduit"
-	candidate := &translation.Candidate{
-		Title: &title, ContentDocumentRevision: uuid.NewString(),
-		ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "fr"},
-	}
-	job := artist.TranslationJob{EntityType: "artist", EntityID: f.artist.ID, TargetLocale: "fr", RequestedByMemberID: f.contributor.memberID}
-
-	err := artist.ApplyTypedTranslationCandidate(t.Context(), artist.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now().UTC()})
-
-	requireCode(t, err, connect.CodeInvalidArgument, "batch: Artist target document identity and revision must match the locked state")
-	_, exists := f.h.store.Locale(f.artist.ID, "fr")
-	require.False(t, exists)
-	require.Empty(t, f.h.audit.Records())
-
-	candidate.ContentDocumentRevision = f.h.revision(t, f.artist.ID).String()
-	require.NoError(t, artist.ApplyTypedTranslationCandidate(t.Context(), artist.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now().UTC()}))
-	stored, exists := f.h.store.Locale(f.artist.ID, "fr")
-	require.True(t, exists)
-	require.Equal(t, "Traduit", *stored.Title)
-	require.Len(t, f.h.audit.Records(), 1)
-	require.Equal(t, f.h.revision(t, f.artist.ID), uuid.MustParse(candidate.ContentDocumentRevision), "a target delivery keeps the shared revision")
 }
 
 func TestUpdateArtistDocumentMetadataRejectsAHierarchyCycle(t *testing.T) {

@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
@@ -12,9 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -60,27 +57,15 @@ func (h *ConnectHandler) GetTranslationOverview(ctx context.Context, _ *connect.
 func (h *ConnectHandler) GetTranslationSettings(ctx context.Context, _ *connect.Request[managev1.GetTranslationSettingsRequest]) (*connect.Response[managev1.GetTranslationSettingsResponse], error) {
 	view, err := h.translations.GetTranslationSettings(ctx)
 	return respond(&managev1.GetTranslationSettingsResponse{
-		Settings: settingsMessage(view.Settings), GenerationEnabled: view.GenerationEnabled, GenerationDisabledReason: view.GenerationDisabledReason,
+		Settings: settingsMessage(view.Settings),
 	}, err)
 }
 
 func (h *ConnectHandler) UpdateTranslationSettings(ctx context.Context, req *connect.Request[managev1.UpdateTranslationSettingsRequest]) (*connect.Response[managev1.UpdateTranslationSettingsResponse], error) {
 	settings, err := h.translations.UpdateTranslationSettings(ctx, UpdateTranslationSettingsCommand{
-		Settings: settingsFromMessage(req.Msg.Settings), BaseSettings: settingsFromMessage(req.Msg.BaseSettings),
-		UpdateMask: req.Msg.UpdateMask,
+		Settings: settingsFromMessage(req.Msg.Settings), UpdateMask: req.Msg.UpdateMask,
 	})
 	return respond(&managev1.UpdateTranslationSettingsResponse{Settings: settingsMessage(settings)}, err)
-}
-
-func (h *ConnectHandler) ListTranslationJobs(ctx context.Context, req *connect.Request[managev1.ListTranslationJobsRequest]) (*connect.Response[managev1.ListTranslationJobsResponse], error) {
-	page, err := h.translations.ListTranslationJobs(ctx, ListTranslationJobsQuery{
-		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
-		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
-	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return respond(&managev1.ListTranslationJobsResponse{Jobs: JobMessages(page.Jobs), Pagination: PaginationMessage(page.Pagination)}, nil)
 }
 
 func (h *ConnectHandler) ListEntityTranslations(ctx context.Context, req *connect.Request[managev1.ListEntityTranslationsRequest]) (*connect.Response[managev1.ListEntityTranslationsResponse], error) {
@@ -107,67 +92,6 @@ func (h *ConnectHandler) SetEntitySourceLocale(ctx context.Context, req *connect
 		DocumentRevision: change.DocumentRevision, Changed: change.Changed,
 		SourceChanged: change.Changed, ChangedLocales: change.ChangedLocales,
 	}, err)
-}
-
-func (h *ConnectHandler) RegenerateEntityTranslations(ctx context.Context, req *connect.Request[managev1.RegenerateEntityTranslationsRequest]) (*connect.Response[managev1.RegenerateEntityTranslationsResponse], error) {
-	jobs, err := h.translations.RegenerateEntityTranslations(ctx, RegenerateEntityTranslationsCommand{
-		Target: TargetFromMessage(req.Msg.Target), Locales: req.Msg.GetLocales(),
-	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return respond(&managev1.RegenerateEntityTranslationsResponse{Jobs: JobMessages(jobs)}, nil)
-}
-
-func (h *ConnectHandler) CancelTranslationJob(ctx context.Context, req *connect.Request[managev1.CancelTranslationJobRequest]) (*connect.Response[managev1.CancelTranslationJobResponse], error) {
-	err := h.translations.CancelTranslationJob(ctx, CancelTranslationJobCommand{JobID: req.Msg.GetJobId()})
-	return respond(&managev1.CancelTranslationJobResponse{}, err)
-}
-
-func (h *ConnectHandler) ListTranslationProviders(ctx context.Context, req *connect.Request[managev1.ListTranslationProvidersRequest]) (*connect.Response[managev1.ListTranslationProvidersResponse], error) {
-	page, err := h.translations.ListTranslationProviders(ctx, ListTranslationProvidersQuery{
-		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(), Filters: req.Msg.Filters,
-	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	providers := make([]*managev1.TranslationProvider, 0, len(page.Providers))
-	for index := range page.Providers {
-		providers = append(providers, providerMessage(ctx, &page.Providers[index]))
-	}
-	return respond(&managev1.ListTranslationProvidersResponse{Providers: providers, Pagination: PaginationMessage(page.Pagination)}, nil)
-}
-
-func (h *ConnectHandler) CreateTranslationProvider(ctx context.Context, req *connect.Request[managev1.CreateTranslationProviderRequest]) (*connect.Response[managev1.CreateTranslationProviderResponse], error) {
-	provider, err := h.translations.CreateTranslationProvider(ctx, CreateTranslationProviderCommand{
-		Name: req.Msg.Name, Type: providerTypeFromMessage(req.Msg.Type), IsActive: req.Msg.IsActive, Priority: req.Msg.GetPriority(),
-		LLMConfig: llmConfigInput(req.Msg.GetLlmConfig()), DeepLConfig: deepLConfigInput(req.Msg.GetDeeplConfig()),
-	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return respond(&managev1.CreateTranslationProviderResponse{Provider: providerMessage(ctx, &provider)}, nil)
-}
-
-func (h *ConnectHandler) UpdateTranslationProvider(ctx context.Context, req *connect.Request[managev1.UpdateTranslationProviderRequest]) (*connect.Response[managev1.UpdateTranslationProviderResponse], error) {
-	command := UpdateTranslationProviderCommand{
-		ID: req.Msg.Id, Name: req.Msg.Name, IsActive: req.Msg.IsActive, Priority: req.Msg.Priority,
-		LLMConfig: llmConfigInput(req.Msg.GetLlmConfig()), DeepLConfig: deepLConfigInput(req.Msg.GetDeeplConfig()),
-	}
-	if req.Msg.Type != nil {
-		providerType := providerTypeFromMessage(*req.Msg.Type)
-		command.Type = &providerType
-	}
-	provider, err := h.translations.UpdateTranslationProvider(ctx, command)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return respond(&managev1.UpdateTranslationProviderResponse{Provider: providerMessage(ctx, &provider)}, nil)
-}
-
-func (h *ConnectHandler) DeleteTranslationProvider(ctx context.Context, req *connect.Request[managev1.DeleteTranslationProviderRequest]) (*connect.Response[managev1.DeleteTranslationProviderResponse], error) {
-	err := h.translations.DeleteTranslationProvider(ctx, DeleteTranslationProviderCommand{ID: req.Msg.Id})
-	return respond(&managev1.DeleteTranslationProviderResponse{}, err)
 }
 
 func (h *ConnectHandler) ExportEntityTranslationXLIFF(ctx context.Context, req *connect.Request[managev1.ExportEntityTranslationXLIFFRequest]) (*connect.Response[managev1.ExportEntityTranslationXLIFFResponse], error) {
@@ -251,58 +175,6 @@ func XLIFFImportMessage(imported XLIFFImport) *managev1.ImportEntityTranslationX
 	}
 }
 
-// PaginationMessage is the wire form of a page position.
-func PaginationMessage(pagination Pagination) *commonv1.PaginationResponse {
-	return &commonv1.PaginationResponse{
-		Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore,
-	}
-}
-
-// JobMessages is the wire form of jobs.
-func JobMessages(jobs []Job) []*managev1.TranslationJob {
-	messages := make([]*managev1.TranslationJob, 0, len(jobs))
-	for index := range jobs {
-		messages = append(messages, JobMessage(jobs[index]))
-	}
-	return messages
-}
-
-// JobMessage is the wire form of a job.
-func JobMessage(job Job) *managev1.TranslationJob {
-	message := &managev1.TranslationJob{
-		Id:                    job.ID,
-		Target:                targetMessage(job.EntityType, job.EntityID),
-		TargetLocale:          job.TargetLocale,
-		SourceLocale:          job.SourceLocale,
-		RequestArtifactDigest: job.RequestArtifactDigest,
-		Status:                jobStatusMessage(job.Status),
-		OperationId:           job.OperationID,
-		RequestedAt:           timestamppb.New(job.RequestedAt),
-	}
-	message.RequestedByMemberId = job.RequestedByMemberID
-	if job.Provider != nil {
-		message.Provider = job.Provider
-	}
-	if job.Model != nil {
-		message.Model = job.Model
-	}
-	if job.StartedAt != nil {
-		message.StartedAt = timestamppb.New(*job.StartedAt)
-	}
-	return message
-}
-
-func jobStatusMessage(status JobStatus) managev1.TranslationJobStatus {
-	switch status {
-	case JobQueued:
-		return managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_QUEUED
-	case JobRunning:
-		return managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_RUNNING
-	default:
-		return managev1.TranslationJobStatus_TRANSLATION_JOB_STATUS_UNSPECIFIED
-	}
-}
-
 // EntryMessages is the wire form of locale entries.
 func EntryMessages(entries []Entry) []*managev1.TranslationEntry {
 	messages := make([]*managev1.TranslationEntry, 0, len(entries))
@@ -332,14 +204,13 @@ func EntryMessage(entry Entry) *managev1.TranslationEntry {
 
 func localeMessage(locale Locale) *managev1.TranslationLocale {
 	return &managev1.TranslationLocale{
-		Code:                      locale.Code,
-		DisplayName:               locale.DisplayName,
-		Enabled:                   locale.Enabled,
-		IsPublic:                  locale.IsPublic,
-		Dir:                       locale.Dir,
-		MachineTranslationAllowed: locale.MachineTranslationAllowed,
-		SortOrder:                 locale.SortOrder,
-		FontProfile:               locale.FontProfile,
+		Code:        locale.Code,
+		DisplayName: locale.DisplayName,
+		Enabled:     locale.Enabled,
+		IsPublic:    locale.IsPublic,
+		Dir:         locale.Dir,
+		SortOrder:   locale.SortOrder,
+		FontProfile: locale.FontProfile,
 	}
 }
 
@@ -350,7 +221,6 @@ func overviewMessage(overview Overview) *managev1.GetTranslationOverviewResponse
 			EnabledLocales:  int32(overview.Stats.EnabledLocales),
 			PublicLocales:   int32(overview.Stats.PublicLocales),
 			SourceEntities:  int32(overview.Stats.SourceEntities),
-			ActiveJobs:      int32(overview.Stats.ActiveJobs),
 			ExistingEntries: int32(overview.Stats.ExistingEntries),
 		},
 		LocaleHealth: make([]*managev1.TranslationLocaleHealth, 0, len(overview.LocaleHealth)),
@@ -360,7 +230,6 @@ func overviewMessage(overview Overview) *managev1.GetTranslationOverviewResponse
 		item := &managev1.TranslationLocaleHealth{
 			Locale:          localeMessage(health.Locale),
 			ExistingEntries: int32(health.ExistingEntries),
-			ActiveJobs:      int32(health.ActiveJobs),
 		}
 		if health.LastTargetUpdateAt != nil {
 			item.LastTargetUpdateAt = timestamppb.New(*health.LastTargetUpdateAt)
@@ -373,7 +242,6 @@ func overviewMessage(overview Overview) *managev1.GetTranslationOverviewResponse
 			EntityType:      definition.Proto,
 			SourceEntities:  int32(health.SourceEntities),
 			ExistingEntries: int32(health.ExistingEntries),
-			ActiveJobs:      int32(health.ActiveJobs),
 		}
 		if health.LastSourceUpdateAt != nil {
 			item.LastSourceUpdateAt = timestamppb.New(*health.LastSourceUpdateAt)
@@ -388,8 +256,7 @@ func settingsMessage(settings translation.RuntimeSettings) *managev1.Translation
 		return nil
 	}
 	message := &managev1.TranslationSettings{
-		DefaultLocale:  settings.DefaultLocale,
-		ProtectedTerms: append([]string(nil), settings.ProtectedTerms...),
+		DefaultLocale: settings.DefaultLocale,
 	}
 	if settings.UpdatedAt != nil {
 		message.UpdatedAt = timestamppb.New(settings.UpdatedAt.UTC())
@@ -402,135 +269,6 @@ func settingsFromMessage(message *managev1.TranslationSettings) *translation.Run
 		return nil
 	}
 	return &translation.RuntimeSettings{
-		DefaultLocale:  message.DefaultLocale,
-		ProtectedTerms: append([]string(nil), message.ProtectedTerms...),
+		DefaultLocale: message.DefaultLocale,
 	}
-}
-
-// providerTypeFromMessage is the stored provider type a request names; an
-// unspecified or unknown type is empty, which the use cases reject.
-func providerTypeFromMessage(providerType managev1.TranslationProviderType) ProviderType {
-	switch providerType {
-	case managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_LLM:
-		return ProviderTypeLLM
-	case managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_DEEPL:
-		return ProviderTypeDeepL
-	default:
-		return ""
-	}
-}
-
-func providerTypeMessage(providerType ProviderType) managev1.TranslationProviderType {
-	switch providerType {
-	case ProviderTypeLLM:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_LLM
-	case ProviderTypeDeepL:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_DEEPL
-	default:
-		return managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_UNSPECIFIED
-	}
-}
-
-// llmPresetFromMessage is the stored preset a request names: empty when
-// unspecified, and a value no preset matches when unknown, so an unknown
-// preset neither inherits the stored one nor passes as a preset.
-func llmPresetFromMessage(preset managev1.TranslationLLMProviderPreset) LLMPreset {
-	switch preset {
-	case managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_UNSPECIFIED:
-		return ""
-	case managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_GEMINI:
-		return LLMPresetGemini
-	case managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_OPENAI_COMPATIBLE:
-		return LLMPresetOpenAICompatible
-	default:
-		return LLMPreset(preset.String())
-	}
-}
-
-func llmPresetMessage(preset LLMPreset) managev1.TranslationLLMProviderPreset {
-	switch preset {
-	case LLMPresetGemini:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_GEMINI
-	case LLMPresetOpenAICompatible:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_OPENAI_COMPATIBLE
-	default:
-		return managev1.TranslationLLMProviderPreset_TRANSLATION_LLM_PROVIDER_PRESET_UNSPECIFIED
-	}
-}
-
-func llmConfigInput(config *managev1.LLMTranslationProviderConfig) *LLMConfigInput {
-	if config == nil {
-		return nil
-	}
-	return &LLMConfigInput{
-		APIKey:                        config.ApiKey,
-		Preset:                        llmPresetFromMessage(config.Preset),
-		APIBaseURL:                    config.GetApiBaseUrl(),
-		Model:                         config.Model,
-		InputTokenPriceUSDPerMillion:  config.InputTokenPriceUsdPerMillion,
-		OutputTokenPriceUSDPerMillion: config.OutputTokenPriceUsdPerMillion,
-		MaxContextTokens:              config.MaxContextTokens,
-		MaxOutputTokens:               config.MaxOutputTokens,
-		SupportsJSONMode:              config.SupportsJsonMode,
-		Temperature:                   config.Temperature,
-	}
-}
-
-func deepLConfigInput(config *managev1.DeepLTranslationProviderConfig) *DeepLConfigInput {
-	if config == nil {
-		return nil
-	}
-	return &DeepLConfigInput{APIKey: config.ApiKey, APIBaseURL: config.GetApiBaseUrl()}
-}
-
-// providerMessage is the wire form of a provider without its secrets. A
-// stored config that does not decode is logged and left out.
-func providerMessage(ctx context.Context, provider *Provider) *managev1.TranslationProvider {
-	message := &managev1.TranslationProvider{
-		Id:        provider.ID,
-		Name:      provider.Name,
-		Type:      providerTypeMessage(provider.Type),
-		IsActive:  provider.IsActive,
-		Priority:  int32(provider.Priority),
-		CreatedAt: timestamppb.New(provider.CreatedAt.UTC()),
-		UpdatedAt: timestamppb.New(provider.UpdatedAt.UTC()),
-	}
-	switch provider.Type {
-	case ProviderTypeLLM:
-		cfg, err := provider.LLMConfig()
-		if err != nil {
-			logUndecodableProviderConfig(ctx, provider.ID, err)
-			break
-		}
-		out := &managev1.LLMTranslationProviderConfig{
-			Preset:                        llmPresetMessage(cfg.Preset),
-			Model:                         cfg.Model,
-			SupportsJsonMode:              cfg.SupportsJSONMode,
-			InputTokenPriceUsdPerMillion:  cfg.InputTokenPriceUSDPerMillion,
-			OutputTokenPriceUsdPerMillion: cfg.OutputTokenPriceUSDPerMillion,
-			MaxContextTokens:              cfg.MaxContextTokens,
-			MaxOutputTokens:               cfg.MaxOutputTokens,
-			Temperature:                   cfg.Temperature,
-		}
-		if cfg.APIBaseURL != "" {
-			out.ApiBaseUrl = &cfg.APIBaseURL
-		}
-		message.Config = &managev1.TranslationProvider_LlmConfig{LlmConfig: out}
-	case ProviderTypeDeepL:
-		cfg, err := provider.DeepLConfig()
-		if err != nil {
-			logUndecodableProviderConfig(ctx, provider.ID, err)
-			break
-		}
-		out := &managev1.DeepLTranslationProviderConfig{}
-		if cfg.APIBaseURL != "" {
-			out.ApiBaseUrl = &cfg.APIBaseURL
-		}
-		message.Config = &managev1.TranslationProvider_DeeplConfig{DeeplConfig: out}
-	}
-	return message
-}
-
-func logUndecodableProviderConfig(ctx context.Context, providerID string, err error) {
-	slog.ErrorContext(ctx, "Stored translation provider config decode failed; returning provider without config", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", providerID)
 }

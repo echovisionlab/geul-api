@@ -119,10 +119,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, err
 	}
 
-	if err := r.registerAI(); err != nil {
-		return registeredServices{}, err
-	}
-
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
 	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, deps.telemetryWriter)
 	if err != nil {

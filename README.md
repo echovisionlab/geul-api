@@ -144,11 +144,6 @@ an old room's token even with identical timestamps. Internal target conflicts
 return a typed `TARGET_REVISION_CHANGED` detail, and no-op metadata writes do
 not report changed locales or advance their revision.
 
-A provider translation job whose target has since become the Page source is
-rejected before any source write. Jobs targeting a locale that remains a target
-may still survive source-locale switching; promotion must not give old target
-jobs authority to overwrite canonical source content.
-
 ## Included media services
 
 CDN delivery, audio/video transcoding, waveform generation, mesh optimization,
@@ -319,12 +314,7 @@ owning compiler.
 
 ## Go package boundaries
 
-`internal/llm` owns provider-neutral requests, sessions, and bounded failures.
-`internal/llm/providers` owns Gemini SDK and OpenAI-compatible HTTP adapters;
-provider construction imports that leaf package. Translation validation and
-placeholder policies have no provider I/O or logging. The AI adapter reports
-private parsing diagnostics in the calling request context while returning the
-same bounded invalid-response error.
+Translation validation and placeholder policies have no I/O or logging.
 
 The integration runner keeps resource composition in `main.go`, serial band
 policy in `band.go`, protected lease file I/O in `lease.go`, and child-process
@@ -621,8 +611,6 @@ published snapshot, but it cannot combine its published status with a later
 draft body. Work also captures its featured-image source, credit groups, credits,
 and client associations in that transaction before resolving public identity
 and ready assets. Draft and share-link access retain their existing authorization.
-Delayed translations cannot write into a locale promoted to the current source
-unless the job itself targets that current source.
 
 Work, Program Event, and Program Event Type public lists reuse or batch their
 loaded relations. The [public-read query measurements](docs/public-read-query-budget.md)
@@ -642,13 +630,6 @@ layout, campaign, run, then recipient order. The deployment's versioned
 Provider acceptance followed by a process crash or failed terminal database write
 still has an at-least-once delivery ambiguity; the lease prevents immediate
 parallel delivery but does not make the provider and database atomic.
-
-Metadata AI jobs use a three-minute attempt lease and timestamp-fenced results.
-Queue delivery retries up to eight times with exponential backoff. A minute
-reconciler checks jobs unchanged for ten minutes, and republishes only when no
-active PGMQ row has the job's stable message ID. A running attempt must also be
-stale. Enqueue and recovery timestamps commit together; canceled handlers get
-at most five seconds to persist their fenced failure state.
 
 Queue handlers create one cancelable or timeout context per delivery. A local
 same-condition diagnostic of 10,000 completed timed deliveries retained 10,000

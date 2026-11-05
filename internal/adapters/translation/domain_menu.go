@@ -2,7 +2,6 @@ package translationadapter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -28,20 +26,8 @@ func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return menu.LoadTranslationSourceDocument(ctx, menupostgres.NewStore(db, menupostgres.Ports{}), entityID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return menu.BuildTranslationExtractionPlan(job.EntityID, job.SourceLocale, job.TargetLocale, source)
-		},
-		buildCandidate: func(_ *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
-			return menu.BuildTranslationCandidate(source, results)
-		},
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, _ *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if job == nil || job.EntityType != string(core.KindMenu) {
-				return errors.New("menu provider translation candidate is required")
-			}
-			return menu.ApplyProviderTranslation(ctx, menupostgres.Bind(tx, menupostgres.Ports{}, audit), menu.ProviderTranslation{
-				MenuID: job.EntityID, TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
-				Candidate: candidate, Now: input.Now,
-			})
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -53,8 +39,8 @@ func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
 			return menu.RequireEditAndLock(ctx, menupostgres.NewStore(tx, menupostgres.Ports{}), freshMenuCan(ctx, tx, spiceDB), menuID)
 		},
-		requireJobRead:      requireJobEdit(policyv1.Menu.Edit),
-		prepareSourceLocale: prepareMenuSourceLocale,
+		requireTranslationRead: requireTranslationEdit(policyv1.Menu.Edit),
+		prepareSourceLocale:    prepareMenuSourceLocale,
 	})
 }
 

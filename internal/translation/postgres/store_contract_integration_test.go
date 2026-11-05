@@ -5,13 +5,11 @@ package translationpostgres_test
 import (
 	"testing"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
@@ -29,9 +27,6 @@ func TestPostgresStoreKeepsTheTranslationStoreContractIntegration(t *testing.T) 
 		})
 		return translationtest.Harness{
 			Harness: mutationtest.PostgresHarness(db, units),
-			SeedMember: func(t *testing.T) string {
-				return orytest.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Translation requester")
-			},
 		}
 	})
 }

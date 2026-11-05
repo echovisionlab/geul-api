@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 
@@ -135,12 +134,6 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[page.Store], error)
 // what it needs.
 func NewStore(tx *gorm.DB, ports Ports) page.Store {
 	return &store{tx: tx, ports: ports}
-}
-
-// Bind joins the Store and audit to tx, a transaction another domain's
-// pipeline opened (translation delivery and interchange).
-func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) page.Joined {
-	return page.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

@@ -25,24 +25,22 @@ import (
 // Config holds the worker's infrastructure and the runtimes of the domains
 // it drives. MetadataAI, TranslationJobs and CampaignEmail may be nil.
 type Config struct {
-	DB              *gorm.DB
-	Config          *config.Config
-	Publisher       *mq.Publisher
-	AdapterLoader   emaildeliveryadapter.MailAdapterLoader
-	S3Client        *s3.Client
-	KratosClient    auth.IdentityManager
-	SpiceDB         *auth.SpiceDBClient
-	Audit           *telemetry.DurableWriter
-	OGPlanner       *ogpostgres.Planner
-	MemberDeletion  accountpostgres.MemberDeletion
-	FileMedia       worker.FileMedia
-	MediaCleanup    worker.DanglingFileCleanup
-	PublicAssets    worker.PublicAssetCleanup
-	OGCleanup       worker.OGCleanup
-	FaviconCleanup  worker.FaviconCleanup
-	MetadataAI      worker.MetadataAIJobProcessor              // optional
-	TranslationJobs worker.TranslationJobProcessor             // optional
-	CampaignEmail   emaildeliveryadapter.CampaignEmailRenderer // optional: live Campaign renders then fail
+	DB             *gorm.DB
+	Config         *config.Config
+	Publisher      *mq.Publisher
+	AdapterLoader  emaildeliveryadapter.MailAdapterLoader
+	S3Client       *s3.Client
+	KratosClient   auth.IdentityManager
+	SpiceDB        *auth.SpiceDBClient
+	Audit          *telemetry.DurableWriter
+	OGPlanner      *ogpostgres.Planner
+	MemberDeletion accountpostgres.MemberDeletion
+	FileMedia      worker.FileMedia
+	MediaCleanup   worker.DanglingFileCleanup
+	PublicAssets   worker.PublicAssetCleanup
+	OGCleanup      worker.OGCleanup
+	FaviconCleanup worker.FaviconCleanup
+	CampaignEmail  emaildeliveryadapter.CampaignEmailRenderer // optional: live Campaign renders then fail
 }
 
 func (c Config) validate() error {
@@ -85,12 +83,6 @@ func New(c Config) (worker.Deps, error) {
 		OGCleanup:      c.OGCleanup,
 		FaviconCleanup: c.FaviconCleanup,
 		SiteOrigin:     c.Config.SiteOrigin,
-	}
-	if c.MetadataAI != nil {
-		deps.MetadataAI = c.MetadataAI
-	}
-	if c.TranslationJobs != nil {
-		deps.TranslationJobs = c.TranslationJobs
 	}
 	units, err := NewUnits(c.DB, ports)
 	if err != nil {

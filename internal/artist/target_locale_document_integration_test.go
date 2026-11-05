@@ -13,33 +13,16 @@ import (
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
-
-type artistTranslationAuditAppender struct {
-	records []sharedtelemetry.AuditRecord
-}
-
-func (a *artistTranslationAuditAppender) AppendDomainAuditInTransaction(
-	_ context.Context,
-	_ *gorm.DB,
-	record sharedtelemetry.AuditRecord,
-) error {
-	a.records = append(a.records, record)
-	return nil
-}
-
-var _ domainaudit.Appender = (*artistTranslationAuditAppender)(nil)
 
 func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegration(t *testing.T) {
 	t.Parallel()
@@ -143,29 +126,6 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	require.NoError(t, err)
 	require.False(t, targetlocale.SnapshotHasLocale(loaded, "ko"))
 
-	providerLocale := "fr"
-	providerTitle := "Titre fourni"
-	requester := uuid.NewString()
-	providerJob := artist.TranslationJob{
-		EntityType: "artist", EntityID: artistID, TargetLocale: providerLocale, RequestedByMemberID: requester,
-	}
-	providerCandidate := &translation.Candidate{
-		Title:                     &providerTitle,
-		ContentDocumentRevision:   sharedRevision,
-		ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: providerLocale},
-	}
-	audit := &artistTranslationAuditAppender{}
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return artist.ApplyTypedTranslationCandidate(
-			t.Context(), artist.Joined{Store: artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: store}), Audit: audit}, providerJob, providerCandidate,
-			translation.EntryWrite{Now: now.Add(5 * time.Second)},
-		)
-	}))
-	require.Len(t, audit.records, 1)
-	require.Equal(t, providerTitle, artistLocaleTitleForIntegration(t, db, artistID, providerLocale))
-	providerTarget, err := store.LoadSnapshot(t.Context(), db, documentID, "en")
-	require.NoError(t, err)
-	require.Equal(t, sharedRevision, providerTarget.Document.Revision.String())
 }
 
 // artistTargetRevisionForIntegration is the target revision of the Artist's

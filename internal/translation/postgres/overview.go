@@ -16,29 +16,25 @@ type translationOverviewStatsRow struct {
 	EnabledLocales  int64 `gorm:"column:enabled_locales"`
 	PublicLocales   int64 `gorm:"column:public_locales"`
 	SourceEntities  int64 `gorm:"column:source_entities"`
-	ActiveJobs      int64 `gorm:"column:active_jobs"`
 	ExistingEntries int64 `gorm:"column:existing_entries"`
 }
 
 type translationLocaleHealthRow struct {
-	Code                      string         `gorm:"column:code"`
-	DisplayName               string         `gorm:"column:display_name"`
-	Enabled                   bool           `gorm:"column:enabled"`
-	IsPublic                  bool           `gorm:"column:is_public"`
-	Dir                       string         `gorm:"column:dir"`
-	MachineTranslationAllowed bool           `gorm:"column:machine_translation_allowed"`
-	FontProfile               sql.NullString `gorm:"column:font_profile"`
-	SortOrder                 int32          `gorm:"column:sort_order"`
-	ExistingEntries           int64          `gorm:"column:existing_entries"`
-	ActiveJobs                int64          `gorm:"column:active_jobs"`
-	LastTargetUpdateAt        sql.NullTime   `gorm:"column:last_target_update_at"`
+	Code               string         `gorm:"column:code"`
+	DisplayName        string         `gorm:"column:display_name"`
+	Enabled            bool           `gorm:"column:enabled"`
+	IsPublic           bool           `gorm:"column:is_public"`
+	Dir                string         `gorm:"column:dir"`
+	FontProfile        sql.NullString `gorm:"column:font_profile"`
+	SortOrder          int32          `gorm:"column:sort_order"`
+	ExistingEntries    int64          `gorm:"column:existing_entries"`
+	LastTargetUpdateAt sql.NullTime   `gorm:"column:last_target_update_at"`
 }
 
 type translationEntityHealthRow struct {
 	EntityType         string       `gorm:"column:entity_type"`
 	SourceEntities     int64        `gorm:"column:source_entities"`
 	ExistingEntries    int64        `gorm:"column:existing_entries"`
-	ActiveJobs         int64        `gorm:"column:active_jobs"`
 	LastSourceUpdateAt sql.NullTime `gorm:"column:last_source_update_at"`
 }
 
@@ -63,28 +59,19 @@ entry_totals AS (
 	FROM (
 		%s
 	) AS translation_entries
-),
-job_totals AS (
-	SELECT COUNT(*) AS active_jobs
-	FROM translation_job
-	WHERE status IN ('%s', '%s')
 )
 SELECT
 	locale_totals.total_locales,
 	locale_totals.enabled_locales,
 	locale_totals.public_locales,
 	source_totals.source_entities,
-	job_totals.active_jobs,
 	entry_totals.existing_entries
 FROM locale_totals
 CROSS JOIN source_totals
 CROSS JOIN entry_totals
-CROSS JOIN job_totals
 `,
 		translationOverviewSourceUnionSQL(),
 		translationOverviewEntryUnionSQL(),
-		statusQueued,
-		statusRunning,
 	)
 
 	var row translationOverviewStatsRow
@@ -96,7 +83,6 @@ CROSS JOIN job_totals
 		EnabledLocales:  row.EnabledLocales,
 		PublicLocales:   row.PublicLocales,
 		SourceEntities:  row.SourceEntities,
-		ActiveJobs:      row.ActiveJobs,
 		ExistingEntries: row.ExistingEntries,
 	}, nil
 }
@@ -112,14 +98,6 @@ WITH entry_counts AS (
 		%s
 	) AS translation_entries
 	GROUP BY locale
-),
-job_counts AS (
-	SELECT
-		target_locale AS locale,
-		COUNT(*) AS active_jobs
-	FROM translation_job
-	WHERE status IN ('%s', '%s')
-	GROUP BY target_locale
 )
 SELECT
 	l.code,
@@ -127,20 +105,15 @@ SELECT
 	l.enabled,
 	l.is_public,
 	l.dir,
-	l.machine_translation_allowed,
 	l.font_profile,
 	l.sort_order,
 	COALESCE(entry_counts.existing_entries, 0) AS existing_entries,
-	COALESCE(job_counts.active_jobs, 0) AS active_jobs,
 	entry_counts.last_target_update_at
 FROM translation_locale l
 LEFT JOIN entry_counts ON entry_counts.locale = l.code
-LEFT JOIN job_counts ON job_counts.locale = l.code
 ORDER BY l.sort_order ASC, l.code ASC
 `,
 		translationOverviewEntryUnionSQL(),
-		statusQueued,
-		statusRunning,
 	)
 
 	var rows []translationLocaleHealthRow
@@ -152,17 +125,15 @@ ORDER BY l.sort_order ASC, l.code ASC
 	for _, row := range rows {
 		health = append(health, application.LocaleHealth{
 			Locale: application.Locale{
-				Code:                      row.Code,
-				DisplayName:               row.DisplayName,
-				Enabled:                   row.Enabled,
-				IsPublic:                  row.IsPublic,
-				Dir:                       row.Dir,
-				MachineTranslationAllowed: row.MachineTranslationAllowed,
-				FontProfile:               nullableStringPointer(row.FontProfile),
-				SortOrder:                 row.SortOrder,
+				Code:        row.Code,
+				DisplayName: row.DisplayName,
+				Enabled:     row.Enabled,
+				IsPublic:    row.IsPublic,
+				Dir:         row.Dir,
+				FontProfile: nullableStringPointer(row.FontProfile),
+				SortOrder:   row.SortOrder,
 			},
 			ExistingEntries:    row.ExistingEntries,
-			ActiveJobs:         row.ActiveJobs,
 			LastTargetUpdateAt: nullableTimePointer(row.LastTargetUpdateAt),
 		})
 	}
@@ -192,32 +163,20 @@ entry_counts AS (
 		%s
 	) AS translation_entries
 	GROUP BY entity_type
-),
-job_counts AS (
-	SELECT
-		entity_type,
-		COUNT(*) AS active_jobs
-	FROM translation_job
-	WHERE status IN ('%s', '%s')
-	GROUP BY entity_type
 )
 SELECT
 	entity_types.entity_type,
 	COALESCE(source_counts.source_entities, 0) AS source_entities,
 	COALESCE(entry_counts.existing_entries, 0) AS existing_entries,
-	COALESCE(job_counts.active_jobs, 0) AS active_jobs,
 	source_counts.last_source_update_at
 FROM entity_types
 LEFT JOIN source_counts ON source_counts.entity_type = entity_types.entity_type
 LEFT JOIN entry_counts ON entry_counts.entity_type = entity_types.entity_type
-LEFT JOIN job_counts ON job_counts.entity_type = entity_types.entity_type
 ORDER BY entity_types.sort_order ASC
 	`,
 		translationOverviewEntityValuesSQL(),
 		translationOverviewSourceUnionSQL(),
 		translationOverviewEntryUnionSQL(),
-		statusQueued,
-		statusRunning,
 	)
 
 	var rows []translationEntityHealthRow
@@ -231,7 +190,6 @@ ORDER BY entity_types.sort_order ASC
 			EntityType:         row.EntityType,
 			SourceEntities:     row.SourceEntities,
 			ExistingEntries:    row.ExistingEntries,
-			ActiveJobs:         row.ActiveJobs,
 			LastSourceUpdateAt: nullableTimePointer(row.LastSourceUpdateAt),
 		})
 	}

@@ -82,62 +82,6 @@ func providerCandidate(t *testing.T, plan *translation.ExtractionPlan, results m
 	return candidate
 }
 
-func TestProviderTranslationCreatesTheTargetLocaleAndAuditsTheRequester(t *testing.T) {
-	f := newMenuFixture(t)
-	created, revision := f.createMenu(t, "Main", customItem("home", "/"), customItem("about", "/about"))
-	source, err := menu.LoadTranslationSourceDocument(t.Context(), f.store, created.ID)
-	require.NoError(t, err)
-	plan, err := menu.BuildTranslationExtractionPlan(created.ID, translation.DefaultLocale, "ko", source)
-	require.NoError(t, err)
-	requester := uuid.NewString()
-	audit := &audittest.Recorder{}
-	applied := menu.ProviderTranslation{
-		MenuID: created.ID, TargetLocale: "ko", RequestedByMemberID: requester,
-		Candidate: providerCandidate(t, plan, map[string]translation.UnitResult{
-			"item:home:label": {UnitID: "item:home:label", TranslatedText: "홈"}, "item:about:label": {UnitID: "item:about:label", TranslatedText: "about"},
-		}),
-		Now: time.Now(),
-	}
-
-	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
-	require.Equal(t, map[string]string{"about": "about", "home": "홈"}, f.labels(t, created.ID, "ko"))
-	require.Equal(t, revision, f.revision(t, created.ID), "a target translation keeps the document revision")
-	records := audit.Records()
-	require.Len(t, records, 1)
-	require.Equal(t, requester, records[0].MemberID)
-	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, records[0].ItemOperation)
-
-	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
-	require.Len(t, audit.Records(), 1, "the same labels again change nothing")
-
-	applied.RequestedByMemberID = "not-a-member"
-	require.Error(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied))
-	applied.RequestedByMemberID = requester
-	applied.MenuID = uuid.NewString()
-	requireCode(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), applied), connect.CodeNotFound, "")
-	require.Error(t, menu.ApplyProviderTranslation(t.Context(), menu.Joined{Store: f.store}, applied), "a provider apply is always audited")
-}
-
-func TestProviderTranslationOfTheSourceLocaleAdvancesTheDocument(t *testing.T) {
-	f := newMenuFixture(t)
-	created, revision := f.createMenu(t, "Main", customItem("home", "/"))
-	source, err := menu.LoadTranslationSourceDocument(t.Context(), f.store, created.ID)
-	require.NoError(t, err)
-	plan, err := menu.BuildTranslationExtractionPlan(created.ID, "ko", translation.DefaultLocale, source)
-	require.NoError(t, err)
-	audit := &audittest.Recorder{}
-
-	require.NoError(t, menu.ApplyProviderTranslation(t.Context(), f.joined(audit), menu.ProviderTranslation{
-		MenuID: created.ID, TargetLocale: translation.DefaultLocale, RequestedByMemberID: uuid.NewString(),
-		Candidate: providerCandidate(t, plan, map[string]translation.UnitResult{"item:home:label": {UnitID: "item:home:label", TranslatedText: "Start"}}),
-		Now:       time.Now(),
-	}))
-
-	require.Equal(t, map[string]string{"home": "Start"}, f.labels(t, created.ID, translation.DefaultLocale))
-	require.NotEqual(t, revision, f.revision(t, created.ID))
-	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, audit.Records()[0].ItemOperation)
-}
-
 func interchange(menuID string, plan *translation.ExtractionPlan, mode menu.InterchangeMode, expected *string, targets map[string]translation.UnitResult) menu.TranslationInterchangeMutation {
 	handles := make([]string, 0, len(targets))
 	for handle := range targets {

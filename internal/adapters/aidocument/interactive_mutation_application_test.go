@@ -142,7 +142,7 @@ func TestInteractiveMutationApplicationRelayFailureDoesNotPublishAfterCommit(t *
 		result,
 		errors.New("relay unavailable"),
 		publisher,
-		intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_IN_EDITOR_AI,
+		intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP,
 	)
 
 	accepted, err := decorated.Apply(interactiveMemberContext(), request)

@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -28,19 +27,8 @@ func releaseDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			source, err := release.LoadTypedTranslationSourceDocument(ctx, releaseStore(db, store), releaseID)
 			return source, releaseConnectError(err)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			if job == nil {
-				return nil, errors.New("typed Release translation source is required")
-			}
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return release.BuildTranslationExtractionPlan(releaseTranslationJob(job), source)
-		},
-		buildCandidate: release.BuildTranslationCandidate,
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if store == nil || job == nil {
-				return errors.New("typed Release translation candidate and content Block store are required")
-			}
-			joined := releasepostgres.Bind(tx, releasepostgres.Ports{ContentBlocks: store}, audit)
-			return releaseConnectError(release.ApplyTypedTranslationCandidate(ctx, joined, releaseTranslationJob(job), candidate, input))
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditReleaseUpdated, sharedtelemetry.NewReleaseSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -52,7 +40,7 @@ func releaseDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			"",
 		),
 		requireInterchangeEdit:  requireLockedReleaseSourceLocaleEdit,
-		requireJobRead:          requireJobEdit(policyv1.Release.Edit),
+		requireTranslationRead:  requireTranslationEdit(policyv1.Release.Edit),
 		requireSourceLocaleEdit: requireLockedReleaseSourceLocaleEdit,
 	})
 }
@@ -69,10 +57,10 @@ func releaseStore(db *gorm.DB, contents *contentblock.Store) release.Store {
 	return releasepostgres.NewStore(db, releasepostgres.Ports{ContentBlocks: contents})
 }
 
-func releaseTranslationJob(job *model.TranslationJob) release.TranslationJob {
+func releaseTranslationJob(job core.PlanTarget) release.TranslationJob {
 	return release.TranslationJob{
 		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
+		TargetLocale: job.TargetLocale,
 	}
 }
 

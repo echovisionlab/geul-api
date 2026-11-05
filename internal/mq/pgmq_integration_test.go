@@ -17,12 +17,12 @@ import (
 
 func TestEmptyQueueConsumerBecomesReadyIntegration(t *testing.T) {
 	t.Parallel()
-	queue := eventpkg.QueueAiMetadataGenerate
+	queue := eventpkg.QueueFileDelete
 	pg := newMQIntegrationPostgres(t, queue)
 	ctx, cancel := context.WithCancel(t.Context())
 	consumer := NewQueueConsumer(pg.SQLDB, QueueConfig{
 		Name:        queue,
-		MessageType: "api.manage.v1.MetadataGenerationQueueEvent",
+		MessageType: "api.manage.v1.FileDeleteEvent",
 	}, func(context.Context, Message) error { return nil })
 	ready := make(chan error, 1)
 	done := make(chan error, 1)
@@ -37,7 +37,7 @@ func TestEmptyQueueConsumerBecomesReadyIntegration(t *testing.T) {
 
 func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	queue := eventpkg.QueueAiMetadataGenerate
+	queue := eventpkg.QueueFileDelete
 	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 
@@ -48,7 +48,7 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 		rolledBack,
 		queue,
 		"rollback-command",
-		&managev1.MetadataGenerationQueueEvent{JobId: "rollback-job"},
+		&managev1.FileDeleteEvent{FileId: "rollback-job"},
 	))
 	require.NoError(t, rolledBack.Rollback())
 	messages, err := pgtest.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
@@ -62,7 +62,7 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 		committed,
 		queue,
 		"commit-command",
-		&managev1.MetadataGenerationQueueEvent{JobId: "commit-job"},
+		&managev1.FileDeleteEvent{FileId: "commit-job"},
 	))
 	require.NoError(t, committed.Commit())
 
@@ -75,7 +75,7 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 
 func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.T) {
 	t.Parallel()
-	queue := eventpkg.QueueAiMetadataGenerate
+	queue := eventpkg.QueueFileDelete
 	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 	messageID := uuid.NewString()
@@ -85,12 +85,12 @@ func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.
 		ctx,
 		queue,
 		messageID,
-		&managev1.MetadataGenerationQueueEvent{JobId: uuid.NewString()},
+		&managev1.FileDeleteEvent{FileId: uuid.NewString()},
 	))
 
 	var pending bool
 	err = pg.SQLDB.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pgmq."q_ai.metadata.generate" WHERE message->>'message_id' = $1)`,
+		`SELECT EXISTS (SELECT 1 FROM pgmq."q_file.delete" WHERE message->>'message_id' = $1)`,
 		messageID,
 	).Scan(&pending)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.
 
 func TestSharedPGMQReadPreservesContractInvalidTransportIDIntegration(t *testing.T) {
 	t.Parallel()
-	queue := eventpkg.QueueAiMetadataGenerate
+	queue := eventpkg.QueueFileDelete
 	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 

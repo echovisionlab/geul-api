@@ -64,7 +64,6 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${GEUL_OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${GEUL_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_RESOURCE_ATTRIBUTES: ${GEUL_OTEL_RESOURCE_ATTRIBUTES:-service.namespace=geul,deployment.environment=production}
-      GOOGLE_AI_API_KEY: ${GEUL_GOOGLE_AI_API_KEY:?set GEUL_GOOGLE_AI_API_KEY}
     stop_grace_period: 140s
     depends_on:
       imgproxy:

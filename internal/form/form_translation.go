@@ -52,9 +52,8 @@ func BuildTranslationExtractionPlan(
 	return &translation.ExtractionPlan{
 		EntityType: "form", EntityID: formID, SourceLocale: sourceLocale,
 		TargetLocale: targetLocale, ContextTitle: contextTitle,
-		ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
-		Bundles:        translation.BuildBundles("form", formID, sourceLocale, targetLocale, units, nil),
+		Units:   units,
+		Bundles: translation.BuildBundles("form", formID, sourceLocale, targetLocale, units, nil),
 	}, nil
 }
 

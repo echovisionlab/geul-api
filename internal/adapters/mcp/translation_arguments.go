@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -19,49 +17,6 @@ type translationTargetArguments struct {
 type translationGetArguments struct {
 	translationTargetArguments
 	Locale core.Locale `json:"l"`
-}
-
-type translationJobArguments struct {
-	JobID string `json:"j"`
-}
-
-type translationRegenerateArguments struct {
-	translationTargetArguments
-	Locales []core.Locale `json:"l"`
-}
-
-type translationJobsListArguments struct {
-	Profile      *core.Domain            `json:"p,omitempty"`
-	Document     *core.DocumentReference `json:"d,omitempty"`
-	TargetLocale *core.Locale            `json:"tl,omitempty"`
-	SourceLocale *core.Locale            `json:"sl,omitempty"`
-	Statuses     []string                `json:"s,omitempty"`
-	Limit        int32                   `json:"n,omitempty"`
-	Offset       int32                   `json:"o,omitempty"`
-	Sort         string                  `json:"k,omitempty"`
-	Descending   *bool                   `json:"z,omitempty"`
-}
-
-func translationLocales(input []core.Locale) ([]string, error) {
-	if len(input) == 0 {
-		return nil, errors.New("at least one explicit target locale is required")
-	}
-	if len(input) > 32 {
-		return nil, errors.New("at most 32 explicit target locales are allowed")
-	}
-	locales := make([]string, 0, len(input))
-	seen := make(map[core.Locale]struct{}, len(input))
-	for _, locale := range input {
-		if err := validateCompactLocale(locale); err != nil {
-			return nil, err
-		}
-		if _, duplicate := seen[locale]; duplicate {
-			return nil, fmt.Errorf("target locale %q is repeated", locale)
-		}
-		seen[locale] = struct{}{}
-		locales = append(locales, string(locale))
-	}
-	return locales, nil
 }
 
 func translationTarget(input translationTargetArguments) (*managev1.TranslationTarget, error) {
@@ -109,84 +64,6 @@ func translationEntityType(profile core.Domain) (managev1.TranslationEntityType,
 func translationProfile(entityType managev1.TranslationEntityType) (core.Domain, bool) {
 	value, ok := translationProfiles[entityType]
 	return value, ok
-}
-
-func translationJobsListQuery(input translationJobsListArguments) (translationapp.ListTranslationJobsQuery, error) {
-	if input.Limit < 0 || input.Limit > 100 {
-		return translationapp.ListTranslationJobsQuery{}, errors.New("translation Job list limit must be between 0 and 100")
-	}
-	if input.Offset < 0 {
-		return translationapp.ListTranslationJobsQuery{}, errors.New("translation Job list offset cannot be negative")
-	}
-	query := translationapp.ListTranslationJobsQuery{Limit: input.Limit, Offset: input.Offset}
-	if (input.Profile == nil) != (input.Document == nil) {
-		return translationapp.ListTranslationJobsQuery{}, errors.New("job list document profile and reference must be provided together")
-	}
-	if input.Profile != nil {
-		target, err := translationTarget(translationTargetArguments{Profile: *input.Profile, Document: *input.Document})
-		if err != nil {
-			return translationapp.ListTranslationJobsQuery{}, err
-		}
-		query.Filters = append(query.Filters,
-			&commonv1.FilterSpec{Field: "entity_type", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: translationStorageEntityType(target.EntityType)},
-			&commonv1.FilterSpec{Field: "entity_id", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: target.EntityId},
-		)
-	}
-	for _, filter := range []struct {
-		field string
-		value *core.Locale
-	}{{"target_locale", input.TargetLocale}, {"source_locale", input.SourceLocale}} {
-		if filter.value == nil {
-			continue
-		}
-		if err := validateCompactLocale(*filter.value); err != nil {
-			return translationapp.ListTranslationJobsQuery{}, err
-		}
-		query.Filters = append(query.Filters, &commonv1.FilterSpec{Field: filter.field, Op: commonv1.FilterOp_FILTER_OP_EQ, Value: string(*filter.value)})
-	}
-	if len(input.Statuses) != 0 {
-		seen := make(map[string]struct{}, len(input.Statuses))
-		for _, status := range input.Statuses {
-			if _, ok := translationJobStatusesByName[status]; !ok {
-				return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("unsupported translation Job status %q", status)
-			}
-			if _, duplicate := seen[status]; duplicate {
-				return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("translation Job status %q is repeated", status)
-			}
-			seen[status] = struct{}{}
-		}
-		query.Filters = append(query.Filters, &commonv1.FilterSpec{Field: "status", Op: commonv1.FilterOp_FILTER_OP_IN, Values: append([]string(nil), input.Statuses...)})
-	}
-	if input.Sort != "" {
-		if !validTranslationJobSort(input.Sort) {
-			return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("unsupported translation Job sort %q", input.Sort)
-		}
-		order := commonv1.SortOrder_SORT_ORDER_ASC
-		if input.Descending != nil && *input.Descending {
-			order = commonv1.SortOrder_SORT_ORDER_DESC
-		}
-		query.Sorts = []*commonv1.SortSpec{{Field: input.Sort, Order: order}}
-	} else if input.Descending != nil {
-		return translationapp.ListTranslationJobsQuery{}, errors.New("sort direction requires an explicit sort field")
-	}
-	return query, nil
-}
-
-func translationStorageEntityType(entityType managev1.TranslationEntityType) string {
-	if entityType == managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_POST_SERIES {
-		return "series"
-	}
-	profile, _ := translationProfile(entityType)
-	return string(profile)
-}
-
-func validTranslationJobSort(sort string) bool {
-	switch sort {
-	case "requested_at", "updated_at", "target_locale", "status":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateCompactLocale(locale core.Locale) error {

@@ -6,7 +6,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/page"
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -20,18 +19,8 @@ func pageDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, pageID string) (*core.SourceDocument, error) {
 			return page.LoadTranslationSourceDocument(ctx, pageStore(db, store), pageID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			if job == nil {
-				return nil, fmt.Errorf("typed Page translation source is required")
-			}
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return page.BuildTranslationExtractionPlan(pageTranslationJob(job), source)
-		},
-		buildCandidate: page.BuildTranslationCandidate,
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if tx == nil || store == nil || job == nil {
-				return fmt.Errorf("typed Page translation candidate and Content Block store are required")
-			}
-			return page.ApplyTranslationCandidate(ctx, pagepostgres.Bind(tx, pagepostgres.Ports{ContentBlocks: store}, audit), pageTranslationJob(job), candidate, input)
 		},
 		requestLocaleOG:   localeAwareOG(core.KindPage),
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditPageUpdated, sharedtelemetry.NewPageSourceLocaleAuditRecord),
@@ -48,7 +37,7 @@ func pageDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			translationCanSet{view: policyv1.Page.View, edit: policyv1.Page.Edit},
 			"",
 		),
-		requireJobRead: requireJobEdit(policyv1.Page.Edit),
+		requireTranslationRead: requireTranslationEdit(policyv1.Page.Edit),
 	})
 }
 
@@ -58,9 +47,9 @@ func pageStore(db *gorm.DB, contents *contentblock.Store) page.Store {
 	return pagepostgres.NewStore(db, pagepostgres.Ports{ContentBlocks: contents})
 }
 
-func pageTranslationJob(job *model.TranslationJob) page.TranslationJob {
+func pageTranslationJob(job core.PlanTarget) page.TranslationJob {
 	return page.TranslationJob{
 		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
+		TargetLocale: job.TargetLocale,
 	}
 }

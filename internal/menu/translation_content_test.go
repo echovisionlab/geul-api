@@ -8,38 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildTranslationCandidateAppliesMenuLabels(t *testing.T) {
-	t.Parallel()
-	source := &translation.SourceDocument{ContentJSON: []byte(`[
-		{"id":"home","label":"Home","linkType":"page"},
-		{"id":"about","label":"About","linkType":"page","children":[{"id":"team","label":"Team","linkType":"page"}]}
-	]`)}
-	candidate, err := BuildTranslationCandidate(source, map[string]translation.UnitResult{
-		"item:home:label":  {UnitID: "item:home:label", TranslatedText: "홈"},
-		"item:about:label": {UnitID: "item:about:label", TranslatedText: "소개"},
-		"item:team:label":  {UnitID: "item:team:label", TranslatedText: "팀"},
-	})
-	require.NoError(t, err)
-	assert.JSONEq(t, `[
-		{"id":"about","label":"소개"},
-		{"id":"home","label":"홈"},
-		{"id":"team","label":"팀"}
-	]`, string(candidate.ContentJSON))
-}
-
-func TestBuildTranslationCandidatePreservesExplicitEmptyAndOmitsMissingResults(t *testing.T) {
-	t.Parallel()
-	source := &translation.SourceDocument{ContentJSON: []byte(`[
-		{"id":"home","label":"Home"},
-		{"id":"about","label":"About"}
-	]`)}
-	candidate, err := BuildTranslationCandidate(source, map[string]translation.UnitResult{
-		"item:home:label": {UnitID: "item:home:label", TranslatedText: ""},
-	})
-	require.NoError(t, err)
-	assert.JSONEq(t, `[{"id":"home","label":""}]`, string(candidate.ContentJSON))
-}
-
 func TestBuildTranslationExtractionPlanSkipsFixedLocaleItemsForOtherTargets(t *testing.T) {
 	t.Parallel()
 	plan, err := BuildTranslationExtractionPlan("menu-1", "ko", "fr", &translation.SourceDocument{

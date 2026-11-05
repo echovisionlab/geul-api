@@ -1,26 +1,12 @@
 package emailauthoring
 
 import (
-	"context"
 	"testing"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 )
-
-func TestApplyTemplateTranslationCandidateRejectsAnotherDomain(t *testing.T) {
-	err := ApplyTemplateTranslationCandidate(
-		context.Background(), Joined{},
-		emailcontent.TranslationJob{EntityType: "campaign"},
-		&translation.Candidate{ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{}},
-		translation.EntryWrite{},
-	)
-	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
-}
 
 func TestEmailTemplateTranslationPlanAndCandidateOwnSubjectAndBlockValues(t *testing.T) {
 	source := &translation.SourceDocument{
@@ -41,7 +27,7 @@ func TestEmailTemplateTranslationPlanAndCandidateOwnSubjectAndBlockValues(t *tes
 			},
 		},
 	}
-	plan, err := translation.BuildRichTextExtractionPlan(&translation.JobIdentity{
+	plan, err := translation.BuildRichTextExtractionPlan(&translation.PlanTarget{
 		EntityType: emailTemplateContentEntity, EntityID: "template-a",
 		SourceLocale: "en", TargetLocale: "ko",
 	}, source, translation.RichTextDocumentFields{Title: true})

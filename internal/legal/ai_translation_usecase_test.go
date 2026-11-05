@@ -1,7 +1,6 @@
 package legal_test
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
@@ -224,72 +222,4 @@ func typedTranslation(t *testing.T, h *harness, kind legal.PolicyKind, id, title
 	}, &translation.Candidate{
 		Title: &title, ContentDocumentRevision: source.ContentDocumentRevision, ContentBlockLocaleOverlay: overlay,
 	}
-}
-
-func TestApplyTypedTranslationCandidateWritesTheTargetLocaleInEveryLifecycle(t *testing.T) {
-	for _, state := range []string{"draft", "scheduled", "active", "archived"} {
-		t.Run(state, func(t *testing.T) {
-			h := newHarness(t)
-			version, revision := h.putVersion(t, legal.Terms, state, nil)
-			audit := &audittest.Recorder{}
-			joined := legal.Joined{Store: h.store, Audit: audit}
-			job, candidate := typedTranslation(t, h, legal.Terms, version.ID, " 번역 제목 ", "번역 본문")
-
-			require.NoError(t, legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, candidate))
-			stored, ok := h.store.StoredTranslation(legal.Terms, version.ID, "ko")
-			require.True(t, ok)
-			require.Equal(t, ptr("번역 제목"), stored.Title)
-			require.Contains(t, stored.Projection.HTML, "번역 본문")
-			require.Equal(t, revision, h.revision(t, legal.Terms, version.ID))
-			require.Len(t, audit.Records(), 1)
-			require.Equal(t, job.RequestedByMemberID, audit.Records()[0].MemberID)
-			require.Equal(t, sharedtelemetry.AuditItemOperationCreated, audit.Records()[0].ItemOperation)
-
-			_, replacement := typedTranslation(t, h, legal.Terms, version.ID, "다시", "다시 번역")
-			require.NoError(t, legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, replacement))
-			require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, audit.Records()[1].ItemOperation)
-		})
-	}
-}
-
-func TestApplyTypedTranslationCandidateRejectsWhatItCannotApply(t *testing.T) {
-	h := newHarness(t)
-	draft, _ := h.putVersion(t, legal.Privacy, "draft", nil)
-	joined := legal.Joined{Store: h.store, Audit: &audittest.Recorder{}}
-	job, candidate := typedTranslation(t, h, legal.Privacy, draft.ID, "제목", "본문")
-	blank := " "
-
-	for name, test := range map[string]struct {
-		change func(*legal.TranslationJob, *translation.Candidate)
-		code   connect.Code
-		answer string
-	}{
-		"an unsupported entity":     {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.EntityType = "page" }, code: connect.CodeInvalidArgument, answer: "entity_type: legal typed translation requires terms or privacy"},
-		"a non-canonical source":    {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.SourceLocale = "EN" }, code: connect.CodeInvalidArgument, answer: "locale: must be an exact canonical locale"},
-		"a non-canonical target":    {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.TargetLocale = "ko-KR" }, code: connect.CodeInvalidArgument, answer: "locale: must be an exact canonical locale"},
-		"an overlay of another one": {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.TargetLocale = "ja" }, code: connect.CodeInvalidArgument, answer: "document.locale_overlay.locale: must match the translation target locale"},
-		"a blank title":             {change: func(_ *legal.TranslationJob, c *translation.Candidate) { c.Title = &blank }, code: connect.CodeFailedPrecondition, answer: "legal target locale title is required"},
-		"a missing version": {change: func(j *legal.TranslationJob, _ *translation.Candidate) {
-			j.EntityID = "e0b0a3b9-0000-4000-8000-000000000000"
-		}, code: connect.CodeNotFound, answer: "privacy not found: e0b0a3b9-0000-4000-8000-000000000000"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			job, candidate := job, *candidate
-			test.change(&job, &candidate)
-			err := legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, &candidate)
-			require.Equal(t, test.code, connect.CodeOf(err), err)
-			require.Equal(t, test.answer, errs.Wrap(err).Message())
-		})
-	}
-	err := legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, nil)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
-
-	stale := *candidate
-	stale.ContentDocumentRevision = uuid.NewString()
-	require.ErrorIs(t, legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, &stale), translation.ErrSourceNoLongerCurrent)
-	_, exists := h.store.StoredTranslation(legal.Privacy, draft.ID, "ko")
-	require.False(t, exists)
-
-	h.store.Fail = map[string]error{"InsertTranslation": errors.New("insert failed")}
-	require.Error(t, legal.ApplyTypedTranslationCandidate(t.Context(), joined, job, candidate))
 }

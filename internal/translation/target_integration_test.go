@@ -22,7 +22,6 @@ func TestTargetCatalogMatchesCurrentSchemaIntegration(t *testing.T) {
 			assertTranslationRootAuthorityColumns(t, postgres.DB, definition)
 		})
 	}
-	assertTranslationJobHardCutColumns(t, postgres.DB)
 	assertRemovedLegacyRootHashes(t, postgres.DB)
 }
 
@@ -77,31 +76,6 @@ func assertTranslationRootAuthorityColumns(t *testing.T, db *gorm.DB, definition
 	for _, required := range []string{"source_locale", "content_document_id"} {
 		if !containsColumn(columns, required) {
 			t.Fatalf("translation root %s is missing %s", definition.RootTable, required)
-		}
-	}
-}
-
-func assertTranslationJobHardCutColumns(t *testing.T, db *gorm.DB) {
-	t.Helper()
-	var columns []string
-	if err := db.Raw(
-		`SELECT column_name
-		 FROM information_schema.columns
-		 WHERE table_schema = 'public' AND table_name = 'translation_job'`,
-	).Scan(&columns).Error; err != nil {
-		t.Fatalf("inspect translation_job columns: %v", err)
-	}
-	for _, required := range []string{"request_artifact_digest", "request_xliff", "request_manifest"} {
-		if !containsColumn(columns, required) {
-			t.Fatalf("translation_job is missing %s", required)
-		}
-	}
-	for _, removed := range []string{
-		"source_hash", "source_revision", "source_epoch", "translation_spec_version", "response_xliff",
-		"response_manifest", "failure_reason", "completed_at", "cancel_requested",
-	} {
-		if containsColumn(columns, removed) {
-			t.Fatalf("translation_job still exposes removed column %s", removed)
 		}
 	}
 }

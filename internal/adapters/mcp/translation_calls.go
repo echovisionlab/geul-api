@@ -10,29 +10,6 @@ import (
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
-func (tools *TranslationTools) listJobs(ctx context.Context, _ string, call toolCall[translationJobsListArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	if err := rejectNullArguments(arguments, "p", "d", "tl", "sl", "s", "n", "o", "k", "z"); err != nil {
-		return executionError(err)
-	}
-	var input translationJobsListArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	query, err := translationJobsListQuery(input)
-	if err != nil {
-		return executionError(err)
-	}
-	page, err := tools.application.ListTranslationJobs(ctx, query)
-	if err != nil {
-		return translationCallError(err)
-	}
-	return translationStructuredResult(encodeTranslationJobList(
-		translationapp.JobMessages(page.Jobs), translationapp.PaginationMessage(page.Pagination),
-	))
-}
-
 func (tools *TranslationTools) listTranslations(ctx context.Context, _ string, call toolCall[translationTargetArguments]) (mcpserver.ToolResult, error) {
 	var input translationTargetArguments
 	if err := call.Decode(&input); err != nil {
@@ -72,42 +49,6 @@ func (tools *TranslationTools) getTranslation(ctx context.Context, _ string, cal
 		return translationCallError(err)
 	}
 	return translationStructuredResult(encodeTranslationEntry(target, translationapp.EntryMessage(entry)))
-}
-
-func (tools *TranslationTools) cancelJob(ctx context.Context, _ string, call toolCall[translationJobArguments]) (mcpserver.ToolResult, error) {
-	var input translationJobArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("job ID", input.JobID); err != nil {
-		return executionError(err)
-	}
-	if err := tools.application.CancelTranslationJob(ctx, translationapp.CancelTranslationJobCommand{JobID: input.JobID}); err != nil {
-		return translationCallError(err)
-	}
-	return translationStructuredResult(encodeTranslationJobCancellation(input.JobID))
-}
-
-func (tools *TranslationTools) regenerate(ctx context.Context, _ string, call toolCall[translationRegenerateArguments]) (mcpserver.ToolResult, error) {
-	var input translationRegenerateArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	target, err := translationTarget(input.translationTargetArguments)
-	if err != nil {
-		return executionError(err)
-	}
-	locales, err := translationLocales(input.Locales)
-	if err != nil {
-		return executionError(err)
-	}
-	jobs, err := tools.application.RegenerateEntityTranslations(ctx, translationapp.RegenerateEntityTranslationsCommand{
-		Target: translationapp.TargetFromMessage(target), Locales: locales,
-	})
-	if err != nil {
-		return translationCallError(err)
-	}
-	return translationStructuredResult(encodeTranslationJobs(translationapp.JobMessages(jobs)))
 }
 
 func (tools *TranslationTools) exportXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFExportArguments]) (mcpserver.ToolResult, error) {

@@ -109,34 +109,6 @@ func (h *Handlers) RegisterQueues(manager *mq.ConsumerManager) error {
 		return fmt.Errorf("failed to register email.campaign queue: %w", err)
 	}
 
-	if h.metadataAI != nil {
-		if err := manager.Register(
-			mq.QueueConfig{
-				Name:         eventpkg.QueueAiMetadataGenerate,
-				MessageType:  "api.manage.v1.MetadataGenerationQueueEvent",
-				Workers:      2,
-				Timeout:      2 * time.Minute,
-				MaxRetries:   8,
-				RetryDelay:   time.Second,
-				RetryBackoff: 2.0,
-			},
-			h.handleAIMetadataGenerateMessage,
-			baseMiddlewares...,
-		); err != nil {
-			return fmt.Errorf("failed to register ai.metadata.generate queue: %w", err)
-		}
-	}
-
-	if h.translationJobs != nil {
-		if err := manager.Register(
-			translationGenerateQueueConfig(),
-			h.handleTranslationGenerateMessage,
-			baseMiddlewares...,
-		); err != nil {
-			return fmt.Errorf("failed to register translation generate queue: %w", err)
-		}
-	}
-
 	return nil
 }
 

@@ -179,18 +179,3 @@ func emailTemplateContentFence(store Store, templateID string) emailcontent.Fenc
 		return emailTemplateContentRows{}.SourceContext(ctx, store, templateID, true)
 	}
 }
-
-// emailTemplateTranslationJobApplyFence lets an accepted translation job
-// finish while the template exists, whatever delivery renders it now.
-func emailTemplateTranslationJobApplyFence(store Store, templateID string) emailcontent.Fence {
-	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		current, err := loadTemplateContentDocument(ctx, store, templateID, true)
-		if err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if current != documentID {
-			return contentblock.DomainContext{}, domainerr.Precondition("content document ownership changed; translation job cannot be applied")
-		}
-		return emailTemplateContentRows{}.SourceContext(ctx, store, templateID, true)
-	}
-}

@@ -24,7 +24,7 @@ func TestProgramEventInterchangeImportKeepsTitleSourceOwnedAndExplicitEmptySumma
 		),
 	}
 	plan, err := core.BuildRichTextExtractionPlan(
-		&core.JobIdentity{
+		&core.PlanTarget{
 			EntityType: "program_event", EntityID: "event-1", SourceLocale: "en", TargetLocale: "ko",
 		},
 		source,

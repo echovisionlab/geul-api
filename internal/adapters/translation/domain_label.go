@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/label"
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -26,23 +25,11 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			}
 			return label.LoadTypedTranslationSourceDocument(ctx, labelJoined(db, store, nil), labelID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			if job == nil || job.EntityType != string(core.KindLabel) {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+			if job.EntityType != string(core.KindLabel) {
 				return nil, errors.New("typed Label translation source is required")
 			}
-			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{})
-		},
-		buildCandidate: func(plan *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
-			if plan == nil || plan.EntityType != string(core.KindLabel) {
-				return nil, errors.New("typed Label translation source is required")
-			}
-			return core.BuildRichTextCandidate(plan, source, results)
-		},
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if store == nil || job == nil {
-				return errors.New("typed Label translation candidate and content Block store are required")
-			}
-			return label.ApplyTypedTranslationCandidate(ctx, labelJoined(tx, store, audit), labelTranslationJob(job), candidate, input)
+			return core.BuildRichTextExtractionPlan(&job, source, core.RichTextDocumentFields{})
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditLabelUpdated, sharedtelemetry.NewLabelSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -58,7 +45,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 				return identitystate.LockActivePrincipal(ctx, tx, principal)
 			}, labelID)
 		},
-		requireJobRead: requireJobEdit(policyv1.Label.Edit),
+		requireTranslationRead: requireTranslationEdit(policyv1.Label.Edit),
 	})
 }
 
@@ -66,11 +53,4 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 // handle, with the content store it hands the delivery.
 func labelJoined(db *gorm.DB, contents *contentblock.Store, audit domainaudit.Appender) label.Joined {
 	return labelpostgres.Bind(db, labelpostgres.Ports{ContentBlocks: contents}, audit)
-}
-
-func labelTranslationJob(job *model.TranslationJob) label.TranslationJob {
-	return label.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
-		RequestedByMemberID: job.RequestedByMemberID,
-	}
 }

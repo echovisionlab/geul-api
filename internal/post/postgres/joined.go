@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -53,23 +52,6 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, db *gorm.DB, store 
 	return post.LoadTypedTranslationSourceDocument(ctx, Bind(db, Ports{ContentBlocks: store}, nil), postID)
 }
 
-// ApplyTypedTranslationCandidateWithDB delivers a provider translation in
-// tx, the translation domain's transaction.
-func ApplyTypedTranslationCandidateWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
-	candidate *translation.Candidate,
-	metadata translation.EntryWrite,
-	audit domainaudit.Appender,
-) error {
-	if store == nil || job == nil {
-		return errors.New("typed post translation candidate and content Block store are required")
-	}
-	return post.ApplyTypedTranslationCandidate(ctx, Bind(tx, Ports{ContentBlocks: store}, audit), translationJob(job), candidate, metadata)
-}
-
 // TranslationInterchange runs Post's XLIFF seam (post.TranslationInterchange)
 // in the translation domain's transaction.
 type TranslationInterchange struct {
@@ -92,20 +74,13 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	job *model.TranslationJob,
+	job post.TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
 	expectedRevision *string,
 ) (post.TranslationInterchangeMutationResult, error) {
-	if i == nil || tx == nil || store == nil || job == nil || candidate == nil {
+	if i == nil || tx == nil || store == nil || candidate == nil {
 		return post.TranslationInterchangeMutationResult{}, errors.New("post translation interchange dependencies are required")
 	}
-	return i.domain.ApplyCandidate(ctx, NewStore(tx, Ports{ContentBlocks: store}), translationJob(job), candidate, entry, expectedRevision)
-}
-
-func translationJob(job *model.TranslationJob) post.TranslationJob {
-	return post.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
-	}
+	return i.domain.ApplyCandidate(ctx, NewStore(tx, Ports{ContentBlocks: store}), job, candidate, entry, expectedRevision)
 }

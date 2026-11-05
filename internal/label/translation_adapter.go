@@ -50,26 +50,7 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, labe
 	}
 	return &translation.SourceDocument{
 		Title: title, ContentDocumentRevision: snapshot.Document.Revision.String(), ContentBlockDocument: document,
-		ProtectedTerms: translation.NormalizeProtectedTerms([]string{title}),
 	}, nil
-}
-
-// ApplyTypedTranslationCandidate applies a provider delivery in the
-// translation domain's transaction, which store is bound to, replacing the
-// current target row.
-func ApplyTypedTranslationCandidate(
-	ctx context.Context,
-	joined Joined,
-	job TranslationJob,
-	candidate *translation.Candidate,
-	metadata translation.EntryWrite,
-) error {
-	store := joined.Store
-	auditWriter := joined.Audit
-
-	return applyTypedTranslationCandidateWithTargetRevision(
-		ctx, store, job, candidate, metadata, auditWriter, nil, targetlocale.RevisionCurrent,
-	)
 }
 
 // ApplyTypedTranslationCandidateWithTargetRevision is the exact Label

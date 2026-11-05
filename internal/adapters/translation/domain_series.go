@@ -2,19 +2,16 @@ package translationadapter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
-	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -25,23 +22,8 @@ func seriesDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return series.LoadTranslationSourceDocument(ctx, seriespostgres.NewTranslationStore(db), entityID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return series.BuildTranslationExtractionPlan(job.EntityID, job.SourceLocale, job.TargetLocale, source)
-		},
-		buildCandidate: application.BuildGenericCandidate,
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, _ *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if job == nil {
-				return errors.New("post Series provider translation candidate is required")
-			}
-			input.Title = candidate.Title
-			input.Summary = candidate.Summary
-			input.ContentJSON = candidate.ContentJSON
-			input.ContentHTML = candidate.ContentHTML
-			input.ContentText = candidate.ContentText
-			return series.ApplyProviderTranslationCandidate(ctx, seriespostgres.NewTranslationStore(tx), series.ProviderTranslationJob{
-				EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
-				RequestedByMemberID: job.RequestedByMemberID,
-			}, candidate, input, audit)
 		},
 		requestLocaleOG: localeAwareOG(core.KindPostSeries),
 		sourceLocaleAudit: sourceLocaleAudit(
@@ -52,7 +34,7 @@ func seriesDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		},
 		requireInterchangeView:  requireSeriesView,
 		requireSourceLocaleEdit: requireSeriesEdit,
-		requireJobRead: func(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
+		requireTranslationRead: func(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				return requireSeriesView(ctx, tx, spiceDB, entityID)
 			})

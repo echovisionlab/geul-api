@@ -26,7 +26,7 @@ func TestRichTextDocumentPlanAndCandidatePreserveBlockIdentity(t *testing.T) {
 			},
 		},
 	}
-	job := &JobIdentity{
+	job := &PlanTarget{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}
 
@@ -68,7 +68,7 @@ func TestRichTextDocumentPlanCanProtectTitleInsteadOfTranslatingIt(t *testing.T)
 			}}},
 		},
 	}
-	plan, err := BuildRichTextExtractionPlan(&JobIdentity{
+	plan, err := BuildRichTextExtractionPlan(&PlanTarget{
 		EntityType: "program_event", EntityID: "event-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestRichTextDocumentPlanKeepsExplicitEmptyUnitBesideTranslatableUnit(t *tes
 			}}),
 		}},
 	}}
-	plan, err := BuildRichTextExtractionPlan(&JobIdentity{
+	plan, err := BuildRichTextExtractionPlan(&PlanTarget{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestRichTextDocumentPlanRejectsAllExplicitEmptyUnits(t *testing.T) {
 			paragraphBlock("empty-a"), paragraphBlock("empty-b"),
 		}},
 	}}
-	_, err := BuildRichTextExtractionPlan(&JobIdentity{
+	_, err := BuildRichTextExtractionPlan(&PlanTarget{
 		EntityType: "post", EntityID: "post-1", SourceLocale: "ko", TargetLocale: "en",
 	}, source, RichTextDocumentFields{})
 	require.ErrorIs(t, err, ErrNoTranslatableUnits)

@@ -8,7 +8,6 @@ import (
 
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
-	"github.com/echovisionlab/geul-api/internal/aieditor"
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
@@ -16,7 +15,6 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/post"
@@ -134,20 +132,6 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 	)
 	r.dependencies.mux.Handle(aiDocumentPath, aiDocumentHandler)
 	slog.Info("Registered service", "path", aiDocumentPath)
-	aiEditorProvider, err := llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{APIKey: r.dependencies.cfg.GoogleAIAPIKey})
-	if err != nil {
-		return fmt.Errorf("initialize AI Editor Gemini provider: %w", err)
-	}
-	aiEditorService, err := aieditor.NewService(aiDocumentMCP.editorApplication, aiEditorProvider)
-	if err != nil {
-		return fmt.Errorf("initialize AI Editor service: %w", err)
-	}
-	aiEditorPath, aiEditorHandler := managev1connect.NewAIEditorOrchestrationServiceHandler(
-		aiEditorService,
-		r.manageOptions...,
-	)
-	r.dependencies.mux.Handle(aiEditorPath, aiEditorHandler)
-	slog.Info("Registered service", "path", aiEditorPath)
 	if err := registerMCPRoutes(r.dependencies.mux, aiDocumentMCP.mcpHandler); err != nil {
 		return err
 	}

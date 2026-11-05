@@ -383,7 +383,6 @@ func setRequiredConfigEnv(t *testing.T) {
 		"HYDRA_ADMIN_URL":              "http://hydra:4445",
 		"EDITOR_COLLAB_URL":            "http://collab:3003",
 		"SITE_ORIGIN":                  "https://studio.example.com",
-		"GOOGLE_AI_API_KEY":            "google-key",
 		"MAXMIND_ACCOUNT_ID":           "maxmind-account",
 		"MAXMIND_LICENSE_KEY":          "maxmind-license",
 		"TOKEN_SIGNING_SECRET":         "token-signing-secret-with-at-least-32-bytes",

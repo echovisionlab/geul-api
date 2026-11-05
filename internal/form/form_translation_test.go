@@ -14,7 +14,7 @@ func TestBuildTranslationExtractionPlanUsesFormSchemaSlots(t *testing.T) {
 
 	summary := " Help us route your request "
 	plan, err := BuildTranslationExtractionPlan("form-1", "en", "ko", &translation.SourceDocument{
-		Title: " Contact form ", Summary: &summary, ProtectedTerms: []string{" Geul "},
+		Title: " Contact form ", Summary: &summary,
 		ContentJSON: []byte(`{"steps":[{"id":"step-1","title":" Contact ","description":" Route us ","fields":[
 			{"id":"field-email","type":"email","label":" Email address ","description":" Reply here ","placeholder":"name@example.com","checkboxLabel":" Keep me posted ","options":[{"id":"option-billing","value":"billing","label":" Billing "}],"validation":{"validators":[{"id":"validator-required","message":" Required "}]}}
 		]}]}`),
@@ -22,7 +22,6 @@ func TestBuildTranslationExtractionPlanUsesFormSchemaSlots(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "form", plan.EntityType)
 	assert.Equal(t, "form-1", plan.EntityID)
-	assert.Equal(t, []string{"Geul"}, plan.ProtectedTerms)
 	assert.Equal(t, []string{
 		"entity:title",
 		"step:step-1:title", "step:step-1:description",

@@ -1,10 +1,7 @@
 package campaign_test
 
 import (
-	"context"
-	"errors"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -13,51 +10,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/emailcontent/emailcontenttest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func TestAcceptedTranslationReplacesCurrentTargetWhileInterchangeKeepsItsCAS(t *testing.T) {
-	h := newHarness(t)
-	row := h.store.PutCampaign(campaign.Campaign{})
-	manual := "Manual target"
-	h.store.PutLocale(row.ID, emailcontenttest.Locale{LocaleMetadata: emailcontent.LocaleMetadata{Locale: "ko", Subject: &manual, UpdatedAt: h.now}})
-	old, err := campaign.LoadTranslationInterchangeTarget(h.ctx, h.joined(h.store), row.ID, "ko")
-	require.NoError(t, err)
-	source, err := campaign.LoadTranslationSourceDocument(h.ctx, h.joined(h.store), row.ID)
-	require.NoError(t, err)
-	require.Equal(t, row.Subject, source.Title)
-	newer := "Newer manual target"
-	h.store.PutLocale(row.ID, emailcontenttest.Locale{LocaleMetadata: emailcontent.LocaleMetadata{Locale: "ko", Subject: &newer, UpdatedAt: h.now.Add(time.Second)}})
-	interchangeErr := h.transaction(func(ctx context.Context, j campaign.Joined) error {
-		_, err := campaign.ApplyTranslationInterchange(ctx, j, row.ID, "en", emailcontent.InterchangeMutation{TargetLocale: "ko", ExpectedDocumentRevision: source.ContentDocumentRevision, ExpectedTargetRevision: &old.Revision, ExpectedPresence: true, Subject: &manual, ContributorMemberID: auth.GetUser(h.ctx).MemberID.String(), Now: h.now.Add(2 * time.Second)})
-		return err
-	})
-	var conflict *translation.TargetRevisionConflict
-	require.True(t, errors.As(interchangeErr, &conflict))
-	stillManual, _ := h.store.Locale(row.ID, "ko")
-	require.Equal(t, newer, *stillManual.Subject)
-	frozen := row
-	frozen.Status = campaign.CampaignStatusSent
-	h.store.PutCampaign(frozen)
-	ai := "AI target"
-	candidate := &translation.Candidate{Title: &ai, ContentDocumentRevision: uuid.NewString(), ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko"}}
-	job := &emailcontent.TranslationJob{EntityType: "campaign", EntityID: row.ID, SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: auth.GetUser(h.ctx).MemberID.String()}
-	require.NoError(t, h.transaction(func(ctx context.Context, j campaign.Joined) error {
-		return campaign.ApplyTranslationCandidate(ctx, j, job, candidate, translation.EntryWrite{Title: &ai, Now: h.now.Add(3 * time.Second)})
-	}))
-	target, exists := h.store.Locale(row.ID, "ko")
-	require.True(t, exists)
-	require.Equal(t, ai, *target.Subject)
-	after, err := campaign.LoadTranslationSourceDocument(h.ctx, h.joined(h.store), row.ID)
-	require.NoError(t, err)
-	require.Equal(t, source.ContentDocumentRevision, after.ContentDocumentRevision)
-	require.Equal(t, source.Title, after.Title)
-	require.Len(t, h.audit.Records(), 1)
-}
 func TestSharedPresentationChangeProjectsSourceWithoutRewritingTargets(t *testing.T) {
 	h := newHarness(t)
 	row := h.store.PutCampaign(campaign.Campaign{})

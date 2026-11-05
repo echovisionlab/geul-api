@@ -23,18 +23,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"gorm.io/gorm"
 
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
-	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
-	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
-	"github.com/echovisionlab/geul-api/internal/ai"
-	aipostgres "github.com/echovisionlab/geul-api/internal/ai/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
@@ -49,8 +44,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
-	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/worker"
 	workerpostgres "github.com/echovisionlab/geul-api/internal/worker/postgres"
 )
@@ -71,10 +64,8 @@ type applicationDependencies struct {
 	workerPublisher         *mq.Publisher
 	transcodeTracker        *transcodepostgres.Tracker
 	adapterLoader           *email.AdapterLoader
-	metadataAIJobs          *ai.MetadataJobManager
 	contentBlockStore       *contentblock.Store
 	og                      *ogDependencies
-	translationJobs         *translationapplication.TranslationJobManager
 	telemetryWriter         *telemetry.DurableWriter
 	workerHandlers          *worker.Handlers
 }
@@ -141,21 +132,6 @@ func initializeApplicationDependencies(
 	deps.workerPublisher = deps.hooksPublisher
 	deps.transcodeTracker = transcodepostgres.NewTracker(deps.db, deps.workerPublisher)
 	deps.adapterLoader = email.NewAdapterLoader(emaildeliverypostgres.NewDeliveryReadStore(deps.db), nil)
-	metadataAIUnits, err := aipostgres.NewUnits(deps.db, deps.servicePublisher)
-	if err != nil {
-		return nil, fmt.Errorf("initialize metadata AI store: %w", err)
-	}
-	metadataAIProvider, err := ai.NewGeminiProvider(cfg.GoogleAIAPIKey)
-	if err != nil {
-		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
-	}
-	deps.metadataAIJobs, err = ai.NewMetadataJobManager(ai.JobManagerDeps{
-		Units: metadataAIUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{},
-		Audit: deps.telemetryWriter, Provider: metadataAIProvider,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
-	}
 	deps.contentBlockStore, err = contentblock.NewGeneratedStore(
 		filemediareuse.New(deps.spicedbClient),
 	)
@@ -165,30 +141,6 @@ func initializeApplicationDependencies(
 	deps.og, err = newOGDependencies(deps.db, cfg.CDNURL)
 	if err != nil {
 		return nil, fmt.Errorf("initialize OG dependencies: %w", err)
-	}
-	translationRegistry, err := translationadapter.NewDomainRegistry(
-		emailauthoringadapter.NewCampaignDeliveryReferences(),
-		deps.telemetryWriter,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("initialize translation domain registry: %w", err)
-	}
-	translationJobUnits, err := translationpostgres.NewJobUnits(deps.db, translationStorePorts(
-		translationRegistry, deps.contentBlockStore, deps.og, deps.spicedbClient, deps.workerPublisher, cfg.CDNURL,
-	))
-	if err != nil {
-		return nil, fmt.Errorf("initialize translation job store: %w", err)
-	}
-	translationLifecycle, err := translationadapter.NewLifecyclePublisher(deps.workerPublisher)
-	if err != nil {
-		return nil, fmt.Errorf("initialize translation lifecycle publisher: %w", err)
-	}
-	deps.translationJobs, err = translationapplication.NewTranslationJobManager(translationapplication.JobManagerDeps{
-		Units: translationJobUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{},
-		Audit: deps.telemetryWriter, Plans: translationRegistry, Lifecycle: translationLifecycle,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize translation job manager: %w", err)
 	}
 	fileMediaRuntime := filemediaruntime.New(
 		deps.db,
@@ -218,24 +170,22 @@ func initializeApplicationDependencies(
 	)
 	faviconCleanup := favicon.NewCleanup(faviconpostgres.NewUnits(deps.db, ""))
 	workerDeps, err := workerpostgres.New(workerpostgres.Config{
-		DB:              deps.db,
-		Config:          cfg,
-		Publisher:       deps.workerPublisher,
-		AdapterLoader:   deps.adapterLoader,
-		S3Client:        deps.s3Client,
-		KratosClient:    deps.kratosClient,
-		SpiceDB:         deps.spicedbClient,
-		Audit:           deps.telemetryWriter,
-		OGPlanner:       deps.og.planner,
-		MemberDeletion:  accountadapter.MemberDeletion{},
-		FileMedia:       fileMediaRuntime,
-		MediaCleanup:    mediaCleanup,
-		PublicAssets:    publicAssetCleanup,
-		OGCleanup:       ogCleanup,
-		FaviconCleanup:  faviconCleanup,
-		MetadataAI:      deps.metadataAIJobs,
-		TranslationJobs: deps.translationJobs,
-		CampaignEmail:   campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
+		DB:             deps.db,
+		Config:         cfg,
+		Publisher:      deps.workerPublisher,
+		AdapterLoader:  deps.adapterLoader,
+		S3Client:       deps.s3Client,
+		KratosClient:   deps.kratosClient,
+		SpiceDB:        deps.spicedbClient,
+		Audit:          deps.telemetryWriter,
+		OGPlanner:      deps.og.planner,
+		MemberDeletion: accountadapter.MemberDeletion{},
+		FileMedia:      fileMediaRuntime,
+		MediaCleanup:   mediaCleanup,
+		PublicAssets:   publicAssetCleanup,
+		OGCleanup:      ogCleanup,
+		FaviconCleanup: faviconCleanup,
+		CampaignEmail:  campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize worker: %w", err)

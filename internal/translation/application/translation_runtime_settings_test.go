@@ -7,86 +7,21 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-func TestTranslationRuntimeSettingsNormalizeProtectedTermsBeforeCompareAndProjection(t *testing.T) {
-	settings, err := normalizeTranslationRuntimeSettings(translationRuntimeSettings{
-		DefaultLocale: "en", ProtectedTerms: []string{" Photoshop ", "Photoshop", "react native", "React Native", " "},
+func TestApplyTranslationRuntimeSettingsUpdateChangesTheDefaultLocale(t *testing.T) {
+	baseline := translationRuntimeSettings{DefaultLocale: "en"}
+	updated, err := applyTranslationRuntimeSettingsUpdate(baseline, UpdateTranslationSettingsCommand{
+		Settings:   &translationRuntimeSettings{DefaultLocale: " ko "},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"default_locale"}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"Photoshop", "react native", "React Native"}, settings.ProtectedTerms)
-	require.Equal(t, settings.ProtectedTerms, settingsMessage(settings).ProtectedTerms)
-	require.Empty(t, translationRuntimeSettingsChangedFields(settings, translationRuntimeSettings{
-		DefaultLocale: "en", ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
-	}))
-	require.Equal(t, []string{"protected_terms"}, translationRuntimeSettingsChangedFields(settings, translationRuntimeSettings{
-		DefaultLocale: "en", ProtectedTerms: []string{"Photoshop", "React Native"},
-	}))
-}
-
-func TestMergeProtectedTermsDeltaPreservesConcurrentDisjointEdits(t *testing.T) {
-	current := []string{"React Native", "Remote addition", "Remove me"}
-	observed := []string{"React Native", "Remove me"}
-	requested := []string{"React Native", "Local addition"}
-
-	require.Equal(t,
-		[]string{"React Native", "Remote addition", "Local addition"},
-		mergeProtectedTermsDelta(current, observed, requested),
-	)
-}
-
-func TestMergeProtectedTermsDeltaCanExplicitlyClearObservedTerms(t *testing.T) {
-	require.Equal(t,
-		[]string{"Concurrent addition"},
-		mergeProtectedTermsDelta([]string{"Observed term", "Concurrent addition"}, []string{"Observed term"}, nil),
-	)
-}
-
-func TestApplyTranslationRuntimeSettingsUpdatePreservesUntouchedFields(t *testing.T) {
-	baseline := translationRuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Observed term"}}
-	localePatch := UpdateTranslationSettingsCommand{
-		Settings:   &translationRuntimeSettings{DefaultLocale: "ko"},
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"default_locale"}},
-	}
-	updatedLocale, err := applyTranslationRuntimeSettingsUpdate(baseline, localePatch)
-	require.NoError(t, err)
-	require.Equal(t, "ko", updatedLocale.DefaultLocale)
-	require.Equal(t, []string{"Observed term"}, updatedLocale.ProtectedTerms)
-
-	staleTermsPatch := UpdateTranslationSettingsCommand{
-		Settings:   &translationRuntimeSettings{ProtectedTerms: []string{"Observed term", "Local addition"}},
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
-		BaseSettings: &translationRuntimeSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{"Observed term"},
-		},
-	}
-	updatedTerms, err := applyTranslationRuntimeSettingsUpdate(updatedLocale, staleTermsPatch)
-	require.NoError(t, err)
-	require.Equal(t, "ko", updatedTerms.DefaultLocale)
-	require.Equal(t, []string{"Observed term", "Local addition"}, updatedTerms.ProtectedTerms)
-}
-
-func TestApplyTranslationRuntimeSettingsUpdateMergesConcurrentProtectedTermChanges(t *testing.T) {
-	current := translationRuntimeSettings{
-		DefaultLocale:  "en",
-		ProtectedTerms: []string{"Observed term", "Remote addition", "Remove me"},
-	}
-	request := UpdateTranslationSettingsCommand{
-		Settings:   &translationRuntimeSettings{ProtectedTerms: []string{"Observed term", "Local addition"}},
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
-		BaseSettings: &translationRuntimeSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{"Observed term", "Remove me"},
-		},
-	}
-
-	updated, err := applyTranslationRuntimeSettingsUpdate(current, request)
-	require.NoError(t, err)
-	require.Equal(t, []string{"Observed term", "Remote addition", "Local addition"}, updated.ProtectedTerms)
+	require.Equal(t, "ko", updated.DefaultLocale)
+	require.Equal(t, []string{"default_locale"}, translationRuntimeSettingsChangedFields(baseline, updated))
+	require.Empty(t, translationRuntimeSettingsChangedFields(updated, updated))
 }
 
 func TestApplyTranslationRuntimeSettingsUpdateRequiresMask(t *testing.T) {
-	current := translationRuntimeSettings{DefaultLocale: "ko", ProtectedTerms: []string{"Existing term"}}
-	request := UpdateTranslationSettingsCommand{
-		Settings: &translationRuntimeSettings{DefaultLocale: "ja", ProtectedTerms: []string{"Replacement term"}},
-	}
+	current := translationRuntimeSettings{DefaultLocale: "ko"}
+	request := UpdateTranslationSettingsCommand{Settings: &translationRuntimeSettings{DefaultLocale: "ja"}}
 	_, err := applyTranslationRuntimeSettingsUpdate(current, request)
 	require.ErrorContains(t, err, "update_mask is required")
 
@@ -95,12 +30,10 @@ func TestApplyTranslationRuntimeSettingsUpdateRequiresMask(t *testing.T) {
 	require.ErrorContains(t, err, "update_mask must include at least one settings field")
 }
 
-func TestApplyTranslationRuntimeSettingsUpdateRequiresObservedBaseForProtectedTerms(t *testing.T) {
-	current := translationRuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Existing term"}}
-	request := UpdateTranslationSettingsCommand{
-		Settings:   &translationRuntimeSettings{ProtectedTerms: []string{"Replacement term"}},
+func TestApplyTranslationRuntimeSettingsUpdateRejectsRemovedFields(t *testing.T) {
+	_, err := applyTranslationRuntimeSettingsUpdate(translationRuntimeSettings{DefaultLocale: "en"}, UpdateTranslationSettingsCommand{
+		Settings:   &translationRuntimeSettings{DefaultLocale: "en"},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
-	}
-	_, err := applyTranslationRuntimeSettingsUpdate(current, request)
-	require.ErrorContains(t, err, "base_settings are required when patching protected_terms")
+	})
+	require.ErrorContains(t, err, `unsupported update_mask path "protected_terms"`)
 }

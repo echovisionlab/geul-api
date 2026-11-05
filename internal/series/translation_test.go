@@ -2,7 +2,6 @@ package series_test
 
 import (
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -134,75 +133,6 @@ func TestTranslationInterchangeTargetRevisionIncludesTheDocumentRevision(t *test
 		return store.AdvanceContentDocument(t.Context(), root.ID, root.ContentDocumentID, f.store.Revision(root.ID), uuid.NewString(), contractTime)
 	}))
 	require.NotEqual(t, before, load())
-}
-
-func TestApplyProviderTranslationCandidatePatchesTheTargetLocale(t *testing.T) {
-	f := newFixture(t)
-	root, plan := f.seedTranslatable(t)
-	requester := uuid.NewString()
-	job := series.ProviderTranslationJob{EntityType: "series", EntityID: root.ID, TargetLocale: "ko", RequestedByMemberID: requester}
-	candidate := func(title string) *translation.Candidate {
-		results := map[string]translation.UnitResult{}
-		for _, unit := range plan.Units {
-			results[unit.UnitID] = translation.UnitResult{UnitID: unit.UnitID, TranslatedText: title + " " + unit.FieldName}
-		}
-		built := &translation.Candidate{}
-		require.NoError(t, built.SetProviderUnitPatch(plan, results))
-		return built
-	}
-	apply := func(job series.ProviderTranslationJob, candidate *translation.Candidate) error {
-		return inTransaction(t, f, func(store series.TranslationStore) error {
-			return series.ApplyProviderTranslationCandidate(t.Context(), store, job, candidate, translation.EntryWrite{Now: contractTime}, f.audit)
-		})
-	}
-
-	require.NoError(t, apply(job, candidate("번역")))
-	stored, ok := f.store.StoredTranslation(root.ID, "ko")
-	require.True(t, ok)
-	require.Equal(t, text("번역 title"), stored.Title)
-	require.Equal(t, text("번역 summary"), stored.Summary)
-	records := f.audit.Records()
-	require.Len(t, records, 1)
-	require.Equal(t, requester, records[0].MemberID, "the requester is the actor of a provider translation")
-	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, records[0].ItemOperation)
-
-	require.NoError(t, apply(job, candidate("번역")))
-	require.Len(t, f.audit.Records(), 1, "the same candidate changes nothing")
-
-	require.NoError(t, apply(job, candidate("다시")))
-	updated, _ := f.store.StoredTranslation(root.ID, "ko")
-	require.Equal(t, translation.NextTargetUpdatedAt(contractTime, stored.UpdatedAt), updated.UpdatedAt)
-	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, f.audit.Records()[1].ItemOperation)
-
-	bad := job
-	bad.RequestedByMemberID = "member"
-	require.Error(t, apply(bad, candidate("다시")))
-}
-
-func TestApplyProviderTranslationCandidateToTheNewSourceAdvancesTheDocument(t *testing.T) {
-	f := newFixture(t)
-	root, plan := f.seedTranslatable(t)
-	require.NoError(t, mutationTransaction(t, f, func(store series.Store) error {
-		if err := store.UpsertTranslation(t.Context(), root.ID, "ko", series.TranslationWrite{Title: text("원본"), Now: contractTime}); err != nil {
-			return err
-		}
-		return store.SetSourceLocale(t.Context(), root.ID, "ko", contractTime)
-	}))
-	revision := f.store.Revision(root.ID)
-	results := map[string]translation.UnitResult{}
-	for _, unit := range plan.Units {
-		results[unit.UnitID] = translation.UnitResult{UnitID: unit.UnitID, TranslatedText: "새 " + unit.FieldName}
-	}
-	candidate := &translation.Candidate{}
-	require.NoError(t, candidate.SetProviderUnitPatch(plan, results))
-
-	require.NoError(t, inTransaction(t, f, func(store series.TranslationStore) error {
-		return series.ApplyProviderTranslationCandidate(t.Context(), store, series.ProviderTranslationJob{
-			EntityType: "series", EntityID: root.ID, TargetLocale: "ko", RequestedByMemberID: uuid.NewString(),
-		}, candidate, translation.EntryWrite{Now: contractTime.Add(time.Minute)}, f.audit)
-	}))
-
-	require.NotEqual(t, revision, f.store.Revision(root.ID), "the source copy moves the shared document revision")
 }
 
 func TestRequireViewAndLockMasksTheSeries(t *testing.T) {

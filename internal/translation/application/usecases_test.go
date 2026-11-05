@@ -1,9 +1,7 @@
 package application_test
 
 import (
-	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,188 +30,6 @@ func (e *env) notAdmin() {
 	e.checker.Deny(policyv1.Platform.IsAdmin())
 }
 
-func TestRegenerateQueuesOneJobPerMachineTranslationTarget(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	entity := e.seedSeries(t)
-	p := newPrincipal(t)
-
-	jobs, err := e.service.RegenerateEntityTranslations(p.ctx, application.RegenerateEntityTranslationsCommand{Target: targetOf(entity)})
-
-	require.NoError(t, err)
-	locales := make([]string, 0, len(jobs))
-	for _, job := range jobs {
-		locales = append(locales, job.TargetLocale)
-		require.Equal(t, application.JobQueued, job.Status)
-		require.Equal(t, "en", job.SourceLocale)
-		require.Equal(t, p.memberID, job.RequestedByMemberID)
-	}
-	require.Equal(t, []string{"ko", "ja", "fr"}, locales, "every enabled target but the source")
-	enqueued := e.store.Enqueued()
-	slices.Sort(enqueued)
-	ids := []string{jobs[0].ID, jobs[1].ID, jobs[2].ID}
-	slices.Sort(ids)
-	require.Equal(t, ids, enqueued, "each queued job's command is enqueued with it")
-	require.Equal(t, []string{
-		"RequireEditable series/" + entity.EntityID, "RequireSourceLocaleEdit series/" + entity.EntityID,
-	}, e.store.FakeDomains().Checks())
-	require.Empty(t, e.audit.Records(), "jobs are operational rows, not audited content")
-}
-
-func TestRegenerateReusesTheActiveJobOfTheSameRequest(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	entity := e.seedSeries(t)
-	p := newPrincipal(t)
-	first := e.queue(t, p, entity, "ko")
-
-	second := e.queue(t, newPrincipal(t), entity, "ko")
-
-	require.Equal(t, first.ID, second.ID)
-	require.Len(t, e.store.Jobs(), 1)
-	require.Equal(t, []string{first.ID}, e.store.Enqueued(), "a reused job is not enqueued again")
-}
-
-func TestRegenerateAsksTheLegalAuthorityOfAPolicy(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	entity := e.store.SeedEntity(translationtest.Entity{
-		EntityType: "terms", EntityID: uuid.NewString(), SourceLocale: "en",
-		Source: &translation.SourceDocument{Title: "Terms"},
-	})
-	denied := domainerr.AdminRequired()
-	e.store.FakeDomains().Deny = func(check, _, _ string) error {
-		if check == "RequireLegalEditable" {
-			return denied
-		}
-		return nil
-	}
-
-	_, err := e.service.RegenerateEntityTranslations(newPrincipal(t).ctx, application.RegenerateEntityTranslationsCommand{Target: targetOf(entity)})
-
-	require.ErrorIs(t, err, denied)
-	require.Equal(t, []string{
-		"RequireEditable terms/" + entity.EntityID, "RequireLegalEditable terms/" + entity.EntityID,
-	}, e.store.FakeDomains().Checks())
-	require.Empty(t, e.store.Jobs())
-}
-
-func TestRegenerateRejectsAndQueuesNothing(t *testing.T) {
-	denied := domainerr.ResourceNotFound("series", "masked")
-	for name, test := range map[string]struct {
-		arrange func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal)
-		code    connect.Code
-	}{
-		"without an active provider": {
-			arrange: func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				return application.RegenerateEntityTranslationsCommand{Target: targetOf(entity)}, newPrincipal(t)
-			},
-			code: connect.CodeFailedPrecondition,
-		},
-		"an unknown locale": {
-			arrange: func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				e.seedProvider(t)
-				return application.RegenerateEntityTranslationsCommand{Target: targetOf(entity), Locales: []string{"xx"}}, newPrincipal(t)
-			},
-			code: connect.CodeInvalidArgument,
-		},
-		"a missing entity": {
-			arrange: func(e *env, _ *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				e.seedProvider(t)
-				return application.RegenerateEntityTranslationsCommand{Target: &application.Target{EntityType: "series", EntityID: uuid.NewString()}}, newPrincipal(t)
-			},
-			code: connect.CodeNotFound,
-		},
-		"an unsupported entity type": {
-			arrange: func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				e.seedProvider(t)
-				return application.RegenerateEntityTranslationsCommand{Target: &application.Target{EntityID: entity.EntityID}}, newPrincipal(t)
-			},
-			code: connect.CodeInvalidArgument,
-		},
-		"a denied source edit": {
-			arrange: func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				e.seedProvider(t)
-				e.store.FakeDomains().Deny = func(check, _, _ string) error {
-					if check == "RequireSourceLocaleEdit" {
-						return denied
-					}
-					return nil
-				}
-				return application.RegenerateEntityTranslationsCommand{Target: targetOf(entity)}, newPrincipal(t)
-			},
-			code: connect.CodeNotFound,
-		},
-		"an anonymous caller": {
-			arrange: func(e *env, entity *translationtest.Entity) (application.RegenerateEntityTranslationsCommand, principal) {
-				e.seedProvider(t)
-				return application.RegenerateEntityTranslationsCommand{Target: targetOf(entity)}, principal{ctx: t.Context()}
-			},
-			code: connect.CodeUnauthenticated,
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := newEnv(t)
-			entity := e.seedSeries(t)
-			command, p := test.arrange(e, entity)
-
-			_, err := e.service.RegenerateEntityTranslations(p.ctx, command)
-
-			require.Equal(t, test.code, codeOf(err), "error %v", err)
-			require.Empty(t, e.store.Jobs())
-			require.Empty(t, e.store.Enqueued())
-		})
-	}
-}
-
-func TestCancelDeletesAnInFlightJobUnderTheEntityAuthority(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	entity := e.seedSeries(t)
-	job := e.queue(t, newPrincipal(t), entity, "ko")
-	domains := e.store.FakeDomains()
-	checksBefore := len(domains.Checks())
-
-	events := captureTerminalEvents(t, func() {
-		require.NoError(t, e.service.CancelTranslationJob(newPrincipal(t).ctx, application.CancelTranslationJobCommand{JobID: job.ID}))
-	})
-
-	require.Empty(t, e.store.Jobs())
-	require.Equal(t, []string{
-		"RequireEditable series/" + entity.EntityID, "RequireSourceLocaleEdit series/" + entity.EntityID,
-	}, domains.Checks()[checksBefore:])
-	require.Len(t, events, 1)
-	require.Equal(t, "cancelled", events[0]["outcome"])
-
-	err := e.service.CancelTranslationJob(newPrincipal(t).ctx, application.CancelTranslationJobCommand{JobID: job.ID})
-	require.Equal(t, connect.CodeNotFound, codeOf(err), "a cancelled job is gone")
-}
-
-func TestCancelRequiresAnAuthenticatedRequesterBeforeAuthority(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	job := e.queue(t, newPrincipal(t), e.seedSeries(t), "ko")
-	checksBefore := len(e.store.FakeDomains().Checks())
-
-	err := e.service.CancelTranslationJob(t.Context(), application.CancelTranslationJobCommand{JobID: job.ID})
-
-	require.Equal(t, connect.CodeUnauthenticated, codeOf(err))
-	require.Len(t, e.store.FakeDomains().Checks(), checksBefore)
-	require.Len(t, e.store.Jobs(), 1)
-}
-
-func TestCancelAnswersADeniedAuthorityWithoutDeleting(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	job := e.queue(t, newPrincipal(t), e.seedSeries(t), "ko")
-	e.store.FakeDomains().Deny = func(string, string, string) error { return domainerr.NoPermission("edit", "series") }
-
-	err := e.service.CancelTranslationJob(newPrincipal(t).ctx, application.CancelTranslationJobCommand{JobID: job.ID})
-
-	require.Equal(t, connect.CodePermissionDenied, codeOf(err))
-	require.Len(t, e.store.Jobs(), 1)
-}
-
 func TestSetEntitySourceLocaleSwitchesAndAuditsTheOwningDomainRecord(t *testing.T) {
 	e := newEnv(t)
 	entity := e.seedSeries(t)
@@ -239,7 +55,7 @@ func TestSetEntitySourceLocaleSwitchesAndAuditsTheOwningDomainRecord(t *testing.
 	require.Equal(t, "en", records[0].PreviousLocale)
 	require.Equal(t, "ko", records[0].NewLocale)
 	require.Equal(t, []translationtest.Signal{{
-		EntityType: "series", EntityID: entity.EntityID, SourceLocaleChanged: true, DocumentRevision: change.DocumentRevision,
+		EntityType: "series", EntityID: entity.EntityID, DocumentRevision: change.DocumentRevision,
 	}}, e.store.Signals())
 	require.Equal(t, []string{"series/" + entity.EntityID + "/ko series_source_locale_changed"}, e.store.FakeDomains().OGRequests())
 	require.Equal(t, []string{
@@ -310,80 +126,6 @@ func jobFilters(entityType, entityID string) []*commonv1.FilterSpec {
 	}
 }
 
-func TestListTranslationJobsGivesAnAdministratorEveryJob(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	e.queue(t, newPrincipal(t), e.seedSeries(t), "ko")
-	e.queue(t, newPrincipal(t), e.seedSeries(t), "ja")
-	checksBefore := len(e.store.FakeDomains().Checks())
-
-	page, err := e.service.ListTranslationJobs(newPrincipal(t).ctx, application.ListTranslationJobsQuery{})
-
-	require.NoError(t, err)
-	require.Len(t, page.Jobs, 2)
-	require.Equal(t, application.Pagination{Total: 2, Limit: 20}, page.Pagination)
-	require.Len(t, e.store.FakeDomains().Checks(), checksBefore, "an administrator needs no entity check")
-}
-
-func TestListTranslationJobsGivesAManagerTheJobsOfOneEntity(t *testing.T) {
-	e := newEnv(t)
-	e.seedProvider(t)
-	entity := e.seedSeries(t)
-	job := e.queue(t, newPrincipal(t), entity, "ko")
-	e.queue(t, newPrincipal(t), e.seedSeries(t), "ko")
-	e.notAdmin()
-	checksBefore := len(e.store.FakeDomains().Checks())
-
-	page, err := e.service.ListTranslationJobs(newPrincipal(t).ctx, application.ListTranslationJobsQuery{
-		Filters: jobFilters("series", entity.EntityID),
-	})
-
-	require.NoError(t, err)
-	require.Len(t, page.Jobs, 1)
-	require.Equal(t, job.ID, page.Jobs[0].ID)
-	require.Equal(t, []string{"RequireJobRead series/" + entity.EntityID}, e.store.FakeDomains().Checks()[checksBefore:])
-}
-
-func TestListTranslationJobsRejectsANonAdministratorWithoutOneExactEntity(t *testing.T) {
-	entityID := uuid.NewString()
-	for name, test := range map[string]struct {
-		filters []*commonv1.FilterSpec
-		code    connect.Code
-	}{
-		"no scope":            {code: connect.CodePermissionDenied},
-		"only an entity type": {filters: jobFilters("series", entityID)[:1], code: connect.CodePermissionDenied},
-		"a Work":              {filters: jobFilters("work", entityID), code: connect.CodePermissionDenied},
-		"a non UUID entity":   {filters: jobFilters("series", "series-a"), code: connect.CodePermissionDenied},
-		"a repeated type": {
-			filters: append(jobFilters("series", entityID), &commonv1.FilterSpec{Field: "entity_type", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: "post"}),
-			code:    connect.CodePermissionDenied,
-		},
-		"a non equality scope": {
-			filters: []*commonv1.FilterSpec{
-				{Field: "entity_type", Op: commonv1.FilterOp_FILTER_OP_IN, Values: []string{"series"}},
-				{Field: "entity_id", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: entityID},
-			},
-			code: connect.CodePermissionDenied,
-		},
-		"an unsupported type": {filters: jobFilters("site_setting", entityID), code: connect.CodeInvalidArgument},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := newEnv(t)
-			e.notAdmin()
-
-			_, err := e.service.ListTranslationJobs(newPrincipal(t).ctx, application.ListTranslationJobsQuery{Filters: test.filters})
-
-			require.Equal(t, test.code, codeOf(err), "error %v", err)
-			require.Empty(t, e.store.FakeDomains().Checks())
-		})
-	}
-	t.Run("an anonymous caller", func(t *testing.T) {
-		e := newEnv(t)
-		_, err := e.service.ListTranslationJobs(t.Context(), application.ListTranslationJobsQuery{})
-		require.Equal(t, connect.CodeUnauthenticated, codeOf(err))
-	})
-}
-
 func TestEntityTranslationsReadTheStoredLocales(t *testing.T) {
 	e := newEnv(t)
 	entity := e.seedSeries(t)
@@ -416,48 +158,40 @@ func TestEntityTranslationsOfANonAdministrator(t *testing.T) {
 
 	_, err = e.service.ListEntityTranslations(newPrincipal(t).ctx, application.ListEntityTranslationsQuery{Target: targetOf(series)})
 	require.NoError(t, err)
-	require.Equal(t, []string{"RequireJobRead series/" + series.EntityID}, e.store.FakeDomains().Checks())
+	require.Equal(t, []string{"RequireTranslationRead series/" + series.EntityID}, e.store.FakeDomains().Checks())
 }
 
-func settingsCommand(paths []string, settings, base translation.RuntimeSettings) application.UpdateTranslationSettingsCommand {
+func settingsCommand(paths []string, settings translation.RuntimeSettings) application.UpdateTranslationSettingsCommand {
 	return application.UpdateTranslationSettingsCommand{
-		Settings: &settings, BaseSettings: &base, UpdateMask: &fieldmaskpb.FieldMask{Paths: paths},
+		Settings: &settings, UpdateMask: &fieldmaskpb.FieldMask{Paths: paths},
 	}
 }
 
-func TestUpdateTranslationSettingsAuditsTheChangedFieldsWithoutTermValues(t *testing.T) {
+func TestUpdateTranslationSettingsAuditsTheChangedFields(t *testing.T) {
 	e := newEnv(t)
-	e.store.SeedSettings(translation.RuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Geul"}})
+	e.store.SeedSettings(translation.RuntimeSettings{DefaultLocale: "en"})
 
 	updated, err := e.service.UpdateTranslationSettings(newPrincipal(t).ctx, settingsCommand(
-		[]string{"default_locale", "protected_terms"},
-		translation.RuntimeSettings{DefaultLocale: " ko ", ProtectedTerms: []string{"Geul", "Secret term"}},
-		translation.RuntimeSettings{ProtectedTerms: []string{"Geul"}},
+		[]string{"default_locale"}, translation.RuntimeSettings{DefaultLocale: " ko "},
 	))
 
 	require.NoError(t, err)
 	require.Equal(t, "ko", updated.DefaultLocale)
-	require.Equal(t, []string{"Geul", "Secret term"}, updated.ProtectedTerms)
 	stored, _ := e.store.Settings()
 	require.True(t, stored.UpdatedAt.Equal(*updated.UpdatedAt))
 	records := e.audit.Records()
 	require.Len(t, records, 1)
 	require.Equal(t, sharedtelemetry.AuditTranslationSettingsUpdated, records[0].Action)
-	require.Equal(t, []string{"default_locale", "protected_terms"}, records[0].ChangedFields)
-	encoded, err := json.Marshal(records[0])
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "Secret term")
+	require.Equal(t, []string{"default_locale"}, records[0].ChangedFields)
 }
 
 func TestUpdateTranslationSettingsWithTheSameValuesChangesNothing(t *testing.T) {
 	e := newEnv(t)
 	updatedAt := time.Unix(1_700_000_000, 0).UTC()
-	e.store.SeedSettings(translation.RuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Geul"}, UpdatedAt: &updatedAt})
+	e.store.SeedSettings(translation.RuntimeSettings{DefaultLocale: "en", UpdatedAt: &updatedAt})
 
 	updated, err := e.service.UpdateTranslationSettings(newPrincipal(t).ctx, settingsCommand(
-		[]string{"protected_terms"},
-		translation.RuntimeSettings{ProtectedTerms: []string{" Geul "}},
-		translation.RuntimeSettings{ProtectedTerms: []string{"Geul"}},
+		[]string{"default_locale"}, translation.RuntimeSettings{DefaultLocale: " en "},
 	))
 
 	require.NoError(t, err)
@@ -471,84 +205,12 @@ func TestUpdateTranslationSettingsRequiresAFreshAdministrator(t *testing.T) {
 	e.checker.Deny(policyv1.TranslationSettings.Update())
 
 	_, err := e.service.UpdateTranslationSettings(newPrincipal(t).ctx, settingsCommand(
-		[]string{"default_locale"}, translation.RuntimeSettings{DefaultLocale: "ko"}, translation.RuntimeSettings{},
+		[]string{"default_locale"}, translation.RuntimeSettings{DefaultLocale: "ko"},
 	))
 
 	require.Equal(t, connect.CodePermissionDenied, codeOf(err))
 	stored, _ := e.store.Settings()
 	require.Equal(t, "en", stored.DefaultLocale)
-}
-
-func TestGetTranslationSettingsReportsWhetherGenerationIsAvailable(t *testing.T) {
-	e := newEnv(t)
-	view, err := e.service.GetTranslationSettings(newPrincipal(t).ctx)
-	require.NoError(t, err)
-	require.Equal(t, translation.DefaultLocale, view.Settings.DefaultLocale, "the default singleton is materialized")
-	require.False(t, view.GenerationEnabled)
-	require.NotNil(t, view.GenerationDisabledReason)
-
-	e.seedProvider(t)
-	view, err = e.service.GetTranslationSettings(newPrincipal(t).ctx)
-	require.NoError(t, err)
-	require.True(t, view.GenerationEnabled)
-	require.Nil(t, view.GenerationDisabledReason)
-}
-
-func TestTranslationProvidersAreAuditedByChangedField(t *testing.T) {
-	e := newEnv(t)
-	p := newPrincipal(t)
-
-	created, err := e.service.CreateTranslationProvider(p.ctx, application.CreateTranslationProviderCommand{
-		Name: " DeepL ", Type: application.ProviderTypeDeepL, IsActive: true, Priority: 3,
-		DeepLConfig: &application.DeepLConfigInput{APIKey: "secret-key"},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "DeepL", created.Name)
-	cfg, err := created.DeepLConfig()
-	require.NoError(t, err)
-	require.Equal(t, translation.DefaultDeepLAPIBaseURL, cfg.APIBaseURL)
-
-	name, priority := "DeepL Pro", int32(3)
-	updated, err := e.service.UpdateTranslationProvider(p.ctx, application.UpdateTranslationProviderCommand{
-		ID: created.ID, Name: &name, Priority: &priority, DeepLConfig: &application.DeepLConfigInput{},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "DeepL Pro", updated.Name)
-	stored, _ := e.store.StoredProvider(created.ID)
-	cfg, err = stored.DeepLConfig()
-	require.NoError(t, err)
-	require.Equal(t, "secret-key", cfg.APIKey, "an empty key keeps the stored one")
-
-	_, err = e.service.UpdateTranslationProvider(p.ctx, application.UpdateTranslationProviderCommand{ID: created.ID, Name: &name})
-	require.NoError(t, err)
-
-	require.NoError(t, e.service.DeleteTranslationProvider(p.ctx, application.DeleteTranslationProviderCommand{ID: created.ID}))
-	records := e.audit.Records()
-	require.Len(t, records, 3, "the unchanged update appends nothing")
-	require.Equal(t, sharedtelemetry.AuditTranslationProviderCreated, records[0].Action)
-	require.Equal(t, created.ID, records[0].TargetID)
-	require.Equal(t, sharedtelemetry.AuditTranslationProviderUpdated, records[1].Action)
-	require.Equal(t, []string{"name"}, records[1].ChangedFields, "a config equal to the stored one is no change")
-	require.Equal(t, sharedtelemetry.AuditTranslationProviderDeleted, records[2].Action)
-
-	_, err = e.service.UpdateTranslationProvider(p.ctx, application.UpdateTranslationProviderCommand{ID: created.ID, Name: &name})
-	require.Equal(t, connect.CodeNotFound, codeOf(err))
-	err = e.service.DeleteTranslationProvider(p.ctx, application.DeleteTranslationProviderCommand{ID: created.ID})
-	require.Equal(t, connect.CodeNotFound, codeOf(err))
-}
-
-func TestCreateTranslationProviderRejectsAnInvalidConfigAndHidesItsKey(t *testing.T) {
-	e := newEnv(t)
-
-	_, err := e.service.CreateTranslationProvider(newPrincipal(t).ctx, application.CreateTranslationProviderCommand{
-		Name: "Broken", Type: application.ProviderTypeDeepL,
-		DeepLConfig: &application.DeepLConfigInput{APIKey: "secret-key", APIBaseURL: "not a url"},
-	})
-	require.Equal(t, connect.CodeInvalidArgument, codeOf(err))
-
-	_, err = e.service.CreateTranslationProvider(newPrincipal(t).ctx, application.CreateTranslationProviderCommand{Name: "Unknown"})
-	require.Equal(t, connect.CodeInvalidArgument, codeOf(err))
-	require.Empty(t, e.audit.Records())
 }
 
 func TestTranslationAdministrationRequiresAnAdministrator(t *testing.T) {
@@ -558,8 +220,8 @@ func TestTranslationAdministrationRequiresAnAdministrator(t *testing.T) {
 
 	_, err := e.service.GetTranslationOverview(ctx)
 	require.Equal(t, connect.CodePermissionDenied, codeOf(err))
-	e.checker.Deny(policyv1.TranslationProvider.List())
-	_, err = e.service.ListTranslationProviders(ctx, application.ListTranslationProvidersQuery{})
+	e.checker.Deny(policyv1.TranslationSettings.View())
+	_, err = e.service.GetTranslationSettings(ctx)
 	require.Equal(t, connect.CodePermissionDenied, codeOf(err))
 
 	locales, err := e.service.ListTranslationLocales(ctx)

@@ -14,7 +14,6 @@ type SourceDocument struct {
 	ContentJSON             []byte
 	ContentHTML             *string
 	ContentText             *string
-	ProtectedTerms          []string
 	ContentDocumentRevision string
 	ContentBlockDocument    *contentv1.LocalizedRichTextDocument
 	PageDocument            *contentv1.LocalizedPageDocument
@@ -162,12 +161,11 @@ type Bundle struct {
 
 // ExtractionPlan captures extracted units and bundles for one locale job.
 type ExtractionPlan struct {
-	EntityType     string
-	EntityID       string
-	SourceLocale   string
-	TargetLocale   string
-	ContextTitle   *string
-	ProtectedTerms []string
-	Units          []Unit
-	Bundles        []Bundle
+	EntityType   string
+	EntityID     string
+	SourceLocale string
+	TargetLocale string
+	ContextTitle *string
+	Units        []Unit
+	Bundles      []Bundle
 }

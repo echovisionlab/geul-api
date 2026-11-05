@@ -10,11 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/google/uuid"
 )
 
 // ProviderTranslation is one accepted provider response to a Menu
@@ -25,100 +22,6 @@ type ProviderTranslation struct {
 	RequestedByMemberID string
 	Candidate           *translation.Candidate
 	Now                 time.Time
-}
-
-// ApplyProviderTranslation applies, in the translation pipeline's joined
-// transaction, only the request-time Menu label units that still belong to
-// the current Menu graph. A source-locale switch changes which locale row is
-// source-owned, not whether the accepted provider response may update its
-// surviving stable labels.
-func ApplyProviderTranslation(ctx context.Context, joined Joined, applied ProviderTranslation) error {
-	if joined.Store == nil || applied.Candidate == nil || !applied.Candidate.HasProviderUnitPatch() {
-		return errors.New("menu provider translation candidate is required")
-	}
-	if joined.Audit == nil {
-		return errors.New("menu provider translation Audit writer is required")
-	}
-	memberID, err := uuid.Parse(strings.TrimSpace(applied.RequestedByMemberID))
-	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(applied.RequestedByMemberID) {
-		return fmt.Errorf("menu provider translation requires canonical requester Member, got %q", applied.RequestedByMemberID)
-	}
-	now := applied.Now.UTC()
-	if now.IsZero() {
-		return errors.New("Menu provider translation time is required")
-	}
-	store := joined.Store
-	root, err := store.LockMenu(ctx, applied.MenuID)
-	if errors.Is(err, ErrMenuNotFound) {
-		return domainerr.ResourceNotFound("menu", applied.MenuID)
-	}
-	if err != nil {
-		return err
-	}
-	current, err := loadMenuAIDocumentSnapshotFromRoot(ctx, store, root, applied.TargetLocale, true)
-	if err != nil {
-		return err
-	}
-	incoming := canonicalMenuAIDocumentLabels(current.Items, applied.TargetLocale, providerMenuLabels(applied.Candidate))
-	next := cloneMenuAIDocumentSnapshot(current)
-	maps.Copy(next.Labels, incoming)
-	if maps.Equal(current.Labels, next.Labels) && current.LocaleExists {
-		return nil
-	}
-	operation, changed, err := persistProviderTranslation(ctx, store, current, next, now)
-	if err != nil || !changed {
-		return err
-	}
-	return domainaudit.AppendMember(
-		ctx, nil, joined.Audit, memberID.String(), sharedtelemetry.AuditMenuUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMenuLocaleContentAuditRecord(metadata, current.ID, applied.TargetLocale, operation)
-		},
-	)
-}
-
-// persistProviderTranslation writes the provider labels of next to the
-// source values row, advancing the content document, or to the target
-// locale row, and names the audited operation.
-func persistProviderTranslation(ctx context.Context, store Store, current, next AIDocumentSnapshot, now time.Time) (sharedtelemetry.AuditItemOperation, bool, error) {
-	operation := sharedtelemetry.AuditItemOperationUpdated
-	if current.Locale != current.SourceLocale {
-		if !current.LocaleExists {
-			next.LocaleExists = true
-			operation = sharedtelemetry.AuditItemOperationCreated
-		}
-		return operation, true, persistMenuAIDocumentTarget(ctx, store, current, next, false, now)
-	}
-	if !current.SourceValuesStored {
-		return "", false, domainerr.Precondition("Menu source locale values are not initialized")
-	}
-	if maps.Equal(current.Labels, next.Labels) {
-		return "", false, nil
-	}
-	if err := persistMenuAIDocumentSourceValues(ctx, store, current, next, now); err != nil {
-		return "", false, err
-	}
-	expected, err := parseMenuContentDocumentUUID(current.DocumentRevision, "content_document.revision")
-	if err != nil {
-		return "", false, err
-	}
-	return operation, true, advanceMenuContentDocument(ctx, store, current.ID, current.contentDocumentID, expected, now)
-}
-
-// providerMenuLabels returns the translated item labels of a provider
-// response, keyed by item ID.
-func providerMenuLabels(candidate *translation.Candidate) map[string]string {
-	patch, _ := candidate.ProviderPatch()
-	labels := make(map[string]string, len(patch.Results))
-	for _, unit := range patch.Units {
-		result, ok := patch.Results[unit.UnitID]
-		if !ok || unit.ContainerType != translation.ContainerTypeBlock || unit.FieldName != "label" ||
-			unit.UnitID != "item:"+unit.ContainerID+":label" {
-			continue
-		}
-		labels[unit.ContainerID] = result.TranslatedText
-	}
-	return labels
 }
 
 type translationLabelItem struct {

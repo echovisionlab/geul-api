@@ -348,7 +348,7 @@ func (s *Service) buildTranslationInterchangePlan(
 	}
 	source.SourceLocale = authority.SourceLocale
 	source.ContentDocumentRevision = authority.DocumentRevision.String()
-	plan, err := s.plans.BuildExtractionPlan(Job{
+	plan, err := s.plans.BuildExtractionPlan(PlanTarget{
 		EntityType: entityType, EntityID: entityID,
 		SourceLocale: authority.SourceLocale, TargetLocale: targetLocale,
 	}, source)

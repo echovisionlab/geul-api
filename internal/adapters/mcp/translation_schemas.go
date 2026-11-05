@@ -8,26 +8,11 @@ func translationTargetInputSchema() json.RawMessage {
 func translationGetInputSchema() json.RawMessage {
 	return json.RawMessage(translationGetInputJSONSchema)
 }
-func translationJobInputSchema() json.RawMessage {
-	return json.RawMessage(translationJobInputJSONSchema)
-}
-func translationJobsListInputSchema() json.RawMessage {
-	return json.RawMessage(translationJobsListInputJSONSchema)
-}
-func translationRegenerateInputSchema() json.RawMessage {
-	return json.RawMessage(translationRegenerateInputJSONSchema)
-}
 func translationXLIFFExportInputSchema() json.RawMessage {
 	return json.RawMessage(translationXLIFFExportInputJSONSchema)
 }
 func translationXLIFFImportInputSchema() json.RawMessage {
 	return json.RawMessage(translationXLIFFImportInputJSONSchema)
-}
-func translationJobCancellationOutputSchema() json.RawMessage {
-	return json.RawMessage(translationJobCancellationOutputJSONSchema)
-}
-func translationJobsOutputSchema() json.RawMessage {
-	return json.RawMessage(translationJobsOutputJSONSchema)
 }
 func translationListOutputSchema() json.RawMessage {
 	return json.RawMessage(translationListOutputJSONSchema)
@@ -55,35 +40,6 @@ const translationGetInputJSONSchema = `{
   "properties":{"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Exact owning document reference, also used as d by document_read.","minLength":1,"maxLength":256},"l":` + localeJSONSchema + `}
 }`
 
-const translationJobInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["j"],
-  "properties":{"j":{"type":"string","description":"Active translation Job ID returned by translation_jobs_list or translation_regenerate.","format":"uuid"}}
-}`
-
-const translationJobsListInputJSONSchema = `{
-  "type":"object","additionalProperties":false,
-  "properties":{
-    "p":{"description":"Document profile filter. Requires d.","allOf":[` + domainJSONSchema + `]},
-    "d":{"type":"string","description":"Exact document reference filter. Requires p. Non-admin callers must provide both p and d.","minLength":1,"maxLength":256},
-    "tl":{"description":"Filter by exact target locale.","allOf":[` + localeJSONSchema + `]},
-    "sl":{"description":"Filter by exact source locale.","allOf":[` + localeJSONSchema + `]},
-    "s":{"type":"array","description":"Active statuses to include; omission or an empty array includes both statuses.","maxItems":2,"uniqueItems":true,"items":{"enum":["queued","running"]}},
-    "n":{"type":"integer","description":"Page size. Omission or zero uses 20; maximum 100.","minimum":0,"maximum":100},
-    "o":{"type":"integer","description":"Number of matching jobs to skip; defaults to zero.","minimum":0},
-    "k":{"description":"Sort field. Omission uses updated_at descending. Job ID is the final tie-breaker.","enum":["requested_at","updated_at","target_locale","status"]},
-    "z":{"type":"boolean","description":"Descending when true, ascending when false; requires k. Defaults to false with an explicit k."}
-  }
-}`
-
-const translationRegenerateInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["p","d","l"],
-  "properties":{
-    "p":` + translationProfileJSONSchema + `,
-    "d":{"type":"string","description":"Exact owning document reference.","minLength":1,"maxLength":256},
-    "l":{"type":"array","description":"Explicit target locale selection admitted by runtime machine-translation policy; no implicit all-locales request.","minItems":1,"maxItems":32,"uniqueItems":true,"items":` + localeJSONSchema + `}
-  }
-}`
-
 const translationXLIFFExportInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["p","d","l","m"],
   "properties":{
@@ -105,32 +61,6 @@ const translationXLIFFImportInputJSONSchema = `{
     "f":{"type":"string","description":"Completed existing upload File ID containing the edited XLIFF. Upload edited XML first; never pass XML or a URL here.","format":"uuid"},
     "er":{"type":"string","description":"Exact target revision r returned by translation_xliff_export. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.","minLength":1,"maxLength":256}
   }
-}`
-
-const compactJobDefinitionJSONSchema = `{
-  "type":"object","additionalProperties":false,
-  "required":["i","p","d","tl","sl","s","o"],
-  "properties":{
-    "i":{"type":"string","description":"Translation Job ID.","format":"uuid"},"p":` + translationProfileJSONSchema + `,"d":{"type":"string","description":"Owning document reference.","minLength":1,"maxLength":256},
-    "tl":{"description":"Job target locale.","allOf":[` + localeJSONSchema + `]},"sl":{"description":"Job source locale.","allOf":[` + localeJSONSchema + `]},
-    "s":{"description":"Active Job status.","enum":["queued","running"]},
-    "o":{"type":"string","description":"Correlation operation ID for the translation request.","format":"uuid"},
-    "rq":{"type":"string","description":"Job request timestamp.","format":"date-time"},"st":{"type":"string","description":"Job start timestamp, when started.","format":"date-time"}
-  }
-}`
-
-const translationJobCancellationOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["j"],
-  "properties":{"j":{"type":"string","description":"Cancelled translation Job ID.","format":"uuid"}}
-}`
-
-const translationJobsOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["j"],
-  "properties":{
-    "j":{"type":"array","description":"Active translation Job metadata.","items":{"$ref":"#/$defs/job"}},
-    "g":{"type":"array","description":"Pagination tuple [total matching jobs, page limit, offset, has more]. Present for translation_jobs_list.","prefixItems":[{"type":"integer","description":"Total matching jobs."},{"type":"integer","description":"Applied page limit."},{"type":"integer","description":"Applied offset."},{"type":"boolean","description":"More matching jobs follow this page."}],"items":false,"minItems":4,"maxItems":4}
-  },
-  "$defs":{"job":` + compactJobDefinitionJSONSchema + `}
 }`
 
 const translationListOutputJSONSchema = `{

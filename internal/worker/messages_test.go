@@ -60,14 +60,10 @@ func (q queuePorts) DeleteIdentity(_ context.Context, command *managev1.UserDele
 func (q queuePorts) DeleteAvatar(_ context.Context, memberID, avatarAssetID string) error {
 	return q.record("DeleteAvatar " + memberID + " " + avatarAssetID)
 }
-func (q queuePorts) ProcessJob(_ context.Context, jobID string) error {
-	return q.record("ProcessJob " + jobID)
-}
-
-func newQueueHandlers(t *testing.T, ports queuePorts, metadataAI MetadataAIJobProcessor) *Handlers {
+func newQueueHandlers(t *testing.T, ports queuePorts) *Handlers {
 	t.Helper()
 	return newTestHandlers(t, Deps{
-		EmailDelivery: ports, BulkEmail: ports, FileMedia: ports, MemberDeletions: ports, MetadataAI: metadataAI,
+		EmailDelivery: ports, BulkEmail: ports, FileMedia: ports, MemberDeletions: ports,
 	})
 }
 
@@ -161,22 +157,17 @@ func TestQueueMessagesReachTheirOwner(t *testing.T) {
 			}), MessageID: "user-delete-avatar:" + queueMemberID},
 			want: "DeleteAvatar " + queueMemberID + " " + queueAssetID,
 		},
-		"metadata AI job": {
-			handle: func(h *Handlers) mq.Handler { return h.handleAIMetadataGenerateMessage },
-			msg:    mq.Message{Body: marshal(t, &managev1.MetadataGenerationQueueEvent{JobId: "job-1"}), MessageID: "job-1"},
-			want:   "ProcessJob job-1",
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}}
-			handlers := newQueueHandlers(t, ports, ports)
+			handlers := newQueueHandlers(t, ports)
 
 			require.NoError(t, tt.handle(handlers)(t.Context(), tt.msg))
 			require.Equal(t, []string{tt.want}, ports.calls.all())
 
 			t.Run("a transport ID that is not the payload's is poison", func(t *testing.T) {
 				ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}}
-				handlers := newQueueHandlers(t, ports, ports)
+				handlers := newQueueHandlers(t, ports)
 				msg := tt.msg
 				msg.MessageID = "another-message"
 
@@ -190,7 +181,7 @@ func TestQueueMessagesReachTheirOwner(t *testing.T) {
 
 			t.Run("an undecodable payload is poison", func(t *testing.T) {
 				ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}}
-				handlers := newQueueHandlers(t, ports, ports)
+				handlers := newQueueHandlers(t, ports)
 
 				err := tt.handle(handlers)(t.Context(), mq.Message{Body: []byte{0xff, 0xff}, MessageID: tt.msg.MessageID})
 
@@ -205,7 +196,7 @@ func TestQueueMessagesReachTheirOwner(t *testing.T) {
 func TestOwnerFailuresStayRetryable(t *testing.T) {
 	failed := errors.New("owner unavailable")
 	ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}, err: failed}
-	handlers := newQueueHandlers(t, ports, ports)
+	handlers := newQueueHandlers(t, ports)
 
 	err := handlers.handleFileDeleteMessage(t.Context(), mq.Message{
 		Body: marshal(t, &managev1.FileDeleteEvent{FileId: queueFileID, Original: queueOriginal()}), MessageID: queueFileID,
@@ -218,7 +209,7 @@ func TestOwnerFailuresStayRetryable(t *testing.T) {
 
 func TestFileDeleteOfAnInvalidTargetIsPoison(t *testing.T) {
 	ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}, err: fmt.Errorf("check: %w", filemediaapplication.ErrInvalidFileDeleteTarget)}
-	handlers := newQueueHandlers(t, ports, ports)
+	handlers := newQueueHandlers(t, ports)
 
 	err := handlers.handleFileDeleteMessage(t.Context(), mq.Message{
 		Body: marshal(t, &managev1.FileDeleteEvent{FileId: queueFileID, Original: queueOriginal()}), MessageID: queueFileID,
@@ -246,7 +237,7 @@ func TestEmailSendMapsTheProviderOutcomeToTheQueueContract(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}, result: tt.result}
-			handlers := newQueueHandlers(t, ports, nil)
+			handlers := newQueueHandlers(t, ports)
 
 			err := handlers.handleEmailSendMessage(t.Context(), mq.Message{
 				Body: marshal(t, &managev1.SendEmailEvent{MessageId: new("message-1")}), MessageID: "message-1",
@@ -263,32 +254,7 @@ func TestEmailSendMapsTheProviderOutcomeToTheQueueContract(t *testing.T) {
 	}
 }
 
-func TestMetadataAIJobWithoutTheProcessorIsRetried(t *testing.T) {
-	ports := queuePorts{unreachable: unreachable{t: t}, calls: &calls{}}
-	handlers := newQueueHandlers(t, ports, nil)
-
-	err := handlers.handleAIMetadataGenerateMessage(t.Context(), mq.Message{
-		Body: marshal(t, &managev1.MetadataGenerationQueueEvent{JobId: "job-1"}), MessageID: "job-1",
-	})
-
-	require.EqualError(t, err, "metadata AI job processor is not configured")
-	_, terminal := mq.TerminalDeliveryErrorClass(err)
-	require.False(t, terminal)
-}
-
-func TestTranslationJobWithoutTheProcessorIsPoison(t *testing.T) {
-	handlers := newTestHandlers(t, Deps{})
-
-	err := handlers.handleTranslationGenerateMessage(t.Context(), mq.Message{
-		Body: marshal(t, &managev1.TranslationGenerateEvent{JobId: "job-1"}), MessageID: "job-1",
-	})
-
-	class, terminal := mq.TerminalDeliveryErrorClass(err)
-	require.True(t, terminal)
-	require.Equal(t, "translation_processor_unconfigured", class)
-}
-
-func TestRegisterQueuesConsumesTheOptionalQueuesOnlyWithTheirProcessors(t *testing.T) {
+func TestRegisterQueuesConsumesEveryQueue(t *testing.T) {
 	required := []string{
 		eventpkg.QueueUserDeleteIdentity, eventpkg.QueueUserDeleteAvatar, eventpkg.QueueFileDelete,
 		eventpkg.QueueTranscodeResult, eventpkg.QueueWaveformResult, eventpkg.QueueMeshOptimizationResult,
@@ -298,12 +264,6 @@ func TestRegisterQueuesConsumesTheOptionalQueuesOnlyWithTheirProcessors(t *testi
 	manager := mq.NewConsumerManager(nil)
 	require.NoError(t, newTestHandlers(t, Deps{}).RegisterQueues(manager))
 	require.Equal(t, required, manager.QueueNames())
-
-	manager = mq.NewConsumerManager(nil)
-	require.NoError(t, newTestHandlers(t, Deps{
-		MetadataAI: metadataAIProcessor{}, TranslationJobs: &recordingTranslationDeliveryProcessor{},
-	}).RegisterQueues(manager))
-	require.Equal(t, append(required, eventpkg.QueueAiMetadataGenerate, eventpkg.QueueTranslationGenerate), manager.QueueNames())
 }
 
 func TestNewHandlersNamesEachMissingCollaborator(t *testing.T) {

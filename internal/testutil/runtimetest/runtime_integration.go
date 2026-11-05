@@ -573,7 +573,6 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 		"SPICEDB_ALLOW_INSECURE":       "true",
 		"SITE_ORIGIN":                  siteOrigin,
 		"EDITOR_COLLAB_URL":            s.CollabURL,
-		"GOOGLE_AI_API_KEY":            "integration-dummy",
 		"MAXMIND_ACCOUNT_ID":           "integration",
 		"MAXMIND_LICENSE_KEY":          "integration",
 		"TOKEN_SIGNING_SECRET":         s.TokenSigningSecret,

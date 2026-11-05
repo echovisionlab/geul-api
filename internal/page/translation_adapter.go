@@ -64,19 +64,3 @@ func validatePageSourceLocaleMutations(
 	}
 	return nil
 }
-
-// upsertTranslationMetadataEntry persists Page target metadata. The Page body
-// remains exclusively in typed Content Blocks.
-func upsertTranslationMetadataEntry(
-	ctx context.Context,
-	store Store,
-	pageID string,
-	locale string,
-	input translation.EntryWrite,
-) error {
-	if len(input.ContentJSON) > 0 || input.ContentHTML != nil || input.ContentText != nil {
-		return domainerr.Precondition("Page translation body is stored as typed Content Blocks")
-	}
-	now := input.Now.UTC()
-	return store.UpsertLocale(ctx, pageID, locale, input.Title, input.Summary, now)
-}

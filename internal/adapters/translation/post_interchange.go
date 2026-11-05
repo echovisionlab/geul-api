@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -29,7 +28,7 @@ type postTranslationInterchangeDomain interface {
 		context.Context,
 		*gorm.DB,
 		*contentblock.Store,
-		*model.TranslationJob,
+		postdomain.TranslationJob,
 		*core.Candidate,
 		core.EntryWrite,
 		*string,
@@ -87,7 +86,7 @@ func (a *PostInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
+	job := postdomain.TranslationJob{
 		EntityType: command.EntityType, EntityID: command.EntityID,
 		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
 		RequestedByMemberID: memberID,

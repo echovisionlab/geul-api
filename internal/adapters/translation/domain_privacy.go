@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
-	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -48,25 +47,11 @@ func legalDomainRegistration(
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return legaldomain.LoadTypedTranslationSourceDocument(ctx, legalJoined(db, store, nil).Store, entityType, entityID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			if job == nil || job.EntityType != entityType {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+			if job.EntityType != entityType {
 				return nil, fmt.Errorf("%s translation requires %s", entityType, entityType)
 			}
-			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Title: true})
-		},
-		buildCandidate: func(plan *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
-			if plan == nil || plan.EntityType != entityType {
-				return nil, fmt.Errorf("%s translation requires %s", entityType, entityType)
-			}
-			return core.BuildRichTextCandidate(plan, source, results)
-		},
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, _ core.EntryWrite) error {
-			if job == nil {
-				// A missing job fails the candidate check, as a missing
-				// candidate does.
-				job, candidate = &model.TranslationJob{}, nil
-			}
-			return legaldomain.ApplyTypedTranslationCandidate(ctx, legalJoined(tx, store, audit), legalTranslationJob(job), candidate)
+			return core.BuildRichTextExtractionPlan(&job, source, core.RichTextDocumentFields{Title: true})
 		},
 		requestLocaleOG: func(ctx context.Context, tx *gorm.DB, planner *ogpostgres.Planner, _ *ogpostgres.Refresher, entityID string, locale string, reason string) (bool, error) {
 			_, err := legaladapter.RequestSaved(ctx, tx, planner, entityType, entityID, locale, false, reason)
@@ -82,12 +67,9 @@ func legalDomainRegistration(
 		requireInterchangeEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			return legaldomain.RequireEditableTranslationMutation(ctx, legalJoined(tx, nil, nil).Store, spiceDB, legalLockActive(ctx, tx), entityType, entityID)
 		},
-		requireJobRead: requireJobEdit(jobEdit),
+		requireTranslationRead: requireTranslationEdit(jobEdit),
 		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			return legaldomain.RequireLockedSourceLocaleEdit(ctx, legalJoined(tx, nil, nil).Store, spiceDB, legalLockActive(ctx, tx), entityType, entityID)
-		},
-		requireRegeneration: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
-			return legaldomain.RequireEditableTranslationMutation(ctx, legalJoined(tx, nil, nil).Store, spiceDB, legalLockActive(ctx, tx), entityType, entityID)
 		},
 	})
 }
@@ -103,12 +85,5 @@ func legalJoined(db *gorm.DB, contents *contentblock.Store, audit domainaudit.Ap
 func legalLockActive(ctx context.Context, tx *gorm.DB) legaldomain.LockActive {
 	return func(principal *auth.UserInfo) (bool, error) {
 		return identitystate.LockActivePrincipal(ctx, tx, principal)
-	}
-}
-
-func legalTranslationJob(job *model.TranslationJob) legaldomain.TranslationJob {
-	return legaldomain.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
-		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
 	}
 }

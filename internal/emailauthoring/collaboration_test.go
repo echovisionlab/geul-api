@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailcontent/emailcontenttest"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -439,28 +438,16 @@ func TestRequireTranslationSourceMutableLocksTheRootBeforeDeliveryAuthority(t *t
 	require.Equal(t, connect.CodeInvalidArgument, codeOf(err))
 }
 
-func TestTemplateTranslationJobsFinishWhileInterchangeEditsStayFrozen(t *testing.T) {
+func TestTemplateInterchangeEditsStayFrozen(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	template, revision, contributor := templateRoom(t, h)
 	h.store.Freeze(template.ID)
-	joined := emailauthoring.Joined{Store: h.store, Audit: h.audit}
-	subject := "Provider subject"
+	subject := "Imported subject"
 
-	err := emailauthoring.ApplyTemplateTranslationCandidate(t.Context(), joined, emailcontent.TranslationJob{
-		EntityType: "email_template", EntityID: template.ID, SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: contributor,
-	}, &translation.Candidate{Title: &subject, ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko"}}, translation.EntryWrite{})
-	require.NoError(t, err, "an accepted job finishes on a frozen template")
-	target, _ := h.store.Locale(template.ID, "ko")
-	require.Equal(t, "Provider subject", *target.Subject)
-
-	_, err = emailauthoring.ApplyTemplateTranslationInterchange(t.Context(), h.store, template.ID, "en", emailcontent.InterchangeMutation{
+	_, err := emailauthoring.ApplyTemplateTranslationInterchange(t.Context(), h.store, template.ID, "en", emailcontent.InterchangeMutation{
 		TargetLocale: "ko", ExpectedDocumentRevision: revision.String(), ExpectedPresence: true,
 		Subject: &subject, ContributorMemberID: contributor,
 	})
 	require.Equal(t, connect.CodeFailedPrecondition, codeOf(err), "an interchange edit keeps the delivery freeze")
-
-	err = emailauthoring.ApplyTemplateTranslationCandidate(t.Context(), joined, emailcontent.TranslationJob{EntityType: "campaign"},
-		&translation.Candidate{ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{}}, translation.EntryWrite{})
-	require.Equal(t, connect.CodeInvalidArgument, codeOf(err))
 }

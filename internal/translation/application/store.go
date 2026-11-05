@@ -10,90 +10,23 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
-
-// JobStore is what the job runner reads and writes, bound to one transaction
-// or read snapshot. translationpostgres implements it over translation_job
-// and the owning domains' adapters; translationtest is the in-memory fake.
-type JobStore interface {
-	// Job reads the job's state without its request artifact; found is
-	// false when the row is gone.
-	Job(ctx context.Context, jobID string) (job Job, found bool, err error)
-	// RequestArtifact reads the job's stored request artifact, or
-	// ErrJobNotFound.
-	RequestArtifact(ctx context.Context, jobID string) (StoredRequestArtifact, error)
-	// ClaimJob moves a queued job to running for provider and model, unless
-	// a stored provider document pins another provider. It answers whether
-	// it moved the row.
-	ClaimJob(ctx context.Context, jobID, provider, model string, now time.Time) (bool, error)
-	// ResumeJob records provider and model on a running job under the same
-	// pin. It answers whether it updated the row.
-	ResumeJob(ctx context.Context, jobID, provider, model string, now time.Time) (bool, error)
-	// LockJobStatus locks the job's row FOR UPDATE and reads its status, or
-	// ErrJobNotFound.
-	LockJobStatus(ctx context.Context, jobID string) (JobStatus, error)
-	// LockJobProviderDocument locks the job's row FOR UPDATE and reads its
-	// status, provider, model and provider document, or ErrJobNotFound.
-	LockJobProviderDocument(ctx context.Context, jobID string) (Job, error)
-	// SetJobProvider records provider and model on a running job.
-	SetJobProvider(ctx context.Context, jobID, provider, model string, now time.Time) error
-	// SetJobProviderDocument stores document on the running job of its
-	// provider and model; it answers whether it updated the row.
-	SetJobProviderDocument(ctx context.Context, jobID string, document ProviderDocument, now time.Time) (bool, error)
-	// ClearJobProviderDocument clears document from the running job that
-	// still holds exactly it; it answers whether it updated the row.
-	ClearJobProviderDocument(ctx context.Context, jobID string, document ProviderDocument, now time.Time) (bool, error)
-	// DeleteJob deletes the job while its status is one of statuses; it
-	// answers how many rows it deleted.
-	DeleteJob(ctx context.Context, jobID string, statuses ...JobStatus) (int64, error)
-
-	// RuntimeSettings reads the settings singleton, inserting the defaults
-	// first when it is missing; never call it under a read-only unit.
-	RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error)
-	// SiteNames reads the site title and company name, which a request
-	// protects as literal spellings.
-	SiteNames(ctx context.Context) (siteTitle, companyName string, err error)
-	// ActiveProviders lists the active providers by priority.
-	ActiveProviders(ctx context.Context) ([]Provider, error)
-
-	// Domains is the owning content domains, bound to this transaction.
-	Domains() Domains
-	// PublishTranslationApplied schedules content.updated for a provider
-	// result the owning domain applied as target.
-	PublishTranslationApplied(ctx context.Context, job Job, target AppliedTranslationTarget, now time.Time) error
-}
 
 // Store is what the Translation use cases read and write, bound to one
 // transaction or read snapshot.
 type Store interface {
-	JobStore
-
-	// JobForCommand reads the whole job, FOR UPDATE when locked, or
-	// ErrJobNotFound.
-	JobForCommand(ctx context.Context, jobID string, locked bool) (Job, error)
-	// ListJobs reads one page of jobs and the count of every match.
-	ListJobs(ctx context.Context, query JobListQuery) ([]Job, int64, error)
-	// LockActiveJobs locks FOR UPDATE the queued and running jobs of key,
-	// oldest first.
-	LockActiveJobs(ctx context.Context, key ActiveJobKey) ([]Job, error)
-	// InsertJob inserts job unless an active job of the same request holds
-	// the active-job unique index; it answers whether it inserted.
-	InsertJob(ctx context.Context, job Job) (bool, error)
-	// EnqueueGenerate enqueues the generate command of a job in this
-	// transaction.
-	EnqueueGenerate(ctx context.Context, jobID string) error
+	// RuntimeSettings reads the settings singleton, inserting the defaults
+	// first when it is missing; never call it under a read-only unit.
+	RuntimeSettings(ctx context.Context) (translation.RuntimeSettings, error)
+	// Domains is the owning content domains, bound to this transaction.
+	Domains() Domains
 
 	// Locales lists the runtime locales, only the enabled ones when
 	// enabledOnly.
 	Locales(ctx context.Context, enabledOnly bool) ([]Locale, error)
 	// Locale reads one runtime locale, or ErrLocaleNotFound.
 	Locale(ctx context.Context, code string) (Locale, error)
-	// MachineTranslationTargets lists the locales machine translation may
-	// target.
-	MachineTranslationTargets(ctx context.Context) ([]Locale, error)
 
 	// LockRuntimeSettings locks the settings singleton FOR UPDATE and reads
 	// it as stored.
@@ -101,18 +34,6 @@ type Store interface {
 	// UpdateRuntimeSettings writes the set fields of change and returns the
 	// stored updated_at.
 	UpdateRuntimeSettings(ctx context.Context, change SettingsChange) (time.Time, error)
-
-	// ListProviders reads one page of providers by priority and the count
-	// of every match.
-	ListProviders(ctx context.Context, query ProviderListQuery) ([]Provider, int64, error)
-	// LockProvider locks a provider FOR UPDATE, or ErrProviderNotFound.
-	LockProvider(ctx context.Context, providerID string) (Provider, error)
-	// InsertProvider inserts provider and returns it as stored.
-	InsertProvider(ctx context.Context, provider Provider) (Provider, error)
-	// UpdateProvider writes change and returns the stored updated_at.
-	UpdateProvider(ctx context.Context, providerID string, change ProviderChange) (time.Time, error)
-	// DeleteProvider deletes a provider.
-	DeleteProvider(ctx context.Context, providerID string) error
 
 	// OverviewStats, LocaleHealth and EntityHealth summarize translation
 	// coverage across every catalog entity.
@@ -141,11 +62,9 @@ type Store interface {
 
 // The answers the Store gives for a missing row.
 var (
-	ErrJobNotFound      = errors.New("translation job not found")
-	ErrProviderNotFound = errors.New("translation provider not found")
-	ErrLocaleNotFound   = errors.New("translation locale not found")
-	ErrEntryNotFound    = errors.New("translation entry not found")
-	ErrEntityNotFound   = errors.New("translation entity not found")
+	ErrLocaleNotFound = errors.New("translation locale not found")
+	ErrEntryNotFound  = errors.New("translation entry not found")
+	ErrEntityNotFound = errors.New("translation entity not found")
 )
 
 // Domains is what Translation asks of the owning content domains in one
@@ -153,16 +72,14 @@ var (
 // authorization calls answer the request principal.
 type Domains interface {
 	LoadSourceDocument(ctx context.Context, entityType, entityID string) (*translation.SourceDocument, error)
-	ApplyCandidate(ctx context.Context, job Job, candidate *translation.Candidate, input translation.EntryWrite) (AppliedTranslationTarget, error)
 	RequestLocaleOG(ctx context.Context, entityType, entityID, locale, reason string) (bool, error)
 	// LockRoot locks the entity's root row FOR UPDATE.
 	LockRoot(ctx context.Context, entityType, entityID string) error
 	RequireEditable(ctx context.Context, entityType, entityID string) error
 	RequireInterchangeView(ctx context.Context, entityType, entityID string) error
+	RequireTranslationRead(ctx context.Context, entityType, entityID string) error
 	RequireInterchangeEdit(ctx context.Context, entityType, entityID string) error
-	RequireJobRead(ctx context.Context, entityType, entityID string) error
 	RequireSourceLocaleEdit(ctx context.Context, entityType, entityID string) error
-	RequireLegalEditable(ctx context.Context, entityType, entityID string) error
 	RequireDocumentContributors(ctx context.Context, contributors []string) error
 	RequireSourceMutable(ctx context.Context, entityType, entityID string) error
 	SourceLocaleAudit(ctx context.Context, entityType, entityID, previousLocale, newLocale string) (SourceLocaleAudit, error)
@@ -170,23 +87,10 @@ type Domains interface {
 	ApplyInterchange(ctx context.Context, apply TranslationInterchangeApply) (TranslationInterchangeApplyResult, error)
 }
 
-// DomainPlans builds a job's extraction plan and a provider result's
-// candidate by the owning domain's rules, without a transaction.
+// DomainPlans builds an extraction plan by the owning domain's rules, without
+// a transaction.
 type DomainPlans interface {
-	BuildExtractionPlan(job Job, source *translation.SourceDocument) (*translation.ExtractionPlan, error)
-	BuildCandidate(plan *translation.ExtractionPlan, source *translation.SourceDocument, results map[string]translation.UnitResult) (*translation.Candidate, error)
-}
-
-// AppliedTranslationTarget is the exact locale-role fence observed by the
-// owning adapter in the same transaction that accepted a provider result.
-// DocumentStateChanged distinguishes a result applied to the current source
-// locale from a target-only result. Changed=false represents a semantic no-op
-// and carries no invalidation.
-type AppliedTranslationTarget struct {
-	Changed              bool
-	DocumentRevision     string
-	DocumentStateChanged bool
-	TargetRevision       string
+	BuildExtractionPlan(target PlanTarget, source *translation.SourceDocument) (*translation.ExtractionPlan, error)
 }
 
 // SourceLocaleAudit is the owning domain's record of a source-locale switch,
@@ -224,38 +128,18 @@ type SwitchedSourceLocale struct {
 // SettingsChange is an update of the settings singleton; a nil field is
 // unchanged.
 type SettingsChange struct {
-	DefaultLocale  *string
-	ProtectedTerms []string
-	// TermsChanged tells an emptied ProtectedTerms from an unchanged one.
-	TermsChanged bool
-}
-
-// JobListQuery selects and orders one page of jobs. Filters and Sorts are
-// the shared query language; the Store rejects an unknown field or operation.
-type JobListQuery struct {
-	Filters []*commonv1.FilterSpec
-	Sorts   []*commonv1.SortSpec
-	Limit   int32
-	Offset  int32
-}
-
-// ProviderListQuery selects one page of providers.
-type ProviderListQuery struct {
-	ActiveOnly bool
-	Limit      int32
-	Offset     int32
+	DefaultLocale *string
 }
 
 // Locale is a runtime locale of the translation catalog.
 type Locale struct {
-	Code                      string
-	DisplayName               string
-	Enabled                   bool
-	IsPublic                  bool
-	Dir                       string
-	MachineTranslationAllowed bool
-	FontProfile               *string
-	SortOrder                 int32
+	Code        string
+	DisplayName string
+	Enabled     bool
+	IsPublic    bool
+	Dir         string
+	FontProfile *string
+	SortOrder   int32
 }
 
 // Entry is one stored locale entry of an entity.
@@ -273,14 +157,13 @@ type Entry struct {
 	OgAsset *mediaasset.Reference
 }
 
-// OverviewStats counts locales, translatable entities, active jobs and
+// OverviewStats counts locales, translatable entities and
 // target entries.
 type OverviewStats struct {
 	TotalLocales    int64
 	EnabledLocales  int64
 	PublicLocales   int64
 	SourceEntities  int64
-	ActiveJobs      int64
 	ExistingEntries int64
 }
 
@@ -288,7 +171,6 @@ type OverviewStats struct {
 type LocaleHealth struct {
 	Locale             Locale
 	ExistingEntries    int64
-	ActiveJobs         int64
 	LastTargetUpdateAt *time.Time
 }
 
@@ -297,6 +179,8 @@ type EntityHealth struct {
 	EntityType         string
 	SourceEntities     int64
 	ExistingEntries    int64
-	ActiveJobs         int64
 	LastSourceUpdateAt *time.Time
 }
+
+// PlanTarget names the entity and locale pair an extraction plan covers.
+type PlanTarget = translation.PlanTarget

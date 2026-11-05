@@ -94,7 +94,7 @@ func TestInteractiveMutationRelayPreservesTargetRevisionTuple(t *testing.T) {
 	expectedTarget := aidocument.Revision("target-before")
 	acceptedTarget := aidocument.Revision("target-after")
 	mutation := AcceptedInteractiveMutation{
-		Origin: intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_IN_EDITOR_AI,
+		Origin: intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP,
 		Request: aidocument.ApplyRequest{
 			Protocol: aidocument.ProtocolVersion, Profile: aidocument.DomainPage,
 			Document: "page-1", Locale: "en", ExpectedDocumentRevision: "document-same",

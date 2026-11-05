@@ -107,7 +107,6 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	require.NotNil(t, composition.editorApplication)
 	require.NotNil(t, composition.connectService)
 	require.NotNil(t, composition.mcpHandler)
 

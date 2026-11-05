@@ -9,24 +9,13 @@ import (
 )
 
 const (
-	ToolTranslationJobsList    = "translation_jobs_list"
 	ToolTranslationList        = "translation_list"
 	ToolTranslationGet         = "translation_get"
-	ToolTranslationJobCancel   = "translation_job_cancel"
-	ToolTranslationRegenerate  = "translation_regenerate"
 	ToolTranslationXLIFFExport = "translation_xliff_export"
 	ToolTranslationXLIFFImport = "translation_xliff_import"
 )
 
 var translationTools = toolRegistry[TranslationTools]{
-	defineTool(mcpserver.Tool{
-		Name: ToolTranslationJobsList, Title: "List translation jobs",
-		Description: "List bounded translation Job metadata. Non-admin callers must provide one exact document target.",
-		InputSchema: translationJobsListInputSchema(), OutputSchema: translationJobsOutputSchema(),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(true, false, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*TranslationTools).listJobs),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationList, Title: "List document translations",
 		Description: "List locale presence metadata for one document. Read translated fields with document_read.",
@@ -43,22 +32,6 @@ var translationTools = toolRegistry[TranslationTools]{
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*TranslationTools).getTranslation),
-	defineTool(mcpserver.Tool{
-		Name: ToolTranslationJobCancel, Title: "Cancel translation job",
-		Description: "Cancel one queued or running translation Job under current source-document edit authority.",
-		InputSchema: translationJobInputSchema(), OutputSchema: translationJobCancellationOutputSchema(),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(false, true, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*TranslationTools).cancelJob),
-	defineTool(mcpserver.Tool{
-		Name: ToolTranslationRegenerate, Title: "Request document translations",
-		Description: "Request or regenerate Translation Jobs for an explicit non-empty locale selection.",
-		InputSchema: translationRegenerateInputSchema(), OutputSchema: translationJobsOutputSchema(),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(false, true, true),
-		Meta:            oauthSecurityMeta(),
-	}, (*TranslationTools).regenerate),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationXLIFFExport, Title: "Export XLIFF 2.2",
 		Description: "Create a short-lived XLIFF 2.2 artifact reference. XML is never returned in tool content.",
@@ -79,16 +52,13 @@ var translationTools = toolRegistry[TranslationTools]{
 
 // TranslationApplication is the Translation use cases the tools call, the
 // same ones the Connect transport serves, so PAT actor context,
-// owning-domain authorization, Job lifecycle and XLIFF authority are not
+// owning-domain authorization and XLIFF authority are not
 // reimplemented here. This public MCP adapter does not own or call Web AI
 // Chat, browser sessions, prompts, models, provider credentials or an
 // in-editor provider loop.
 type TranslationApplication interface {
-	ListTranslationJobs(context.Context, translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error)
 	ListEntityTranslations(context.Context, translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error)
 	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (translationapp.Entry, error)
-	CancelTranslationJob(context.Context, translationapp.CancelTranslationJobCommand) error
-	RegenerateEntityTranslations(context.Context, translationapp.RegenerateEntityTranslationsCommand) ([]translationapp.Job, error)
 	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error)
 	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error)
 }
