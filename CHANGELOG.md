@@ -1,5 +1,21 @@
 # Changelog
 
+## [6.0.0](https://github.com/echovisionlab/geul-api/compare/v5.1.0...v6.0.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove machine translation and in-app AI generation ([#234](https://github.com/echovisionlab/geul-api/issues/234))
+
+### Features
+
+* remove machine translation and in-app AI generation ([#234](https://github.com/echovisionlab/geul-api/issues/234)) ([ca0d6a4](https://github.com/echovisionlab/geul-api/commit/ca0d6a4fd82327c032eda88293c2f4d044e5a193))
+
+
+### Bug Fixes
+
+* **media:** deliver and accept XLIFF translation files ([#232](https://github.com/echovisionlab/geul-api/issues/232)) ([cd91fc9](https://github.com/echovisionlab/geul-api/commit/cd91fc90d1a3e486fa97eb8dd163ae79a8510736))
+
 ## [5.1.0](https://github.com/echovisionlab/geul-api/compare/v5.0.1...v5.1.0) (2026-11-03)
 
 
