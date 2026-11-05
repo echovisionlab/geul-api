@@ -52,6 +52,22 @@ const documentCatalogOutputJSONSchema = `{
   "$defs":{"shape":{"type":"object","additionalProperties":false,"required":["ownership","translatable","file"],"properties":{` + catalogShapePropertiesJSONSchema + `}}}
 }`
 
+func documentCatalogInputSchema() json.RawMessage {
+	return json.RawMessage(documentCatalogInputJSONSchema)
+}
+
+const documentCatalogInputJSONSchema = `{
+  "type":"object",
+  "additionalProperties":false,
+  "required":["p","d","l"],
+  "properties":{
+    "p":` + domainJSONSchema + `,
+    "d":` + documentReferenceJSONSchema + `,
+    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
+    "k":{"type":"array","description":"Return only these block kinds, such as [\"file\",\"paragraph\"]. Omit for the whole catalog.","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}}
+  }
+}`
+
 func documentCatalogOutputSchema() json.RawMessage {
 	return json.RawMessage(documentCatalogOutputJSONSchema)
 }

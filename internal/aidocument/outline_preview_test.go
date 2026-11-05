@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestSearchNodesFindsALinkByItsAddress(t *testing.T) {
+	linked := Node{ID: "linked", Localized: []FieldValue{{ID: "content", Value: RichText(Link("/products/topofon/support", InlineText("지원 문의")))}}}
+	plain := Node{ID: "plain", Localized: []FieldValue{{ID: "content", Value: RichText(InlineText("지원 문의"))}}}
+
+	matches := searchNodes([]Node{linked, plain}, "/products/TOPOFON")
+
+	if len(matches) != 1 || !strings.Contains(matches["linked"], "지원 문의") || !strings.Contains(matches["linked"], "/products/topofon/support") {
+		t.Fatalf("matches = %v", matches)
+	}
+}
+
 func TestOutlinePreviewsUseLocaleTextOnly(t *testing.T) {
 	long := strings.Repeat("가", outlinePreviewRunes+5)
 	previews := outlinePreviews([]Node{

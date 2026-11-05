@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
@@ -16,8 +17,8 @@ const ToolDocumentCatalog = "document_catalog"
 var documentCatalogTools = toolRegistry[DocumentCatalogTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentCatalog, Title: "Describe document catalog",
-		Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified.",
-		InputSchema: openInputSchema(), OutputSchema: documentCatalogOutputSchema(),
+		Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified. Pass k with the block kinds you are about to write: a Page's whole catalog is tens of kilobytes.",
+		InputSchema: documentCatalogInputSchema(), OutputSchema: documentCatalogOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 	}, (*DocumentCatalogTools).describe),
 }
@@ -190,9 +191,31 @@ func projectCatalogShape(schema core.FieldSchema) catalogShape {
 	return shape
 }
 
-func (tools *DocumentCatalogTools) describe(ctx context.Context, name string, call toolCall[openArguments]) (mcpserver.ToolResult, error) {
-	var input openArguments
+type documentCatalogArguments struct {
+	openArguments
+	Kinds []core.BlockKind `json:"k,omitempty"`
+}
+
+// keepBlockKinds narrows a catalog to the kinds a caller is about to write. The
+// whole catalog of a Page runs to tens of kilobytes.
+func (output *documentCatalogOutput) keepBlockKinds(kinds []core.BlockKind) {
+	if len(kinds) == 0 {
+		return
+	}
+	kept := func(kind core.BlockKind) bool { return slices.Contains(kinds, kind) }
+	output.BlockKinds = slices.DeleteFunc(output.BlockKinds, func(kind core.BlockKind) bool { return !kept(kind) })
+	output.BlockRules = slices.DeleteFunc(output.BlockRules, func(rule catalogBlockRule) bool { return !kept(rule.Kind) })
+	output.Fields = slices.DeleteFunc(output.Fields, func(field catalogField) bool { return !kept(field.BlockKind) })
+	output.Relations = slices.DeleteFunc(output.Relations, func(relation catalogRelation) bool { return !kept(relation.BlockKind) })
+	output.RelationFields = slices.DeleteFunc(output.RelationFields, func(field catalogRelationField) bool { return !kept(field.BlockKind) })
+}
+
+func (tools *DocumentCatalogTools) describe(ctx context.Context, name string, call toolCall[documentCatalogArguments]) (mcpserver.ToolResult, error) {
+	var input documentCatalogArguments
 	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	if err := rejectNullArguments(call.Arguments, "k"); err != nil {
 		return executionError(err)
 	}
 	if err := validateMCPDocumentReference(input.Document); err != nil {
@@ -204,7 +227,9 @@ func (tools *DocumentCatalogTools) describe(ctx context.Context, name string, ca
 	if err != nil {
 		return expectedToolError(err)
 	}
-	encoded, err := json.Marshal(projectDocumentCatalog(description))
+	output := projectDocumentCatalog(description)
+	output.keepBlockKinds(input.Kinds)
+	encoded, err := json.Marshal(output)
 	if err != nil {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document catalog: %w", err)
 	}

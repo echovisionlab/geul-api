@@ -172,12 +172,12 @@ const acceptedOutputJSONSchema = `{
 const paragraphCreateInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["document_type","document_id","locale","expected_document_revision","text"],
+  "required":["document_type","document_id","locale","text"],
   "properties":{
     "document_type":` + domainJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Optional here, because this only adds a block: omit it to use the current revision."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
     "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle returned by document_read. Required for Page documents and must identify a rich-text section."},
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert. Omit to insert at the beginning of the selected parent, or at the top level when parent_block_id is omitted."},
@@ -188,12 +188,12 @@ const paragraphCreateInputJSONSchema = `{
 const textReplaceInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["document_type","document_id","locale","expected_document_revision","find","replace"],
+  "required":["document_type","document_id","locale","find","replace"],
   "properties":{
     "document_type":` + domainJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Optional: find already guards this edit, so omit it to use the current revision. Pass it to refuse the edit if anything changed since your read."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
     "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Optional Block handle to search in; omit to search the whole document."},
     "find":{"type":"string","minLength":1,"maxLength":2000,"description":"Exact text to replace, copied from document_read; must occur exactly once and sit inside one formatted run."},

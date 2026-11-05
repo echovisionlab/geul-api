@@ -53,7 +53,7 @@ func pageSetFilePath(message protoreflect.Message, path []core.FieldPathSegment,
 
 func pageResolvePath(message protoreflect.Message, path []core.FieldPathSegment, create bool) (protoreflect.Message, protoreflect.FieldDescriptor, error) {
 	if len(path) == 0 {
-		return nil, nil, errors.New("page recursive field path is required")
+		return nil, nil, errors.New("page section fields are set one at a time: add a nested field path, such as [block,\"\",\"\",field,[[\"f\",name]]]")
 	}
 	current := message
 	for index := 0; index < len(path); index++ {

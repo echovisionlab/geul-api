@@ -29,6 +29,8 @@ type MCPFileRuntime interface {
 	InitiateMultipartUpload(context.Context, filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error)
 	FindMultipartUploadCandidate(context.Context, filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error)
 	CompleteMultipartUpload(context.Context, filemediadomain.CompleteMultipartUploadCommand) (*filemediadomain.CompletedUpload, error)
+	PresignMultipartParts(context.Context, filemediadomain.PresignMultipartPartsCommand) ([]filemediadomain.PresignedUploadPart, error)
+	AbortMultipartUpload(context.Context, filemediadomain.AbortMultipartUploadCommand) error
 	DownloadFromURL(context.Context, filemediadomain.DownloadFromURLCommand) (*filemediadomain.ImportedFile, error)
 	GetMediaDelivery(context.Context, filemediadomain.GetMediaDeliveryQuery) (*filemediadomain.MediaDeliveryResult, error)
 }
@@ -75,6 +77,7 @@ const (
 	MCPFileTransferUploading  MCPFileTransferState = "uploading"
 	MCPFileTransferFinalizing MCPFileTransferState = "finalizing"
 	MCPFileTransferReady      MCPFileTransferState = "ready"
+	MCPFileTransferAborted    MCPFileTransferState = "aborted"
 )
 
 // MCPFileBeginInput describes metadata or a remote HTTPS source only. File
@@ -155,6 +158,16 @@ type MCPFileTransferSession struct {
 	ChunkSize           int32
 	UploadedPartNumbers []int32
 	LastActivityAt      *time.Time
+	// PartUploads holds the URLs a presigned_multipart client PUTs its bytes to.
+	PartUploads []MCPFilePartUpload
+}
+
+// MCPFilePartUpload is one short-lived URL for one part of the File.
+type MCPFilePartUpload struct {
+	PartNumber int32
+	URL        string
+	Size       int64
+	ExpiresAt  time.Time
 }
 
 type MCPFileTransferResult struct {
@@ -263,12 +276,65 @@ func (facade *MCPFileFacade) Status(
 	return MCPFileTransferResult{State: session.State, Session: &session}, nil
 }
 
+// Parts returns upload URLs for the parts of a presigned_multipart session that
+// object storage does not hold yet.
+func (facade *MCPFileFacade) Parts(ctx context.Context, handle MCPFileSessionHandle) (MCPFileTransferResult, error) {
+	if handle.Transport != MCPFileTransportPresignedMultipart {
+		return MCPFileTransferResult{}, invalidMCPFileInput("parts requires a presigned_multipart session")
+	}
+	result, err := facade.Status(ctx, handle)
+	if err != nil || result.Session == nil {
+		return result, err
+	}
+	result.Session.PartUploads, err = facade.partUploads(ctx, handle)
+	if err != nil {
+		return MCPFileTransferResult{}, err
+	}
+	return result, nil
+}
+
+func (facade *MCPFileFacade) partUploads(ctx context.Context, handle MCPFileSessionHandle) ([]MCPFilePartUpload, error) {
+	parts, err := facade.files.PresignMultipartParts(ctx, filemediadomain.PresignMultipartPartsCommand{
+		FileID: handle.FileID, UploadID: handle.UploadID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	uploads := make([]MCPFilePartUpload, len(parts))
+	for index, part := range parts {
+		uploads[index] = MCPFilePartUpload{PartNumber: part.PartNumber, URL: part.URL, Size: part.Size, ExpiresAt: part.ExpiresAt}
+	}
+	return uploads, nil
+}
+
+// Abort discards an unfinished session and the parts it holds.
+func (facade *MCPFileFacade) Abort(ctx context.Context, handle MCPFileSessionHandle) (MCPFileTransferResult, error) {
+	if _, err := validateMCPFileSessionHandle(handle); err != nil {
+		return MCPFileTransferResult{}, err
+	}
+	err := facade.files.AbortMultipartUpload(ctx, filemediadomain.AbortMultipartUploadCommand{
+		FileID: handle.FileID, UploadID: handle.UploadID,
+	})
+	if err != nil {
+		return MCPFileTransferResult{}, err
+	}
+	return MCPFileTransferResult{State: MCPFileTransferAborted}, nil
+}
+
 func (facade *MCPFileFacade) Complete(
 	ctx context.Context,
 	handle MCPFileSessionHandle,
 ) (MCPFileTransferResult, error) {
 	if _, err := validateMCPFileSessionHandle(handle); err != nil {
 		return MCPFileTransferResult{}, err
+	}
+	// A presigned client PUT its parts directly, so nothing has told the session
+	// about them. Status reconciles the object store's inventory first. A
+	// browser that prepared a media bundle has already confirmed its parts.
+	if handle.Transport == MCPFileTransportPresignedMultipart && handle.ClientMediaBundleID == "" {
+		if _, err := facade.Status(ctx, handle); err != nil {
+			return MCPFileTransferResult{}, err
+		}
 	}
 	response, err := facade.files.CompleteMultipartUpload(ctx, filemediadomain.CompleteMultipartUploadCommand{
 		FileID: handle.FileID, UploadID: handle.UploadID, ClientMediaBundleID: handle.ClientMediaBundleID,
@@ -345,7 +411,24 @@ func (facade *MCPFileFacade) beginMultipart(
 	}
 	session.Handle.TrackID = input.TrackID
 	session.Handle.ExpectedCurrentFileID = input.ExpectedCurrentFileID
+	if input.Transport == MCPFileTransportPresignedMultipart && mcpFileTakesPartUploads(input.Kind, mimeType) {
+		session.PartUploads, err = facade.partUploads(ctx, session.Handle)
+		if err != nil {
+			return MCPFileTransferResult{}, err
+		}
+	}
 	return MCPFileTransferResult{State: session.State, Session: &session}, nil
+}
+
+// mcpFileTakesPartUploads excludes direct audio and video, whose completion
+// needs derivatives only a browser can prepare.
+func mcpFileTakesPartUploads(kind MCPFileKind, mimeType string) bool {
+	switch kind {
+	case MCPFileKindVideo, MCPFileKindAudio, MCPFileKindTrackAudio:
+		return false
+	default:
+		return !strings.HasPrefix(mimeType, "audio/") && !strings.HasPrefix(mimeType, "video/")
+	}
 }
 
 func (facade *MCPFileFacade) beginRemoteHTTPS(

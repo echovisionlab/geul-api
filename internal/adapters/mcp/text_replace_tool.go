@@ -53,6 +53,7 @@ func (tools *AIDocumentTools) replaceText(ctx context.Context, _ string, call to
 		if err != nil {
 			return expectedToolError(err)
 		}
+		adoptReadRevisions(&input.focusedMutationArguments, matches)
 		if stale, result, err := staleTextReplace(input.focusedMutationArguments, matches, recipe); stale {
 			return result, err
 		}
@@ -72,6 +73,7 @@ func (tools *AIDocumentTools) replaceText(ctx context.Context, _ string, call to
 			if err != nil {
 				return expectedToolError(err)
 			}
+			adoptReadRevisions(&input.focusedMutationArguments, page)
 			if stale, result, err := staleTextReplace(input.focusedMutationArguments, page, recipe); stale {
 				return result, err
 			}
@@ -87,6 +89,15 @@ func (tools *AIDocumentTools) replaceText(ctx context.Context, _ string, call to
 		return executionError(err)
 	}
 	return tools.applyRequest(ctx, request, "")
+}
+
+// adoptReadRevisions lets a caller omit revisions: find is its own guard, so the
+// first read's revisions stand in, and later reads and apply still detect a move.
+func adoptReadRevisions(input *focusedMutationArguments, read readResult) {
+	if input.ExpectedDocumentRevision == "" {
+		input.ExpectedDocumentRevision = read.revisions.document
+		input.ExpectedTargetRevision = read.revisions.target
+	}
 }
 
 type readRevisions struct {

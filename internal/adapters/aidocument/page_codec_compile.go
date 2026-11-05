@@ -612,6 +612,11 @@ func (c *PageCodec) setPageField(document *contentv1.LocalizedPageDocument, role
 	default:
 		return errors.New("field is not in the Page section catalog")
 	}
+	// document_read returns a section's empty settings as an empty object, and
+	// writing back what was read must not fail.
+	if len(target.Path) == 0 && value.Kind == core.ValueKindObject && len(value.Object) == 0 {
+		return nil
+	}
 	if role != core.LocaleRoleSource && target.Field == pageSectionLocaleField {
 		_, field, err := pageResolvePath(message, target.Path, true)
 		if err != nil {
@@ -958,7 +963,7 @@ func applyPageColumnOperation(document *contentv1.LocalizedPageDocument, operati
 	case core.OperationReplaceBlockKind:
 		return errors.New("page-column kind cannot be replaced")
 	default:
-		return errors.New("unsupported page-column operation")
+		return errors.New("a page-column accepts only setting ratio, moving and deleting; insert sections with the column as their parent")
 	}
 }
 

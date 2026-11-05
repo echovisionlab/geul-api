@@ -140,7 +140,15 @@ func (tools *AIDocumentTools) mutateHeading(ctx context.Context, call toolCall[h
 	if input.Alignment != nil {
 		operations = append(operations, core.SetFieldOperation(input.Block, "textAlignment", core.Text(*input.Alignment)))
 	}
-	request, err := focusedApplyRequest(input.focusedMutationArguments, operations)
+	focused := input.focusedMutationArguments
+	if !update {
+		var err error
+		focused, err = withCurrentRevisions(ctx, tools.application, focused)
+		if err != nil {
+			return expectedToolError(err)
+		}
+	}
+	request, err := focusedApplyRequest(focused, operations)
 	if err != nil {
 		return executionError(err)
 	}
@@ -189,9 +197,13 @@ func (tools *AIDocumentTools) createTable(ctx context.Context, _ string, call to
 			}
 		}
 	}
+	focused, err := withCurrentRevisions(ctx, tools.application, input.focusedMutationArguments)
+	if err != nil {
+		return expectedToolError(err)
+	}
 	block := core.BlockID(uuid.NewString())
 	shared, localized := plainTableValues(input.Rows, input.HeaderRow, input.HeaderColumn)
-	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
+	request, err := focusedApplyRequest(focused, []core.Operation{
 		core.InsertBlockOperation(block, "table", input.Parent, input.After),
 		core.SetFieldOperation(block, "table", shared),
 		core.SetFieldOperation(block, "tableContent", localized),

@@ -554,25 +554,14 @@ func (s *Service) HandlePresignUploadPart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	expiresAt := time.Now().Add(multipartPresignTTL)
-	presigned, err := s.s3PresignClient.PresignUploadPart(
-		r.Context(),
-		&s3.UploadPartInput{
-			Bucket:        aws.String(s.s3Bucket),
-			Key:           aws.String(request.fileKey),
-			UploadId:      aws.String(request.session.UploadID),
-			PartNumber:    aws.Int32(request.partNumber),
-			ContentLength: aws.Int64(expectedSize),
-		},
-		func(options *s3.PresignOptions) { options.Expires = multipartPresignTTL },
-	)
+	url, expiresAt, err := s.signMultipartPart(r.Context(), request.session, request.fileKey, request.partNumber, expectedSize)
 	if err != nil {
 		recordUploadFailure(r, fmt.Errorf("sign upload part: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to sign upload part", http.StatusInternalServerError)
 		return
 	}
 	writeMultipartJSON(w, multipartPresignResponse{
-		URL: presigned.URL, ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		URL: url, ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
 	})
 }
 

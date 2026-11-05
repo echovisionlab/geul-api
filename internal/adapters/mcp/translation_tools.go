@@ -52,8 +52,11 @@ var translationTools = toolRegistry[TranslationTools]{
 	}, (*TranslationTools).importXLIFF),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationUnitsGet, Title: "Get translation units",
-		Description: "Read the source and current target of a document's translation units for one target locale, " +
-			"without an XLIFF file. Units use XLIFF 2.2 inline markup; translate them and write back with translation_units_put.",
+		Description: "Read a document's translation units: source and targets together, with no XLIFF file and no other read first. " +
+			"Pass l for one whole locale. Omit l, or pass ls, to read several locales at once with each unit listed once and its targets per locale; " +
+			"that form needs b (Block handles), q (text in any locale, ignoring case and markup) or u to keep the result small. " +
+			"Units with several formatted runs use XLIFF 2.2 inline markup; in the several-locale form a one-run unit reads as plain text and p holds a marked-up unit's plain source. " +
+			"Write back with translation_units_put.",
 		InputSchema: translationUnitsGetInputSchema(), OutputSchema: translationUnitsGetOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -61,9 +64,11 @@ var translationTools = toolRegistry[TranslationTools]{
 	}, (*TranslationTools).getTranslationUnits),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationUnitsPut, Title: "Put translation units",
-		Description: "Write target translations for named units of one target locale. Other units keep their values. " +
-			"Each target must keep its source's inline codes with the same ids and nesting.",
-		InputSchema: translationUnitsPutInputSchema(), OutputSchema: translationXLIFFImportOutputSchema(),
+		Description: "Set translations; other units keep their values. Preferred: e, a list of edits giving a unit's current source text s and its target per locale t, so one call updates every locale and needs no read first. " +
+			"All locales apply together or none do. s must match the current source exactly, which refuses the write if the source changed; add i (unit ID) or b (Block handle) when several units share that text. " +
+			"Plain text is enough for a one-run unit and keeps its link or formatting; a unit with several runs needs markup keeping its source codes. " +
+			"Alternative: l with u (target per unit ID) and er (the revision r from translation_units_get) for one locale.",
+		InputSchema: translationUnitsPutInputSchema(), OutputSchema: translationUnitsPutOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -83,6 +88,7 @@ type TranslationApplication interface {
 	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error)
 	GetEntityTranslationUnits(context.Context, translationapp.GetTranslationUnitsQuery) (translationapp.TranslationUnits, error)
 	PutEntityTranslationUnits(context.Context, translationapp.PutTranslationUnitsCommand) (translationapp.XLIFFImport, error)
+	EditEntityTranslationUnits(context.Context, translationapp.EditTranslationUnitsCommand) (map[string]translationapp.XLIFFImport, error)
 }
 
 type TranslationTools struct {

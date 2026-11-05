@@ -41,6 +41,14 @@ type fakeMCPFileRuntime struct {
 	deliveryError   error
 }
 
+func (runtime *fakeMCPFileRuntime) PresignMultipartParts(context.Context, filemediadomain.PresignMultipartPartsCommand) ([]filemediadomain.PresignedUploadPart, error) {
+	return nil, nil
+}
+
+func (runtime *fakeMCPFileRuntime) AbortMultipartUpload(context.Context, filemediadomain.AbortMultipartUploadCommand) error {
+	return nil
+}
+
 func (runtime *fakeMCPFileRuntime) ImportRemoteFile(_ context.Context, input filemediadomain.RemoteFileImportInput) (*filemediadomain.ImportedFile, error) {
 	runtime.importInput = &input
 	return runtime.downloadResult, runtime.downloadError
@@ -377,7 +385,7 @@ func TestMCPFileCompleteKeepsBundleOptionalAndPreservesMediaPrerequisite(t *test
 	}}
 	facade, _ := NewMCPFileFacade(runtime)
 	handle := MCPFileSessionHandle{
-		Transport: MCPFileTransportPresignedMultipart, Kind: MCPFileKindGeneral,
+		Transport: MCPFileTransportBrowserUploadPage, Kind: MCPFileKindGeneral,
 		FileID: fileID, UploadID: "upload-binary",
 	}
 	if _, err := facade.Complete(t.Context(), handle); err != nil {

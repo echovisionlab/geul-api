@@ -53,7 +53,7 @@ var documentTools = toolRegistry[AIDocumentTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
-			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
+			"Revisions are optional because this only adds a block. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
@@ -69,7 +69,7 @@ var documentTools = toolRegistry[AIDocumentTools]{
 		Meta:            oauthSecurityMeta(),
 	}, (*AIDocumentTools).updateParagraph),
 	defineTool(mcpserver.Tool{Name: ToolHeadingCreate, Title: "Create document heading",
-		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
+		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Revisions are optional because this only adds a block. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
 		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
 		return tools.mutateHeading(ctx, call, false)
 	}),
@@ -82,14 +82,14 @@ var documentTools = toolRegistry[AIDocumentTools]{
 		Name: ToolTextReplace, Title: "Replace text in document",
 		Description: "Replace one exact piece of text (a word or sentence) inside existing blocks while keeping the marks, links and colors around it: the cheapest way to fix a sentence in a long or formatted block. " +
 			"find must occur exactly once in this locale's text, copied exactly (case and spacing matter), within block_id when given or else anywhere in the document; an empty replace deletes it. " +
-			"Locate it first with document_read m=outline q=<text>, which also returns dr and tr. Works for every document type and translation. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
+			"Works for every document type and translation, with no read first: revisions are optional because find guards the edit. It changes nothing and says so when find is missing or occurs more than once." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(textReplaceInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*AIDocumentTools).replaceText),
 	defineTool(mcpserver.Tool{Name: ToolTableCreate, Title: "Create document table",
-		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
+		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Revisions are optional because this only adds a block. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
 		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, (*AIDocumentTools).createTable),
 	defineTool(mcpserver.Tool{
 		Name: ToolBlockDelete, Title: "Delete document block",
@@ -353,8 +353,12 @@ func (tools *AIDocumentTools) createParagraph(ctx context.Context, _ string, cal
 	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id"); err != nil {
 		return executionError(err)
 	}
+	focused, err := withCurrentRevisions(ctx, tools.application, input.focusedMutationArguments)
+	if err != nil {
+		return expectedToolError(err)
+	}
 	block := core.BlockID(uuid.NewString())
-	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
+	request, err := focusedApplyRequest(focused, []core.Operation{
 		core.InsertBlockOperation(block, "paragraph", input.Parent, input.After),
 		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
@@ -482,6 +486,30 @@ func metadataUUIDList(ids []string) (core.Value, error) {
 		items = append(items, core.StableItem(core.RelationItemID(canonical), core.Text(canonical)))
 	}
 	return core.List(items...), nil
+}
+
+// withCurrentRevisions fills omitted revisions for an edit that only adds a
+// block, so nothing it could overwrite needs a read first. Apply still rejects
+// the revisions if the document moves before the edit lands.
+func withCurrentRevisions(ctx context.Context, application AIDocumentApplication, input focusedMutationArguments) (focusedMutationArguments, error) {
+	if input.ExpectedDocumentRevision != "" {
+		return input, nil
+	}
+	if err := validateMCPDocumentReference(input.Document); err != nil {
+		return input, err
+	}
+	if err := requireLocale(input.Locale, "locale"); err != nil {
+		return input, err
+	}
+	metadata, err := application.Open(ctx, core.OpenRequest{
+		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+	})
+	if err != nil {
+		return input, err
+	}
+	input.ExpectedDocumentRevision = metadata.DocumentRevision
+	input.ExpectedTargetRevision = metadata.TargetRevision
+	return input, nil
 }
 
 func focusedApplyRequest(input focusedMutationArguments, operations []core.Operation) (core.ApplyRequest, error) {

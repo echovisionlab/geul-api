@@ -221,7 +221,7 @@ func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
 			}
 			tools := mustAIDocumentTools(t, application)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
-			if err != nil || !result.IsError || result.StructuredContent["i"] == nil || result.StructuredContent["o"] == nil {
+			if err != nil || !result.IsError || result.StructuredContent["i"] == nil || result.StructuredContent["o"] != nil {
 				t.Fatalf("missing structured rejection: %+v %v", result, err)
 			}
 			listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})

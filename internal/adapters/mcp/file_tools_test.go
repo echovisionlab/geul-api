@@ -45,6 +45,22 @@ type recordingMCPFileRuntime struct {
 	deliveryRequest *managev1.GetMediaDeliveryRequest
 	deliveryResult  *filemediadomain.MediaDeliveryResult
 	deliveryError   error
+
+	presignCommand *filemediadomain.PresignMultipartPartsCommand
+	presignResult  []filemediadomain.PresignedUploadPart
+	abortCommand   *filemediadomain.AbortMultipartUploadCommand
+}
+
+func (runtime *recordingMCPFileRuntime) PresignMultipartParts(ctx context.Context, command filemediadomain.PresignMultipartPartsCommand) ([]filemediadomain.PresignedUploadPart, error) {
+	runtime.capture(ctx)
+	runtime.presignCommand = &command
+	return runtime.presignResult, nil
+}
+
+func (runtime *recordingMCPFileRuntime) AbortMultipartUpload(ctx context.Context, command filemediadomain.AbortMultipartUploadCommand) error {
+	runtime.capture(ctx)
+	runtime.abortCommand = &command
+	return nil
 }
 
 func (runtime *recordingMCPFileRuntime) ImportRemoteFile(ctx context.Context, input filemediadomain.RemoteFileImportInput) (*filemediadomain.ImportedFile, error) {
@@ -236,6 +252,80 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 	if !strings.Contains(statusText, `"u":[1,3]`) || !strings.Contains(statusText, `"a":"2026-08-23T01:11:12.000000123Z"`) ||
 		strings.Contains(statusText, "must-not-leak") {
 		t.Fatalf("status result = %s", statusText)
+	}
+}
+
+func TestFileToolsPresignedTransferNeedsOnlyBeginAndComplete(t *testing.T) {
+	fileID := uuid.NewString()
+	expires := time.Date(2026, 11, 6, 1, 0, 0, 0, time.UTC)
+	runtime := &recordingMCPFileRuntime{
+		initiateResult: &filemediadomain.MultipartUpload{
+			FileID: fileID, UploadID: "upload-i", TotalParts: 2, ChunkSize: 1024,
+			Status: filemediadomain.UploadSessionStatusInitiated,
+		},
+		presignResult: []filemediadomain.PresignedUploadPart{
+			{PartNumber: 1, URL: "https://s3.example/1", Size: 1024, ExpiresAt: expires},
+			{PartNumber: 2, URL: "https://s3.example/2", Size: 10, ExpiresAt: expires},
+		},
+		findResult: &filemediadomain.MultipartCandidate{
+			FileID: fileStringPointer(fileID), UploadID: fileStringPointer("upload-i"), FileSize: 1034, TotalParts: 2, ChunkSize: 1024,
+			Status: filemediadomain.UploadSessionStatusUploading,
+		},
+		completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: fileTestDelivery(fileID)},
+	}
+	tools := mustFileTools(t, runtime)
+
+	begin, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
+		`{"a":"begin","k":"image","t":"presigned_multipart","n":"icon.png","m":"image/png","s":1034}`))
+	if err != nil {
+		t.Fatalf("file_transfer(begin) error = %v", err)
+	}
+	session := begin.StructuredContent["x"].(map[string]any)
+	wantParts := []any{[]any{float64(1), "https://s3.example/1", float64(1024)}, []any{float64(2), "https://s3.example/2", float64(10)}}
+	if !reflect.DeepEqual(session["l"], wantParts) || session["e"] != "2026-11-06T01:00:00Z" {
+		t.Fatalf("begin upload URLs = %v, expiry %v", session["l"], session["e"])
+	}
+	if runtime.presignCommand == nil || runtime.presignCommand.FileID != fileID || runtime.presignCommand.UploadID != "upload-i" {
+		t.Fatalf("presign command = %+v", runtime.presignCommand)
+	}
+
+	handle := `["presigned_multipart","image","` + fileID + `","upload-i"]`
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"complete","h":`+handle+`}`)); err != nil {
+		t.Fatalf("file_transfer(complete) error = %v", err)
+	}
+	if runtime.findRequest == nil || runtime.completeRequest == nil {
+		t.Fatalf("complete must reconcile parts first: find %+v, complete %+v", runtime.findRequest, runtime.completeRequest)
+	}
+
+	parts, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"parts","h":`+handle+`}`))
+	if err != nil {
+		t.Fatalf("file_transfer(parts) error = %v", err)
+	}
+	if got := parts.StructuredContent["x"].(map[string]any)["l"]; !reflect.DeepEqual(got, wantParts) {
+		t.Fatalf("parts upload URLs = %v", got)
+	}
+
+	aborted, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"abort","h":`+handle+`}`))
+	if err != nil {
+		t.Fatalf("file_transfer(abort) error = %v", err)
+	}
+	if aborted.StructuredContent["s"] != "aborted" || runtime.abortCommand == nil || runtime.abortCommand.UploadID != "upload-i" {
+		t.Fatalf("abort = %+v, command %+v", aborted.StructuredContent, runtime.abortCommand)
+	}
+}
+
+func TestFileToolsPresignedAudioGetsNoUploadURLs(t *testing.T) {
+	runtime := &recordingMCPFileRuntime{initiateResult: &filemediadomain.MultipartUpload{
+		FileID: uuid.NewString(), UploadID: "upload-a", TotalParts: 1, ChunkSize: 1024,
+		Status: filemediadomain.UploadSessionStatusInitiated,
+	}}
+	begin, err := mustFileTools(t, runtime).CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
+		`{"a":"begin","k":"general","t":"presigned_multipart","n":"a.wav","m":"audio/wav","s":10}`))
+	if err != nil {
+		t.Fatalf("file_transfer(begin) error = %v", err)
+	}
+	if runtime.presignCommand != nil || begin.StructuredContent["x"].(map[string]any)["l"] != nil {
+		t.Fatalf("direct audio must keep the browser flow: %+v", begin.StructuredContent)
 	}
 }
 
@@ -559,7 +649,7 @@ func TestFileTransferInputSchemaIsOneFlatObject(t *testing.T) {
 			t.Fatalf("file_transfer input property %q missing or undocumented", name)
 		}
 	}
-	if !reflect.DeepEqual(properties["a"].Enum, []string{"begin", "status", "complete"}) ||
+	if !reflect.DeepEqual(properties["a"].Enum, []string{"begin", "status", "parts", "complete", "abort"}) ||
 		!reflect.DeepEqual(properties["t"].Enum, []string{"browser_upload_page", "presigned_multipart", "remote_https"}) {
 		t.Fatalf("file_transfer action/transport enums = %v / %v", properties["a"].Enum, properties["t"].Enum)
 	}
