@@ -256,7 +256,7 @@ jobs:
       # released revisions; the Kratos image is the one built from that Identity.
       INTEGRATION_IDENTITY_REVISION: eed171aad8078e88f4e2538fe7d3232f8afbd4b1 # OAuth app routes (main)
       GEUL_TEST_KRATOS_IMAGE: registry.rawsector.com/echovisionlab/geul-identity-kratos@sha256:e9d06c5765c16c5e4e410bca8cd1abdfb7ce1fd13e772a4e9936fe6c95ba4094
-      INTEGRATION_COLLAB_REVISION: 7508b50cafbbdb06a8b767035b5798dd39ce318c # v0.6.10
+      INTEGRATION_COLLAB_REVISION: 977edcf747aa9e4ce4ccc355e2e7170a77cf3dc1 # v0.7.0
       INTEGRATION_COMMON_REVISION: 8faddac1a051b786c88f677950c4a415012c837d # v0.11.1
       INTEGRATION_CONTRACTS_REVISION: eaa6e90bf160330485f1d49cef415dcd265c5aea # v0.17.0
       INTEGRATION_TELEMETRY_REVISION: fb79e5327ab2233af9ad0ac06ff30743e54c28ad # v0.5.0
