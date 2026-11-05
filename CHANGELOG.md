@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.1](https://github.com/echovisionlab/geul-api/compare/v6.1.0...v6.1.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **translation:** keep authored run whitespace and stable target revisions ([#238](https://github.com/echovisionlab/geul-api/issues/238)) ([08f7d39](https://github.com/echovisionlab/geul-api/commit/08f7d397a3ec5d25cd3885e2a10a1532f14aa9f8))
+
 ## [6.1.0](https://github.com/echovisionlab/geul-api/compare/v6.0.0...v6.1.0) (2026-11-05)
 
 
