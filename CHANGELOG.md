@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.0](https://github.com/echovisionlab/geul-api/compare/v6.1.2...v6.2.0) (2026-11-05)
+
+
+### Features
+
+* **mcp:** let edits and uploads finish in fewer requests ([#242](https://github.com/echovisionlab/geul-api/issues/242)) ([79409ea](https://github.com/echovisionlab/geul-api/commit/79409ea59993c19671f4051b748b54903397d3da))
+
 ## [6.1.2](https://github.com/echovisionlab/geul-api/compare/v6.1.1...v6.1.2) (2026-11-05)
 
 
