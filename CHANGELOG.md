@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/echovisionlab/geul-api/compare/v6.0.0...v6.1.0) (2026-11-05)
+
+
+### Features
+
+* **mcp:** read and write translation units without XLIFF files ([#236](https://github.com/echovisionlab/geul-api/issues/236)) ([f381319](https://github.com/echovisionlab/geul-api/commit/f381319cea48f3def0d8394ab0f2aeb4d6d64008))
+
 ## [6.0.0](https://github.com/echovisionlab/geul-api/compare/v5.1.0...v6.0.0) (2026-11-05)
 
 
