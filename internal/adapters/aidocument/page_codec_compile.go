@@ -355,7 +355,8 @@ func (c *PageCodec) applyPageOperation(ctx context.Context, document *contentv1.
 	if operation.Kind == core.OperationInsertBlock && operation.InsertBlock.Kind == pageColumnBlockKind {
 		return insertPageColumn(document, operation.InsertBlock)
 	}
-	if _, _, _, isColumn := findPageColumn(document, string(targetBlock)); isColumn {
+	// An insert targets its parent, so a column here is the new section's slot.
+	if _, _, _, isColumn := findPageColumn(document, string(targetBlock)); isColumn && operation.Kind != core.OperationInsertBlock {
 		return applyPageColumnOperation(document, operation)
 	}
 	if operation.Kind == core.OperationInsertBlock && c.baseCases[operation.InsertBlock.Kind] == nil {

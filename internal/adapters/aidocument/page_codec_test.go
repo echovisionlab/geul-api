@@ -119,6 +119,48 @@ func TestPageCodecCompilesSectionMoveByStableColumnHandle(t *testing.T) {
 	require.Equal(t, columnsID, moved.ParentID.String())
 }
 
+func TestPageCodecInsertsSectionByStableColumnHandle(t *testing.T) {
+	codec, err := NewPageCodec()
+	require.NoError(t, err)
+	columnsID, columnID, otherColumnID, sectionID, paragraphID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	document := &contentv1.LocalizedPageDocument{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Locale: "en",
+		Base: &contentv1.PageSectionGraph{Nodes: []*contentv1.PageSectionNode{{
+			Section: &contentv1.PageSection{Id: columnsID, Settings: &contentv1.PageSectionSettings{}, Value: &contentv1.PageSection_Columns{Columns: &contentv1.ColumnsSection{Props: &contentv1.ColumnsSectionProps{
+				Columns: []*contentv1.ColumnsSectionProps_ColumnsItem{{Id: columnID, Ratio: 1}, {Id: otherColumnID, Ratio: 1}},
+			}}}}, Placement: &contentv1.PageSectionPlacement{},
+		}}},
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "en", Sections: []*contentv1.PageSectionLocale{{
+			SectionId: columnsID, Value: &contentv1.PageSectionLocale_Columns{Columns: &contentv1.ColumnsSectionLocale{Props: &contentv1.ColumnsSectionLocaleProps{}}},
+		}}},
+	}
+	batch, issues, err := codec.Compile(t.Context(), uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), []core.Operation{
+		core.InsertBlockOperation(core.BlockID(sectionID), "rich-text", core.BlockID(columnID), ""),
+		core.InsertBlockOperation(core.BlockID(paragraphID), "paragraph", core.BlockID(sectionID), ""),
+	})
+	require.NoError(t, err)
+	require.Empty(t, issues)
+	var inserted *contentblock.BaseBlock
+	for index := range batch.Upserts {
+		if batch.Upserts[index].ID.String() == sectionID {
+			inserted = &batch.Upserts[index]
+		}
+	}
+	require.NotNil(t, inserted)
+	require.Equal(t, "column-"+columnID, inserted.ContainerSlot)
+	require.Equal(t, columnsID, inserted.ParentID.String())
+
+	before := proto.Clone(document)
+	batch, issues, err = codec.Compile(t.Context(), uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), []core.Operation{
+		core.InsertBlockOperation(core.BlockID(uuid.NewString()), "paragraph", core.BlockID(columnID), ""),
+	})
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	require.Contains(t, issues[0].Message, "rich Text parent")
+	require.Empty(t, batch.Upserts)
+	require.True(t, proto.Equal(before, document))
+}
+
 func TestNewPageRegistrationRejectsMissingDomainService(t *testing.T) {
 	_, err := NewPageRegistration(nil)
 	require.ErrorContains(t, err, "page AI document port is required")
