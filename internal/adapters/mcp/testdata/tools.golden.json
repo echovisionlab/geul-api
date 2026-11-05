@@ -28247,6 +28247,307 @@
     }
   },
   {
+    "name": "translation_units_get",
+    "title": "Get translation units",
+    "description": "Read the source and current target of a document's translation units for one target locale, without an XLIFF file. Units use XLIFF 2.2 inline markup; translate them and write back with translation_units_put.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p",
+        "d",
+        "l"
+      ],
+      "properties": {
+        "p": {
+          "description": "Document profile, paired with the document reference d.",
+          "allOf": [
+            {
+              "enum": [
+                "post",
+                "page",
+                "work",
+                "program_event",
+                "release",
+                "artist",
+                "label",
+                "menu",
+                "email_template",
+                "email_layout",
+                "campaign",
+                "form",
+                "privacy",
+                "terms",
+                "post_series"
+              ]
+            }
+          ]
+        },
+        "d": {
+          "type": "string",
+          "description": "Exact owning document reference.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "l": {
+          "description": "Target locale; it must differ from the source locale.",
+          "allOf": [
+            {
+              "type": "string",
+              "description": "Exact supported locale code; aliases and case variants are not normalized.",
+              "minLength": 1,
+              "maxLength": 35,
+              "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          ]
+        },
+        "u": {
+          "type": "array",
+          "description": "Unit IDs to read. Omit to read every current unit.",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "s",
+        "l",
+        "u"
+      ],
+      "properties": {
+        "s": {
+          "description": "Source locale.",
+          "allOf": [
+            {
+              "type": "string",
+              "description": "Exact supported locale code; aliases and case variants are not normalized.",
+              "minLength": 1,
+              "maxLength": 35,
+              "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          ]
+        },
+        "l": {
+          "description": "Target locale.",
+          "allOf": [
+            {
+              "type": "string",
+              "description": "Exact supported locale code; aliases and case variants are not normalized.",
+              "minLength": 1,
+              "maxLength": 35,
+              "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          ]
+        },
+        "r": {
+          "type": "string",
+          "description": "Current opaque target revision. Pass unchanged as translation_units_put er. Omitted when the target does not exist.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "u": {
+          "type": "array",
+          "description": "Units in document order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "i",
+              "g",
+              "s"
+            ],
+            "properties": {
+              "i": {
+                "type": "string",
+                "description": "Unit ID; the key for translation_units_put."
+              },
+              "g": {
+                "type": "string",
+                "description": "Group the unit belongs to, such as one block or the document metadata."
+              },
+              "c": {
+                "type": "string",
+                "description": "Context note for the unit."
+              },
+              "s": {
+                "type": "string",
+                "description": "Source text as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e."
+              },
+              "t": {
+                "type": "string",
+                "description": "Current target in the same markup. Omitted when the unit has no target yet."
+              }
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "translation_units_put",
+    "title": "Put translation units",
+    "description": "Write target translations for named units of one target locale. Other units keep their values. Each target must keep its source's inline codes with the same ids and nesting.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p",
+        "d",
+        "l",
+        "u"
+      ],
+      "properties": {
+        "p": {
+          "description": "Document profile, paired with the document reference d.",
+          "allOf": [
+            {
+              "enum": [
+                "post",
+                "page",
+                "work",
+                "program_event",
+                "release",
+                "artist",
+                "label",
+                "menu",
+                "email_template",
+                "email_layout",
+                "campaign",
+                "form",
+                "privacy",
+                "terms",
+                "post_series"
+              ]
+            }
+          ]
+        },
+        "d": {
+          "type": "string",
+          "description": "Exact owning document reference.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "l": {
+          "description": "Target locale; it must differ from the source locale.",
+          "allOf": [
+            {
+              "type": "string",
+              "description": "Exact supported locale code; aliases and case variants are not normalized.",
+              "minLength": 1,
+              "maxLength": 35,
+              "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          ]
+        },
+        "u": {
+          "type": "object",
+          "description": "Target per unit ID from translation_units_get, as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e. Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.",
+          "minProperties": 1,
+          "maxProperties": 1000,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 100000
+          }
+        },
+        "er": {
+          "type": "string",
+          "description": "Exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "r",
+        "c",
+        "u"
+      ],
+      "properties": {
+        "r": {
+          "type": "string",
+          "description": "Target revision after import.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "c": {
+          "type": "boolean",
+          "description": "Whether stored target values changed."
+        },
+        "u": {
+          "type": "array",
+          "description": "Opaque unit IDs affected by the validated import.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
     "name": "translation_xliff_export",
     "title": "Export XLIFF 2.2",
     "description": "Create a short-lived XLIFF 2.2 artifact reference. XML is never returned in tool content.",

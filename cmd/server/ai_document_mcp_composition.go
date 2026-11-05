@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
-const mcpServerImplementationVersion = "20"
+const mcpServerImplementationVersion = "21"
 
 const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=page, p=program_event, p=release or p=artist), policy_list (p=terms or p=privacy) " +
 	"and menu_list (p=menu; menu_locations_get for placement); pass d unchanged, never a slug or URL. " +

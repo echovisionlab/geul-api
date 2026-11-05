@@ -248,7 +248,7 @@ func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command Impo
 			return s.applyImportedXLIFF(ctx, store, *imported, TranslationInterchangeApply{
 				EntityType: entityType, EntityID: entityID, TargetLocale: targetLocale,
 				Mode: command.Mode, ExpectedRevision: expectedRevision, Now: now,
-			})
+			}, importedTargetsFromFile)
 		},
 		// The owning domain appends the locale-content record in its apply.
 		Audit: func(TranslationInterchangeApplyResult) mutation.Audit { return mutation.Unchanged() },
@@ -262,6 +262,18 @@ func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command Impo
 	}, nil
 }
 
+// importedTargets names where applied targets came from: the request field
+// that invalid targets are reported against and the OG request reason.
+type importedTargets struct {
+	field    string
+	ogReason string
+}
+
+var (
+	importedTargetsFromFile  = importedTargets{field: "file_id", ogReason: "translation_xliff_import"}
+	importedTargetsFromUnits = importedTargets{field: "units", ogReason: "translation_units_put"}
+)
+
 // applyImportedXLIFF applies the imported targets that still match the
 // current extraction plan and requests the target locale's OG.
 func (s *Service) applyImportedXLIFF(
@@ -269,20 +281,21 @@ func (s *Service) applyImportedXLIFF(
 	store Store,
 	imported translation.XLIFFDocument,
 	apply TranslationInterchangeApply,
+	origin importedTargets,
 ) (TranslationInterchangeApplyResult, error) {
 	plan, source, err := s.buildTranslationInterchangePlan(ctx, store, apply.EntityType, apply.EntityID, apply.TargetLocale)
 	if err != nil {
 		return TranslationInterchangeApplyResult{}, err
 	}
 	if imported.SourceLocale != plan.SourceLocale {
-		return TranslationInterchangeApplyResult{}, domainerr.InvalidField("file_id", "XLIFF source locale no longer matches the owning document")
+		return TranslationInterchangeApplyResult{}, domainerr.InvalidField(origin.field, "source locale no longer matches the owning document")
 	}
 	targets, handles, err := validateImportedXLIFFAgainstCurrentPlan(imported, plan, apply.Mode)
 	if err != nil {
 		if invalid, ok := errors.AsType[*domainerr.Error](err); ok && invalid.Kind == domainerr.Invalid {
 			return TranslationInterchangeApplyResult{}, err
 		}
-		return TranslationInterchangeApplyResult{}, domainerr.InvalidField("file_id", err.Error())
+		return TranslationInterchangeApplyResult{}, domainerr.InvalidField(origin.field, err.Error())
 	}
 	apply.SourceLocale, apply.Source, apply.Plan = plan.SourceLocale, source, plan
 	apply.Targets, apply.UnitHandles = targets, handles
@@ -295,7 +308,7 @@ func (s *Service) applyImportedXLIFF(
 	}
 	if result.Changed {
 		if _, err := store.Domains().RequestLocaleOG(
-			ctx, apply.EntityType, apply.EntityID, apply.TargetLocale, "translation_xliff_import",
+			ctx, apply.EntityType, apply.EntityID, apply.TargetLocale, origin.ogReason,
 		); err != nil {
 			return TranslationInterchangeApplyResult{}, err
 		}
@@ -309,12 +322,25 @@ func (s *Service) validateTranslationInterchangeRequest(
 	targetLocale string,
 	mode InterchangeMode,
 ) (string, string, string, error) {
+	if mode != InterchangeModePatch && mode != InterchangeModeReplace {
+		if _, _, err := parseTranslationTarget(target); err != nil {
+			return "", "", "", err
+		}
+		return "", "", "", domainerr.InvalidField("mode", "PATCH or REPLACE is required")
+	}
+	return s.validateTranslationInterchangeTarget(ctx, target, targetLocale)
+}
+
+// validateTranslationInterchangeTarget checks the entity target and that the
+// target locale is a known locale.
+func (s *Service) validateTranslationInterchangeTarget(
+	ctx context.Context,
+	target *Target,
+	targetLocale string,
+) (string, string, string, error) {
 	entityType, entityID, err := parseTranslationTarget(target)
 	if err != nil {
 		return "", "", "", err
-	}
-	if mode != InterchangeModePatch && mode != InterchangeModeReplace {
-		return "", "", "", domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	targetLocale = strings.TrimSpace(targetLocale)
 	if targetLocale == "" {

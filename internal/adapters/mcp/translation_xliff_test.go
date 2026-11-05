@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -48,7 +49,7 @@ func TestXLIFFExportSelectionEnforcesAdvertisedBound(t *testing.T) {
 		t.Fatal("selection above the advertised maximum was accepted")
 	}
 	// Replace imports may affect more than the patch export selection maximum.
-	if _, err := encodeXLIFFImport(&managev1.ImportEntityTranslationXLIFFResponse{
+	if _, err := encodeXLIFFImport(translationapp.XLIFFImport{
 		TargetRevision: "revision-a", Changed: true, AffectedUnitHandles: handles,
 	}); err != nil {
 		t.Fatalf("successful complete import response was bounded as a selection: %v", err)

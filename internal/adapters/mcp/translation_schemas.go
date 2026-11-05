@@ -91,3 +91,54 @@ const translationXLIFFImportOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["r","c","u"],
   "properties":{"r":{"type":"string","description":"Target revision after import.","minLength":1,"maxLength":256},"c":{"type":"boolean","description":"Whether stored target values changed."},"u":{"type":"array","description":"Opaque unit IDs affected by the validated import.","uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}}
 }`
+
+func translationUnitsGetInputSchema() json.RawMessage {
+	return json.RawMessage(translationUnitsGetInputJSONSchema)
+}
+func translationUnitsGetOutputSchema() json.RawMessage {
+	return json.RawMessage(translationUnitsGetOutputJSONSchema)
+}
+func translationUnitsPutInputSchema() json.RawMessage {
+	return json.RawMessage(translationUnitsPutInputJSONSchema)
+}
+
+// translationUnitMarkupJSON describes unit markup, already escaped for a JSON
+// string.
+const translationUnitMarkupJSON = `XLIFF 2.2 inline markup: <pc id=\"…\">…</pc> wraps formatted or linked text, and <ph id=\"…\" equiv=\"…\"/> stands for a placeholder whose equiv shows what it renders. Text escapes &, < and >.`
+
+const translationUnitsGetInputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["p","d","l"],
+  "properties":{
+    "p":` + translationProfileJSONSchema + `,
+    "d":{"type":"string","description":"Exact owning document reference.","minLength":1,"maxLength":256},
+    "l":{"description":"Target locale; it must differ from the source locale.","allOf":[` + localeJSONSchema + `]},
+    "u":{"type":"array","description":"Unit IDs to read. Omit to read every current unit.","maxItems":1000,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}
+  }
+}`
+
+const translationUnitsGetOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["s","l","u"],
+  "properties":{
+    "s":{"description":"Source locale.","allOf":[` + localeJSONSchema + `]},
+    "l":{"description":"Target locale.","allOf":[` + localeJSONSchema + `]},
+    "r":{"type":"string","description":"Current opaque target revision. Pass unchanged as translation_units_put er. Omitted when the target does not exist.","minLength":1,"maxLength":256},
+    "u":{"type":"array","description":"Units in document order.","items":{"type":"object","additionalProperties":false,"required":["i","g","s"],"properties":{
+      "i":{"type":"string","description":"Unit ID; the key for translation_units_put."},
+      "g":{"type":"string","description":"Group the unit belongs to, such as one block or the document metadata."},
+      "c":{"type":"string","description":"Context note for the unit."},
+      "s":{"type":"string","description":"Source text as ` + translationUnitMarkupJSON + `"},
+      "t":{"type":"string","description":"Current target in the same markup. Omitted when the unit has no target yet."}
+    }}}
+  }
+}`
+
+const translationUnitsPutInputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["p","d","l","u"],
+  "properties":{
+    "p":` + translationProfileJSONSchema + `,
+    "d":{"type":"string","description":"Exact owning document reference.","minLength":1,"maxLength":256},
+    "l":{"description":"Target locale; it must differ from the source locale.","allOf":[` + localeJSONSchema + `]},
+    "u":{"type":"object","description":"Target per unit ID from translation_units_get, as ` + translationUnitMarkupJSON + ` Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.","minProperties":1,"maxProperties":1000,"additionalProperties":{"type":"string","maxLength":100000}},
+    "er":{"type":"string","description":"Exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.","minLength":1,"maxLength":256}
+  }
+}`

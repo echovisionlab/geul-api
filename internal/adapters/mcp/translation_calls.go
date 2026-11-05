@@ -74,7 +74,7 @@ func (tools *TranslationTools) importXLIFF(ctx context.Context, _ string, call t
 	if err != nil {
 		return translationCallError(err)
 	}
-	return translationStructuredResult(encodeXLIFFImport(translationapp.XLIFFImportMessage(imported)))
+	return translationStructuredResult(encodeXLIFFImport(imported))
 }
 
 func translationCallError(err error) (mcpserver.ToolResult, error) {
