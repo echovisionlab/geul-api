@@ -255,6 +255,7 @@ var canonicalMimeAliases = map[string]string{
 	"audio/x-m4a":                  "audio/mp4",
 	"audio/mp4a-latm":              "audio/mp4",
 	"application/ogg":              "audio/ogg",
+	"application/x-xliff+xml":      "application/xliff+xml",
 	"application/x-zip-compressed": "application/zip",
 	"image/jpg":                    "image/jpeg",
 	"image/x-png":                  "image/png",
@@ -325,6 +326,9 @@ func detectCanonicalMime(body []byte, allowedSet map[string]struct{}) string {
 	if detectsAllowedSVG(body, detectedBase, allowedSet) {
 		return "image/svg+xml"
 	}
+	if detectsAllowedXLIFF(body, detectedBase, allowedSet) {
+		return "application/xliff+xml"
+	}
 
 	if aiffMime := detectAIFFMime(body, allowedSet); aiffMime != "" {
 		return aiffMime
@@ -373,4 +377,21 @@ func detectsAllowedSVG(body []byte, detectedBase string, allowedSet map[string]s
 		sample = sample[:4096]
 	}
 	return bytes.Contains(bytes.ToLower(sample), []byte("<svg"))
+}
+
+// detectsAllowedXLIFF recognizes an XLIFF document by its root element and
+// OASIS namespace. Other XML stays undetermined, so General File uploads
+// accept translation interchange without accepting arbitrary XML.
+func detectsAllowedXLIFF(body []byte, detectedBase string, allowedSet map[string]struct{}) bool {
+	if _, ok := allowedSet["application/xliff+xml"]; !ok {
+		return false
+	}
+	if detectedBase != "text/xml" && detectedBase != "application/xml" && detectedBase != "text/plain" {
+		return false
+	}
+	sample := body
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	return bytes.Contains(sample, []byte("<xliff")) && bytes.Contains(sample, []byte("urn:oasis:names:tc:xliff:document:"))
 }

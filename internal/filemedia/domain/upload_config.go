@@ -26,7 +26,7 @@ var DefaultUploadConfigs = map[string]*UploadConfig{
 			"application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 			"application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 			"application/zip", "application/x-zip-compressed", "application/x-rar-compressed", "application/x-7z-compressed",
-			"text/plain", "text/csv", "application/json",
+			"text/plain", "text/csv", "application/json", "application/xliff+xml",
 		},
 		MaxSize:     8 * 1024 * 1024 * 1024,
 		MinSize:     1,

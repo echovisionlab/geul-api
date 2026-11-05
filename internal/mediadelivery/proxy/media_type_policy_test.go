@@ -57,6 +57,7 @@ var canonicalMediaTypeCases = []canonicalMediaTypeCase{
 	{name: "plain text document", extension: "txt", contentType: "text/plain"},
 	{name: "csv document", extension: "csv", contentType: "text/csv"},
 	{name: "json presentation", extension: "json", contentType: "application/json", public: true},
+	{name: "xliff translation interchange", extension: "xlf", contentType: "application/xliff+xml"},
 	{name: "word document", extension: "doc", contentType: "application/msword"},
 	{name: "openxml word document", extension: "docx", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
 	{name: "excel document", extension: "xls", contentType: "application/vnd.ms-excel"},
