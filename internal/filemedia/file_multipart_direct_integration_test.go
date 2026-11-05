@@ -560,11 +560,11 @@ func TestPresignedPartsCompleteWithoutPrefixOrConfirmDirectIntegration(t *testin
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	handler := NewConnectHandler(svc)
 
-	upload := func(t *testing.T, mimeType string, body []byte) *managev1.InitiateMultipartUploadResponse {
+	upload := func(t *testing.T, mimeType, extension string, body []byte) *managev1.InitiateMultipartUploadResponse {
 		t.Helper()
 		initResp, err := handler.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			FileName:   fmt.Sprintf("presigned-%d", time.Now().UnixNano()),
+			FileName:   fmt.Sprintf("presigned-%d.%s", time.Now().UnixNano(), extension),
 			FileSize:   int64(len(body)),
 			MimeType:   mimeType,
 		}))
@@ -595,7 +595,7 @@ func TestPresignedPartsCompleteWithoutPrefixOrConfirmDirectIntegration(t *testin
 	}
 
 	t.Run("declared type matches the bytes", func(t *testing.T) {
-		initiated := upload(t, "image/jpeg", imageBody)
+		initiated := upload(t, "image/jpeg", "jpg", imageBody)
 		completed, err := handler.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 			FileId: initiated.GetFileId(), UploadId: initiated.GetUploadId(),
 		}))
@@ -605,7 +605,7 @@ func TestPresignedPartsCompleteWithoutPrefixOrConfirmDirectIntegration(t *testin
 	})
 
 	t.Run("completion rejects bytes that do not match the declared type", func(t *testing.T) {
-		initiated := upload(t, "image/png", imageBody)
+		initiated := upload(t, "image/png", "png", imageBody)
 		_, err := handler.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 			FileId: initiated.GetFileId(), UploadId: initiated.GetUploadId(),
 		}))
