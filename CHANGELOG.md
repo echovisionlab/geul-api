@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.2](https://github.com/echovisionlab/geul-api/compare/v6.1.1...v6.1.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **mcp:** allow inserting page sections into columns ([#240](https://github.com/echovisionlab/geul-api/issues/240)) ([cc3e3c0](https://github.com/echovisionlab/geul-api/commit/cc3e3c0846a9bccd5ef8458d7a45ea1e1af1fe8a))
+
 ## [6.1.1](https://github.com/echovisionlab/geul-api/compare/v6.1.0...v6.1.1) (2026-11-05)
 
 
