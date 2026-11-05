@@ -96,6 +96,7 @@ var signedMediaObjectTypesByExtension = map[string][]string{
 	"webm": {"video/webm"},
 	"webp": {"image/webp"},
 	"xls":  {"application/vnd.ms-excel"},
+	"xlf":  {"application/xliff+xml"},
 	"xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
 	"zip":  {"application/zip", "application/x-zip-compressed"},
 }
