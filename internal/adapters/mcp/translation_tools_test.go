@@ -41,6 +41,8 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 		ToolTranslationGet:         toolAnnotations(true, false, false),
 		ToolTranslationXLIFFExport: toolAnnotations(false, false, false),
 		ToolTranslationXLIFFImport: toolAnnotations(false, true, false),
+		ToolTranslationUnitsGet:    toolAnnotations(true, false, false),
+		ToolTranslationUnitsPut:    toolAnnotations(false, true, false),
 	}
 	for _, tool := range listed {
 		assertMCPToolOAuthSecurity(t, tool)
@@ -378,6 +380,10 @@ type recordingTranslationApplication struct {
 	getTranslationError      error
 	exportError              error
 	importError              error
+	unitsGetRequest          *translationapp.GetTranslationUnitsQuery
+	unitsGetResponse         translationapp.TranslationUnits
+	unitsPutRequest          *translationapp.PutTranslationUnitsCommand
+	unitsPutResponse         translationapp.XLIFFImport
 }
 
 func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
@@ -399,6 +405,16 @@ func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF
 func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF(_ context.Context, command translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error) {
 	application.importRequest = &command
 	return application.importResponse, application.importError
+}
+
+func (application *recordingTranslationApplication) GetEntityTranslationUnits(_ context.Context, query translationapp.GetTranslationUnitsQuery) (translationapp.TranslationUnits, error) {
+	application.unitsGetRequest = &query
+	return application.unitsGetResponse, nil
+}
+
+func (application *recordingTranslationApplication) PutEntityTranslationUnits(_ context.Context, command translationapp.PutTranslationUnitsCommand) (translationapp.XLIFFImport, error) {
+	application.unitsPutRequest = &command
+	return application.unitsPutResponse, nil
 }
 
 func mustTranslationTools(t *testing.T, application *recordingTranslationApplication) *TranslationTools {
@@ -427,5 +443,53 @@ func TestTranslationToolsRejectXLIFFArtifactWithoutExpiry(t *testing.T) {
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`))
 	if err == nil || !strings.Contains(err.Error(), "incomplete XLIFF artifact reference") || result.Content != nil {
 		t.Fatalf("missing artifact expiry: result=%+v, error=%v", result, err)
+	}
+}
+
+func TestTranslationUnitsToolsPassUnitsAndMarkupThrough(t *testing.T) {
+	revision := "revision-a"
+	application := &recordingTranslationApplication{
+		unitsGetResponse: translationapp.TranslationUnits{
+			SourceLocale: "en", TargetLocale: "ko", TargetRevision: &revision,
+			Units: []translation.XLIFFUnitMarkup{{ID: "entity:title", GroupID: "entity:meta", Source: `<pc id="r1">Night</pc> walks`}},
+		},
+		unitsPutResponse: translationapp.XLIFFImport{TargetRevision: "revision-b", Changed: true, AffectedUnitHandles: []string{"entity:title"}},
+	}
+	tools := mustTranslationTools(t, application)
+
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","u":["entity:title"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := application.unitsGetRequest; got == nil || got.TargetLocale != "ko" || !reflect.DeepEqual(got.UnitHandles, []string{"entity:title"}) {
+		t.Fatalf("units get request = %+v", got)
+	}
+	units := read.StructuredContent["u"].([]any)
+	if read.StructuredContent["r"] != revision || len(units) != 1 ||
+		units[0].(map[string]any)["s"] != `<pc id="r1">Night</pc> walks` {
+		t.Fatalf("units get result = %+v", read.StructuredContent)
+	}
+
+	written, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","er":"revision-a","u":{"entity:title":"<pc id=\"r1\">밤</pc> 산책"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := application.unitsPutRequest; got == nil || *got.ExpectedTargetRevision != revision ||
+		got.Targets["entity:title"] != `<pc id="r1">밤</pc> 산책` {
+		t.Fatalf("units put request = %+v", got)
+	}
+	if written.StructuredContent["r"] != "revision-b" || written.StructuredContent["c"] != true {
+		t.Fatalf("units put result = %+v", written.StructuredContent)
+	}
+}
+
+func TestTranslationUnitsPutRejectsAnEmptyTargetSet(t *testing.T) {
+	application := &recordingTranslationApplication{}
+	tools := mustTranslationTools(t, application)
+
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","u":{}}`))
+
+	if err == nil || application.unitsPutRequest != nil {
+		t.Fatalf("empty target set: error=%v request=%+v", err, application.unitsPutRequest)
 	}
 }

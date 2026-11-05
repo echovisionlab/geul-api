@@ -11,7 +11,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func encodeXLIFFExport(response translationapp.XLIFFExport) ([]byte, error) {
@@ -81,7 +80,7 @@ func validateArtifactURL(value string) error {
 	return nil
 }
 
-func encodeXLIFFImport(response *managev1.ImportEntityTranslationXLIFFResponse) ([]byte, error) {
+func encodeXLIFFImport(response translationapp.XLIFFImport) ([]byte, error) {
 	if err := validateCompactOpaque("Translation application target revision", response.TargetRevision, 256); err != nil {
 		return nil, err
 	}

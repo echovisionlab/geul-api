@@ -126,7 +126,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "20", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "21", envelope.Result.ServerInfo.Version)
 		require.NotContains(t, envelope.Result.Instructions, "DSUB")
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",

@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
 func TestXLIFFImportEncodingPreservesEmptyAffectedUnitArray(t *testing.T) {
-	encoded, err := encodeXLIFFImport(&managev1.ImportEntityTranslationXLIFFResponse{TargetRevision: "revision-a"})
+	encoded, err := encodeXLIFFImport(translationapp.XLIFFImport{TargetRevision: "revision-a"})
 	if err != nil {
 		t.Fatalf("encodeXLIFFImport() error = %v", err)
 	}

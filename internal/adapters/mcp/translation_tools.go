@@ -13,6 +13,8 @@ const (
 	ToolTranslationGet         = "translation_get"
 	ToolTranslationXLIFFExport = "translation_xliff_export"
 	ToolTranslationXLIFFImport = "translation_xliff_import"
+	ToolTranslationUnitsGet    = "translation_units_get"
+	ToolTranslationUnitsPut    = "translation_units_put"
 )
 
 var translationTools = toolRegistry[TranslationTools]{
@@ -48,6 +50,24 @@ var translationTools = toolRegistry[TranslationTools]{
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*TranslationTools).importXLIFF),
+	defineTool(mcpserver.Tool{
+		Name: ToolTranslationUnitsGet, Title: "Get translation units",
+		Description: "Read the source and current target of a document's translation units for one target locale, " +
+			"without an XLIFF file. Units use XLIFF 2.2 inline markup; translate them and write back with translation_units_put.",
+		InputSchema: translationUnitsGetInputSchema(), OutputSchema: translationUnitsGetOutputSchema(),
+		SecuritySchemes: oauthSecuritySchemes(),
+		Annotations:     toolAnnotations(true, false, false),
+		Meta:            oauthSecurityMeta(),
+	}, (*TranslationTools).getTranslationUnits),
+	defineTool(mcpserver.Tool{
+		Name: ToolTranslationUnitsPut, Title: "Put translation units",
+		Description: "Write target translations for named units of one target locale. Other units keep their values. " +
+			"Each target must keep its source's inline codes with the same ids and nesting.",
+		InputSchema: translationUnitsPutInputSchema(), OutputSchema: translationXLIFFImportOutputSchema(),
+		SecuritySchemes: oauthSecuritySchemes(),
+		Annotations:     toolAnnotations(false, true, false),
+		Meta:            oauthSecurityMeta(),
+	}, (*TranslationTools).putTranslationUnits),
 }
 
 // TranslationApplication is the Translation use cases the tools call, the
@@ -61,6 +81,8 @@ type TranslationApplication interface {
 	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (translationapp.Entry, error)
 	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error)
 	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error)
+	GetEntityTranslationUnits(context.Context, translationapp.GetTranslationUnitsQuery) (translationapp.TranslationUnits, error)
+	PutEntityTranslationUnits(context.Context, translationapp.PutTranslationUnitsCommand) (translationapp.XLIFFImport, error)
 }
 
 type TranslationTools struct {
