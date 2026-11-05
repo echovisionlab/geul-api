@@ -2,6 +2,8 @@ package translation
 
 import (
 	"fmt"
+	"html"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -15,6 +17,66 @@ type XLIFFUnitMarkup struct {
 	Context *string
 	Source  string
 	Target  *string
+}
+
+var (
+	xliffPlaceholderEquiv = regexp.MustCompile(`<ph\b[^>]*?\bequiv="([^"]*)"[^>]*?/>`)
+	xliffInlineCode       = regexp.MustCompile(`</?(?:pc|ph)\b[^>]*>`)
+)
+
+// XLIFFMarkupPlainText is markup as a reader sees it: codes removed, and each
+// placeholder replaced by the text it renders.
+func XLIFFMarkupPlainText(markup string) string {
+	text := xliffPlaceholderEquiv.ReplaceAllString(markup, "$1")
+	return html.UnescapeString(xliffInlineCode.ReplaceAllString(text, ""))
+}
+
+// XLIFFSingleRunCodes returns the paired codes wrapping a source that is one
+// run of text, outermost first. ok is false when the source has placeholders
+// or several runs, whose target has to be written as markup.
+func XLIFFSingleRunCodes(sourceMarkup string) (codes []string, ok bool) {
+	nodes, err := decodeXLIFFInlineContent(sourceMarkup)
+	if err != nil {
+		return nil, false
+	}
+	for len(nodes) == 1 && nodes[0].Kind == XLIFFInlinePairedCode {
+		codes = append(codes, nodes[0].ID)
+		nodes = nodes[0].Children
+	}
+	if len(nodes) == 0 || (len(nodes) == 1 && nodes[0].Kind == XLIFFInlineText) {
+		return codes, true
+	}
+	return nil, false
+}
+
+// XLIFFSimplifiedMarkup is markup without its codes when it is one run of text,
+// because a plain target can be written back for such a unit. Other markup is
+// returned unchanged.
+func XLIFFSimplifiedMarkup(markup string) string {
+	if _, ok := XLIFFSingleRunCodes(markup); ok {
+		return XLIFFMarkupPlainText(markup)
+	}
+	return markup
+}
+
+// XLIFFTargetFromPlainText wraps plain target text in the codes of a one-run
+// source, so a caller translating a linked word needs no markup. A target that
+// already contains codes is returned unchanged.
+func XLIFFTargetFromPlainText(sourceMarkup, target string) (string, error) {
+	if xliffInlineCode.MatchString(target) {
+		return target, nil
+	}
+	codes, ok := XLIFFSingleRunCodes(sourceMarkup)
+	if !ok {
+		return "", fmt.Errorf("source has several formatted runs, so write the target as markup keeping these codes: %s", sourceMarkup)
+	}
+	var output strings.Builder
+	for _, code := range codes {
+		output.WriteString(`<pc id="` + markupAttributeEscaper.Replace(code) + `">`)
+	}
+	output.WriteString(markupTextEscaper.Replace(target))
+	output.WriteString(strings.Repeat(`</pc>`, len(codes)))
+	return output.String(), nil
 }
 
 // XLIFFUnitsMarkup renders every unit of document as inline markup.

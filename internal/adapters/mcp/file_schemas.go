@@ -42,9 +42,9 @@ const fileSessionHandleVariantsJSONSchema = `[{
 const fileTransferInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["a"],
   "properties":{
-    "a":{"enum":["begin","status","complete"],"description":"Action. begin starts one File transfer (requires k and t); status inspects and complete finishes a multipart session (both require h). Send only the fields listed for the chosen action/transport."},
+    "a":{"enum":["begin","status","parts","complete","abort"],"description":"Action. begin starts one File transfer (requires k and t); status inspects, parts re-issues upload URLs for missing parts, complete finishes and abort discards a multipart session (all require h). Send only the fields listed for the chosen action/transport."},
     "k":{"enum":["general","image","video","audio","attachment","mesh","track_audio"],"description":"begin only, required. File ingest kind. track_audio attaches original audio through existing Track authority and CAS; audio remains an independent editor File."},
-    "t":{"enum":["browser_upload_page","presigned_multipart","remote_https"],"description":"begin only, required. browser_upload_page/presigned_multipart: multipart bytes through the existing authenticated browser upload flow (MCP carries metadata only). remote_https: server import from a public HTTPS URL."},
+    "t":{"enum":["browser_upload_page","presigned_multipart","remote_https"],"description":"begin only, required. presigned_multipart: returns URLs you PUT the bytes to yourself. browser_upload_page: the authenticated browser upload flow sends the bytes. remote_https: server import from a public HTTPS URL."},
     "n":{"type":"string","minLength":1,"maxLength":512,"description":"begin multipart: required; forbidden for remote_https. Original filename including its extension."},
     "m":{"type":"string","minLength":1,"maxLength":255,"description":"begin multipart: required; forbidden for remote_https. Original MIME type; must match the filename and verified bytes."},
     "s":{"type":"integer","minimum":1,"description":"begin multipart: required; forbidden for remote_https. Original File size in bytes."},
@@ -96,7 +96,9 @@ const fileSessionJSONSchema = `{
     "p":{"type":"integer","minimum":1,"description":"Total number of upload parts."},"c":{"type":"integer","minimum":1,"description":"Upload part chunk size in bytes."},
     "u":{"type":"array","description":"Uploaded part numbers, starting at 1.","items":{"type":"integer","minimum":1}},
     "a":{"type":"string","format":"date-time","description":"Last activity time in UTC RFC3339."},
-    "client_media_bundle_id":{"type":"string","format":"uuid","description":"Current browser-prepared media bundle ID; copy to complete for direct audio/video after browser preparation."}
+    "client_media_bundle_id":{"type":"string","format":"uuid","description":"Current browser-prepared media bundle ID; copy to complete for direct audio/video after browser preparation."},
+    "l":{"type":"array","description":"Upload URLs for presigned_multipart: PUT each part's exact bytes, then call complete.","items":{"type":"array","prefixItems":[{"type":"integer","minimum":1,"description":"Part number."},{"type":"string","format":"uri","description":"Short-lived PUT URL."},{"type":"integer","minimum":1,"description":"Exact part size in bytes."}],"items":false,"minItems":3,"maxItems":3}},
+    "e":{"type":"string","format":"date-time","description":"When the URLs in l expire."}
   }
 }`
 
@@ -109,6 +111,10 @@ const fileTransferOutputJSONSchema = `{
     {
       "additionalProperties":false,"required":["s","f"],
       "properties":{"s":{"const":"ready","description":"Verified original File is stored; derivatives may still be processing."},"f":{"$ref":"#/$defs/file","description":"Verified File metadata and current delivery references."}}
+    },
+    {
+      "additionalProperties":false,"required":["s"],
+      "properties":{"s":{"const":"aborted","description":"The session and its uploaded parts were discarded."}}
     }
   ],
   "$defs":{"session":` + fileSessionJSONSchema + `,"file":` + fileHandleJSONSchema + `}

@@ -555,6 +555,14 @@ func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedi
 	return &filemedia.CompletedUpload{}, nil
 }
 
+func (*compositionFileRuntime) PresignMultipartParts(context.Context, filemedia.PresignMultipartPartsCommand) ([]filemedia.PresignedUploadPart, error) {
+	return nil, nil
+}
+
+func (*compositionFileRuntime) AbortMultipartUpload(context.Context, filemedia.AbortMultipartUploadCommand) error {
+	return nil
+}
+
 func (*compositionFileRuntime) DownloadFromURL(context.Context, filemedia.DownloadFromURLCommand) (*filemedia.ImportedFile, error) {
 	return &filemedia.ImportedFile{}, nil
 }

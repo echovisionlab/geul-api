@@ -384,6 +384,9 @@ type recordingTranslationApplication struct {
 	unitsGetResponse         translationapp.TranslationUnits
 	unitsPutRequest          *translationapp.PutTranslationUnitsCommand
 	unitsPutResponse         translationapp.XLIFFImport
+	unitsEditRequest         *translationapp.EditTranslationUnitsCommand
+	unitsEditResponse        map[string]translationapp.XLIFFImport
+	unitsByLocale            map[string]translationapp.TranslationUnits
 }
 
 func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
@@ -409,12 +412,20 @@ func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF
 
 func (application *recordingTranslationApplication) GetEntityTranslationUnits(_ context.Context, query translationapp.GetTranslationUnitsQuery) (translationapp.TranslationUnits, error) {
 	application.unitsGetRequest = &query
+	if units, ok := application.unitsByLocale[query.TargetLocale]; ok {
+		return units, nil
+	}
 	return application.unitsGetResponse, nil
 }
 
 func (application *recordingTranslationApplication) PutEntityTranslationUnits(_ context.Context, command translationapp.PutTranslationUnitsCommand) (translationapp.XLIFFImport, error) {
 	application.unitsPutRequest = &command
 	return application.unitsPutResponse, nil
+}
+
+func (application *recordingTranslationApplication) EditEntityTranslationUnits(_ context.Context, command translationapp.EditTranslationUnitsCommand) (map[string]translationapp.XLIFFImport, error) {
+	application.unitsEditRequest = &command
+	return application.unitsEditResponse, nil
 }
 
 func mustTranslationTools(t *testing.T, application *recordingTranslationApplication) *TranslationTools {
@@ -480,6 +491,91 @@ func TestTranslationUnitsToolsPassUnitsAndMarkupThrough(t *testing.T) {
 	}
 	if written.StructuredContent["r"] != "revision-b" || written.StructuredContent["c"] != true {
 		t.Fatalf("units put result = %+v", written.StructuredContent)
+	}
+}
+
+func TestTranslationUnitsReadSeveralLocalesInOneCall(t *testing.T) {
+	revision := func(value string) *string { return &value }
+	link := `<pc id="l1"><pc id="r1">지원 문의</pc></pc>`
+	marked := `<pc id="r1">앞</pc><ph id="h1" equiv="` + "\n" + `"/><pc id="r2">뒤</pc>`
+	unitsFor := func(locale, target string) translationapp.TranslationUnits {
+		other := "other " + locale
+		return translationapp.TranslationUnits{SourceLocale: "ko", TargetLocale: locale, TargetRevision: revision("revision-" + locale), Units: []translation.XLIFFUnitMarkup{
+			{ID: "section:s1:block:b1:typed:paragraph/content", GroupID: "block:s1", Source: link, Target: &target},
+			{ID: "section:s1:block:b2:typed:paragraph/content", GroupID: "block:s1", Source: marked, Target: &other},
+			{ID: "entity:title", GroupID: "entity:meta", Source: "제품", Target: &other},
+		}}
+	}
+	application := &recordingTranslationApplication{
+		listTranslationsResponse: translationapp.EntityTranslations{SourceLocale: "ko", Entries: []translationapp.Entry{{Locale: "ko"}, {Locale: "en"}, {Locale: "de"}}},
+		unitsByLocale: map[string]translationapp.TranslationUnits{
+			"en": unitsFor("en", `<pc id="l1"><pc id="r1">Contact support</pc></pc>`),
+			"de": unitsFor("de", `<pc id="l1"><pc id="r1">Support kontaktieren</pc></pc>`),
+		},
+	}
+	tools := mustTranslationTools(t, application)
+
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a","q":"CONTACT"}`))
+	if err != nil {
+		t.Fatalf("translation_units_get error = %v", err)
+	}
+	want := map[string]any{
+		"s": "ko",
+		"r": map[string]any{"en": "revision-en", "de": "revision-de"},
+		"u": []any{map[string]any{
+			"i": "section:s1:block:b1:typed:paragraph/content", "g": "block:s1", "s": "지원 문의",
+			"t": map[string]any{"en": "Contact support"},
+		}},
+	}
+	if !reflect.DeepEqual(read.StructuredContent, want) {
+		t.Fatalf("read = %#v, want %#v", read.StructuredContent, want)
+	}
+
+	byBlock, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a","ls":["en"],"b":["b2"]}`))
+	if err != nil {
+		t.Fatalf("translation_units_get(b) error = %v", err)
+	}
+	units := byBlock.StructuredContent["u"].([]any)
+	if len(units) != 1 || units[0].(map[string]any)["s"] != marked || units[0].(map[string]any)["p"] != "앞\n뒤" {
+		t.Fatalf("a marked-up unit must keep its markup and offer plain source: %#v", units)
+	}
+
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a"}`)); err == nil {
+		t.Fatal("reading every locale without a selection succeeded")
+	}
+}
+
+func TestTranslationUnitsPutEditsGoThroughInOneCommand(t *testing.T) {
+	application := &recordingTranslationApplication{unitsEditResponse: map[string]translationapp.XLIFFImport{
+		"en": {TargetRevision: "r-en", Changed: true},
+		"de": {TargetRevision: "r-de", Changed: false},
+	}}
+	tools := mustTranslationTools(t, application)
+
+	written, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t,
+		`{"p":"page","d":"page-a","e":[{"s":"지원 문의","b":"b1","t":{"en":"Contact support","de":"Support kontaktieren"}}]}`))
+	if err != nil {
+		t.Fatalf("translation_units_put error = %v", err)
+	}
+	command := application.unitsEditRequest
+	if command == nil || len(command.Edits) != 1 || command.Edits[0].Source != "지원 문의" || command.Edits[0].Block != "b1" ||
+		command.Edits[0].Targets["de"] != "Support kontaktieren" {
+		t.Fatalf("edit command = %+v", command)
+	}
+	want := map[string]any{"r": map[string]any{"en": "r-en", "de": "r-de"}, "c": map[string]any{"en": true, "de": false}}
+	if !reflect.DeepEqual(written.StructuredContent, want) {
+		t.Fatalf("result = %#v", written.StructuredContent)
+	}
+
+	for name, arguments := range map[string]string{
+		"edits mixed with one locale": `{"p":"page","d":"page-a","l":"en","e":[{"s":"a","t":{"en":"b"}}]}`,
+		"no source":                   `{"p":"page","d":"page-a","e":[{"t":{"en":"b"}}]}`,
+		"no targets":                  `{"p":"page","d":"page-a","e":[{"s":"a","t":{}}]}`,
+		"nothing to write":            `{"p":"page","d":"page-a"}`,
+	} {
+		if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, arguments)); err == nil {
+			t.Fatalf("%s succeeded", name)
+		}
 	}
 }
 

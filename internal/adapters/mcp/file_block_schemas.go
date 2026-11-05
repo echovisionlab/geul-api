@@ -4,12 +4,12 @@ const fileBlockDocumentTypeJSONSchema = `{"enum":["post","page","work","program_
 
 const documentFileAddInputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","locale","expected_document_revision","file_id"],
+  "required":["document_type","document_id","locale","file_id"],
   "properties":{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Current source locale whose document structure is being edited."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Optional here, because this only adds a block: omit it to use the current revision."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision when one was returned."},
     "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle. Required for a File Block inside a Page rich-text section."},
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert the File Block."},

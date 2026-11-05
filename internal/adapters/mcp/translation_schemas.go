@@ -107,38 +107,61 @@ func translationUnitsPutInputSchema() json.RawMessage {
 const translationUnitMarkupJSON = `XLIFF 2.2 inline markup: <pc id=\"…\">…</pc> wraps formatted or linked text, and <ph id=\"…\" equiv=\"…\"/> stands for a placeholder whose equiv shows what it renders. Text escapes &, < and >.`
 
 const translationUnitsGetInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["p","d","l"],
+  "type":"object","additionalProperties":false,"required":["p","d"],
   "properties":{
     "p":` + translationProfileJSONSchema + `,
     "d":{"type":"string","description":"Exact owning document reference.","minLength":1,"maxLength":256},
-    "l":{"description":"Target locale; it must differ from the source locale.","allOf":[` + localeJSONSchema + `]},
-    "u":{"type":"array","description":"Unit IDs to read. Omit to read every current unit.","maxItems":1000,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}
+    "l":{"description":"One target locale, read whole; it must differ from the source locale. Omit l and ls to read every existing translation.","allOf":[` + localeJSONSchema + `]},
+    "ls":{"type":"array","description":"Several target locales to read together. Needs b, q or u.","minItems":1,"maxItems":64,"uniqueItems":true,"items":` + localeJSONSchema + `},
+    "u":{"type":"array","description":"Unit IDs to read. Omit to read every current unit.","maxItems":1000,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
+    "b":{"type":"array","description":"Read only the units of these Block or section handles, from document_read.","maxItems":256,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":160}},
+    "q":{"type":"string","description":"Read only units whose text in the source or a requested locale contains this, ignoring case and markup.","minLength":1,"maxLength":200}
   }
 }`
 
 const translationUnitsGetOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["s","l","u"],
+  "type":"object","additionalProperties":false,"required":["s","u"],
   "properties":{
     "s":{"description":"Source locale.","allOf":[` + localeJSONSchema + `]},
-    "l":{"description":"Target locale.","allOf":[` + localeJSONSchema + `]},
-    "r":{"type":"string","description":"Current opaque target revision. Pass unchanged as translation_units_put er. Omitted when the target does not exist.","minLength":1,"maxLength":256},
+    "l":{"description":"Target locale of a one-locale read.","allOf":[` + localeJSONSchema + `]},
+    "r":{"description":"One-locale read: the current opaque target revision, omitted when the target does not exist. Several locales: the revision per locale.","type":["string","object"],"additionalProperties":{"type":"string"}},
     "u":{"type":"array","description":"Units in document order.","items":{"type":"object","additionalProperties":false,"required":["i","g","s"],"properties":{
-      "i":{"type":"string","description":"Unit ID; the key for translation_units_put."},
+      "i":{"type":"string","description":"Unit ID."},
       "g":{"type":"string","description":"Group the unit belongs to, such as one block or the document metadata."},
       "c":{"type":"string","description":"Context note for the unit."},
-      "s":{"type":"string","description":"Source text as ` + translationUnitMarkupJSON + `"},
-      "t":{"type":"string","description":"Current target in the same markup. Omitted when the unit has no target yet."}
+      "s":{"type":"string","description":"Source text as ` + translationUnitMarkupJSON + ` Plain text for a one-run unit in a several-locale read."},
+      "p":{"type":"string","description":"Plain source text of a marked-up unit, to pass as translation_units_put e[].s."},
+      "t":{"description":"One-locale read: the current target, omitted when absent. Several locales: the target per locale.","type":["string","object"],"additionalProperties":{"type":"string"}}
     }}}
   }
 }`
 
 const translationUnitsPutInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["p","d","l","u"],
+  "type":"object","additionalProperties":false,"required":["p","d"],
   "properties":{
     "p":` + translationProfileJSONSchema + `,
     "d":{"type":"string","description":"Exact owning document reference.","minLength":1,"maxLength":256},
-    "l":{"description":"Target locale; it must differ from the source locale.","allOf":[` + localeJSONSchema + `]},
-    "u":{"type":"object","description":"Target per unit ID from translation_units_get, as ` + translationUnitMarkupJSON + ` Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.","minProperties":1,"maxProperties":1000,"additionalProperties":{"type":"string","maxLength":100000}},
-    "er":{"type":"string","description":"Exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.","minLength":1,"maxLength":256}
+    "e":{"type":"array","description":"Edits applied across locales in one transaction. Do not combine with l, u or er.","minItems":1,"maxItems":1000,"items":{"type":"object","additionalProperties":false,"required":["s","t"],"properties":{
+      "s":{"type":"string","description":"The unit's current plain source text, without markup."},
+      "i":{"type":"string","description":"Unit ID, when several units share s.","minLength":1,"maxLength":256},
+      "b":{"type":"string","description":"Block or section handle, when several units share s.","minLength":1,"maxLength":160},
+      "t":{"type":"object","description":"Target per locale. Plain text for a one-run unit; otherwise ` + translationUnitMarkupJSON + `","minProperties":1,"maxProperties":64,"additionalProperties":{"type":"string","maxLength":100000}}
+    }}},
+    "l":{"description":"With u: the one target locale; it must differ from the source locale.","allOf":[` + localeJSONSchema + `]},
+    "u":{"type":"object","description":"With l: target per unit ID from translation_units_get, as ` + translationUnitMarkupJSON + ` Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.","minProperties":1,"maxProperties":1000,"additionalProperties":{"type":"string","maxLength":100000}},
+    "er":{"type":"string","description":"With l and u: exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.","minLength":1,"maxLength":256}
+  }
+}`
+
+func translationUnitsPutOutputSchema() json.RawMessage {
+	return json.RawMessage(translationUnitsPutOutputJSONSchema)
+}
+
+const translationUnitsPutOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["r","c"],
+  "properties":{
+    "r":{"description":"With l and u: the target revision after the write. With e: the revision per locale.","type":["string","object"],"additionalProperties":{"type":"string"}},
+    "c":{"description":"With l and u: whether stored target values changed. With e: whether they changed per locale.","type":["boolean","object"],"additionalProperties":{"type":"boolean"}},
+    "u":{"type":"array","description":"With l and u: opaque unit IDs affected by the write.","uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}
   }
 }`

@@ -84,6 +84,21 @@ func mustDocumentCatalogTools(t *testing.T, port *documentCatalogPort) *Document
 	return tools
 }
 
+func TestDocumentCatalogKeepsOnlyRequestedBlockKinds(t *testing.T) {
+	output := documentCatalogOutput{
+		BlockKinds: []core.BlockKind{"file", "paragraph", "table"},
+		BlockRules: []catalogBlockRule{{Kind: "file"}, {Kind: "table"}},
+		Fields:     []catalogField{{BlockKind: "file", Field: "alt"}, {BlockKind: "table", Field: "rows"}},
+		Relations:  []catalogRelation{{BlockKind: "table", Relation: "r"}},
+	}
+
+	output.keepBlockKinds([]core.BlockKind{"file"})
+
+	if !reflect.DeepEqual(output.BlockKinds, []core.BlockKind{"file"}) || len(output.BlockRules) != 1 || len(output.Fields) != 1 || output.Fields[0].Field != "alt" || len(output.Relations) != 0 {
+		t.Fatalf("filtered catalog = %+v", output)
+	}
+}
+
 func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 	port := &documentCatalogPort{document: documentCatalogFixture()}
 	tools := mustDocumentCatalogTools(t, port)

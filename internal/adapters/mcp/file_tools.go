@@ -26,10 +26,12 @@ const (
 var fileTools = toolRegistry[FileTools]{
 	fileTransferTool(mcpserver.Tool{
 		Name: ToolFileTransfer, Title: "Transfer a File",
-		Description: "Begin, inspect, or complete one File ingest through the existing File authority. " +
+		Description: "Begin, inspect, complete or abort one File ingest through the existing File authority. " +
+			"To upload a local file: begin with t=presigned_multipart returns upload URLs in x.l as [part number, URL, size] tuples; PUT each part's exact bytes to its URL, for example with curl -T, then call complete with h. Nothing else is needed: the bytes are verified at completion. " +
+			"URLs expire in minutes and a large File gets at most 32 at a time; parts takes h and returns URLs for the parts still missing. abort takes h and discards an unfinished session. " +
 			"Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; " +
-			"begin remote_https takes k,t,u and correlation_id; status takes h; complete takes h and optional client_media_bundle_id. Other fields are rejected. " +
-			"Multipart bytes use the existing authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives; " +
+			"begin remote_https takes k,t,u and correlation_id; status, parts and abort take h; complete takes h and optional client_media_bundle_id. Other fields are rejected. " +
+			"t=browser_upload_page leaves the bytes to the authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives and gets no upload URLs; " +
 			"complete must pass the client_media_bundle_id returned by status after browser preparation. " +
 			"For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. " +
 			"track_audio requires track_id and attaches through native Track authority/CAS. Omit expected_current_file_id only when the Track has no original audio; otherwise copy its current File UUID. " +
@@ -179,6 +181,23 @@ func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mc
 			return executionError(handleErr)
 		}
 		result, err = tools.files.Status(ctx, handle)
+	case "parts", "abort":
+		var input fileSessionArguments
+		if err := call.Status.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := rejectNullArguments(arguments, "h"); err != nil {
+			return executionError(err)
+		}
+		handle, handleErr := fileSessionHandle(input.Handle)
+		if handleErr != nil {
+			return executionError(handleErr)
+		}
+		if action == "parts" {
+			result, err = tools.files.Parts(ctx, handle)
+		} else {
+			result, err = tools.files.Abort(ctx, handle)
+		}
 	case "complete":
 		var input fileCompleteArguments
 		if err := call.Complete.Decode(&input); err != nil {
@@ -337,6 +356,8 @@ type compactFileSession struct {
 	UploadedParts       []int32                        `json:"u"`
 	LastActivityAt      string                         `json:"a,omitempty"`
 	ClientMediaBundleID string                         `json:"client_media_bundle_id,omitempty"`
+	PartUploads         [][]any                        `json:"l,omitempty"`
+	PartUploadsExpireAt string                         `json:"e,omitempty"`
 }
 
 type compactFileHandle struct {
@@ -365,6 +386,10 @@ func encodeFileTransferResult(result filemedia.MCPFileTransferResult) ([]byte, e
 		}
 		file := compactVerifiedFile(*result.File)
 		compact.File = &file
+	case filemedia.MCPFileTransferAborted:
+		if result.Session != nil || result.File != nil {
+			return nil, errors.New("MCP File facade returned an invalid aborted transfer result")
+		}
 	default:
 		return nil, errors.New("MCP File facade returned an unknown transfer state")
 	}
@@ -398,6 +423,10 @@ func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFi
 	}
 	if session.LastActivityAt != nil {
 		result.LastActivityAt = session.LastActivityAt.UTC().Format(time.RFC3339Nano)
+	}
+	for _, part := range session.PartUploads {
+		result.PartUploads = append(result.PartUploads, []any{part.PartNumber, part.URL, part.Size})
+		result.PartUploadsExpireAt = part.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return result
 }

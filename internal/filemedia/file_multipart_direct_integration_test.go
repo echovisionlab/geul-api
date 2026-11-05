@@ -541,6 +541,110 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 	}), finalizedBeforeRetry, "response recovery must not republish finalized progress")
 }
 
+func TestPresignedPartsCompleteWithoutPrefixOrConfirmDirectIntegration(t *testing.T) {
+	t.Parallel()
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	imageBody, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
+	require.NoError(t, err)
+	svc := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
+	handler := NewConnectHandler(svc)
+
+	upload := func(t *testing.T, mimeType, extension string, body []byte) *managev1.InitiateMultipartUploadResponse {
+		t.Helper()
+		initResp, err := handler.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
+			FileName:   fmt.Sprintf("presigned-%d.%s", time.Now().UnixNano(), extension),
+			FileSize:   int64(len(body)),
+			MimeType:   mimeType,
+		}))
+		require.NoError(t, err)
+		parts, err := svc.PresignMultipartParts(ctx, PresignMultipartPartsCommand{FileID: initResp.Msg.GetFileId(), UploadID: initResp.Msg.GetUploadId()})
+		require.NoError(t, err)
+		require.Len(t, parts, 1)
+		require.Equal(t, int64(len(body)), parts[0].Size)
+		putReq, err := http.NewRequest(http.MethodPut, parts[0].URL, bytes.NewReader(body))
+		require.NoError(t, err)
+		putReq.ContentLength = int64(len(body))
+		putResp, err := http.DefaultClient.Do(putReq)
+		require.NoError(t, err)
+		require.NoError(t, putResp.Body.Close())
+		require.Equal(t, http.StatusOK, putResp.StatusCode)
+
+		// The uploaded part needs no new URL, and only the inventory knows about it.
+		remaining, err := svc.PresignMultipartParts(ctx, PresignMultipartPartsCommand{FileID: initResp.Msg.GetFileId(), UploadID: initResp.Msg.GetUploadId()})
+		require.NoError(t, err)
+		require.Empty(t, remaining)
+		_, err = handler.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
+			FileId:     hardCutPtrString(initResp.Msg.GetFileId()),
+			UploadId:   hardCutPtrString(initResp.Msg.GetUploadId()),
+		}))
+		require.NoError(t, err)
+		return initResp.Msg
+	}
+
+	t.Run("declared type matches the bytes", func(t *testing.T) {
+		initiated := upload(t, "image/jpeg", "jpg", imageBody)
+		completed, err := handler.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			FileId: initiated.GetFileId(), UploadId: initiated.GetUploadId(),
+		}))
+		require.NoError(t, err)
+		require.Equal(t, initiated.GetFileId(), completed.Msg.GetDelivery().GetFileId())
+		requireCanonicalInlineRef(t, completed.Msg.GetDelivery().GetInline(), initiated.GetFileId(), "jpg", "image/jpeg")
+	})
+
+	t.Run("completion rejects bytes that do not match the declared type", func(t *testing.T) {
+		initiated := upload(t, "image/png", "png", imageBody)
+		_, err := handler.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			FileId: initiated.GetFileId(), UploadId: initiated.GetUploadId(),
+		}))
+		require.Error(t, err)
+		fileKey, keyErr := mediaauth.MediaObjectKey(initiated.GetFileId(), initiated.GetExtension())
+		require.NoError(t, keyErr)
+		_, headErr := runtimeS3Client(t, stack).HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(stack.S3MediaBucket), Key: aws.String(fileKey)})
+		require.Error(t, headErr, "the mismatching object must not stay in storage")
+	})
+}
+
+func TestPresignedPartsRefuseDirectAudioDirectIntegration(t *testing.T) {
+	t.Parallel()
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	svc := newTestService(Deps{
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
+	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
+		FileName:   "direct.wav",
+		FileSize:   1024,
+		MimeType:   "audio/wav",
+	}))
+	require.NoError(t, err)
+
+	_, err = svc.PresignMultipartParts(ctx, PresignMultipartPartsCommand{FileID: initResp.Msg.GetFileId(), UploadID: initResp.Msg.GetUploadId()})
+
+	require.ErrorContains(t, err, "clientMediaBundleRequired")
+}
+
 func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T) {
 	t.Parallel()
 	stack := runtimetest.SetupDirectMediaRuntimeStack(t)

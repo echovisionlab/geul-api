@@ -10,7 +10,9 @@ import (
 
 func encodeValidation(validation core.ValidationResult) ([]byte, error) {
 	output := make(map[string]any, 3)
-	if len(validation.Normalized) != 0 {
+	// A rejected batch's issues name its operations by index; echoing the batch
+	// back only repeats what the caller just sent.
+	if len(validation.Normalized) != 0 && len(validation.Issues) == 0 {
 		for _, operation := range validation.Normalized {
 			if _, err := json.Marshal(operation); err != nil {
 				return nil, fmt.Errorf("invalid normalized operation: %w", err)

@@ -830,7 +830,7 @@
   {
     "name": "document_catalog",
     "title": "Describe document catalog",
-    "description": "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified.",
+    "description": "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified. Pass k with the block kinds you are about to write: a Page's whole catalog is tens of kilobytes.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -870,6 +870,18 @@
           "minLength": 1,
           "maxLength": 35,
           "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+        },
+        "k": {
+          "type": "array",
+          "description": "Return only these block kinds, such as [\"file\",\"paragraph\"]. Omit for the whole catalog.",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
         }
       }
     },
@@ -1689,7 +1701,7 @@
   {
     "name": "document_file_add",
     "title": "Add an existing File to a document",
-    "description": "Add a new File Block that reuses an existing File; this does not upload or copy bytes. Image Files render as images through the native File Block. An optional caption is saved in the same mutation. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. New File Block download policy starts disabled. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Add a new File Block that reuses an existing File; this does not upload or copy bytes. Image Files render as images through the native File Block. An optional caption is saved in the same mutation. Revisions are optional because this only adds a block. New File Block download policy starts disabled. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -1697,7 +1709,6 @@
         "document_type",
         "document_id",
         "locale",
-        "expected_document_revision",
         "file_id"
       ],
       "properties": {
@@ -1726,7 +1737,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "description": "dr from your latest document_read or the previous edit."
+          "description": "Optional here, because this only adds a block: omit it to use the current revision."
         },
         "expected_target_revision": {
           "type": "string",
@@ -3278,7 +3289,7 @@
   {
     "name": "document_heading_create",
     "title": "Create document heading",
-    "description": "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Revisions are optional because this only adds a block. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -3308,7 +3319,7 @@
           ]
         },
         "expected_document_revision": {
-          "description": "dr from your latest document_read or the previous edit.",
+          "description": "Optional here, because this only adds a block: omit it to use the current revision.",
           "maxLength": 256,
           "minLength": 1,
           "type": "string"
@@ -3350,7 +3361,6 @@
         "document_type",
         "document_id",
         "locale",
-        "expected_document_revision",
         "text",
         "level"
       ],
@@ -4852,7 +4862,7 @@
   {
     "name": "document_paragraph_create",
     "title": "Create document paragraph",
-    "description": "Create one plain-text Paragraph Block in an existing document. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Create one plain-text Paragraph Block in an existing document. Revisions are optional because this only adds a block. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -4860,7 +4870,6 @@
         "document_type",
         "document_id",
         "locale",
-        "expected_document_revision",
         "text"
       ],
       "properties": {
@@ -4900,7 +4909,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "description": "dr from your latest document_read or the previous edit."
+          "description": "Optional here, because this only adds a block: omit it to use the current revision."
         },
         "expected_target_revision": {
           "type": "string",
@@ -6622,6 +6631,165 @@
     }
   },
   {
+    "name": "document_search",
+    "title": "Search document text",
+    "description": "Find which documents contain some text, across document bodies, titles and slugs, including link addresses, ignoring case. Use it when you do not know which document holds a sentence, a label or a link; document_list only matches titles. Each match gives d, its slug and title, and up to five blocks as [handle, preview] to read or edit. Searches each document's source locale, or l when given. Omit p to search every type. One call reads up to 50 documents: continue with next_offset until it is null.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "q"
+      ],
+      "properties": {
+        "q": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Text to find, ignoring case and spacing."
+        },
+        "p": {
+          "enum": [
+            "page",
+            "post",
+            "work",
+            "program_event",
+            "release",
+            "artist"
+          ],
+          "description": "Search only this document type. Omit to search every type."
+        },
+        "l": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 35,
+          "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
+          "description": "Search this locale instead of each document's source locale."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "next_offset from the previous call."
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matches",
+        "scanned",
+        "total",
+        "next_offset"
+      ],
+      "properties": {
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "p",
+              "d",
+              "title",
+              "source_locale"
+            ],
+            "properties": {
+              "p": {
+                "type": "string",
+                "description": "Document type, passed as p to document_read."
+              },
+              "d": {
+                "type": "string",
+                "description": "Document UUID, passed as d to document_read."
+              },
+              "title": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "source_locale": {
+                "type": "string"
+              },
+              "blocks": {
+                "type": "array",
+                "description": "Matching blocks as [handle, preview around the match].",
+                "items": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ],
+                  "items": false,
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "more_blocks": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Further matching blocks; list them with document_read m=outline q."
+              }
+            }
+          }
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Documents read by this call."
+        },
+        "unreadable": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Documents this call could not read, which were left out."
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Documents in the searched types."
+        },
+        "next_offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Pass as offset to continue; null when every document was read."
+        }
+      }
+    },
+    "securitySchemes": [
+      {
+        "type": "oauth2",
+        "scopes": [
+          "mcp",
+          "offline_access"
+        ]
+      }
+    ],
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "securitySchemes": [
+        {
+          "type": "oauth2",
+          "scopes": [
+            "mcp",
+            "offline_access"
+          ]
+        }
+      ]
+    }
+  },
+  {
     "name": "document_slug_check",
     "title": "Check document slug",
     "description": "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.",
@@ -6705,7 +6873,7 @@
   {
     "name": "document_table_create",
     "title": "Create document table",
-    "description": "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Revisions are optional because this only adds a block. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -6728,7 +6896,7 @@
           ]
         },
         "expected_document_revision": {
-          "description": "dr from your latest document_read or the previous edit.",
+          "description": "Optional here, because this only adds a block: omit it to use the current revision.",
           "maxLength": 256,
           "minLength": 1,
           "type": "string"
@@ -6779,7 +6947,6 @@
         "document_type",
         "document_id",
         "locale",
-        "expected_document_revision",
         "rows"
       ],
       "type": "object"
@@ -7116,7 +7283,7 @@
   {
     "name": "document_text_replace",
     "title": "Replace text in document",
-    "description": "Replace one exact piece of text (a word or sentence) inside existing blocks while keeping the marks, links and colors around it: the cheapest way to fix a sentence in a long or formatted block. find must occur exactly once in this locale's text, copied exactly (case and spacing matter), within block_id when given or else anywhere in the document; an empty replace deletes it. Locate it first with document_read m=outline q=\u003ctext\u003e, which also returns dr and tr. Works for every document type and translation. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
+    "description": "Replace one exact piece of text (a word or sentence) inside existing blocks while keeping the marks, links and colors around it: the cheapest way to fix a sentence in a long or formatted block. find must occur exactly once in this locale's text, copied exactly (case and spacing matter), within block_id when given or else anywhere in the document; an empty replace deletes it. Works for every document type and translation, with no read first: revisions are optional because find guards the edit. It changes nothing and says so when find is missing or occurs more than once. On sync_required nothing changed: run the returned document_read recipe (it rereads the blocks the edit targeted), compare the latest values with the intended edit, and retry with the new revisions.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -7124,7 +7291,6 @@
         "document_type",
         "document_id",
         "locale",
-        "expected_document_revision",
         "find",
         "replace"
       ],
@@ -7165,7 +7331,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "description": "dr from your latest document_read or the previous edit."
+          "description": "Optional: find already guards this edit, so omit it to use the current revision. Pass it to refuse the edit if anything changed since your read."
         },
         "expected_target_revision": {
           "type": "string",
@@ -9658,7 +9824,7 @@
   {
     "name": "file_transfer",
     "title": "Transfer a File",
-    "description": "Begin, inspect, or complete one File ingest through the existing File authority. Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; begin remote_https takes k,t,u and correlation_id; status takes h; complete takes h and optional client_media_bundle_id. Other fields are rejected. Multipart bytes use the existing authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives; complete must pass the client_media_bundle_id returned by status after browser preparation. For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. track_audio requires track_id and attaches through native Track authority/CAS. Omit expected_current_file_id only when the Track has no original audio; otherwise copy its current File UUID. Pass the returned session handle unchanged, including its Track/CAS fields.",
+    "description": "Begin, inspect, complete or abort one File ingest through the existing File authority. To upload a local file: begin with t=presigned_multipart returns upload URLs in x.l as [part number, URL, size] tuples; PUT each part's exact bytes to its URL, for example with curl -T, then call complete with h. Nothing else is needed: the bytes are verified at completion. URLs expire in minutes and a large File gets at most 32 at a time; parts takes h and returns URLs for the parts still missing. abort takes h and discards an unfinished session. Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; begin remote_https takes k,t,u and correlation_id; status, parts and abort take h; complete takes h and optional client_media_bundle_id. Other fields are rejected. t=browser_upload_page leaves the bytes to the authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives and gets no upload URLs; complete must pass the client_media_bundle_id returned by status after browser preparation. For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. track_audio requires track_id and attaches through native Track authority/CAS. Omit expected_current_file_id only when the Track has no original audio; otherwise copy its current File UUID. Pass the returned session handle unchanged, including its Track/CAS fields.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -9670,9 +9836,11 @@
           "enum": [
             "begin",
             "status",
-            "complete"
+            "parts",
+            "complete",
+            "abort"
           ],
-          "description": "Action. begin starts one File transfer (requires k and t); status inspects and complete finishes a multipart session (both require h). Send only the fields listed for the chosen action/transport."
+          "description": "Action. begin starts one File transfer (requires k and t); status inspects, parts re-issues upload URLs for missing parts, complete finishes and abort discards a multipart session (all require h). Send only the fields listed for the chosen action/transport."
         },
         "k": {
           "enum": [
@@ -9692,7 +9860,7 @@
             "presigned_multipart",
             "remote_https"
           ],
-          "description": "begin only, required. browser_upload_page/presigned_multipart: multipart bytes through the existing authenticated browser upload flow (MCP carries metadata only). remote_https: server import from a public HTTPS URL."
+          "description": "begin only, required. presigned_multipart: returns URLs you PUT the bytes to yourself. browser_upload_page: the authenticated browser upload flow sends the bytes. remote_https: server import from a public HTTPS URL."
         },
         "n": {
           "type": "string",
@@ -9872,6 +10040,18 @@
               "description": "Verified File metadata and current delivery references."
             }
           }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "s"
+          ],
+          "properties": {
+            "s": {
+              "const": "aborted",
+              "description": "The session and its uploaded parts were discarded."
+            }
+          }
         }
       ],
       "$defs": {
@@ -10019,6 +10199,38 @@
               "type": "string",
               "format": "uuid",
               "description": "Current browser-prepared media bundle ID; copy to complete for direct audio/video after browser preparation."
+            },
+            "l": {
+              "type": "array",
+              "description": "Upload URLs for presigned_multipart: PUT each part's exact bytes, then call complete.",
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Part number."
+                  },
+                  {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Short-lived PUT URL."
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Exact part size in bytes."
+                  }
+                ],
+                "items": false,
+                "minItems": 3,
+                "maxItems": 3
+              }
+            },
+            "e": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the URLs in l expire."
             }
           }
         },
@@ -28249,14 +28461,13 @@
   {
     "name": "translation_units_get",
     "title": "Get translation units",
-    "description": "Read the source and current target of a document's translation units for one target locale, without an XLIFF file. Units use XLIFF 2.2 inline markup; translate them and write back with translation_units_put.",
+    "description": "Read a document's translation units: source and targets together, with no XLIFF file and no other read first. Pass l for one whole locale. Omit l, or pass ls, to read several locales at once with each unit listed once and its targets per locale; that form needs b (Block handles), q (text in any locale, ignoring case and markup) or u to keep the result small. Units with several formatted runs use XLIFF 2.2 inline markup; in the several-locale form a one-run unit reads as plain text and p holds a marked-up unit's plain source. Write back with translation_units_put.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "p",
-        "d",
-        "l"
+        "d"
       ],
       "properties": {
         "p": {
@@ -28290,7 +28501,7 @@
           "maxLength": 256
         },
         "l": {
-          "description": "Target locale; it must differ from the source locale.",
+          "description": "One target locale, read whole; it must differ from the source locale. Omit l and ls to read every existing translation.",
           "allOf": [
             {
               "type": "string",
@@ -28300,6 +28511,20 @@
               "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
             }
           ]
+        },
+        "ls": {
+          "type": "array",
+          "description": "Several target locales to read together. Needs b, q or u.",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "Exact supported locale code; aliases and case variants are not normalized.",
+            "minLength": 1,
+            "maxLength": 35,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+          }
         },
         "u": {
           "type": "array",
@@ -28311,6 +28536,23 @@
             "minLength": 1,
             "maxLength": 256
           }
+        },
+        "b": {
+          "type": "array",
+          "description": "Read only the units of these Block or section handles, from document_read.",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "q": {
+          "type": "string",
+          "description": "Read only units whose text in the source or a requested locale contains this, ignoring case and markup.",
+          "minLength": 1,
+          "maxLength": 200
         }
       }
     },
@@ -28319,7 +28561,6 @@
       "additionalProperties": false,
       "required": [
         "s",
-        "l",
         "u"
       ],
       "properties": {
@@ -28336,7 +28577,7 @@
           ]
         },
         "l": {
-          "description": "Target locale.",
+          "description": "Target locale of a one-locale read.",
           "allOf": [
             {
               "type": "string",
@@ -28348,10 +28589,14 @@
           ]
         },
         "r": {
-          "type": "string",
-          "description": "Current opaque target revision. Pass unchanged as translation_units_put er. Omitted when the target does not exist.",
-          "minLength": 1,
-          "maxLength": 256
+          "description": "One-locale read: the current opaque target revision, omitted when the target does not exist. Several locales: the revision per locale.",
+          "type": [
+            "string",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "u": {
           "type": "array",
@@ -28367,7 +28612,7 @@
             "properties": {
               "i": {
                 "type": "string",
-                "description": "Unit ID; the key for translation_units_put."
+                "description": "Unit ID."
               },
               "g": {
                 "type": "string",
@@ -28379,11 +28624,21 @@
               },
               "s": {
                 "type": "string",
-                "description": "Source text as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e."
+                "description": "Source text as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e. Plain text for a one-run unit in a several-locale read."
+              },
+              "p": {
+                "type": "string",
+                "description": "Plain source text of a marked-up unit, to pass as translation_units_put e[].s."
               },
               "t": {
-                "type": "string",
-                "description": "Current target in the same markup. Omitted when the unit has no target yet."
+                "description": "One-locale read: the current target, omitted when absent. Several locales: the target per locale.",
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -28419,15 +28674,13 @@
   {
     "name": "translation_units_put",
     "title": "Put translation units",
-    "description": "Write target translations for named units of one target locale. Other units keep their values. Each target must keep its source's inline codes with the same ids and nesting.",
+    "description": "Set translations; other units keep their values. Preferred: e, a list of edits giving a unit's current source text s and its target per locale t, so one call updates every locale and needs no read first. All locales apply together or none do. s must match the current source exactly, which refuses the write if the source changed; add i (unit ID) or b (Block handle) when several units share that text. Plain text is enough for a one-run unit and keeps its link or formatting; a unit with several runs needs markup keeping its source codes. Alternative: l with u (target per unit ID) and er (the revision r from translation_units_get) for one locale.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "p",
-        "d",
-        "l",
-        "u"
+        "d"
       ],
       "properties": {
         "p": {
@@ -28460,8 +28713,50 @@
           "minLength": 1,
           "maxLength": 256
         },
+        "e": {
+          "type": "array",
+          "description": "Edits applied across locales in one transaction. Do not combine with l, u or er.",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "s",
+              "t"
+            ],
+            "properties": {
+              "s": {
+                "type": "string",
+                "description": "The unit's current plain source text, without markup."
+              },
+              "i": {
+                "type": "string",
+                "description": "Unit ID, when several units share s.",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "b": {
+                "type": "string",
+                "description": "Block or section handle, when several units share s.",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "t": {
+                "type": "object",
+                "description": "Target per locale. Plain text for a one-run unit; otherwise XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e.",
+                "minProperties": 1,
+                "maxProperties": 64,
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 100000
+                }
+              }
+            }
+          }
+        },
         "l": {
-          "description": "Target locale; it must differ from the source locale.",
+          "description": "With u: the one target locale; it must differ from the source locale.",
           "allOf": [
             {
               "type": "string",
@@ -28474,7 +28769,7 @@
         },
         "u": {
           "type": "object",
-          "description": "Target per unit ID from translation_units_get, as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e. Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.",
+          "description": "With l: target per unit ID from translation_units_get, as XLIFF 2.2 inline markup: \u003cpc id=\"…\"\u003e…\u003c/pc\u003e wraps formatted or linked text, and \u003cph id=\"…\" equiv=\"…\"/\u003e stands for a placeholder whose equiv shows what it renders. Text escapes \u0026, \u003c and \u003e. Keep every source code with the same id and nesting, and the same line breaks and {{…}} placeholders.",
           "minProperties": 1,
           "maxProperties": 1000,
           "additionalProperties": {
@@ -28484,7 +28779,7 @@
         },
         "er": {
           "type": "string",
-          "description": "Exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.",
+          "description": "With l and u: exact target revision r returned by translation_units_get. Required for an existing target; omit only to create a currently absent target. A concurrent change causes a conflict.",
           "minLength": 1,
           "maxLength": 256
         }
@@ -28495,23 +28790,32 @@
       "additionalProperties": false,
       "required": [
         "r",
-        "c",
-        "u"
+        "c"
       ],
       "properties": {
         "r": {
-          "type": "string",
-          "description": "Target revision after import.",
-          "minLength": 1,
-          "maxLength": 256
+          "description": "With l and u: the target revision after the write. With e: the revision per locale.",
+          "type": [
+            "string",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "c": {
-          "type": "boolean",
-          "description": "Whether stored target values changed."
+          "description": "With l and u: whether stored target values changed. With e: whether they changed per locale.",
+          "type": [
+            "boolean",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "boolean"
+          }
         },
         "u": {
           "type": "array",
-          "description": "Opaque unit IDs affected by the validated import.",
+          "description": "With l and u: opaque unit IDs affected by the write.",
           "uniqueItems": true,
           "items": {
             "type": "string",

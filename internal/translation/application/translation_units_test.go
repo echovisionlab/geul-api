@@ -45,6 +45,58 @@ func TestTranslationUnitsReadUnderViewAuthorityAndWriteOneUnit(t *testing.T) {
 	require.Equal(t, []string{"series/" + entity.EntityID + "/ko translation_units_put"}, e.store.FakeDomains().OGRequests())
 }
 
+func TestEditTranslationUnitsWritesEveryLocaleFromTheSourceTextAlone(t *testing.T) {
+	e, entity := xliffEnv(t)
+
+	written, err := e.service.EditEntityTranslationUnits(newPrincipal(t).ctx, application.EditTranslationUnitsCommand{
+		Target: targetOf(entity),
+		Edits: []application.TranslationUnitEdit{{
+			Source:  "Night walks",
+			Targets: map[string]string{"ko": "밤 산책", "ja": "夜の散歩"},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, written, 2)
+	require.True(t, written["ko"].Changed)
+	require.True(t, written["ja"].Changed)
+	applied := e.store.FakeDomains().Imported()
+	require.Len(t, applied, 2)
+	require.Equal(t, "ja", applied[0].TargetLocale)
+	require.Equal(t, "夜の散歩", applied[0].Targets["entity:title"].TranslatedText)
+	require.Equal(t, "ko", applied[1].TargetLocale)
+	require.Equal(t, "밤 산책", applied[1].Targets["entity:title"].TranslatedText)
+
+	// A second edit needs no revision either: it follows the target's current one.
+	_, err = e.service.EditEntityTranslationUnits(newPrincipal(t).ctx, application.EditTranslationUnitsCommand{
+		Target: targetOf(entity),
+		Edits:  []application.TranslationUnitEdit{{Source: "Night walks", Targets: map[string]string{"ko": "밤의 산책"}}},
+	})
+	require.NoError(t, err)
+}
+
+func TestEditTranslationUnitsRefusesAChangedSourceWithoutApplying(t *testing.T) {
+	for name, edits := range map[string][]application.TranslationUnitEdit{
+		"a source that no longer matches": {{Source: "Old title", Targets: map[string]string{"ko": "x"}}},
+		"no edits":                        nil,
+		"no targets":                      {{Source: "Night walks"}},
+		"the source locale as target":     {{Source: "Night walks", Targets: map[string]string{"en": "x"}}},
+		"one good locale and one bad edit": {
+			{Source: "Night walks", Targets: map[string]string{"ko": "밤 산책"}},
+			{Source: "Old title", Targets: map[string]string{"ja": "x"}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, entity := xliffEnv(t)
+
+			_, err := e.service.EditEntityTranslationUnits(newPrincipal(t).ctx, application.EditTranslationUnitsCommand{Target: targetOf(entity), Edits: edits})
+
+			require.Equal(t, connect.CodeInvalidArgument, codeOf(err), "error %v", err)
+			require.Empty(t, e.store.FakeDomains().Imported())
+		})
+	}
+}
+
 func TestTranslationUnitsReadOnlyTheSelectedUnits(t *testing.T) {
 	e, entity := xliffEnv(t)
 

@@ -34,7 +34,7 @@ var fileBlockTools = toolRegistry[FileBlockTools]{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
 		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
 			"Image Files render as images through the native File Block. An optional caption is saved in the same mutation. " +
-			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. New File Block download policy starts disabled." + syncRequiredGuidance,
+			"Revisions are optional because this only adds a block. New File Block download policy starts disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
 	}, (*FileBlockTools).add),
@@ -194,6 +194,10 @@ func (tools *FileBlockTools) add(ctx context.Context, _ string, call toolCall[do
 	if err != nil {
 		return executionError(err)
 	}
+	focused, err := withCurrentRevisions(ctx, tools.documents, input.focusedMutationArguments)
+	if err != nil {
+		return expectedToolError(err)
+	}
 	block := core.BlockID(uuid.NewString())
 	operations := []core.Operation{
 		core.InsertBlockOperation(block, fileBlockKind, input.Parent, input.After),
@@ -202,7 +206,7 @@ func (tools *FileBlockTools) add(ctx context.Context, _ string, call toolCall[do
 	if input.Caption != nil {
 		operations = append(operations, core.SetFieldOperation(block, "caption", core.Text(*input.Caption)))
 	}
-	request, err := focusedApplyRequest(input.focusedMutationArguments, operations)
+	request, err := focusedApplyRequest(focused, operations)
 	if err != nil {
 		return executionError(err)
 	}

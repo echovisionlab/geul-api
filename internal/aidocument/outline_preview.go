@@ -44,7 +44,13 @@ func searchNodes(nodes []Node, query string) map[BlockID]string {
 		text := []rune(nodeLocaleText(node, 0))
 		index := runeIndex(lowerRunes(text), needle)
 		if index < 0 {
-			continue
+			// A link's address is not text a reader sees, but finding every link
+			// to a page starts from it.
+			if linked := nodeLinkAddresses(node); runeIndex(lowerRunes([]rune(linked)), needle) >= 0 {
+				text, index = []rune(strings.TrimSpace(string(text)+" "+linked)), 0
+			} else {
+				continue
+			}
 		}
 		start := max(0, index-searchContextRunes)
 		end := min(len(text), start+outlinePreviewRunes)
@@ -105,6 +111,23 @@ func nodeLocaleText(node Node, limit int) string {
 		}
 	}
 	return strings.Join(strings.Fields(text.String()), " ")
+}
+
+func nodeLinkAddresses(node Node) string {
+	var addresses []string
+	var visit func(items []InlineItem)
+	visit = func(items []InlineItem) {
+		for _, item := range items {
+			if item.Kind == InlineKindLink && item.Target != "" {
+				addresses = append(addresses, item.Target)
+			}
+			visit(item.Children)
+		}
+	}
+	for _, field := range node.Localized {
+		visit(field.Value.Inline)
+	}
+	return strings.Join(addresses, " ")
 }
 
 func appendValueText(text *strings.Builder, value Value) {
