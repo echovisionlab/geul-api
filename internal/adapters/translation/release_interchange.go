@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -81,7 +80,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
+	job := releasedomain.TranslationJob{
 		EntityType: command.EntityType, EntityID: command.EntityID,
 		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
 		RequestedByMemberID: memberID,
@@ -89,7 +88,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 	if err := releasedomain.ApplyTypedTranslationInterchangeCandidate(
 		ctx,
 		releaseStore(db, store),
-		releaseTranslationJob(job),
+		job,
 		candidate,
 		core.EntryWrite{Now: command.Now.UTC()},
 		command.ExpectedRevision,

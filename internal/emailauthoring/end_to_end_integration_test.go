@@ -28,9 +28,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
 	// endToEnd is the Email Authoring use cases as the server wires them, over
 	// a database and SpiceDB.
@@ -212,45 +210,10 @@ func TestEmailTemplateTargetsKeepTheSharedRevisionAcrossWritersIntegration(t *te
 	var targetConflict *translation.TargetRevisionConflict
 	require.ErrorAs(t, err, &targetConflict)
 
-	providerSubject := "Provider subject"
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return emailauthoring.ApplyTemplateTranslationCandidate(collab,
-			emailauthoringpostgres.Bind(tx, e.ports, apitelemetry.NewDurableWriter(db)),
-			emailcontent.TranslationJob{
-				EntityType: "email_template", EntityID: created.ID, SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: contributorID,
-			},
-			&translation.Candidate{
-				Title: &providerSubject, ContentDocumentRevision: sourceWrite.DocumentRevision,
-				ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko"}, ContentBlockLocaleDeletes: []string{blockID},
-			},
-			translation.EntryWrite{Title: &providerSubject, Now: time.Now().UTC()},
-		)
-	}))
-	var audit struct {
-		ActorKind     string `gorm:"column:actor_kind"`
-		ActorMemberID string `gorm:"column:actor_member_id"`
-	}
-	require.NoError(t, db.Raw(`
-		SELECT actor_kind, actor_member_id::text AS actor_member_id
-		FROM domain_audit
-		WHERE action = ? AND target_type = 'email_template' AND target_id = ?
-		  AND attributes @> '{"changed_fields":["locale_content"],"locale":"ko"}'::jsonb
-		ORDER BY occurred_at DESC, audit_id DESC
-		LIMIT 1`, sharedtelemetry.AuditEmailTemplateUpdated, created.ID).Scan(&audit).Error)
-	require.Equal(t, "member", audit.ActorKind)
-	require.Equal(t, contributorID, audit.ActorMemberID)
-	var projection string
-	require.NoError(t, db.Table("email_template_translation").Select("content_html").
-		Where("entity_id = ? AND locale = 'ko'", created.ID).Scan(&projection).Error)
-	require.Contains(t, projection, "Source body")
-
 	updated, err := e.internal.ApplyTemplateBlockBatch(collab, emailauthoring.ApplyTemplateBlockBatchCommand{
 		TemplateID: created.ID, Locale: "en",
 		Batch: paragraphBatch(uuid.MustParse(sourceWrite.DocumentRevision), "en", blockID, "Updated source body", false, contributorID),
 	})
 	require.NoError(t, err)
 	require.NotEqual(t, sourceWrite.DocumentRevision, updated.DocumentRevision)
-	require.NoError(t, db.Table("email_template_translation").Select("content_html").
-		Where("entity_id = ? AND locale = 'ko'", created.ID).Scan(&projection).Error)
-	require.Contains(t, projection, "Updated source body")
 }

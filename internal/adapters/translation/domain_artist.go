@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -26,23 +25,11 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			}
 			return artist.LoadTypedTranslationSourceDocument(ctx, artistJoined(db, store, nil), artistID)
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			if job == nil || job.EntityType != string(core.KindArtist) {
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+			if job.EntityType != string(core.KindArtist) {
 				return nil, errors.New("typed Artist translation source is required")
 			}
-			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{})
-		},
-		buildCandidate: func(plan *core.ExtractionPlan, source *core.SourceDocument, results map[string]core.UnitResult) (*core.Candidate, error) {
-			if plan == nil || plan.EntityType != string(core.KindArtist) {
-				return nil, errors.New("typed Artist translation source is required")
-			}
-			return core.BuildRichTextCandidate(plan, source, results)
-		},
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if store == nil || job == nil {
-				return errors.New("typed Artist translation candidate and content Block store are required")
-			}
-			return artist.ApplyTypedTranslationCandidate(ctx, artistJoined(tx, store, audit), artistTranslationJob(job), candidate, input)
+			return core.BuildRichTextExtractionPlan(&job, source, core.RichTextDocumentFields{})
 		},
 		requestLocaleOG:   localeAwareOG(core.KindArtist),
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditArtistUpdated, sharedtelemetry.NewArtistSourceLocaleAuditRecord),
@@ -59,7 +46,7 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 				return identitystate.LockActivePrincipal(ctx, tx, principal)
 			}, artistID)
 		},
-		requireJobRead: requireJobEdit(policyv1.Artist.Edit),
+		requireTranslationRead: requireTranslationEdit(policyv1.Artist.Edit),
 	})
 }
 
@@ -67,11 +54,4 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 // handle, with the content store it hands the delivery.
 func artistJoined(db *gorm.DB, contents *contentblock.Store, audit domainaudit.Appender) artist.Joined {
 	return artistpostgres.Bind(db, artistpostgres.Ports{ContentBlocks: contents}, audit)
-}
-
-func artistTranslationJob(job *model.TranslationJob) artist.TranslationJob {
-	return artist.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
-		RequestedByMemberID: job.RequestedByMemberID,
-	}
 }

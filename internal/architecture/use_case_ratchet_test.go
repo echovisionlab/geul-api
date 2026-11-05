@@ -20,7 +20,6 @@ const (
 var pipelineDomains = []string{
 	"internal/account",
 	"internal/admin",
-	"internal/ai",
 	"internal/artist",
 	"internal/authentication",
 	"internal/campaign",

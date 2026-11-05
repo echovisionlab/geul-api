@@ -23,10 +23,6 @@ func (d domains) LoadSourceDocument(ctx context.Context, entityType, entityID st
 	return d.ports.Domains.LoadSourceDocument(ctx, d.tx, d.ports.ContentBlocks, entityType, entityID)
 }
 
-func (d domains) ApplyCandidate(ctx context.Context, job application.Job, candidate *translation.Candidate, input translation.EntryWrite) (application.AppliedTranslationTarget, error) {
-	return d.ports.Domains.ApplyCandidate(ctx, d.tx, d.ports.ContentBlocks, job, candidate, input)
-}
-
 func (d domains) RequestLocaleOG(ctx context.Context, entityType, entityID, locale, reason string) (bool, error) {
 	return d.ports.Domains.RequestLocaleOG(ctx, d.tx, d.ports.OGPlanner, d.ports.OGRefresher, entityType, entityID, locale, reason)
 }
@@ -47,16 +43,12 @@ func (d domains) RequireInterchangeEdit(ctx context.Context, entityType, entityI
 	return d.ports.Domains.RequireTranslationInterchangeEdit(ctx, d.tx, d.ports.SpiceDB, entityType, entityID)
 }
 
-func (d domains) RequireJobRead(ctx context.Context, entityType, entityID string) error {
-	return d.ports.Domains.RequireJobRead(ctx, d.tx, d.ports.SpiceDB, entityType, entityID)
+func (d domains) RequireTranslationRead(ctx context.Context, entityType, entityID string) error {
+	return d.ports.Domains.RequireTranslationRead(ctx, d.tx, d.ports.SpiceDB, entityType, entityID)
 }
 
 func (d domains) RequireSourceLocaleEdit(ctx context.Context, entityType, entityID string) error {
 	return d.ports.Domains.RequireSourceLocaleEdit(ctx, d.tx, d.ports.SpiceDB, entityType, entityID)
-}
-
-func (d domains) RequireLegalEditable(ctx context.Context, entityType, entityID string) error {
-	return d.ports.Domains.RequireLegalEditable(ctx, d.tx, d.ports.SpiceDB, entityType, entityID)
 }
 
 func (d domains) RequireDocumentContributors(ctx context.Context, contributors []string) error {

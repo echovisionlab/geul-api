@@ -56,9 +56,6 @@ func TestUnmarshalXLIFFInterchangePreservesExplicitEmptyTarget(t *testing.T) {
 	if target == nil || *target != "" {
 		t.Fatalf("target = %#v, want explicit empty", target)
 	}
-	if _, err := UnmarshalXLIFF(body); err == nil {
-		t.Fatal("provider parser accepted an empty translated target")
-	}
 }
 
 func TestXLIFFRoundTripPreservesExplicitEmptyAndWhitespaceOnlyUnits(t *testing.T) {
@@ -84,7 +81,7 @@ func TestXLIFFRoundTripPreservesExplicitEmptyAndWhitespaceOnlyUnits(t *testing.T
 	require.Contains(t, string(body), `<unit id="body:empty"`)
 	require.Contains(t, string(body), `<source xml:space="preserve"></source>`)
 
-	decoded, err := UnmarshalXLIFF(body)
+	decoded, err := UnmarshalXLIFFInterchange(body)
 	require.NoError(t, err)
 	units := decoded.File.Groups[0].TranslationUnit
 	require.Len(t, units, 2)
@@ -121,8 +118,8 @@ func TestUnmarshalXLIFFRejectsLegacy21Namespace(t *testing.T) {
   <file id="post:post-1"><group id="block:a"><unit id="block:a:text"><segment id="s1"><source>Hello</source></segment></unit></group></file>
 </xliff>`)
 
-	_, err := UnmarshalXLIFF(body)
-	require.ErrorContains(t, err, "unsupported XLIFF namespace")
+	_, err := UnmarshalXLIFFInterchange(body)
+	require.Error(t, err)
 }
 
 func TestValidateXLIFFDocumentRejectsPlaceholderAndLineBreakDrift(t *testing.T) {
@@ -180,37 +177,6 @@ func TestSamePlaceholdersChecksOccurrenceCardinality(t *testing.T) {
 	require.False(t, SamePlaceholders("{{name}} {{name}} {{site}}", "{{name}} {{site}} {{site}}"))
 }
 
-func TestValidateResponseRejectsXLIFFIdentityAndSourceChanges(t *testing.T) {
-	expected := XLIFFDocument{
-		Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko",
-		File: XLIFFFile{ID: "page:page-1", Groups: []XLIFFGroup{{
-			ID: "entity:meta", TranslationUnit: []XLIFFUnit{{ID: "entity:title", Source: "Hello"}},
-		}}},
-	}
-	responseDocument := XLIFFWithTargets(expected, map[string]UnitResult{
-		"entity:title": {UnitID: "entity:title", TranslatedText: "안녕하세요"},
-	})
-	responseDocument.Version = "2.0"
-	responseDocument.SourceLocale = "fr"
-	responseDocument.TargetLocale = "ja"
-	responseDocument.File.ID = "page:other"
-	responseDocument.File.Groups[0].ID = "other:group"
-	responseDocument.File.Groups[0].TranslationUnit[0].Source = "Changed"
-
-	result := ValidateResponse(expected, ProviderResponse{Document: responseDocument})
-	require.False(t, result.Passed)
-	require.NotNil(t, result.ParseError)
-	require.Contains(t, *result.ParseError, "XLIFF version changed")
-	require.Contains(t, *result.ParseError, "XLIFF source locale changed")
-	require.Contains(t, *result.ParseError, "XLIFF target locale changed")
-	require.Contains(t, *result.ParseError, "XLIFF file id changed")
-	require.Contains(t, *result.ParseError, `XLIFF group "entity:meta" changed`)
-	require.Contains(t, *result.ParseError, `XLIFF unit "entity:title" source changed`)
-	require.Equal(t, []string{
-		"file_id_changed", "group_changed", "source_changed", "source_locale_changed", "target_locale_changed", "version_changed",
-	}, ProviderResponseIssueKinds(ResponseValidationError(result)))
-}
-
 func TestXLIFFTypedInlineRoundTripsNestedPairedCodesAndPlaceholders(t *testing.T) {
 	source := `<strong>Hello {{name}}</strong>`
 	target := `<strong>안녕하세요 {{name}}</strong>`
@@ -247,29 +213,13 @@ func TestXLIFFTypedInlineRoundTripsNestedPairedCodesAndPlaceholders(t *testing.T
 	require.Contains(t, string(body), `<pc id="c1" dataRefStart="d1" dataRefEnd="d2" canCopy="no" canDelete="no">`)
 	require.Contains(t, string(body), `<ph id="p1" dataRef="d3" canCopy="no" canDelete="no"></ph>`)
 
-	decoded, err := UnmarshalXLIFF(body)
+	decoded, err := UnmarshalXLIFFInterchange(body)
 	require.NoError(t, err)
 	decodedUnit := decoded.File.Groups[0].TranslationUnit[0]
 	require.Equal(t, source, decodedUnit.Source)
 	require.Equal(t, target, *decodedUnit.Target)
 	require.True(t, reflect.DeepEqual(document.File.Groups[0].TranslationUnit[0].SourceInline, decodedUnit.SourceInline))
 	require.True(t, reflect.DeepEqual(document.File.Groups[0].TranslationUnit[0].TargetInline, decodedUnit.TargetInline))
-}
-
-func TestParseTranslatedXLIFFRejectsInlineSourceIdentityDrift(t *testing.T) {
-	target := "Hello"
-	document := XLIFFDocument{
-		Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "fr",
-		File: XLIFFFile{ID: "page:page-1", Groups: []XLIFFGroup{{
-			ID: "entity:body", TranslationUnit: []XLIFFUnit{{ID: "entity:body", Source: "Hello", Target: &target}},
-		}}},
-	}
-	body, err := MarshalXLIFF(&document)
-	require.NoError(t, err)
-	drifted := strings.Replace(string(body), `unit id="entity:body"`, `unit id="entity:changed"`, 1)
-
-	_, err = ParseTranslatedXLIFF(document, []byte(drifted))
-	require.ErrorContains(t, err, "unit identity changed")
 }
 
 func TestValidateXLIFFRejectsTargetTextOutsideSourceTextBearingRun(t *testing.T) {

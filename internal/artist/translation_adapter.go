@@ -53,32 +53,12 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, arti
 	if err != nil {
 		return nil, normalizeCreativeContentBlockError(err)
 	}
-	artist, err := store.FindArtist(ctx, artistID)
-	if err != nil {
+	if _, err := store.FindArtist(ctx, artistID); err != nil {
 		return nil, err
 	}
 	return &translation.SourceDocument{
 		Title: title, ContentDocumentRevision: snapshot.Document.Revision.String(), ContentBlockDocument: document,
-		ProtectedTerms: translation.NormalizeProtectedTerms([]string{title, optionalArtistString(artist.RealName)}),
 	}, nil
-}
-
-// ApplyTypedTranslationCandidate applies a provider delivery in the
-// translation domain's transaction, which store is bound to, replacing the
-// current target row.
-func ApplyTypedTranslationCandidate(
-	ctx context.Context,
-	joined Joined,
-	job TranslationJob,
-	candidate *translation.Candidate,
-	metadata translation.EntryWrite,
-) error {
-	store := joined.Store
-	auditWriter := joined.Audit
-
-	return applyTypedTranslationCandidate(
-		ctx, store, job, candidate, metadata, nil, targetlocale.RevisionCurrent, auditWriter, true,
-	)
 }
 
 // ApplyTypedTranslationInterchangeCandidate applies an XLIFF interchange
@@ -268,11 +248,4 @@ func canonicalArtistUUID(value string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("canonical UUID is required")
 	}
 	return parsed, nil
-}
-
-func optionalArtistString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

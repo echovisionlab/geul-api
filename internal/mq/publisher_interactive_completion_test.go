@@ -28,11 +28,4 @@ func TestPublisherNeverSuppressesInteractiveContentSignal(t *testing.T) {
 		event,
 	)
 	require.ErrorContains(t, err, "PostgreSQL publisher is required")
-
-	err = publisher.NotifyProtobuf(
-		aidocument.WithInteractivePostCommitCompletion(context.Background()),
-		eventpkg.SignalTranslationLifecycle,
-		event,
-	)
-	require.ErrorContains(t, err, "PostgreSQL publisher is required")
 }

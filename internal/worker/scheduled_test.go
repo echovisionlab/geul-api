@@ -87,14 +87,13 @@ func (p scheduledPorts) ResumeActiveEmailDeliveryRuns(_ context.Context, limit i
 	return 0, p.record("ResumeActiveEmailDeliveryRuns")
 }
 
-func newScheduledHandlers(t *testing.T, ports scheduledPorts, jobs *fakeJobs, processor MetadataAIJobProcessor) (*Handlers, *mutationtest.UnitOfWork[Jobs]) {
+func newScheduledHandlers(t *testing.T, ports scheduledPorts, jobs *fakeJobs) (*Handlers, *mutationtest.UnitOfWork[Jobs]) {
 	t.Helper()
 	units := mutationtest.New[Jobs](jobs)
 	return newTestHandlers(t, Deps{
 		Units: units, FileMedia: ports, DanglingFiles: ports, PublicAssets: ports, OGCleanup: ports,
 		FaviconCleanup: ports, Uploads: ports, ShareLinks: ports, AuthCodes: ports, QueueArchives: ports,
 		MemberDeletions: ports, Legal: ports, Identities: identityPages{}, GeoIP: ports, Campaigns: ports,
-		MetadataAI: processor,
 	}), units
 }
 
@@ -116,13 +115,12 @@ func TestHandleScheduledRoutesEachJobToItsOwner(t *testing.T) {
 		scheduler.JobUpdateGeoIP:               {"Refresh"},
 		scheduler.JobProcessScheduledCampaigns: {"DispatchDueEmailDeliveryRuns", "ResumeActiveEmailDeliveryRuns"},
 		scheduler.JobProcessScheduledPosts:     {"LockDuePosts"},
-		scheduler.JobRecoverMetadataAI:         {"RecoverExpiredJobs"},
 	} {
 		t.Run(string(job), func(t *testing.T) {
 			recorded := &calls{}
 			jobs := newFakeJobs()
 			jobs.calls = recorded
-			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded}, jobs, metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}})
+			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded}, jobs)
 
 			require.NoError(t, handlers.HandleScheduled(t.Context(), job))
 			require.Equal(t, want, recorded.all())
@@ -144,7 +142,7 @@ func TestScheduledCleanupsRunEveryStepAndReportEveryFailure(t *testing.T) {
 	} {
 		t.Run(string(job), func(t *testing.T) {
 			recorded := &calls{}
-			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded, err: failed}, newFakeJobs(), nil)
+			handlers, _ := newScheduledHandlers(t, scheduledPorts{unreachable: unreachable{t: t}, calls: recorded, err: failed}, newFakeJobs())
 
 			err := handlers.HandleScheduled(t.Context(), job)
 
@@ -279,43 +277,6 @@ func TestScheduledPostsRollBackWhenAPublishFails(t *testing.T) {
 	require.ErrorIs(t, handlers.HandleScheduled(t.Context(), scheduler.JobProcessScheduledPosts), failed)
 	require.Empty(t, jobs.published)
 	require.Equal(t, []mutation.Step{mutation.StepRollback}, units.Steps())
-}
-
-type metadataAIProcessor struct{ MetadataAIRecovery }
-
-func (metadataAIProcessor) ProcessJob(context.Context, string) error { return nil }
-
-func TestMetadataAIRecoveryUsesTheOwnersBatchWithoutAJobTransaction(t *testing.T) {
-	jobs := newFakeJobs()
-	jobs.recovered = 2
-	units := mutationtest.New[Jobs](jobs)
-	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}}})
-
-	require.NoError(t, handlers.HandleScheduled(t.Context(), scheduler.JobRecoverMetadataAI))
-
-	require.Equal(t, []int{0}, jobs.recoveryLimits, "0 keeps the owner's bounded batch")
-	require.Empty(t, units.Steps(), "recovery owns its transaction")
-}
-
-func TestMetadataAIRecoveryFailureFailsTheJobWithoutAJobTransaction(t *testing.T) {
-	failed := errors.New("recovery scan failed")
-	jobs := newFakeJobs()
-	jobs.recovery = failed
-	units := mutationtest.New[Jobs](jobs)
-	handlers := newTestHandlers(t, Deps{Units: units, MetadataAI: metadataAIProcessor{MetadataAIRecovery: fakeMetadataAIRecovery{jobs: jobs}}})
-
-	require.ErrorIs(t, handlers.HandleScheduled(t.Context(), scheduler.JobRecoverMetadataAI), failed)
-	require.Empty(t, units.Steps(), "a recovery error must not open an unrelated transaction")
-}
-
-func TestMetadataAIRecoveryIsSkippedWithoutTheProcessor(t *testing.T) {
-	jobs := newFakeJobs()
-	units := mutationtest.New[Jobs](jobs)
-	handlers := newTestHandlers(t, Deps{Units: units})
-
-	require.NoError(t, handlers.HandleScheduled(t.Context(), scheduler.JobRecoverMetadataAI))
-	require.Empty(t, units.Steps(), "no transaction opens")
-	require.Empty(t, jobs.recoveryLimits)
 }
 
 type geoIPOutcome struct {

@@ -20,14 +20,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing.T) {
+func TestLabelTargetLocaleCASSeedAndDeleteIntegration(t *testing.T) {
 	t.Parallel()
 	db := orytest.NewIntegrationDB(t)
 	stack := orytest.SetupOryStack(t)
@@ -55,13 +54,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	internal := label.NewInternalConnectHandler(aiService)
 
 	missing := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
-	require.False(t, missing.Msg.LocaleExists)
-	require.Nil(t, missing.Msg.TargetRevision)
-	require.Equal(t, documentRevision, missing.Msg.DocumentRevision)
-	require.Equal(t, "en", missing.Msg.SourceMetadata.GetLocale())
-	require.Equal(t, "ko", missing.Msg.GetLocale())
-	require.Equal(t, "source description", labelFirstBlockText(t, missing.Msg.Document),
-		"a target collaboration room must render missing target units from the current source")
+	requireLabelMissingTargetRoomIntegration(t, missing.Msg, documentRevision)
 	_, err := internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
 		LabelId: labelID, Locale: "ko",
 		Batch: labelTargetParagraphBatch(documentRevision, memberID.String(), "ko", labelFirstBlockID(t, missing.Msg.Document), "blocked"),
@@ -113,43 +106,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	}))
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
 
-	localeDelete := &contentv1.RichTextBlockMutationBatch{
-		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
-		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT,
-		ExpectedRevision:        documentRevision,
-		ContributorMemberIds:    []string{memberID.String()},
-		LocaleMutationGroups: []*contentv1.RichTextLocaleMutationGroup{{
-			Locale: "ko",
-			Mutations: []*contentv1.RichTextBlockLocaleMutation{{Operation: &contentv1.RichTextBlockLocaleMutation_Delete{
-				Delete: &contentv1.DeleteRichTextBlockLocale{BlockId: blockID},
-			}}},
-		}},
-	}
-	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: koEdited.Msg.TargetRevision, Batch: localeDelete,
-	}))
-	requireLabelMutationRejectionIntegration(
-		t, err,
-		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-	)
-
-	_, dcdpDeleteErr := aiService.ExecuteAIDocumentMutation(memberCtx, labelID, "ko", label.AIDocumentExecutionApply,
-		func(label.AIDocumentState) (label.AIDocumentMutation, error) {
-			return label.AIDocumentMutation{
-				LabelID: labelID, Locale: "ko", ExpectedRevision: documentRevision,
-				ExpectedTargetRevision: koEdited.Msg.TargetRevision, ExpectedSource: "en", ExpectedPresence: true,
-				ContributorMemberID: memberID,
-				Batch: &contentblock.Batch{
-					DocumentID: documentID, ExpectedRevision: uuid.MustParse(documentRevision),
-					ContributorMemberIDs: []uuid.UUID{memberID},
-					LocaleGroups:         []contentblock.LocaleMutationGroup{{Locale: "ko", Deletes: []uuid.UUID{uuid.MustParse(blockID)}}},
-				},
-			}, nil
-		})
-	requireLabelMutationRejectionIntegration(
-		t, dcdpDeleteErr,
-		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-	)
+	requireLabelTargetBlockDeletesRejectedIntegration(t, memberCtx, internal, aiService, labelID, documentID, documentRevision, memberID, blockID, koEdited.Msg.TargetRevision)
 
 	koAfterRejectedDeletes := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
 	require.Equal(t, koEdited.Msg.TargetRevision, koAfterRejectedDeletes.Msg.TargetRevision)
@@ -163,12 +120,116 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	require.NotEqual(t, koAfterRejectedDeletes.Msg.TargetRevision, explicitEmpty.Msg.TargetRevision)
 	require.Equal(t, 1, labelLocaleOverlayCountIntegration(t, db, labelID, "ko"), "explicit empty preserves the locale unit")
 
+	requireLabelTargetForbiddenMutationsIntegration(t, memberCtx, internal, labelID, documentRevision, memberID, blockID, explicitEmpty.Msg.TargetRevision)
+
+	sourceEdited, err := internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
+		LabelId: labelID, Locale: "en",
+		Batch: labelTargetParagraphBatch(documentRevision, memberID.String(), "en", blockID, "source changed"),
+	}))
+	require.NoError(t, err)
+	require.NotEqual(t, documentRevision, sourceEdited.Msg.DocumentRevision)
+	koAfterSource := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
+	require.NotEqual(t, *explicitEmpty.Msg.TargetRevision, *koAfterSource.Msg.TargetRevision)
+	require.Equal(t, sourceEdited.Msg.DocumentRevision, koAfterSource.Msg.DocumentRevision)
+
+	deleted := executeLabelTargetLifecycleIntegration(
+		t, memberCtx, aiService, labelID, "ko",
+		sourceEdited.Msg.DocumentRevision, koAfterSource.Msg.TargetRevision, true,
+	)
+	require.True(t, deleted.Content.Changed)
+	require.Equal(t, sourceEdited.Msg.DocumentRevision, deleted.Content.DocumentRevision.String())
+	koAfterDelete := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
+	require.False(t, koAfterDelete.Msg.LocaleExists)
+	require.Nil(t, koAfterDelete.Msg.TargetRevision)
+	require.Equal(t, sourceEdited.Msg.DocumentRevision, koAfterDelete.Msg.DocumentRevision)
+}
+
+// requireLabelMissingTargetRoomIntegration checks that a room for a missing
+// "ko" target renders the current "en" source without a target revision.
+func requireLabelMissingTargetRoomIntegration(t *testing.T, missing *intrav1.LoadLabelBlockDocumentResponse, documentRevision string) {
+	t.Helper()
+	require.False(t, missing.LocaleExists)
+	require.Nil(t, missing.TargetRevision)
+	require.Equal(t, documentRevision, missing.DocumentRevision)
+	require.Equal(t, "en", missing.SourceMetadata.GetLocale())
+	require.Equal(t, "ko", missing.GetLocale())
+	require.Equal(t, "source description", labelFirstBlockText(t, missing.Document),
+		"a target collaboration room must render missing target units from the current source")
+}
+
+// requireLabelTargetBlockDeletesRejectedIntegration checks that neither a
+// collaboration batch nor a DCDP mutation may delete a target locale block.
+func requireLabelTargetBlockDeletesRejectedIntegration(
+	t *testing.T,
+	memberCtx context.Context,
+	internal *label.InternalConnectHandler,
+	aiService *label.Service,
+	labelID string,
+	documentID uuid.UUID,
+	documentRevision string,
+	memberID uuid.UUID,
+	blockID string,
+	targetRevision *string,
+) {
+	t.Helper()
+	localeDelete := &contentv1.RichTextBlockMutationBatch{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT,
+		ExpectedRevision:        documentRevision,
+		ContributorMemberIds:    []string{memberID.String()},
+		LocaleMutationGroups: []*contentv1.RichTextLocaleMutationGroup{{
+			Locale: "ko",
+			Mutations: []*contentv1.RichTextBlockLocaleMutation{{Operation: &contentv1.RichTextBlockLocaleMutation_Delete{
+				Delete: &contentv1.DeleteRichTextBlockLocale{BlockId: blockID},
+			}}},
+		}},
+	}
+	_, err := internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
+		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: targetRevision, Batch: localeDelete,
+	}))
+	requireLabelMutationRejectionIntegration(
+		t, err,
+		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+	)
+
+	_, dcdpDeleteErr := aiService.ExecuteAIDocumentMutation(memberCtx, labelID, "ko", label.AIDocumentExecutionApply,
+		func(label.AIDocumentState) (label.AIDocumentMutation, error) {
+			return label.AIDocumentMutation{
+				LabelID: labelID, Locale: "ko", ExpectedRevision: documentRevision,
+				ExpectedTargetRevision: targetRevision, ExpectedSource: "en", ExpectedPresence: true,
+				ContributorMemberID: memberID,
+				Batch: &contentblock.Batch{
+					DocumentID: documentID, ExpectedRevision: uuid.MustParse(documentRevision),
+					ContributorMemberIDs: []uuid.UUID{memberID},
+					LocaleGroups:         []contentblock.LocaleMutationGroup{{Locale: "ko", Deletes: []uuid.UUID{uuid.MustParse(blockID)}}},
+				},
+			}, nil
+		})
+	requireLabelMutationRejectionIntegration(
+		t, dcdpDeleteErr,
+		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+	)
+}
+
+// requireLabelTargetForbiddenMutationsIntegration checks that a target locale
+// rejects structural, shared-field, file-relation and document-metadata edits.
+func requireLabelTargetForbiddenMutationsIntegration(
+	t *testing.T,
+	memberCtx context.Context,
+	internal *label.InternalConnectHandler,
+	labelID string,
+	documentRevision string,
+	memberID uuid.UUID,
+	blockID string,
+	targetRevision *string,
+) {
+	t.Helper()
 	structural := labelTargetParagraphBatch(documentRevision, memberID.String(), "ko", blockID, "forbidden")
 	structural.BaseMutations = []*contentv1.RichTextBlockMutation{{Operation: &contentv1.RichTextBlockMutation_Delete{
 		Delete: &contentv1.DeleteRichTextBlock{BlockId: blockID},
 	}}}
-	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: explicitEmpty.Msg.TargetRevision, Batch: structural,
+	_, err := internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
+		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: targetRevision, Batch: structural,
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	requireLabelMutationRejectionIntegration(
@@ -183,7 +244,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		}},
 	}}}
 	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: explicitEmpty.Msg.TargetRevision, Batch: shared,
+		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: targetRevision, Batch: shared,
 	}))
 	requireLabelMutationRejectionIntegration(
 		t, err,
@@ -203,7 +264,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		}},
 	}}}
 	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: explicitEmpty.Msg.TargetRevision, Batch: fileMutation,
+		LabelId: labelID, Locale: "ko", ExpectedTargetRevision: targetRevision, Batch: fileMutation,
 	}))
 	requireLabelMutationRejectionIntegration(
 		t, err,
@@ -212,113 +273,13 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	targetTitle := "forbidden target title"
 	_, err = internal.UpdateLabelLocaleMetadata(memberCtx, connect.NewRequest(&intrav1.UpdateLabelLocaleMetadataRequest{
 		LabelId: labelID, Locale: "ko", ExpectedRevision: documentRevision,
-		ExpectedTargetRevision: explicitEmpty.Msg.TargetRevision, ContributorMemberIds: []string{memberID.String()},
+		ExpectedTargetRevision: targetRevision, ContributorMemberIds: []string{memberID.String()},
 		Title: &targetTitle,
 	}))
 	requireLabelMutationRejectionIntegration(
 		t, err,
 		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_DOCUMENT_METADATA_FORBIDDEN,
 	)
-
-	sourceEdited, err := internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "en",
-		Batch: labelTargetParagraphBatch(documentRevision, memberID.String(), "en", blockID, "source changed"),
-	}))
-	require.NoError(t, err)
-	require.NotEqual(t, documentRevision, sourceEdited.Msg.DocumentRevision)
-	require.NotEqual(t, documentRevision, sourceEdited.Msg.DocumentRevision)
-	koAfterSource := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
-	require.NotEqual(t, *explicitEmpty.Msg.TargetRevision, *koAfterSource.Msg.TargetRevision)
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, koAfterSource.Msg.DocumentRevision)
-
-	deleted := executeLabelTargetLifecycleIntegration(
-		t, memberCtx, aiService, labelID, "ko",
-		sourceEdited.Msg.DocumentRevision, koAfterSource.Msg.TargetRevision, true,
-	)
-	require.True(t, deleted.Content.Changed)
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, deleted.Content.DocumentRevision.String())
-	koAfterDelete := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
-	require.False(t, koAfterDelete.Msg.LocaleExists)
-	require.Nil(t, koAfterDelete.Msg.TargetRevision)
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, koAfterDelete.Msg.DocumentRevision)
-
-	providerCandidate := &translation.Candidate{
-		ContentDocumentRevision:   sourceEdited.Msg.DocumentRevision,
-		ContentBlockLocaleOverlay: labelTargetLocaleOverlay(blockID, "ja", "provider ja"),
-	}
-	providerJob := label.TranslationJob{
-		EntityType: "label", EntityID: labelID, TargetLocale: "ja",
-		RequestedByMemberID: orytest.PostIntegrationMemberID(identityID),
-	}
-	providerJobWithoutRequester := providerJob
-	providerJobWithoutRequester.RequestedByMemberID = ""
-	err = db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(
-			t.Context(), label.Joined{Store: labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), Audit: auditWriter}, providerJobWithoutRequester, providerCandidate,
-			translation.EntryWrite{Now: time.Now().UTC()},
-		)
-	})
-	require.ErrorContains(t, err, "requires its requesting Member")
-	requireLabelTargetLocaleAuditCountIntegration(t, db, labelID, 7)
-
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), label.Joined{Store: labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), Audit: auditWriter}, providerJob, providerCandidate, translation.EntryWrite{Now: time.Now().UTC()})
-	}))
-	jaLoaded := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
-	require.True(t, jaLoaded.Msg.LocaleExists)
-	require.NotNil(t, jaLoaded.Msg.TargetRevision)
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, jaLoaded.Msg.DocumentRevision, "provider target delivery must not bump the shared document revision")
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, jaLoaded.Msg.DocumentRevision, "provider target delivery must not bump the shared document revision")
-	require.Equal(t, 1, labelLocaleOverlayCountIntegration(t, db, labelID, "ja"))
-
-	providerReplacement := &translation.Candidate{
-		ContentDocumentRevision: sourceEdited.Msg.DocumentRevision,
-		ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{
-			Locale: "ja",
-		},
-		ContentBlockLocaleDeletes: []string{blockID},
-	}
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), label.Joined{Store: labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), Audit: auditWriter}, providerJob, providerReplacement, translation.EntryWrite{Now: time.Now().UTC()})
-	}))
-	jaAfterReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
-	require.True(t, jaAfterReplacement.Msg.LocaleExists)
-	require.NotNil(t, jaAfterReplacement.Msg.TargetRevision)
-	require.NotEqual(t, jaLoaded.Msg.TargetRevision, jaAfterReplacement.Msg.TargetRevision)
-	require.Equal(t, sourceEdited.Msg.DocumentRevision, jaAfterReplacement.Msg.DocumentRevision)
-	require.Zero(t, labelLocaleOverlayCountIntegration(t, db, labelID, "ja"), "provider whole replacement may remove omitted locale units")
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), label.Joined{Store: labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), Audit: auditWriter}, providerJob, providerReplacement,
-			translation.EntryWrite{Now: time.Now().UTC()},
-		)
-	}))
-	jaAfterNoopReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
-	require.Equal(t, jaAfterReplacement.Msg.TargetRevision, jaAfterNoopReplacement.Msg.TargetRevision)
-	requireLabelTargetLocaleAuditsIntegration(t, db, labelID, orytest.PostIntegrationMemberID(identityID), map[string][]string{
-		"de": {string(sharedtelemetry.AuditItemOperationCreated)},
-		"fr": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},
-		"ja": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},
-		"ko": {
-			string(sharedtelemetry.AuditItemOperationCreated),
-			string(sharedtelemetry.AuditItemOperationUpdated),
-			string(sharedtelemetry.AuditItemOperationUpdated),
-			string(sharedtelemetry.AuditItemOperationDeleted),
-		},
-	})
-
-	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.User())
-	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
-		LabelId: labelID, Locale: "ja", ExpectedTargetRevision: jaAfterReplacement.Msg.TargetRevision,
-		Batch: labelTargetParagraphBatch(
-			sourceEdited.Msg.DocumentRevision, memberID.String(), "ja", blockID, "revoked write",
-		),
-	}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "each Collab save must recheck the current exact edit authority")
-	require.Equal(t, *jaAfterReplacement.Msg.TargetRevision, labelTargetRevisionIntegration(
-		t, db, labelID, sourceEdited.Msg.DocumentRevision, "ja",
-	))
-	require.Zero(t, labelLocaleOverlayCountIntegration(t, db, labelID, "ja"))
-	requireLabelTargetLocaleAuditCountIntegration(t, db, labelID, 9)
 }
 
 type labelTargetIntegrationRuntime struct{ labelpostgres.Runtime }

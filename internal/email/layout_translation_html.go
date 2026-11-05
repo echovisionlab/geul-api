@@ -58,30 +58,15 @@ func BuildLayoutTranslationExtractionPlan(
 		})
 	}
 	return &translation.ExtractionPlan{
-		EntityType:     "email_layout",
-		EntityID:       layoutID,
-		SourceLocale:   sourceLocale,
-		TargetLocale:   targetLocale,
-		ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
+		EntityType:   "email_layout",
+		EntityID:     layoutID,
+		SourceLocale: sourceLocale,
+		TargetLocale: targetLocale,
+		Units:        units,
 		Bundles: translation.BuildBundles(
 			"email_layout", layoutID, sourceLocale, targetLocale, units, nil,
 		),
 	}, nil
-}
-
-// ApplyLayoutHTMLTranslationCandidate replaces the requested locale overlay
-// with the validated result set. Deleted source units are ignored and current-
-// only source units remain absent so render-time fallback can use the source.
-func ApplyLayoutHTMLTranslationCandidate(
-	contentHTML string,
-	resultByUnit map[string]translation.UnitResult,
-) (*string, *string, error) {
-	values := make(map[string]string, len(resultByUnit))
-	for handle, result := range resultByUnit {
-		values[handle] = result.TranslatedText
-	}
-	return ApplyLayoutLocaleValues(contentHTML, values)
 }
 
 func popLayoutHTMLElementStack(stack []string, tag string) []string {

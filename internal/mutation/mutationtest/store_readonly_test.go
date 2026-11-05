@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/ai/aitest"
 	"github.com/echovisionlab/geul-api/internal/campaign/campaigntest"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring/emailauthoringtest"
@@ -123,15 +122,7 @@ func TestReadDistinguishesOGRunCreationFromRequestObservations(t *testing.T) {
 }
 
 func TestReadDoesNotTreatOneShotFailuresAsPersistedWrites(t *testing.T) {
-	t.Run("AI read failure", func(t *testing.T) {
-		store, _ := aitest.New()
-		units := mutationtest.New(store)
-		failure := errors.New("one-shot AI read failure")
-		store.ReadErr = failure
-		err := units.Read(t.Context(), func(read *aitest.Store) error { _, err := read.Job(t.Context(), "missing"); return err })
-		require.Same(t, failure, err)
-		require.Nil(t, store.ReadErr)
-	})
+
 	t.Run("page failure", func(t *testing.T) {
 		store := pagetest.NewStore()
 		units := mutationtest.New(store)

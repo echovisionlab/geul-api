@@ -58,7 +58,6 @@ type Config struct {
 	EditorCollabURL               string `envconfig:"EDITOR_COLLAB_URL" required:"true"`
 	SESEventSNSTopicARN           string `envconfig:"SES_EVENT_SNS_TOPIC_ARN"`
 	SiteOrigin                    string `envconfig:"SITE_ORIGIN" required:"true"`
-	GoogleAIAPIKey                string `envconfig:"GOOGLE_AI_API_KEY" required:"true"`
 	MaxMindAccountID              string `envconfig:"MAXMIND_ACCOUNT_ID" required:"true"`
 	MaxMindLicenseKey             string `envconfig:"MAXMIND_LICENSE_KEY" required:"true"`
 	InstanceID                    string `envconfig:"INSTANCE_ID"`

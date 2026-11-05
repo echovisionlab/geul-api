@@ -112,9 +112,9 @@ func localeAwareOG(domain core.Kind) func(context.Context, *gorm.DB, *ogpostgres
 	}
 }
 
-func requireJobEdit(factory func(string) (policyv1.Can, error)) func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error {
+func requireTranslationEdit(factory func(string) (policyv1.Can, error)) func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error {
 	if factory == nil {
-		panic("translation job permission factory is required")
+		panic("translation permission factory is required")
 	}
 	return func(ctx context.Context, _ *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 		can, err := factory(entityID)

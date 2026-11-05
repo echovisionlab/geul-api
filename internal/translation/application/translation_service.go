@@ -15,9 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -62,7 +60,6 @@ type Service struct {
 	units      mutation.UnitOfWork[Store]
 	spiceDB    mutation.Authorizer
 	now        func() time.Time
-	metrics    translationMetrics
 	plans      DomainPlans
 	xliffFiles TranslationXLIFFFiles
 	mutations  *mutation.StoreRunner[Store]
@@ -78,7 +75,7 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		units: deps.Units, spiceDB: deps.SpiceDB, now: dbtime.Now, metrics: newTranslationMetrics(),
+		units: deps.Units, spiceDB: deps.SpiceDB, now: dbtime.Now,
 		plans: deps.Plans, xliffFiles: deps.XLIFFFiles, mutations: mutations,
 	}, nil
 }
@@ -143,9 +140,7 @@ func (s *Service) GetTranslationOverview(ctx context.Context) (Overview, error) 
 // SettingsView is the runtime translation settings and whether a provider
 // can generate translations now.
 type SettingsView struct {
-	Settings                 translation.RuntimeSettings
-	GenerationEnabled        bool
-	GenerationDisabledReason *string
+	Settings translation.RuntimeSettings
 }
 
 // GetTranslationSettings reads the runtime translation settings.
@@ -155,34 +150,23 @@ func (s *Service) GetTranslationSettings(ctx context.Context) (SettingsView, err
 		return SettingsView{}, err
 	}
 	var settings translation.RuntimeSettings
-	var generationEnabled bool
 	// Reading the settings inserts the default singleton when it is missing.
 	err := s.units.ReadCurrent(ctx, func(store Store) error {
 		var err error
-		if settings, err = store.RuntimeSettings(ctx); err != nil {
-			return err
-		}
-		generationEnabled, err = hasAvailableTranslationProvider(ctx, store)
+		settings, err = store.RuntimeSettings(ctx)
 		return err
 	})
 	if err != nil {
 		return SettingsView{}, err
 	}
-	view := SettingsView{Settings: settings, GenerationEnabled: generationEnabled}
-	if !generationEnabled {
-		reason := translationProviderUnavailableMessage
-		view.GenerationDisabledReason = &reason
-	}
-	return view, nil
+	return SettingsView{Settings: settings}, nil
 }
 
 // UpdateTranslationSettingsCommand patches the runtime translation settings.
-// UpdateMask names the fields to change; BaseSettings are the settings the
-// caller last read, from which a protected-terms patch is derived.
+// UpdateMask names the fields to change.
 type UpdateTranslationSettingsCommand struct {
-	Settings     *translation.RuntimeSettings
-	BaseSettings *translation.RuntimeSettings
-	UpdateMask   *fieldmaskpb.FieldMask
+	Settings   *translation.RuntimeSettings
+	UpdateMask *fieldmaskpb.FieldMask
 }
 
 type settingsUpdate struct {
@@ -240,9 +224,6 @@ func updateTranslationRuntimeSettings(
 	if current.DefaultLocale != requested.DefaultLocale {
 		change.DefaultLocale = &requested.DefaultLocale
 	}
-	if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
-		change.ProtectedTerms, change.TermsChanged = requested.ProtectedTerms, true
-	}
 	updatedAt, err := store.UpdateRuntimeSettings(ctx, change)
 	if err != nil {
 		return settingsUpdate{}, err
@@ -267,14 +248,10 @@ func requireTranslationAdmin(ctx context.Context, spiceDB mutation.Authorizer) e
 }
 
 func translationRuntimeSettingsChangedFields(current, requested translationRuntimeSettings) []string {
-	fields := make([]string, 0, 2)
 	if current.DefaultLocale != requested.DefaultLocale {
-		fields = append(fields, "default_locale")
+		return []string{"default_locale"}
 	}
-	if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
-		fields = append(fields, "protected_terms")
-	}
-	return fields
+	return nil
 }
 
 // Pagination is where a page sits among every match.
@@ -283,55 +260,4 @@ type Pagination struct {
 	Limit   int32
 	Offset  int32
 	HasMore bool
-}
-
-func paginationOf(page queryutil.Pagination, total int64) Pagination {
-	response := page.BuildResponse(total)
-	return Pagination{Total: response.Total, Limit: response.Limit, Offset: response.Offset, HasMore: response.HasMore}
-}
-
-// ListTranslationJobsQuery lists in-flight translation jobs. An
-// administrator reads every job; another principal must filter to exactly
-// one entity it may read.
-type ListTranslationJobsQuery struct {
-	// Limit defaults to 20 and is capped at 100.
-	Limit   int32
-	Offset  int32
-	Filters []*commonv1.FilterSpec
-	Sorts   []*commonv1.SortSpec
-}
-
-// JobPage is one page of translation jobs.
-type JobPage struct {
-	Jobs       []Job
-	Pagination Pagination
-}
-
-// ListTranslationJobs lists translation jobs.
-func (s *Service) ListTranslationJobs(ctx context.Context, query ListTranslationJobsQuery) (JobPage, error) {
-	if err := s.authorizeTranslationJobList(ctx, query.Filters); err != nil {
-		return JobPage{}, err
-	}
-	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
-	var jobs []Job
-	var total int64
-	err := s.units.Read(ctx, func(store Store) error {
-		var err error
-		jobs, total, err = store.ListJobs(ctx, JobListQuery{
-			Filters: query.Filters, Sorts: query.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
-		})
-		return err
-	})
-	if err != nil {
-		return JobPage{}, err
-	}
-	for index := range jobs {
-		if err := ValidateJobRequester(&jobs[index]); err != nil {
-			return JobPage{}, err
-		}
-	}
-	if jobs == nil {
-		jobs = []Job{}
-	}
-	return JobPage{Jobs: jobs, Pagination: paginationOf(pagination, total)}, nil
 }

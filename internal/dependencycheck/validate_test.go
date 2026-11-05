@@ -6,11 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidatorRejectsTypedNilValues(t *testing.T) {
+func TestMustNotNilRejectsTypedNilValues(t *testing.T) {
 	var dependency *int
-	require.PanicsWithValue(t, "example: dependency is required", func() {
-		New("example").RequireNotNil(dependency, "dependency").Validate()
-	})
+	require.PanicsWithValue(t, "dependency is required", func() { MustNotNil(dependency, "dependency") })
 }
 
 func TestMustNotNilAcceptsConcreteValues(t *testing.T) {

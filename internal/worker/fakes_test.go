@@ -256,12 +256,6 @@ type fakeJobs struct {
 	published map[string]bool
 	publish   error
 
-	// recovered is how many expired metadata AI jobs a recovery
-	// republishes; recoveryLimits the limits each recovery got.
-	recovered      int
-	recoveryLimits []int
-	recovery       error
-
 	// activations are the legal versions activated; due answers whether a
 	// version is due, activate and requestOG fail the steps.
 	activations map[string]bool
@@ -327,14 +321,6 @@ func (p fakeScheduledPosts) PublishDuePost(_ context.Context, postID string, _ *
 	}
 	p.jobs.published[postID] = true
 	return true, nil
-}
-
-type fakeMetadataAIRecovery struct{ jobs *fakeJobs }
-
-func (r fakeMetadataAIRecovery) RecoverExpiredJobs(_ context.Context, limit int) (int, error) {
-	r.jobs.calls.add("RecoverExpiredJobs")
-	r.jobs.recoveryLimits = append(r.jobs.recoveryLimits, limit)
-	return r.jobs.recovered, r.jobs.recovery
 }
 
 type fakeLegalActivation struct{ jobs *fakeJobs }

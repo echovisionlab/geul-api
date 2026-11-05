@@ -9,14 +9,12 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
 )
 
 // TranslationJob is the part of a translation job a Release delivery reads.
@@ -61,7 +59,6 @@ func LoadTypedTranslationSourceDocument(
 		Title:                   title,
 		ContentDocumentRevision: snapshot.Document.Revision.String(),
 		ContentBlockDocument:    document,
-		ProtectedTerms:          translation.NormalizeProtectedTerms([]string{title}),
 	}
 	result.ReleaseCreditNotes, err = store.CreditNotes(ctx, releaseID, sourceLocale)
 	if err != nil {
@@ -81,35 +78,6 @@ func loadReleaseTranslationTitle(ctx context.Context, store Store, releaseID, lo
 		return "", nil
 	}
 	return strings.TrimSpace(*title), nil
-}
-
-// ApplyTypedTranslationCandidateWithDB persists a translated Release locale
-// overlay and Release-owned credit notes behind the Release document fence,
-// and records the change for the Member who requested the job.
-func ApplyTypedTranslationCandidate(
-	ctx context.Context,
-	joined Joined,
-	job TranslationJob,
-	candidate *translation.Candidate,
-	metadataInput translation.EntryWrite,
-) error {
-	applied, err := applyTypedTranslationCandidate(
-		ctx, joined.Store, job, candidate, metadataInput, nil,
-		targetlocale.Policy{
-			AllowCreate: true, SeedSource: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
-		},
-		false,
-	)
-	if err != nil || !applied.changed {
-		return err
-	}
-	if strings.TrimSpace(job.RequestedByMemberID) == "" {
-		return errors.New("Release translation audit requires requester Member")
-	}
-	return domainaudit.AppendMember(
-		ctx, nil, joined.Audit, job.RequestedByMemberID, sharedtelemetry.AuditReleaseUpdated,
-		releaseLocaleContentRecord(job.EntityID, applied.locale, applied.operation),
-	)
 }
 
 // ApplyTypedTranslationInterchangeCandidateWithDB applies an interactive
@@ -487,65 +455,12 @@ func BuildTranslationExtractionPlan(
 	return &translation.ExtractionPlan{
 		EntityType: job.EntityType, EntityID: job.EntityID,
 		SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
-		ContextTitle:   translation.NonBlankString(strings.TrimSpace(source.Title)),
-		ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
+		ContextTitle: translation.NonBlankString(strings.TrimSpace(source.Title)),
+		Units:        units,
 		Bundles: translation.BuildBundles(
 			job.EntityType, job.EntityID, job.SourceLocale, job.TargetLocale, units, nil,
 		),
 	}, nil
-}
-
-// BuildTranslationCandidate applies validated results to a cloned Release
-// locale overlay and projects Release-owned credit notes by stable credit ID.
-func BuildTranslationCandidate(
-	plan *translation.ExtractionPlan,
-	source *translation.SourceDocument,
-	results map[string]translation.UnitResult,
-) (*translation.Candidate, error) {
-	if plan == nil || plan.EntityType != releaseContentEntity || source == nil || source.ContentBlockDocument == nil ||
-		source.ContentBlockDocument.GetLocaleOverlay() == nil {
-		return nil, errors.New("typed Release translation source is required")
-	}
-	if strings.TrimSpace(plan.TargetLocale) == "" {
-		return nil, errors.New("typed Release translation target locale is required")
-	}
-	requestedBlockIDs := make(map[string]struct{})
-	for _, unit := range plan.Units {
-		if unit.ContainerType == translation.ContainerTypeBlock && strings.TrimSpace(unit.ContainerID) != "" {
-			requestedBlockIDs[unit.ContainerID] = struct{}{}
-		}
-	}
-	overlay := &contentv1.RichTextLocaleOverlay{Locale: plan.TargetLocale}
-	for _, sourceBlock := range source.ContentBlockDocument.GetLocaleOverlay().GetBlocks() {
-		if _, requested := requestedBlockIDs[sourceBlock.GetBlockId()]; !requested {
-			continue
-		}
-		block := proto.Clone(sourceBlock).(*contentv1.RichTextBlockLocale)
-		if block == nil || strings.TrimSpace(block.GetBlockId()) == "" {
-			return nil, errors.New("typed Release translation Block ID is required")
-		}
-		if err := translation.ApplyRichTextResults(block, "block:"+block.GetBlockId(), results); err != nil {
-			return nil, err
-		}
-		overlay.Blocks = append(overlay.Blocks, block)
-	}
-	candidate := &translation.Candidate{
-		ContentBlockLocaleOverlay: overlay,
-		ContentDocumentRevision:   source.ContentDocumentRevision,
-		ReleaseCreditNotes:        make(map[string]string, len(source.ReleaseCreditNotes)),
-	}
-	translation.ApplyCandidateFields(candidate, plan.Bundles, results)
-	for creditID, sourceText := range source.ReleaseCreditNotes {
-		result, ok := results["credit-note:"+creditID]
-		if !ok {
-			continue
-		}
-		candidate.ReleaseCreditNotes[creditID] = strings.TrimSpace(
-			translation.PreserveSourceEdgeWhitespace(sourceText, result.TranslatedText),
-		)
-	}
-	return candidate, nil
 }
 
 func validateReleaseCreditNoteMap(

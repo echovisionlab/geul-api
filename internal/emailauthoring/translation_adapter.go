@@ -2,7 +2,6 @@ package emailauthoring
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -18,27 +17,6 @@ import (
 // domain's transaction.
 func LoadTemplateTranslationSourceDocument(ctx context.Context, store Store, templateID string) (*translation.SourceDocument, error) {
 	return emailTemplateContent.LoadTranslationSourceDocument(ctx, store, templateID, loadTemplateSourceSubject)
-}
-
-// ApplyTemplateTranslationCandidate replaces one generated target in the
-// translation delivery's transaction that joined binds.
-func ApplyTemplateTranslationCandidate(
-	ctx context.Context,
-	joined Joined,
-	job emailcontent.TranslationJob,
-	candidate *translation.Candidate,
-	input translation.EntryWrite,
-) error {
-	if candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
-		return errors.New("typed Email Template translation candidate is required")
-	}
-	if job.EntityType != emailTemplateContentEntity {
-		return domainerr.InvalidField("entity_type", "Email Template translation entity is required")
-	}
-	return emailTemplateContent.ApplyTranslationCandidate(ctx, joined.Store, emailcontent.TranslationCandidate{
-		Job: &job, Candidate: candidate, Input: input,
-		Fence: emailTemplateTranslationJobApplyFence(joined.Store, job.EntityID),
-	}, joined.Audit)
 }
 
 // projectEmailTemplateMaterializedContent stores the materialized content of

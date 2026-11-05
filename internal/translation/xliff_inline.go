@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -72,82 +71,12 @@ func validateNormalizedXLIFFUnitInline(unit XLIFFUnit, hasTarget bool) error {
 	if !reflect.DeepEqual(sourceCodes, targetCodes) {
 		return fmt.Errorf("inline code identity or nesting changed")
 	}
-	if err := validateProtectedXLIFFPartOrder(unit.SourceInline, unit.TargetInline); err != nil {
-		return err
-	}
 	allowedTextParents := make(map[string]struct{})
 	collectXLIFFTextParents(unit.SourceInline, "", allowedTextParents)
 	if err := validateXLIFFTextParents(unit.TargetInline, "", allowedTextParents); err != nil {
 		return err
 	}
 	return nil
-}
-
-func validateProtectedXLIFFPartOrder(source, target []XLIFFInline) error {
-	sourceEvents := xliffLeafEvents(source)
-	targetEvents := xliffLeafEvents(target)
-	expected := make(map[int][]string)
-	for _, event := range sourceEvents {
-		group, ok := parseProtectedXLIFFPartID(event)
-		if ok {
-			expected[group] = append(expected[group], event)
-		}
-	}
-	for group, expectedParts := range expected {
-		positions := make([]int, 0, len(expectedParts))
-		targetParts := make([]string, 0, len(expectedParts))
-		for position, event := range targetEvents {
-			eventGroup, ok := parseProtectedXLIFFPartID(event)
-			if ok && eventGroup == group {
-				positions = append(positions, position)
-				targetParts = append(targetParts, event)
-			}
-		}
-		if !reflect.DeepEqual(expectedParts, targetParts) {
-			return fmt.Errorf("protected term parts changed order")
-		}
-		for index := 1; index < len(positions); index++ {
-			if positions[index] != positions[index-1]+1 {
-				return fmt.Errorf("protected term parts are no longer adjacent")
-			}
-		}
-	}
-	return nil
-}
-
-func xliffLeafEvents(nodes []XLIFFInline) []string {
-	events := make([]string, 0)
-	var collect func([]XLIFFInline)
-	collect = func(children []XLIFFInline) {
-		for _, node := range children {
-			switch node.Kind {
-			case XLIFFInlineText:
-				if node.Text != "" {
-					events = append(events, "#text")
-				}
-			case XLIFFInlinePlaceholder:
-				events = append(events, node.ID)
-			case XLIFFInlinePairedCode:
-				collect(node.Children)
-			}
-		}
-	}
-	collect(nodes)
-	return events
-}
-
-// parseProtectedXLIFFPartID returns the group of a well-formed protected part ID.
-func parseProtectedXLIFFPartID(id string) (int, bool) {
-	if !strings.HasPrefix(id, protectedXLIFFCodePrefix) {
-		return 0, false
-	}
-	groupAndPart := strings.Split(strings.TrimPrefix(id, protectedXLIFFCodePrefix), "Part")
-	if len(groupAndPart) != 2 {
-		return 0, false
-	}
-	group, groupErr := strconv.Atoi(groupAndPart[0])
-	part, partErr := strconv.Atoi(groupAndPart[1])
-	return group, groupErr == nil && partErr == nil && group > 0 && part > 0
 }
 
 func collectXLIFFTextParents(nodes []XLIFFInline, parent string, parents map[string]struct{}) {

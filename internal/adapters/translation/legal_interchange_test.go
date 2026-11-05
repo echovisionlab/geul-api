@@ -301,7 +301,7 @@ func newLegalInterchangeFixture(t *testing.T, entityType string) legalInterchang
 			LocaleOverlay:           sourceOverlay,
 		},
 	}
-	plan, err := core.BuildRichTextExtractionPlan(&core.JobIdentity{
+	plan, err := core.BuildRichTextExtractionPlan(&core.PlanTarget{
 		EntityType: entityType, EntityID: entityID, SourceLocale: "en", TargetLocale: "ko",
 	}, source, core.RichTextDocumentFields{Title: true})
 	require.NoError(t, err)

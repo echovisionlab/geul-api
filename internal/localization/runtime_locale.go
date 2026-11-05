@@ -13,16 +13,15 @@ import (
 // identity is code-owned by this package; the database row controls runtime
 // enablement, public visibility, and machine-translation policy.
 type RuntimeLocale struct {
-	Code                      string    `gorm:"column:code;type:text;primaryKey"`
-	DisplayName               string    `gorm:"column:display_name;type:text;not null"`
-	Enabled                   bool      `gorm:"column:enabled;not null"`
-	IsPublic                  bool      `gorm:"column:is_public;not null"`
-	Dir                       string    `gorm:"column:dir;type:text;not null"`
-	MachineTranslationAllowed bool      `gorm:"column:machine_translation_allowed;not null"`
-	FontProfile               *string   `gorm:"column:font_profile;type:text"`
-	SortOrder                 int32     `gorm:"column:sort_order;not null"`
-	CreatedAt                 time.Time `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt                 time.Time `gorm:"column:updated_at;not null;default:now()"`
+	Code        string    `gorm:"column:code;type:text;primaryKey"`
+	DisplayName string    `gorm:"column:display_name;type:text;not null"`
+	Enabled     bool      `gorm:"column:enabled;not null"`
+	IsPublic    bool      `gorm:"column:is_public;not null"`
+	Dir         string    `gorm:"column:dir;type:text;not null"`
+	FontProfile *string   `gorm:"column:font_profile;type:text"`
+	SortOrder   int32     `gorm:"column:sort_order;not null"`
+	CreatedAt   time.Time `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;not null;default:now()"`
 }
 
 func (RuntimeLocale) TableName() string {
@@ -59,14 +58,6 @@ func (catalog *Catalog) All(ctx context.Context) ([]RuntimeLocale, error) {
 // Enabled returns runtime-enabled locales in stable product order.
 func (catalog *Catalog) Enabled(ctx context.Context) ([]RuntimeLocale, error) {
 	return catalog.filter(ctx, func(locale RuntimeLocale) bool { return locale.Enabled })
-}
-
-// MachineTranslationTargets returns enabled locales admitted for provider
-// generation in stable product order.
-func (catalog *Catalog) MachineTranslationTargets(ctx context.Context) ([]RuntimeLocale, error) {
-	return catalog.filter(ctx, func(locale RuntimeLocale) bool {
-		return locale.Enabled && locale.MachineTranslationAllowed
-	})
 }
 
 // Find returns the exact canonical runtime locale. Aliases belong at request

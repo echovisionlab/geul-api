@@ -172,7 +172,7 @@ func TestCopyInterchangeProtoPathMatchesImmersiveUnitIdentity(t *testing.T) {
 
 func blockInterchangePlan(t *testing.T, source *contentv1.LocalizedRichTextDocument, entityType, entityID, targetLocale string) *core.ExtractionPlan {
 	t.Helper()
-	plan, err := core.BuildRichTextExtractionPlan(&core.JobIdentity{
+	plan, err := core.BuildRichTextExtractionPlan(&core.PlanTarget{
 		EntityType: entityType, EntityID: entityID,
 		SourceLocale: source.GetLocale(), TargetLocale: targetLocale,
 	}, &core.SourceDocument{ContentBlockDocument: source}, core.RichTextDocumentFields{})

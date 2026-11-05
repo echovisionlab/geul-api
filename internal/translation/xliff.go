@@ -444,20 +444,6 @@ func encodeXLIFFInlineNodes(encoder *xml.Encoder, inline []XLIFFInline) error {
 	return nil
 }
 
-// MarshalXLIFFInlineFragment serializes one provider-visible semantic segment
-// as stable XLIFF pc/ph tokens without an enclosing source or target element.
-func MarshalXLIFFInlineFragment(inline []XLIFFInline) (string, error) {
-	var output bytes.Buffer
-	encoder := xml.NewEncoder(&output)
-	if err := encodeXLIFFInlineNodes(encoder, inline); err != nil {
-		return "", err
-	}
-	if err := encoder.Flush(); err != nil {
-		return "", err
-	}
-	return output.String(), nil
-}
-
 func xliffInlineAttributes(node XLIFFInline) []xml.Attr {
 	attributes := []xml.Attr{{Name: xml.Name{Local: "id"}, Value: node.ID}}
 	values := []struct {

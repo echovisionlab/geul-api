@@ -47,39 +47,6 @@ func TestLayoutTextNewlinesSurviveStorageAndRendering(t *testing.T) {
 	require.Contains(t, rendered, "First<br>second<br><br>third")
 }
 
-func TestLayoutTranslationHTMLPreservesWrapperAndStableUnit(t *testing.T) {
-	t.Parallel()
-
-	raw := `<!DOCTYPE html><html><head><style>body { color: red; }</style></head><body><main>{{content}}</main><footer> Unsubscribe </footer></body></html>`
-	source := canonicalLayoutSourceForTest(t, raw)
-	recanonical, err := CanonicalizeLayoutSourceMarkers(source)
-	require.NoError(t, err)
-	assert.Equal(t, source, recanonical)
-
-	plan, err := BuildLayoutTranslationExtractionPlan("11111111-1111-4111-8111-111111111111", "en", "ko", &translation.SourceDocument{ContentHTML: &source})
-	require.NoError(t, err)
-	require.Len(t, plan.Units, 1)
-	assert.Regexp(t, `^unit:[0-9a-f-]{36}:text$`, plan.Units[0].UnitID)
-	assert.Equal(t, " Unsubscribe ", plan.Units[0].SourceText)
-
-	result, textResult, err := ApplyLayoutHTMLTranslationCandidate(source, map[string]translation.UnitResult{
-		plan.Units[0].UnitID: {UnitID: plan.Units[0].UnitID, TranslatedText: "구독 해지"},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Contains(t, *result, `<main>{{content}}</main>`)
-	assert.Contains(t, *result, `<style>body { color: red; }</style>`)
-	assert.Contains(t, *result, `<!--geul-value:text:`)
-	require.NotNil(t, textResult)
-	assert.Equal(t, "{{content}}\n\n구독 해지", *textResult)
-
-	rendered, err := ResolveLayoutLocaleMarkup(source, result)
-	require.NoError(t, err)
-	assert.Contains(t, rendered, `<footer> 구독 해지 </footer>`)
-	assert.NotContains(t, rendered, "geul-unit")
-	assert.NotContains(t, rendered, "geul-value")
-}
-
 func TestLayoutTranslationExplicitEmptyDiffersFromAbsent(t *testing.T) {
 	t.Parallel()
 
@@ -201,48 +168,6 @@ func TestLayoutTranslationExtractionUsesSharedBundleLimit(t *testing.T) {
 	require.Len(t, plan.Bundles, 2)
 	assert.Equal(t, "html:main", plan.Bundles[0].BundleID)
 	assert.Equal(t, "html:main:chunk:2", plan.Bundles[1].BundleID)
-}
-
-func TestLayoutTranslationHTMLIncludesVisibleAccessibilityAttributes(t *testing.T) {
-	t.Parallel()
-
-	raw := `<!DOCTYPE html><html><head><style>.hero { color: red; }</style></head><body><main title=" Main title "><img src="https://cdn.example/hero.png?x=1&amp;y=2" alt="Hero {{name}}" data-label="Never translate"><button aria-label="Unsubscribe action"> Unsubscribe </button><span title="{{title}}">{{content}}</span><script>const title = "Never translate";</script></main></body></html>`
-	source := canonicalLayoutSourceForTest(t, raw)
-	plan, err := BuildLayoutTranslationExtractionPlan("11111111-1111-4111-8111-111111111111", "en", "ko", &translation.SourceDocument{ContentHTML: &source})
-	require.NoError(t, err)
-
-	bySource := make(map[string]translation.Unit, len(plan.Units))
-	for _, unit := range plan.Units {
-		bySource[strings.TrimSpace(unit.SourceText)] = unit
-	}
-	for _, expected := range []string{"Main title", "Hero {{name}}", "Unsubscribe action", "Unsubscribe"} {
-		require.Contains(t, bySource, expected)
-		assert.Contains(t, bySource[expected].UnitID, "unit:")
-	}
-	assert.NotContains(t, bySource, "{{title}}")
-	assert.NotContains(t, bySource, "{{content}}")
-	assert.NotContains(t, bySource, "Never translate")
-
-	results := map[string]translation.UnitResult{
-		bySource["Main title"].UnitID:         {TranslatedText: "기본 제목"},
-		bySource["Hero {{name}}"].UnitID:      {TranslatedText: "영웅 {{name}}"},
-		bySource["Unsubscribe action"].UnitID: {TranslatedText: "구독 해지 동작"},
-		bySource["Unsubscribe"].UnitID:        {TranslatedText: "구독 해지"},
-	}
-	target, _, err := ApplyLayoutHTMLTranslationCandidate(source, results)
-	require.NoError(t, err)
-	rendered, err := ResolveLayoutLocaleMarkup(source, target)
-	require.NoError(t, err)
-	assert.Contains(t, rendered, `title=" 기본 제목 "`)
-	assert.Contains(t, rendered, `alt="영웅 {{name}}"`)
-	assert.Contains(t, rendered, `aria-label="구독 해지 동작"`)
-	assert.Contains(t, rendered, `> 구독 해지 </button>`)
-	assert.Contains(t, rendered, `src="https://cdn.example/hero.png?x=1&amp;y=2"`)
-	assert.Contains(t, rendered, `data-label="Never translate"`)
-	assert.Contains(t, rendered, `<style>.hero { color: red; }</style>`)
-	assert.Contains(t, rendered, `<script>const title = "Never translate";</script>`)
-	assert.Contains(t, rendered, `title="{{title}}"`)
-	assert.Contains(t, rendered, `>{{content}}</span>`)
 }
 
 func TestLayoutTranslationRejectsUnmarkedAndDuplicateStableUnits(t *testing.T) {

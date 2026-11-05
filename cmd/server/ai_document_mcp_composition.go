@@ -106,9 +106,8 @@ func (registrations aiDocumentDomainRegistrations) values() []aidocumentadapter.
 }
 
 type aiDocumentMCPComposition struct {
-	editorApplication *aidocumentadapter.InteractiveMutationApplication
-	connectService    *aidocumentadapter.Service
-	mcpHandler        http.Handler
+	connectService *aidocumentadapter.Service
+	mcpHandler     http.Handler
 }
 
 // aiDocumentMCPConfig names the transport and relay settings shared by the MCP
@@ -225,15 +224,6 @@ func newAIDocumentMCPComposition(
 	)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP AI document completion: %w", err)
-	}
-	editorApplication, err := aidocumentadapter.NewInteractiveMutationApplication(
-		application,
-		relay,
-		fallbackPublisher,
-		intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_IN_EDITOR_AI,
-	)
-	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize editor AI document completion: %w", err)
 	}
 	documentTools, err := mcpadapter.NewAIDocumentTools(mcpApplication)
 	if err != nil {
@@ -381,7 +371,7 @@ func newAIDocumentMCPComposition(
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP HTTP handler: %w", err)
 	}
 	return aiDocumentMCPComposition{
-		editorApplication: editorApplication, connectService: connectService, mcpHandler: mcpHandler,
+		connectService: connectService, mcpHandler: mcpHandler,
 	}, nil
 }
 

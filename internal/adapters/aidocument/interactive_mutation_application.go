@@ -56,9 +56,8 @@ func NewInteractiveMutationApplication(
 	if interfaceNil(publisher) {
 		return nil, errors.New("interactive AI document transactional publisher is required")
 	}
-	if origin != intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP &&
-		origin != intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_IN_EDITOR_AI {
-		return nil, errors.New("interactive AI document origin must be MCP or in-editor AI")
+	if origin != intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP {
+		return nil, errors.New("interactive AI document origin must be MCP")
 	}
 	return &InteractiveMutationApplication{
 		application: application,

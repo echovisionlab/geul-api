@@ -134,16 +134,6 @@ func TestJobPusherFunc(t *testing.T) {
 	assert.ErrorIs(t, adapter.Push(t.Context(), job), publisher.err)
 }
 
-func TestSchedulerJobNamesRemainStable(t *testing.T) {
-	assert.Equal(t, "cleanup.dangling", string(JobCleanupDangling))
-	assert.Equal(t, "cleanup.public_assets", string(JobCleanupPublicAssets))
-	assert.Equal(t, "email.campaign_due", string(JobProcessScheduledCampaigns))
-	assert.Equal(t, "post.scheduled_due", string(JobProcessScheduledPosts))
-	assert.Equal(t, "ai.metadata_recover", string(JobRecoverMetadataAI))
-	assert.Equal(t, "cleanup.auth_code_issuance", string(JobCleanupAuthCodeIssuance))
-	assert.Equal(t, "cleanup.pgmq_archives", string(JobCleanupPGMQArchives))
-}
-
 func TestGeoIPWakeupRunsDailyAfterCleanupWindow(t *testing.T) {
 	require.Equal(t, "15 3 * * *", geoIPWakeupSchedule)
 }

@@ -11,8 +11,8 @@ import (
 )
 
 // Domains is the fake owning-domain registry over the Store's entities. It
-// allows every check, loads an entity's Source, and applies a candidate as
-// a changed target unless a hook says otherwise.
+// allows every check and loads an entity's Source unless a hook says
+// otherwise.
 type Domains struct {
 	store *Store
 
@@ -20,9 +20,6 @@ type Domains struct {
 	// Deny answers an authorization check (the Domains method name) on an
 	// entity; nil allows it.
 	Deny func(check, entityType, entityID string) error
-	// Apply answers ApplyCandidate; nil stores the candidate as the target
-	// entry and reports a changed target.
-	Apply func(job application.Job, candidate *translation.Candidate) (application.AppliedTranslationTarget, error)
 	// OG answers RequestLocaleOG; nil prepares nothing.
 	OG func(entityType, entityID, locale, reason string) (bool, error)
 	// LoadTarget and ApplyTarget answer the XLIFF interchange calls.
@@ -31,7 +28,6 @@ type Domains struct {
 
 	checks   []string
 	ogCalls  []string
-	applied  []application.Job
 	imported []application.TranslationInterchangeApply
 }
 
@@ -47,13 +43,6 @@ func (d *Domains) OGRequests() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]string(nil), d.ogCalls...)
-}
-
-// Applied returns the jobs whose candidate was applied.
-func (d *Domains) Applied() []application.Job {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return append([]application.Job(nil), d.applied...)
 }
 
 // Imported returns the XLIFF applies.
@@ -88,30 +77,6 @@ func (d *Domains) LoadSourceDocument(_ context.Context, entityType, entityID str
 	return &source, nil
 }
 
-func (d *Domains) ApplyCandidate(_ context.Context, job application.Job, candidate *translation.Candidate, input translation.EntryWrite) (application.AppliedTranslationTarget, error) {
-	d.mu.Lock()
-	d.applied = append(d.applied, job)
-	apply := d.Apply
-	d.mu.Unlock()
-	if apply != nil {
-		return apply(job, candidate)
-	}
-	d.store.mu.Lock()
-	defer d.store.mu.Unlock()
-	entity, err := d.store.entity(job.EntityType, job.EntityID)
-	if err != nil {
-		return application.AppliedTranslationTarget{}, domainerr.ResourceNotFound(job.EntityType, job.EntityID)
-	}
-	entity.Entries[job.TargetLocale] = application.Entry{
-		EntityType: job.EntityType, EntityID: job.EntityID, Locale: job.TargetLocale,
-		Title: input.Title, Summary: input.Summary, ContentHTML: input.ContentHTML, ContentText: input.ContentText,
-		ContentJSON: input.ContentJSON, UpdatedAt: input.Now,
-	}
-	return application.AppliedTranslationTarget{
-		Changed: true, DocumentRevision: entity.DocumentRevision.String(), TargetRevision: "target-" + job.ID,
-	}, nil
-}
-
 func (d *Domains) RequestLocaleOG(_ context.Context, entityType, entityID, locale, reason string) (bool, error) {
 	d.mu.Lock()
 	d.ogCalls = append(d.ogCalls, entityType+"/"+entityID+"/"+locale+" "+reason)
@@ -144,16 +109,12 @@ func (d *Domains) RequireInterchangeEdit(_ context.Context, entityType, entityID
 	return d.check("RequireInterchangeEdit", entityType, entityID)
 }
 
-func (d *Domains) RequireJobRead(_ context.Context, entityType, entityID string) error {
-	return d.check("RequireJobRead", entityType, entityID)
+func (d *Domains) RequireTranslationRead(_ context.Context, entityType, entityID string) error {
+	return d.check("RequireTranslationRead", entityType, entityID)
 }
 
 func (d *Domains) RequireSourceLocaleEdit(_ context.Context, entityType, entityID string) error {
 	return d.check("RequireSourceLocaleEdit", entityType, entityID)
-}
-
-func (d *Domains) RequireLegalEditable(_ context.Context, entityType, entityID string) error {
-	return d.check("RequireLegalEditable", entityType, entityID)
 }
 
 func (d *Domains) RequireDocumentContributors(_ context.Context, contributors []string) error {

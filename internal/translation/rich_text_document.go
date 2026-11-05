@@ -15,7 +15,8 @@ type RichTextDocumentFields struct {
 	Summary bool
 }
 
-type JobIdentity struct {
+// PlanTarget names the entity and locale pair an extraction plan covers.
+type PlanTarget struct {
 	EntityType   string
 	EntityID     string
 	SourceLocale string
@@ -25,7 +26,7 @@ type JobIdentity struct {
 // BuildRichTextExtractionPlan extracts entity fields and locale-owned Rich
 // Text values while leaving structure and shared Block props untouched.
 func BuildRichTextExtractionPlan(
-	job *JobIdentity,
+	job *PlanTarget,
 	source *SourceDocument,
 	fields RichTextDocumentFields,
 ) (*ExtractionPlan, error) {
@@ -80,9 +81,8 @@ func BuildRichTextExtractionPlan(
 	return &ExtractionPlan{
 		EntityType: job.EntityType, EntityID: job.EntityID,
 		SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
-		ContextTitle:   NonBlankString(strings.TrimSpace(source.Title)),
-		ProtectedTerms: NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
+		ContextTitle: NonBlankString(strings.TrimSpace(source.Title)),
+		Units:        units,
 		Bundles: BuildBundles(
 			job.EntityType, job.EntityID, job.SourceLocale, job.TargetLocale,
 			units, NonBlankString(strings.TrimSpace(stringValue(source.Summary))),

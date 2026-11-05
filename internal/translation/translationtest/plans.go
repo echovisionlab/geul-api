@@ -7,13 +7,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
-// Plans builds every entity's plan and candidate the way the scalar
-// domains do: one plain-text unit per non-empty title, summary and body,
-// so a fake entity translates through the real XLIFF request and response
-// path.
+// Plans builds every entity's plan the way the scalar domains do: one
+// plain-text unit per non-empty title, summary and body, so a fake entity
+// exchanges through the real XLIFF path.
 type Plans struct{}
 
-func (Plans) BuildExtractionPlan(job application.Job, source *translation.SourceDocument) (*translation.ExtractionPlan, error) {
+func (Plans) BuildExtractionPlan(job application.PlanTarget, source *translation.SourceDocument) (*translation.ExtractionPlan, error) {
 	if source == nil {
 		return nil, translation.ErrNoTranslatableUnits
 	}
@@ -39,14 +38,10 @@ func (Plans) BuildExtractionPlan(job application.Job, source *translation.Source
 	return &translation.ExtractionPlan{
 		EntityType: job.EntityType, EntityID: job.EntityID,
 		SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
-		ContextTitle: &title, ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:   units,
-		Bundles: translation.BuildBundles(job.EntityType, job.EntityID, job.SourceLocale, job.TargetLocale, units, source.Summary),
+		ContextTitle: &title,
+		Units:        units,
+		Bundles:      translation.BuildBundles(job.EntityType, job.EntityID, job.SourceLocale, job.TargetLocale, units, source.Summary),
 	}, nil
-}
-
-func (Plans) BuildCandidate(plan *translation.ExtractionPlan, source *translation.SourceDocument, results map[string]translation.UnitResult) (*translation.Candidate, error) {
-	return application.BuildGenericCandidate(plan, source, results)
 }
 
 func value(text *string) string {

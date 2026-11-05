@@ -23,13 +23,6 @@ type Jobs interface {
 	LegalActivation() LegalActivation
 }
 
-// MetadataAIRecovery republishes expired metadata AI jobs in the owner's transaction.
-type MetadataAIRecovery interface {
-	// RecoverExpiredJobs republishes up to limit expired jobs (0: the
-	// owner's batch) and returns how many it republished.
-	RecoverExpiredJobs(ctx context.Context, limit int) (int, error)
-}
-
 // LegalKind is a legal policy the scheduler activates: "terms" or "privacy".
 type LegalKind string
 
@@ -230,15 +223,4 @@ type EmailDelivery interface {
 // BulkEmail materializes one Campaign delivery batch into recipient emails.
 type BulkEmail interface {
 	Handle(ctx context.Context, job *managev1.SendBulkEmailBatchEvent) error
-}
-
-// MetadataAIJobProcessor runs queued jobs and recovers expired jobs in its own unit of work.
-type MetadataAIJobProcessor interface {
-	MetadataAIRecovery
-	ProcessJob(ctx context.Context, jobID string) error
-}
-
-// TranslationJobProcessor runs one queued translation job.
-type TranslationJobProcessor interface {
-	ProcessDelivery(ctx context.Context, jobID string) error
 }

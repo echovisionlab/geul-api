@@ -96,23 +96,6 @@ func campaignEmailContentFence(store Store, entityID string) emailcontent.Fence 
 	}
 }
 
-// campaignTranslationJobApplyFence permits an already-accepted TranslationJob
-// to finish against any still-existing Campaign root. Current Campaign
-// lifecycle controls new requests and interactive edits; it does not revoke a
-// durable job whose request-time authorization was accepted.
-func campaignTranslationJobApplyFence(store Store, entityID string) emailcontent.Fence {
-	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, store, entityID, true)
-		if err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if currentDocumentID != documentID {
-			return contentblock.DomainContext{}, domainerr.Precondition("Campaign content document ownership changed; translation job cannot be applied")
-		}
-		return loadCampaignSourceContext(ctx, store, entityID, true)
-	}
-}
-
 func campaignEmailDeleteContentFence(store Store, entityID string) emailcontent.Fence {
 	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, store, entityID, true)

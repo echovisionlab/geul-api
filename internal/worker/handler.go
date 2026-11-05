@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -18,18 +17,15 @@ const (
 	// Transactional and campaign mail retries for about 85 minutes (5 s
 	// doubling, ten times) so a database or mail adapter outage does not
 	// exhaust the budget before it recovers.
-	emailSendMaxRetries     = 10
-	emailSendRetryDelay     = 5 * time.Second
-	emailSendRetryBackoff   = 2.0
-	authEmailMaxRetries     = 4
-	authEmailRetryDelay     = 30 * time.Second
-	mediaResultMaxRetries   = 2
-	mediaResultRetryDelay   = 500 * time.Millisecond
-	userDeletionMaxRetries  = 5
-	userDeletionRetryDelay  = 5 * time.Second
-	translationMaxRetries   = 3
-	translationRetryDelay   = time.Second
-	translationRetryBackoff = 2.0
+	emailSendMaxRetries    = 10
+	emailSendRetryDelay    = 5 * time.Second
+	emailSendRetryBackoff  = 2.0
+	authEmailMaxRetries    = 4
+	authEmailRetryDelay    = 30 * time.Second
+	mediaResultMaxRetries  = 2
+	mediaResultRetryDelay  = 500 * time.Millisecond
+	userDeletionMaxRetries = 5
+	userDeletionRetryDelay = 5 * time.Second
 
 	// scheduledCampaignBatch bounds the Campaign delivery runs one wake-up
 	// dispatches and resumes.
@@ -61,14 +57,10 @@ type Handlers struct {
 	campaigns       CampaignDeliveries
 	emailDelivery   EmailDelivery
 	bulkEmail       BulkEmail
-	metadataAI      MetadataAIJobProcessor
-	translationJobs TranslationJobProcessor
 	siteOrigin      string
 }
 
-// Deps are the worker's collaborators. MetadataAI and TranslationJobs may be
-// nil: their queues are then not consumed and the metadata AI recovery is
-// skipped. SiteOrigin may be empty.
+// Deps are the worker's collaborators. SiteOrigin may be empty.
 type Deps struct {
 	Units           mutation.UnitOfWork[Jobs] // workerpostgres.NewUnits
 	FileMedia       FileMedia
@@ -90,9 +82,7 @@ type Deps struct {
 	Campaigns       CampaignDeliveries
 	EmailDelivery   EmailDelivery
 	BulkEmail       BulkEmail
-	MetadataAI      MetadataAIJobProcessor  // optional
-	TranslationJobs TranslationJobProcessor // optional
-	SiteOrigin      string                  // optional; the legal notice links
+	SiteOrigin      string // optional; the legal notice links
 }
 
 // NewHandlers returns the worker handlers, or an error naming each missing
@@ -152,8 +142,6 @@ func NewHandlers(deps Deps) (*Handlers, error) {
 		campaigns:       deps.Campaigns,
 		emailDelivery:   deps.EmailDelivery,
 		bulkEmail:       deps.BulkEmail,
-		metadataAI:      deps.MetadataAI,
-		translationJobs: deps.TranslationJobs,
 		siteOrigin:      deps.SiteOrigin,
 	}, nil
 }
@@ -199,26 +187,10 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 			_, err := post.ProcessDueScheduledPosts(ctx, tx.Store().ScheduledPosts(), 0)
 			return err
 		})
-	case scheduler.JobRecoverMetadataAI:
-		return h.handleRecoverMetadataAI(ctx)
 
 	default:
 		return fmt.Errorf("unknown scheduler job: %q", job)
 	}
-}
-
-func (h *Handlers) handleRecoverMetadataAI(ctx context.Context) error {
-	if h.metadataAI == nil {
-		return nil
-	}
-	republished, err := h.metadataAI.RecoverExpiredJobs(ctx, 0)
-	if err != nil {
-		return err
-	}
-	if republished > 0 {
-		slog.Info("Expired metadata AI jobs republished", "count", republished)
-	}
-	return nil
 }
 
 // HandleEmailSend handles transactional email delivery events.

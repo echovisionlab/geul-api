@@ -1,10 +1,11 @@
 package translation
 
 import (
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSiteVariableXLIFFOccurrencesAndMultiset(t *testing.T) {
@@ -63,11 +64,12 @@ func TestSiteTextTokensProtectedInRichTextAndLinkLabels(t *testing.T) {
 	}
 	walk(nodes)
 	require.Equal(t, 22, count)
-	document := XLIFFDocument{Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko", File: XLIFFFile{ID: "page:1", Groups: []XLIFFGroup{{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: source, OriginalData: data, SourceInline: nodes}}}}}}
+	target := source
+	document := XLIFFDocument{Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko", File: XLIFFFile{ID: "page:1", Groups: []XLIFFGroup{{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: source, Target: &target, OriginalData: data, SourceInline: nodes, TargetInline: nodes}}}}}}
 	body, err := MarshalXLIFF(&document)
 	require.NoError(t, err)
-	require.Equal(t, 22, strings.Count(string(body), "<ph "))
-	decoded, err := UnmarshalXLIFF(body)
+	require.Equal(t, 44, strings.Count(string(body), "<ph "), "source and target each keep every placeholder")
+	decoded, err := UnmarshalXLIFFInterchange(body)
 	require.NoError(t, err)
 	require.Equal(t, source, decoded.File.Groups[0].TranslationUnit[0].Source)
 
@@ -97,17 +99,15 @@ func TestTextTemplateTokenXLIFFRoundTripAndMultiset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 14, strings.Count(string(body), "<ph "))
 	require.Contains(t, string(body), "{{unknown}}")
-	decoded, err := UnmarshalXLIFF(body)
+	decoded, err := UnmarshalXLIFFInterchange(body)
 	require.NoError(t, err)
 	require.Equal(t, target, *decoded.File.Groups[0].TranslationUnit[0].Target)
-	require.True(t, ValidateResponse(document, ProviderResponse{Document: *decoded}).Passed)
 	for _, invalid := range []string{
 		strings.Replace(target, "{{site.title}}", "", 1),
 		target + " {{site.title}}",
 		strings.Replace(target, "{{site.title}}", "{{site.url}}", 1),
 	} {
 		candidate := XLIFFWithTargets(document, map[string]UnitResult{"title": {TranslatedText: invalid}})
-		require.False(t, ValidateResponse(document, ProviderResponse{Document: candidate}).Passed)
 		require.Error(t, ValidateXLIFFInterchangeDocument(&candidate))
 	}
 }

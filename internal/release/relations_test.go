@@ -2,17 +2,13 @@ package release_test
 
 import (
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/release/releasetest"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 
@@ -207,47 +203,6 @@ func TestReleaseArtworkReplacesAndUnlinksWithoutDeletingFiles(t *testing.T) {
 	unknown := uuid.NewString()
 	_, err = h.service.SetReleaseArtwork(h.ctx(t), release.SetReleaseArtworkCommand{ReleaseID: unknown, FileID: requested})
 	requireCode(t, err, connect.CodeNotFound, "release not found: "+unknown)
-}
-
-// Translation delivery is fenced by the Release root: a draft Release takes
-// the result, a deleted one rejects it without writing.
-func TestTranslationDeliveryFollowsTheReleaseRoot(t *testing.T) {
-	h := newHarness(t)
-	document := compactDocument("en", "Body")
-	created, err := h.service.CreateRelease(h.ctx(t), release.CreateReleaseCommand{Title: "Album", Type: release.TypeAlbum, SourceLocale: "en", Document: document})
-	require.NoError(t, err)
-	value := created.Release
-	blockID := document.Base.Nodes[0].Block.Id
-	job := release.TranslationJob{
-		EntityType: "release", EntityID: value.ID, SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: h.principal.memberID,
-	}
-	candidate := func(releaseID string) *translation.Candidate {
-		return &translation.Candidate{
-			ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko", Blocks: []*contentv1.RichTextBlockLocale{{
-				BlockId: blockID, Value: &contentv1.RichTextBlockLocale_Paragraph{Paragraph: &contentv1.ParagraphBlockLocale{
-					Props:   &contentv1.ParagraphLocaleProps{},
-					Content: []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "본문"}}}},
-				}},
-			}}},
-			ContentDocumentRevision: h.revision(t, releaseID).String(), ReleaseCreditNotes: map[string]string{},
-		}
-	}
-	before := len(h.audit.Records())
-	joined := release.Joined{Store: h.store, Audit: h.audit}
-	require.NoError(t, release.ApplyTypedTranslationCandidate(t.Context(), joined, job, candidate(value.ID), translation.EntryWrite{Now: time.Now()}))
-	metadata, _, ok := h.store.Locale(value.ID, "ko")
-	require.True(t, ok)
-	require.Equal(t, "Album", *metadata.Title, "the source title is the protected target title")
-	records := h.audit.Records()[before:]
-	require.Len(t, records, 1)
-	require.Equal(t, h.principal.memberID, records[0].MemberID)
-	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, records[0].ItemOperation)
-
-	candidateOfDeleted := candidate(value.ID)
-	require.NoError(t, h.store.DeleteRelease(t.Context(), value.ID))
-	err = release.ApplyTypedTranslationCandidate(t.Context(), joined, job, candidateOfDeleted, translation.EntryWrite{Now: time.Now()})
-	require.ErrorIs(t, err, release.ErrLocaleNotFound)
-	require.Len(t, h.audit.Records(), before+1)
 }
 
 func releaseMember(nickname string) releasetest.Member {

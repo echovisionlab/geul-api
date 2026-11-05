@@ -172,7 +172,7 @@ func TestNormalizingHandlerKeepsScalarListsAndDropsStructures(t *testing.T) {
 	logger := slog.New(handler)
 	many := make([]int, 52)
 	logger.Info("loaded",
-		"queues", []string{"og.generate", "translation.generate"},
+		"queues", []string{"og.generate", "file.delete"},
 		"part_numbers", many,
 		"signal", syscall.SIGTERM,
 		"config", struct{ Secret string }{Secret: "do-not-log"},
@@ -181,7 +181,7 @@ func TestNormalizingHandlerKeepsScalarListsAndDropsStructures(t *testing.T) {
 
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &line))
-	require.Equal(t, "og.generate,translation.generate", line["queues"])
+	require.Equal(t, "og.generate,file.delete", line["queues"])
 	require.Contains(t, line["part_numbers"], ",+2 more")
 	require.Equal(t, "terminated", line["signal"])
 	require.NotContains(t, line, "config")

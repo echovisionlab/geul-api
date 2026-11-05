@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	emailcontentpostgres "github.com/echovisionlab/geul-api/internal/emailcontent/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -96,12 +95,6 @@ func NewStore(tx *gorm.DB, ports Ports) emailauthoring.Store {
 		Store: emailcontentpostgres.New(tx, ports.ContentBlocks, "email_template"),
 		tx:    tx, ports: ports,
 	}
-}
-
-// Bind joins the Store and audit to tx, a transaction another domain's
-// pipeline opened (translation delivery and interchange).
-func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) emailauthoring.Joined {
-	return emailauthoring.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

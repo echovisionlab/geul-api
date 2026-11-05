@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -334,25 +333,6 @@ func TestLoadLabelBlockDocumentResolvesTheSessionAndRequiresEdit(t *testing.T) {
 	requireCode(t, err, connect.CodePermissionDenied, "no permission to edit this label")
 	_, err = f.h.service.LoadLabelBlockDocument(t.Context(), label.LoadLabelBlockDocumentQuery{LabelID: f.label.ID, Locale: " ", SessionID: "session"})
 	requireCode(t, err, connect.CodeInvalidArgument, "locale is required")
-}
-
-func TestTranslationDeliveryAppliesToADraftLabelAndRejectsADeletedOne(t *testing.T) {
-	f := newRoomFixture(t)
-	job := label.TranslationJob{EntityType: "label", EntityID: f.label.ID, TargetLocale: "ko", RequestedByMemberID: f.contributor.memberID}
-	candidate := &translation.Candidate{
-		ContentDocumentRevision:   f.h.revision(t, f.label.ID).String(),
-		ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "ko"},
-	}
-
-	require.NoError(t, label.ApplyTypedTranslationCandidate(f.contributor.context(t), label.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now()}),
-		"an already-submitted translation job may apply to a draft Label")
-	_, exists := f.h.store.Locale(f.label.ID, "ko")
-	require.True(t, exists)
-	require.Equal(t, []sharedtelemetry.AuditItemOperation{sharedtelemetry.AuditItemOperationCreated}, itemOperations(f.h))
-
-	require.NoError(t, f.h.store.DeleteLabel(t.Context(), f.label.ID))
-	err := label.ApplyTypedTranslationCandidate(f.contributor.context(t), label.Joined{Store: f.h.store, Audit: f.h.audit}, job, candidate, translation.EntryWrite{Now: time.Now()})
-	requireCode(t, err, connect.CodeNotFound, "label not found: "+f.label.ID)
 }
 
 func itemOperations(h *harness) []sharedtelemetry.AuditItemOperation {

@@ -9,44 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildTranslationCandidateLeavesPostRequestBlocksMissing(t *testing.T) {
-	t.Parallel()
-
-	requestedID := uuid.NewString()
-	addedLaterID := uuid.NewString()
-	source := &translation.SourceDocument{
-		Title:                   "Release",
-		ContentDocumentRevision: uuid.NewString(),
-		ContentBlockDocument: &contentv1.LocalizedRichTextDocument{
-			Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, Locale: "en",
-			LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "en", Blocks: []*contentv1.RichTextBlockLocale{
-				releaseTranslationParagraph(requestedID, "Requested"),
-				releaseTranslationParagraph(addedLaterID, "Added later"),
-			}},
-		},
-	}
-	job := TranslationJob{EntityType: releaseContentEntity, EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "ko"}
-	plan, err := BuildTranslationExtractionPlan(job, source)
-	require.NoError(t, err)
-	requestedUnits := make([]translation.Unit, 0, 1)
-	for _, unit := range plan.Units {
-		if unit.ContainerID == requestedID {
-			requestedUnits = append(requestedUnits, unit)
-		}
-	}
-	require.Len(t, requestedUnits, 1)
-	plan.Units = requestedUnits
-	plan.Bundles = translation.BuildBundles(job.EntityType, job.EntityID, job.SourceLocale, job.TargetLocale, requestedUnits, nil)
-
-	candidate, err := BuildTranslationCandidate(plan, source, map[string]translation.UnitResult{
-		requestedUnits[0].UnitID: {UnitID: requestedUnits[0].UnitID, TranslatedText: "번역"},
-	})
-	require.NoError(t, err)
-	require.Len(t, candidate.ContentBlockLocaleOverlay.GetBlocks(), 1)
-	require.Equal(t, requestedID, candidate.ContentBlockLocaleOverlay.GetBlocks()[0].GetBlockId())
-	require.Equal(t, "번역", candidate.ContentBlockLocaleOverlay.GetBlocks()[0].GetParagraph().GetContent()[0].GetText().GetText())
-}
-
 func TestReleaseTranslationExtractionRejectsAllEmptyStableUnits(t *testing.T) {
 	t.Parallel()
 

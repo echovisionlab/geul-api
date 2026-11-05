@@ -23,16 +23,13 @@ func translationJobStringPtr(value string) *string {
 }
 
 func (testTranslationDomains) BuildExtractionPlan(
-	job Job,
+	job PlanTarget,
 	source *translation.SourceDocument,
 ) (*translation.ExtractionPlan, error) {
 	switch job.EntityType {
 	case "post":
 		return translation.BuildRichTextExtractionPlan(
-			&translation.JobIdentity{
-				EntityType: job.EntityType, EntityID: job.EntityID,
-				SourceLocale: job.SourceLocale, TargetLocale: job.TargetLocale,
-			},
+			&job,
 			source,
 			translation.RichTextDocumentFields{Title: true, Summary: true},
 		)
@@ -44,22 +41,5 @@ func (testTranslationDomains) BuildExtractionPlan(
 		return email.BuildLayoutTranslationExtractionPlan(job.EntityID, job.SourceLocale, job.TargetLocale, source)
 	default:
 		return nil, fmt.Errorf("unsupported test translation entity type %q", job.EntityType)
-	}
-}
-
-func (testTranslationDomains) BuildCandidate(
-	plan *translation.ExtractionPlan,
-	source *translation.SourceDocument,
-	results map[string]translation.UnitResult,
-) (*translation.Candidate, error) {
-	switch plan.EntityType {
-	case "post":
-		return translation.BuildRichTextCandidate(plan, source, results)
-	case "form":
-		return form.ApplyTranslationCandidate(source, results)
-	case "series", "email_layout":
-		return BuildGenericCandidate(plan, source, results)
-	default:
-		return nil, fmt.Errorf("unsupported test translation entity type %q", plan.EntityType)
 	}
 }

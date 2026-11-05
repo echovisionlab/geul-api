@@ -39,13 +39,6 @@ type UserDeletionPublisher interface {
 	PublishUserDeleteAvatar(context.Context, *managev1.UserDeleteAvatarCommand) error
 }
 
-type TranslationPublisher interface {
-	PublishTranslationGenerate(context.Context, *managev1.TranslationGenerateEvent) error
-	PublishTranslationLifecycle(context.Context, *managev1.TranslationLifecycleEvent) error
-	PublishContentUpdated(context.Context, *managev1.ContentUpdatedEvent) error
-	PublishContentUpdatedWithExecutor(context.Context, eventpkg.DBTX, *managev1.ContentUpdatedEvent) error
-}
-
 // AsyncPublisher is the transport-neutral capability exposed to domain
 // services. Durable work is enqueued in PGMQ; ephemeral wake-ups are PostgreSQL
 // NOTIFY signals.
@@ -435,13 +428,6 @@ func (p *Publisher) PublishSendBulkEmail(ctx context.Context, job *managev1.Send
 	return p.EnqueueProtobuf(ctx, eventpkg.QueueEmailCampaign, job.GetDeliveryRunId(), job)
 }
 
-func (p *Publisher) PublishTranslationGenerate(ctx context.Context, job *managev1.TranslationGenerateEvent) error {
-	if job == nil {
-		return fmt.Errorf("translation generation job is required")
-	}
-	return p.EnqueueProtobuf(ctx, eventpkg.QueueTranslationGenerate, job.GetJobId(), job)
-}
-
 func (p *Publisher) PublishTranscodeProgress(ctx context.Context, message *managev1.TranscodeProgressEvent) error {
 	return p.NotifyProtobuf(ctx, eventpkg.SignalTranscodeProgress, message)
 }
@@ -510,10 +496,6 @@ func ValidateFileIngestSignal(message proto.Message) error {
 
 func (p *Publisher) PublishMailAdapterChanged(ctx context.Context, message *managev1.MailAdapterChangedEvent) error {
 	return p.NotifyProtobuf(ctx, eventpkg.SignalMailAdapterChanged, message)
-}
-
-func (p *Publisher) PublishTranslationLifecycle(ctx context.Context, message *managev1.TranslationLifecycleEvent) error {
-	return p.NotifyProtobuf(ctx, eventpkg.SignalTranslationLifecycle, message)
 }
 
 func (p *Publisher) PublishContentUpdated(ctx context.Context, message *managev1.ContentUpdatedEvent) error {

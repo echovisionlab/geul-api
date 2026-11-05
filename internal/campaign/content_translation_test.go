@@ -28,7 +28,7 @@ func TestCampaignTranslationPlanAndCandidateOwnSubjectAndTargetOverlay(t *testin
 			},
 		},
 	}
-	job := &translation.JobIdentity{
+	job := &translation.PlanTarget{
 		EntityType:   campaignContentEntity,
 		EntityID:     "campaign-a",
 		SourceLocale: "en",

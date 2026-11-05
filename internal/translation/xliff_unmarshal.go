@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 )
 
@@ -55,14 +54,6 @@ type xliffXMLSegment struct {
 
 type xliffXMLContent struct {
 	InnerXML string `xml:",innerxml"`
-}
-
-// UnmarshalXLIFF parses the constrained Geul XLIFF 2.2 profile without
-// flattening inline codes. Provider-specific relative validation belongs in
-// ParseTranslatedXLIFF, because an arbitrary document cannot establish source
-// identity by itself.
-func UnmarshalXLIFF(body []byte) (*XLIFFDocument, error) {
-	return unmarshalXLIFF(body, ValidateXLIFFDocument)
 }
 
 // UnmarshalXLIFFInterchange parses the constrained CAT profile. Unlike a
@@ -271,12 +262,6 @@ func decodeXLIFFInlineContent(innerXML string) ([]XLIFFInline, error) {
 	return stack[0], nil
 }
 
-// UnmarshalXLIFFInlineFragment parses the exact pc/ph token stream returned by
-// a provider. Callers must validate it against the source unit before apply.
-func UnmarshalXLIFFInlineFragment(fragment string) ([]XLIFFInline, error) {
-	return decodeXLIFFInlineContent(fragment)
-}
-
 func setXLIFFInlineAttributes(node *XLIFFInline, attributes []xml.Attr) {
 	for _, attribute := range attributes {
 		switch attribute.Name.Local {
@@ -294,73 +279,4 @@ func setXLIFFInlineAttributes(node *XLIFFInline, attributes []xml.Attr) {
 			node.CanDelete = attribute.Value
 		}
 	}
-}
-
-// ParseTranslatedXLIFF parses provider output relative to the exact uploaded
-// source and rejects locale, file, group, unit, source, original-data, or
-// source-inline drift before exposing any translated targets.
-func ParseTranslatedXLIFF(source XLIFFDocument, body []byte) (*ProviderResponse, error) {
-	translated, err := UnmarshalXLIFF(body)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateTranslatedXLIFFIdentity(source, *translated); err != nil {
-		return nil, err
-	}
-
-	result := source
-	result.File.Groups = make([]XLIFFGroup, len(source.File.Groups))
-	for groupIndex, sourceGroup := range source.File.Groups {
-		resultGroup := sourceGroup
-		resultGroup.TranslationUnit = make([]XLIFFUnit, len(sourceGroup.TranslationUnit))
-		for unitIndex, sourceUnit := range sourceGroup.TranslationUnit {
-			translatedUnit := translated.File.Groups[groupIndex].TranslationUnit[unitIndex]
-			resultUnit := sourceUnit
-			resultUnit.Target = translatedUnit.Target
-			resultUnit.TargetInline = translatedUnit.TargetInline
-			if len(resultUnit.OriginalData) == 0 {
-				resultUnit.OriginalData = translatedUnit.OriginalData
-			}
-			if len(resultUnit.SourceInline) == 0 {
-				resultUnit.SourceInline = translatedUnit.SourceInline
-			}
-			resultGroup.TranslationUnit[unitIndex] = resultUnit
-		}
-		result.File.Groups[groupIndex] = resultGroup
-	}
-	if err := ValidateXLIFFDocument(&result, true); err != nil {
-		return nil, err
-	}
-	return &ProviderResponse{Document: result}, nil
-}
-
-func validateTranslatedXLIFFIdentity(source XLIFFDocument, translated XLIFFDocument) error {
-	if source.Version != translated.Version || source.SourceLocale != translated.SourceLocale || source.TargetLocale != translated.TargetLocale {
-		return fmt.Errorf("translated XLIFF document identity changed")
-	}
-	if source.File.ID != translated.File.ID || len(source.File.Groups) != len(translated.File.Groups) {
-		return fmt.Errorf("translated XLIFF file identity changed")
-	}
-	for groupIndex, sourceGroup := range source.File.Groups {
-		translatedGroup := translated.File.Groups[groupIndex]
-		if sourceGroup.ID != translatedGroup.ID || len(sourceGroup.TranslationUnit) != len(translatedGroup.TranslationUnit) {
-			return fmt.Errorf("translated XLIFF group identity changed")
-		}
-		for unitIndex, sourceUnit := range sourceGroup.TranslationUnit {
-			translatedUnit := translatedGroup.TranslationUnit[unitIndex]
-			normalizedSource, err := normalizeXLIFFUnitInline(sourceUnit, isEmailTemplateFile(source.File.ID))
-			if err != nil {
-				return err
-			}
-			if sourceUnit.ID != translatedUnit.ID || sourceUnit.Name != translatedUnit.Name {
-				return fmt.Errorf("translated XLIFF unit identity changed")
-			}
-			if normalizedSource.Source != translatedUnit.Source ||
-				!reflect.DeepEqual(normalizedSource.OriginalData, translatedUnit.OriginalData) ||
-				!reflect.DeepEqual(normalizedSource.SourceInline, translatedUnit.SourceInline) {
-				return fmt.Errorf("translated XLIFF unit source changed")
-			}
-		}
-	}
-	return nil
 }

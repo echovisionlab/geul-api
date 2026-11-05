@@ -51,7 +51,6 @@ func LoadTranslationSourceDocument(ctx context.Context, store Store, eventID str
 	}
 	return &translation.SourceDocument{
 		Summary:                 content.Metadata.Summary,
-		ProtectedTerms:          translation.NormalizeProtectedTerms([]string{content.Metadata.Title}),
 		ContentBlockDocument:    document,
 		ContentDocumentRevision: content.Snapshot.Document.Revision.String(),
 	}, nil
@@ -81,18 +80,6 @@ func loadProgramEventTypedTranslationContent(
 		)
 	}
 	return programEventTypedTranslationContent{Metadata: metadata, Snapshot: snapshot}, nil
-}
-
-// ApplyTypedTranslationCandidate writes a provider translation of job into
-// the translation pipeline's transaction.
-func ApplyTypedTranslationCandidate(
-	ctx context.Context,
-	joined Joined,
-	job TranslationJob,
-	candidate *translation.Candidate,
-	entry translation.EntryWrite,
-) error {
-	return applyProgramEventTypedTranslationCandidate(ctx, joined, job, candidate, entry, nil, targetlocale.RevisionCurrent)
 }
 
 // ApplyTranslationInterchangeCandidate closes Program Event's typed Block

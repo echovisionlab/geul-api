@@ -88,26 +88,6 @@ func applyMenuLocaleLabels(items []Item, locale string, labels map[string]string
 	}
 }
 
-// BuildTranslationCandidate emits only translated label values keyed by stable
-// source item ID. Missing results remain absent and an explicit empty result is
-// retained as a present empty value.
-func BuildTranslationCandidate(
-	source *translation.SourceDocument,
-	results map[string]translation.UnitResult,
-) (*translation.Candidate, error) {
-	var items []Item
-	if err := json.Unmarshal(source.ContentJSON, &items); err != nil {
-		return nil, fmt.Errorf("failed to parse menu items: %w", err)
-	}
-	labels := make(map[string]string)
-	collectTranslationResultLabels(items, results, labels)
-	body, err := EncodeTranslationLabelValues(labels)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode translated menu items: %w", err)
-	}
-	return &translation.Candidate{ContentJSON: body}, nil
-}
-
 func collectTranslationUnits(
 	menuID string,
 	sourceLocale string,
@@ -128,20 +108,6 @@ func collectTranslationUnits(
 			})
 		}
 		collectTranslationUnits(menuID, sourceLocale, targetLocale, item.Children, units)
-	}
-}
-
-func collectTranslationResultLabels(
-	items []Item,
-	results map[string]translation.UnitResult,
-	labels map[string]string,
-) {
-	for index := range items {
-		item := &items[index]
-		if result, ok := results[fmt.Sprintf("item:%s:label", item.ID)]; ok {
-			labels[item.ID] = strings.TrimSpace(result.TranslatedText)
-		}
-		collectTranslationResultLabels(item.Children, results, labels)
 	}
 }
 

@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 // BuildTranslationExtractionPlan extracts Work-owned locale fields and typed
@@ -57,13 +55,12 @@ func BuildTranslationExtractionPlan(
 	}
 
 	return &translation.ExtractionPlan{
-		EntityType:     job.EntityType,
-		EntityID:       job.EntityID,
-		SourceLocale:   job.SourceLocale,
-		TargetLocale:   job.TargetLocale,
-		ContextTitle:   translation.NonBlankString(strings.TrimSpace(source.Title)),
-		ProtectedTerms: translation.NormalizeProtectedTerms(source.ProtectedTerms),
-		Units:          units,
+		EntityType:   job.EntityType,
+		EntityID:     job.EntityID,
+		SourceLocale: job.SourceLocale,
+		TargetLocale: job.TargetLocale,
+		ContextTitle: translation.NonBlankString(strings.TrimSpace(source.Title)),
+		Units:        units,
 		Bundles: translation.BuildBundles(
 			job.EntityType,
 			job.EntityID,
@@ -73,39 +70,4 @@ func BuildTranslationExtractionPlan(
 			translation.NonBlankString(strings.TrimSpace(optionalString(source.Summary))),
 		),
 	}, nil
-}
-
-// BuildTranslationCandidate applies validated translation results to a cloned
-// Work locale overlay without changing source-owned Block structure.
-func BuildTranslationCandidate(
-	plan *translation.ExtractionPlan,
-	source *translation.SourceDocument,
-	results map[string]translation.UnitResult,
-) (*translation.Candidate, error) {
-	if plan == nil || plan.EntityType != "work" || source == nil || source.ContentBlockDocument == nil ||
-		source.ContentBlockDocument.GetLocaleOverlay() == nil {
-		return nil, fmt.Errorf("typed Work translation source is required")
-	}
-	if strings.TrimSpace(plan.TargetLocale) == "" {
-		return nil, fmt.Errorf("typed Work translation target locale is required")
-	}
-
-	document := proto.Clone(source.ContentBlockDocument).(*contentv1.LocalizedRichTextDocument)
-	document.Locale = plan.TargetLocale
-	document.LocaleOverlay.Locale = plan.TargetLocale
-	for _, block := range document.LocaleOverlay.GetBlocks() {
-		if block == nil || strings.TrimSpace(block.GetBlockId()) == "" {
-			return nil, fmt.Errorf("typed Work translation Block ID is required")
-		}
-		if err := translation.ApplyRichTextResults(block, "block:"+block.GetBlockId(), results); err != nil {
-			return nil, err
-		}
-	}
-
-	candidate := &translation.Candidate{
-		ContentBlockLocaleOverlay: document.LocaleOverlay,
-		ContentDocumentRevision:   source.ContentDocumentRevision,
-	}
-	translation.ApplyCandidateFields(candidate, plan.Bundles, results)
-	return candidate, nil
 }

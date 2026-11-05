@@ -104,7 +104,7 @@ func emailInterchangePlan(
 ) *core.ExtractionPlan {
 	t.Helper()
 	plan, err := core.BuildRichTextExtractionPlan(
-		&core.JobIdentity{
+		&core.PlanTarget{
 			EntityType: entityType, EntityID: entityID,
 			SourceLocale: source.GetLocale(), TargetLocale: targetLocale,
 		},

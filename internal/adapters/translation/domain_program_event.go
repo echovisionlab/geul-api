@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
@@ -35,15 +34,8 @@ func programEventDomainRegistration(audit domainaudit.Appender) domainRegistrati
 			})
 			return output, err
 		},
-		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return core.BuildRichTextExtractionPlan(jobIdentity(job), source, core.RichTextDocumentFields{Summary: true})
-		},
-		buildCandidate: core.BuildRichTextCandidate,
-		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			if store == nil || job == nil {
-				return errors.New("typed Program Event translation candidate and content Block store are required")
-			}
-			return programevent.ApplyTypedTranslationCandidate(ctx, programEventJoined(tx, store, audit), programEventTranslationJob(job), candidate, input)
+		buildExtractionPlan: func(job core.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+			return core.BuildRichTextExtractionPlan(&job, source, core.RichTextDocumentFields{Summary: true})
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditProgramEventUpdated, sharedtelemetry.NewProgramEventSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -58,7 +50,7 @@ func programEventDomainRegistration(audit domainaudit.Appender) domainRegistrati
 		requireInterchangeEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			return programEventAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, programEventStore(tx, nil), spiceDB, programEventLockActive(ctx, tx), entityID))
 		},
-		requireJobRead: requireJobEdit(policyv1.ProgramEvent.Edit),
+		requireTranslationRead: requireTranslationEdit(policyv1.ProgramEvent.Edit),
 		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			return programEventAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, programEventStore(tx, nil), spiceDB, programEventLockActive(ctx, tx), entityID))
 		},
@@ -81,13 +73,6 @@ func programEventStore(db *gorm.DB, contents *contentblock.Store) programevent.S
 func programEventLockActive(ctx context.Context, tx *gorm.DB) programevent.LockActive {
 	return func(principal *auth.UserInfo) (bool, error) {
 		return identitystate.LockActivePrincipal(ctx, tx, principal)
-	}
-}
-
-func programEventTranslationJob(job *model.TranslationJob) programevent.TranslationJob {
-	return programevent.TranslationJob{
-		EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
-		RequestedByMemberID: job.RequestedByMemberID,
 	}
 }
 

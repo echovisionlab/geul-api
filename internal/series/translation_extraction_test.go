@@ -16,10 +16,9 @@ func TestBuildTranslationExtractionPlan(t *testing.T) {
 	summary := "Quiet summary"
 	contentText := "Body text"
 	plan, err := BuildTranslationExtractionPlan("series-1", "en", "ko", &translation.SourceDocument{
-		Title:          " Hello ",
-		Summary:        &summary,
-		ContentText:    &contentText,
-		ProtectedTerms: []string{" Geul ", ""},
+		Title:       " Hello ",
+		Summary:     &summary,
+		ContentText: &contentText,
 	})
 	require.NoError(t, err)
 
@@ -29,7 +28,6 @@ func TestBuildTranslationExtractionPlan(t *testing.T) {
 	assert.Equal(t, "ko", plan.TargetLocale)
 	require.NotNil(t, plan.ContextTitle)
 	assert.Equal(t, "Hello", *plan.ContextTitle)
-	assert.Equal(t, []string{"Geul"}, plan.ProtectedTerms)
 	require.Len(t, plan.Units, 3)
 	assert.Equal(t, []string{"entity:title", "entity:summary", "entity:content_text"}, []string{
 		plan.Units[0].UnitID,

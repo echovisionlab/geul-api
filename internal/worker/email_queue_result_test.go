@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/email"
 	"log/slog"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/email"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/mq"

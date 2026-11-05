@@ -20,16 +20,15 @@ func (s runtimeSettingsReader) RuntimeSettings(ctx context.Context) (translation
 	defaults := translation.DefaultRuntimeSettings()
 
 	var row model.TranslationSettings
-	if err := s.db.WithContext(ctx).Select("default_locale, protected_terms, updated_at").First(&row, "id = 1").Error; err != nil {
+	if err := s.db.WithContext(ctx).Select("default_locale, updated_at").First(&row, "id = 1").Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return defaults, nil
 		}
 		return defaults, err
 	}
 	settings, err := translation.NormalizeRuntimeSettings(translation.RuntimeSettings{
-		DefaultLocale:  row.DefaultLocale,
-		ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
-		UpdatedAt:      &row.UpdatedAt,
+		DefaultLocale: row.DefaultLocale,
+		UpdatedAt:     &row.UpdatedAt,
 	})
 	if err != nil {
 		return defaults, err

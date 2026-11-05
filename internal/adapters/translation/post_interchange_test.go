@@ -152,7 +152,7 @@ func TestPostInterchangeValidateRejectsIdentityAndRevisionMismatch(t *testing.T)
 func requirePostInterchangePlan(t *testing.T, source *core.SourceDocument) *core.ExtractionPlan {
 	t.Helper()
 	plan, err := core.BuildRichTextExtractionPlan(
-		&core.JobIdentity{
+		&core.PlanTarget{
 			EntityType: "post", EntityID: "post-1", SourceLocale: "en", TargetLocale: "ko",
 		},
 		source,

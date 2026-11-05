@@ -3,8 +3,6 @@ package translationadapter
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -14,13 +12,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -60,213 +56,12 @@ func (r *DomainRegistry) LoadSourceDocument(
 	return port.loadSourceDocument(ctx, db, store, entityID)
 }
 
-func (r *DomainRegistry) BuildExtractionPlan(job application.Job, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-	port, err := r.domainPort(job.EntityType)
+func (r *DomainRegistry) BuildExtractionPlan(target application.PlanTarget, source *core.SourceDocument) (*core.ExtractionPlan, error) {
+	port, err := r.domainPort(target.EntityType)
 	if err != nil {
 		return nil, err
 	}
-	return port.buildExtractionPlan(modelJob(job), source)
-}
-
-// modelJob is the job as the owning domains' translation adapters take it.
-func modelJob(job application.Job) *model.TranslationJob {
-	return &model.TranslationJob{
-		ID: job.ID, EntityType: job.EntityType, EntityID: job.EntityID,
-		TargetLocale: job.TargetLocale, SourceLocale: job.SourceLocale,
-		RequestArtifactDigest: job.RequestArtifactDigest, OperationID: job.OperationID,
-		Status: string(job.Status), RequestedByMemberID: job.RequestedByMemberID,
-		Provider: job.Provider, Model: job.Model,
-		ProviderDocumentID: job.ProviderDocumentID, ProviderDocumentKey: job.ProviderDocumentKey,
-		ProviderDocumentSubmittedAt: job.ProviderDocumentSubmittedAt,
-		RequestXLIFF:                job.RequestXLIFF, RequestManifest: job.RequestManifest,
-		FailureReason: job.FailureReason, RequestedAt: job.RequestedAt, StartedAt: job.StartedAt,
-		CompletedAt: job.CompletedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
-	}
-}
-
-func (r *DomainRegistry) BuildCandidate(
-	plan *core.ExtractionPlan,
-	source *core.SourceDocument,
-	results map[string]core.UnitResult,
-) (*core.Candidate, error) {
-	if plan == nil {
-		return nil, fmt.Errorf("translation extraction plan is required")
-	}
-	port, err := r.domainPort(plan.EntityType)
-	if err != nil {
-		return nil, err
-	}
-	return port.buildCandidate(plan, source, results)
-}
-
-func (r *DomainRegistry) ApplyCandidate(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	appliedJob application.Job,
-	candidate *core.Candidate,
-	input core.EntryWrite,
-) (application.AppliedTranslationTarget, error) {
-	job := modelJob(appliedJob)
-	before, err := loadProviderLocaleFence(ctx, tx, job)
-	if err != nil {
-		return application.AppliedTranslationTarget{}, err
-	}
-	port, err := r.domainPort(job.EntityType)
-	if err != nil {
-		return application.AppliedTranslationTarget{}, err
-	}
-	if err := port.applyCandidate(ctx, tx, store, job, candidate, input); err != nil {
-		return application.AppliedTranslationTarget{}, err
-	}
-	after, err := loadProviderLocaleFence(ctx, tx, job)
-	if err != nil {
-		return application.AppliedTranslationTarget{}, err
-	}
-	return classifyAppliedProviderTranslation(job.TargetLocale, before, after)
-}
-
-type providerLocaleFence struct {
-	sourceLocale     string
-	documentRevision string
-	localeUpdatedAt  *time.Time
-	targetRevision   string
-	exists           bool
-}
-
-func loadProviderLocaleFence(
-	ctx context.Context,
-	tx *gorm.DB,
-	job *model.TranslationJob,
-) (providerLocaleFence, error) {
-	if tx == nil || job == nil {
-		return providerLocaleFence{}, fmt.Errorf("provider locale fence dependencies are required")
-	}
-	definition, ok := core.DefinitionForKind(job.EntityType)
-	if !ok {
-		return providerLocaleFence{}, fmt.Errorf(
-			"unsupported translation entity type %q",
-			job.EntityType,
-		)
-	}
-	var row struct {
-		SourceLocale    string     `gorm:"column:source_locale"`
-		DocumentID      uuid.UUID  `gorm:"column:content_document_id"`
-		LocaleUpdatedAt *time.Time `gorm:"column:locale_updated_at"`
-	}
-	result := tx.WithContext(ctx).Raw(
-		"SELECT root.source_locale AS source_locale, root.content_document_id, "+
-			"locale_entry.updated_at AS locale_updated_at "+
-			"FROM "+definition.RootTable+" AS root "+
-			"LEFT JOIN "+definition.EntryTable+" AS locale_entry "+
-			"ON locale_entry.entity_id = root.id AND locale_entry.locale = ? "+
-			"WHERE root.id = ?",
-		job.TargetLocale,
-		job.EntityID,
-	).Scan(&row)
-	if result.Error != nil {
-		return providerLocaleFence{}, errs.Internal(result.Error)
-	}
-	// A root without its Content Document is as absent as a missing root.
-	if result.RowsAffected != 1 || row.DocumentID == uuid.Nil {
-		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
-	}
-	revision, err := contentblock.CurrentRevision(ctx, tx, row.DocumentID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
-	}
-	if err != nil {
-		return providerLocaleFence{}, errs.Internal(err)
-	}
-	sourceLocale := strings.TrimSpace(row.SourceLocale)
-	if sourceLocale == "" || sourceLocale != row.SourceLocale {
-		return providerLocaleFence{}, errs.FailedPrecondition(
-			"Translation source locale is not canonical",
-		)
-	}
-	documentRevision := revision.String()
-	if revision == uuid.Nil {
-		return providerLocaleFence{}, errs.FailedPrecondition("Content Document revision is not a canonical UUID")
-	}
-	fence := providerLocaleFence{
-		sourceLocale: sourceLocale, documentRevision: documentRevision,
-		localeUpdatedAt: row.LocaleUpdatedAt, exists: row.LocaleUpdatedAt != nil,
-	}
-	if job.TargetLocale == sourceLocale {
-		if !fence.exists {
-			return providerLocaleFence{}, errs.FailedPrecondition(
-				"Translation source locale values are missing",
-			)
-		}
-		return fence, nil
-	}
-	if !fence.exists {
-		return fence, nil
-	}
-	targetRevision, err := core.DeriveTargetRevision(core.TargetRevisionFacts{
-		LocaleExists:     true,
-		DocumentRevision: documentRevision,
-		LocaleUpdatedAt:  row.LocaleUpdatedAt,
-	})
-	if err != nil {
-		return providerLocaleFence{}, errs.Internal(err)
-	}
-	fence.targetRevision = targetRevision
-	return fence, nil
-}
-
-func classifyAppliedProviderTranslation(
-	targetLocale string,
-	before providerLocaleFence,
-	after providerLocaleFence,
-) (application.AppliedTranslationTarget, error) {
-	if before.sourceLocale == "" || before.sourceLocale != after.sourceLocale {
-		return application.AppliedTranslationTarget{}, fmt.Errorf(
-			"provider translation source locale changed during apply",
-		)
-	}
-	documentChanged := before.documentRevision != after.documentRevision
-	if targetLocale == before.sourceLocale {
-		if !before.exists || !after.exists {
-			return application.AppliedTranslationTarget{}, fmt.Errorf(
-				"provider source translation requires existing locale values",
-			)
-		}
-		localeChanged := !providerLocaleUpdatedAtEqual(before.localeUpdatedAt, after.localeUpdatedAt)
-		if localeChanged && !documentChanged {
-			return application.AppliedTranslationTarget{}, fmt.Errorf(
-				"provider source translation changed locale values without advancing the document revision",
-			)
-		}
-		return application.AppliedTranslationTarget{
-			Changed:              documentChanged,
-			DocumentRevision:     after.documentRevision,
-			DocumentStateChanged: documentChanged,
-		}, nil
-	}
-	if documentChanged {
-		return application.AppliedTranslationTarget{}, fmt.Errorf(
-			"provider target translation advanced the shared document revision",
-		)
-	}
-	changed := before.exists != after.exists || before.targetRevision != after.targetRevision
-	if changed && !after.exists {
-		return application.AppliedTranslationTarget{}, fmt.Errorf(
-			"provider target translation removed its target locale",
-		)
-	}
-	return application.AppliedTranslationTarget{
-		Changed:          changed,
-		DocumentRevision: after.documentRevision,
-		TargetRevision:   after.targetRevision,
-	}, nil
-}
-
-func providerLocaleUpdatedAtEqual(left *time.Time, right *time.Time) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return left.Equal(*right)
+	return port.buildExtractionPlan(target, source)
 }
 
 func (r *DomainRegistry) RequestLocaleOG(
@@ -371,7 +166,7 @@ func (r *DomainRegistry) RequireTranslationInterchangeEdit(
 	return maskTranslationAuthorizationDenial(err, entityType, entityID)
 }
 
-func (r *DomainRegistry) RequireJobRead(
+func (r *DomainRegistry) RequireTranslationRead(
 	ctx context.Context,
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
@@ -389,7 +184,7 @@ func (r *DomainRegistry) RequireJobRead(
 	if err != nil {
 		return errs.InvalidArgument("filters.entity_type", err.Error())
 	}
-	return port.requireJobRead(ctx, db, spiceDB, entityID)
+	return port.requireTranslationRead(ctx, db, spiceDB, entityID)
 }
 
 func (r *DomainRegistry) PrepareSourceLocale(
@@ -459,27 +254,6 @@ type translationCanSet struct {
 	edit         auth.ResourceAction
 	viewArchived auth.ResourceAction
 	editArchived auth.ResourceAction
-}
-
-func (r *DomainRegistry) RequireLegalEditable(
-	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	entityType string,
-	entityID string,
-) error {
-	if entityType != "privacy" && entityType != "terms" {
-		return errs.InvalidArgument("target.entity_type", "Legal translation target is required")
-	}
-	if spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
-	port, err := r.domainPort(entityType)
-	if err != nil {
-		return errs.InvalidArgument("target.entity_type", err.Error())
-	}
-	err = port.requireRegeneration(ctx, db, spiceDB, entityID)
-	return maskTranslationAuthorizationDenial(err, entityType, entityID)
 }
 
 func (*DomainRegistry) RequireDocumentContributors(

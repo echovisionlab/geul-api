@@ -82,7 +82,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 
 // translationStorePorts are the Translation Store's domain registry and
 // shared runtimes; the use cases also need the interchange registry, which
-// the content domains' services complete later than the job runner starts.
+// the content domains' services complete later.
 func translationStorePorts(
 	registry *translationadapter.DomainRegistry,
 	contentBlocks *contentblock.Store,
@@ -93,7 +93,7 @@ func translationStorePorts(
 ) translationpostgres.Ports {
 	return translationpostgres.Ports{
 		Domains: registry, ContentBlocks: contentBlocks, OGPlanner: ogDeps.planner, OGRefresher: ogDeps.refresher,
-		SpiceDB: spiceDB, Signals: contentsignaladapter.NewPublisher(publisher), Queue: publisher, CDNDomain: cdnDomain,
+		SpiceDB: spiceDB, Signals: contentsignaladapter.NewPublisher(publisher), CDNDomain: cdnDomain,
 	}
 }
 

@@ -146,23 +146,6 @@ func legalTargetLocales(sourceLocale string, batch *contentblock.Batch) []string
 	return locales
 }
 
-// legalTranslationJobApplyDocumentFence permits an already-accepted
-// TranslationJob to finish against any still-existing policy root. Current
-// administrator permissions continue to govern new requests and direct
-// edits; completion reuses the authority accepted at request time.
-func legalTranslationJobApplyDocumentFence(kind *policyKind, entityID string) ContentFence {
-	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
-		if err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-			return contentblock.DomainContext{}, domainerr.Precondition(kind.entity() + " content document changed; translation job cannot be applied")
-		}
-		return loadLegalContentDomainContext(ctx, store, kind, entityID)
-	}
-}
-
 func authorizeLegalBlockBootstrap(
 	ctx context.Context,
 	store Store,

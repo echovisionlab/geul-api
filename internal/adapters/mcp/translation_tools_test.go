@@ -21,13 +21,10 @@ import (
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 const (
-	testTranslationJobID       = "11111111-1111-4111-8111-111111111111"
-	testTranslationGeneratedID = "22222222-2222-4222-8222-222222222222"
-	testTranslationArtifactID  = "33333333-3333-4333-8333-333333333333"
+	testTranslationArtifactID = "33333333-3333-4333-8333-333333333333"
 )
 
 func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
@@ -40,11 +37,8 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 		t.Fatalf("ListTools() returned %d tools, want %d", len(listed), len(tools.ToolNames()))
 	}
 	wantAnnotations := map[string]map[string]any{
-		ToolTranslationJobsList:    toolAnnotations(true, false, false),
 		ToolTranslationList:        toolAnnotations(true, false, false),
 		ToolTranslationGet:         toolAnnotations(true, false, false),
-		ToolTranslationJobCancel:   toolAnnotations(false, true, false),
-		ToolTranslationRegenerate:  toolAnnotations(false, true, true),
 		ToolTranslationXLIFFExport: toolAnnotations(false, false, false),
 		ToolTranslationXLIFFImport: toolAnnotations(false, true, false),
 	}
@@ -95,32 +89,6 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 	}
 }
 
-func TestTranslationToolsListJobsMapsBoundedGeneratedRequest(t *testing.T) {
-	application := &recordingTranslationApplication{listJobsResponse: translationapp.JobPage{
-		Jobs:       []translationapp.Job{testTranslationJob(testTranslationJobID, translationapp.JobRunning)},
-		Pagination: translationapp.Pagination{Total: 3, Limit: 2, Offset: 1, HasMore: false},
-	}}
-	tools := mustTranslationTools(t, application)
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList, toolArguments(t, `{
-		"p":"post_series","d":"44444444-4444-4444-8444-444444444444","tl":"en","sl":"ko",
-		"s":["queued","running"],"n":2,"o":1,"k":"updated_at","z":true
-	}`))
-	if err != nil {
-		t.Fatalf("translation_jobs_list error = %v", err)
-	}
-	request := application.listJobsRequest
-	if request == nil || request.Limit != 2 || request.Offset != 1 || len(request.Filters) != 5 || len(request.Sorts) != 1 {
-		t.Fatalf("ListTranslationJobs request = %+v", request)
-	}
-	if request.Filters[0].Field != "entity_type" || request.Filters[0].Value != "series" || request.Filters[1].Field != "entity_id" || request.Sorts[0].Order != commonv1.SortOrder_SORT_ORDER_DESC {
-		t.Fatalf("ListTranslationJobs lost exact target/sort: %+v", request)
-	}
-	text := result.Content[0]["text"].(string)
-	if !strings.Contains(text, `"g":[3,2,1,false]`) || !strings.Contains(text, `"s":"running"`) {
-		t.Fatalf("translation_jobs_list result = %s", text)
-	}
-}
-
 func TestTranslationToolsListAndGetReturnMetadataWithoutTranslationBody(t *testing.T) {
 	title := "secret title"
 	html := "<p>secret html</p>"
@@ -151,38 +119,6 @@ func TestTranslationToolsListAndGetReturnMetadataWithoutTranslationBody(t *testi
 	}
 	if !strings.Contains(combined, `"l":"en"`) || application.getTranslationRequest.Locale != "en" {
 		t.Fatalf("translation metadata/request mismatch: %s %+v", combined, application.getTranslationRequest)
-	}
-}
-
-func TestTranslationToolsCancelAndRegenerateUseGeneratedApplication(t *testing.T) {
-	application := &recordingTranslationApplication{
-		regenerateResponse: []translationapp.Job{testTranslationJob(testTranslationGeneratedID, translationapp.JobQueued)},
-	}
-	tools := mustTranslationTools(t, application)
-
-	cancelled, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobCancel, toolArguments(t, `{"j":"`+testTranslationJobID+`"}`))
-	if err != nil {
-		t.Fatalf("%s error = %v", ToolTranslationJobCancel, err)
-	}
-	if got := cancelled.Content[0]["text"].(string); got != `{"j":"`+testTranslationJobID+`"}` {
-		t.Fatalf("%s result = %s", ToolTranslationJobCancel, got)
-	}
-	if got, ok := cancelled.StructuredContent["j"].(string); !ok || got != testTranslationJobID {
-		t.Fatalf("%s structured result = %+v", ToolTranslationJobCancel, cancelled.StructuredContent)
-	}
-
-	regenerated, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationRegenerate, toolArguments(t, `{"p":"post","d":"post-a","l":["en","ja"]}`))
-	if err != nil {
-		t.Fatalf("%s error = %v", ToolTranslationRegenerate, err)
-	}
-	if !strings.Contains(regenerated.Content[0]["text"].(string), testTranslationGeneratedID) {
-		t.Fatalf("%s result = %+v", ToolTranslationRegenerate, regenerated)
-	}
-	if application.cancelRequest.JobID != testTranslationJobID {
-		t.Fatalf("job cancellation request = %+v", application.cancelRequest)
-	}
-	if application.regenerateRequest.Target.EntityType != "post" || !reflect.DeepEqual(application.regenerateRequest.Locales, []string{"en", "ja"}) {
-		t.Fatalf("regenerate request = %+v", application.regenerateRequest)
 	}
 }
 
@@ -245,11 +181,7 @@ func TestTranslationToolsRejectInlineXLIFFAndInvalidLifecycleArguments(t *testin
 		{name: "patch export without units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch"}`},
 		{name: "replace export with units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"replace","u":["block-a/content"]}`},
 		{name: "empty unit handle", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","u":[""]}`},
-		{name: "implicit all regeneration", tool: ToolTranslationRegenerate, arguments: `{"p":"post","d":"post-a","l":[]}`},
-		{name: "non UUID job", tool: ToolTranslationJobCancel, arguments: `{"j":"job-one"}`},
-		{name: "uppercase UUID job", tool: ToolTranslationJobCancel, arguments: `{"j":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}`},
 		{name: "zero UUID file", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"replace","f":"00000000-0000-0000-0000-000000000000"}`},
-		{name: "duplicate locales", tool: ToolTranslationRegenerate, arguments: `{"p":"post","d":"post-a","l":["en","en"]}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -263,18 +195,6 @@ func TestTranslationToolsRejectInlineXLIFFAndInvalidLifecycleArguments(t *testin
 }
 
 func TestTranslationToolsRejectOptionalNullBeforeApplicationCall(t *testing.T) {
-	for _, field := range []string{"p", "d", "tl", "sl", "s", "n", "o", "k", "z"} {
-		t.Run("job list "+field, func(t *testing.T) {
-			application := &recordingTranslationApplication{}
-			tools := mustTranslationTools(t, application)
-			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList,
-				toolArguments(t, `{"`+field+`":null}`))
-			var execution *mcpserver.ToolExecutionError
-			if !errors.As(err, &execution) || application.listJobsRequest != nil {
-				t.Fatalf("null %s: error=%v, application request=%+v", field, err, application.listJobsRequest)
-			}
-		})
-	}
 	for _, test := range []struct {
 		name      string
 		tool      string
@@ -292,32 +212,6 @@ func TestTranslationToolsRejectOptionalNullBeforeApplicationCall(t *testing.T) {
 				t.Fatalf("null XLIFF argument: error=%v, export=%+v, import=%+v", err, application.exportRequest, application.importRequest)
 			}
 		})
-	}
-}
-
-func TestTranslationOptionalArgumentsPreserveOmissionAndEmptyValues(t *testing.T) {
-	for _, arguments := range []string{`{}`, `{"s":[]}`, `{"k":""}`, `{"n":0,"o":0,"s":[],"k":""}`} {
-		application := &recordingTranslationApplication{listJobsResponse: translationapp.JobPage{
-			Pagination: translationapp.Pagination{Limit: 20},
-		}}
-		tools := mustTranslationTools(t, application)
-		if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList, toolArguments(t, arguments)); err != nil {
-			t.Fatalf("default Job list %s: %v", arguments, err)
-		}
-		request := application.listJobsRequest
-		if request == nil || len(request.Filters) != 0 || len(request.Sorts) != 0 || request.Limit != 0 || request.Offset != 0 {
-			t.Fatalf("default Job list %s changed: %+v", arguments, request)
-		}
-	}
-	for _, selection := range []string{"", `,"u":[]`} {
-		command, err := translationXLIFFExportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
-		if err != nil || len(command.UnitHandles) != 0 {
-			t.Fatalf("replace export selection %q: command=%+v, error=%v", selection, command, err)
-		}
-	}
-	command, err := translationXLIFFImportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
-	if err != nil || command.ExpectedTargetRevision != nil {
-		t.Fatalf("omitted import revision: command=%+v, error=%v", command, err)
 	}
 }
 
@@ -402,8 +296,8 @@ func TestTranslationToolsPreserveSafeConnectErrorsAndHideInternalFailures(t *tes
 		{name: "internal", applicationErr: connect.NewError(connect.CodeInternal, errors.New("database password leaked"))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			tools := mustTranslationTools(t, &recordingTranslationApplication{regenerateError: test.applicationErr})
-			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationRegenerate, toolArguments(t, `{"p":"post","d":"post-a","l":["en"]}`))
+			tools := mustTranslationTools(t, &recordingTranslationApplication{getTranslationError: test.applicationErr})
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationGet, toolArguments(t, `{"p":"post","d":"post-a","l":"en"}`))
 			var execution *mcpserver.ToolExecutionError
 			if errors.As(err, &execution) != test.wantExecution || result.Content != nil {
 				t.Fatalf("CallTool() = %+v, %v, execution=%v", result, err, execution)
@@ -417,9 +311,9 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing
 		Protocol: core.ProtocolVersion, Profile: core.DomainPost, Catalog: "catalog-a", Document: "post-a",
 		DocumentRevision: "revision-a", SourceLocale: "ko", Locale: "ko", LocaleRole: core.LocaleRoleSource, LocaleExists: true,
 	}}
-	translationApplication := &recordingTranslationApplication{
-		regenerateResponse: []translationapp.Job{testTranslationJob(testTranslationJobID, translationapp.JobQueued)},
-	}
+	translationApplication := &recordingTranslationApplication{getTranslationResponse: translationapp.Entry{
+		EntityType: "post", EntityID: "post-a", Locale: "en", UpdatedAt: time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC),
+	}}
 	documentTools, err := NewAIDocumentTools(documentApplication)
 	if err != nil {
 		t.Fatal(err)
@@ -444,11 +338,11 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing
 		}
 	}
 
-	callResponse := serveMCPAdapterRequest(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"translation_regenerate","arguments":{"p":"post","d":"post-a","l":["en"]}}}`)
-	if callResponse.Code != 200 || !strings.Contains(callResponse.Body.String(), testTranslationJobID) {
+	callResponse := serveMCPAdapterRequest(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"translation_get","arguments":{"p":"post","d":"post-a","l":"en"}}}`)
+	if callResponse.Code != 200 || !strings.Contains(callResponse.Body.String(), `\"l\":\"en\"`) {
 		t.Fatalf("tools/call = %d %s", callResponse.Code, callResponse.Body.String())
 	}
-	user := auth.GetUser(translationApplication.regenerateContext)
+	user := auth.GetUser(translationApplication.getTranslationContext)
 	if user == nil || user.MemberID.String() != testMember || user.IdentityID.String() != testIdentity || user.SessionID != "" {
 		t.Fatalf("OAuth actor context was not preserved: %+v", user)
 	}
@@ -468,50 +362,22 @@ func TestToolSetRejectsDuplicateAndTypedNilProviders(t *testing.T) {
 	}
 }
 
-func testTranslationJob(id string, status translationapp.JobStatus) translationapp.Job {
-	return translationapp.Job{
-		ID:         id,
-		EntityType: "post", EntityID: "post-a",
-		TargetLocale: "en", SourceLocale: "ko", Status: status,
-		OperationID: "55555555-5555-4555-8555-555555555555",
-		RequestedAt: time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC),
-	}
-}
-
 // recordingTranslationApplication records each use-case input and answers
 // with the configured result.
 type recordingTranslationApplication struct {
-	listJobsRequest          *translationapp.ListTranslationJobsQuery
-	cancelRequest            *translationapp.CancelTranslationJobCommand
 	listTranslationsRequest  *translationapp.ListEntityTranslationsQuery
 	getTranslationRequest    *translationapp.GetEntityTranslationQuery
-	regenerateRequest        *translationapp.RegenerateEntityTranslationsCommand
+	getTranslationContext    context.Context
 	exportRequest            *translationapp.ExportTranslationXLIFFCommand
 	importRequest            *translationapp.ImportTranslationXLIFFCommand
-	regenerateContext        context.Context
-	listJobsResponse         translationapp.JobPage
 	listTranslationsResponse translationapp.EntityTranslations
 	getTranslationResponse   translationapp.Entry
-	regenerateResponse       []translationapp.Job
 	exportResponse           translationapp.XLIFFExport
 	importResponse           translationapp.XLIFFImport
-	listJobsError            error
-	cancelError              error
 	listTranslationsError    error
 	getTranslationError      error
-	regenerateError          error
 	exportError              error
 	importError              error
-}
-
-func (application *recordingTranslationApplication) ListTranslationJobs(_ context.Context, query translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error) {
-	application.listJobsRequest = &query
-	return application.listJobsResponse, application.listJobsError
-}
-
-func (application *recordingTranslationApplication) CancelTranslationJob(_ context.Context, command translationapp.CancelTranslationJobCommand) error {
-	application.cancelRequest = &command
-	return application.cancelError
 }
 
 func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
@@ -519,15 +385,10 @@ func (application *recordingTranslationApplication) ListEntityTranslations(_ con
 	return application.listTranslationsResponse, application.listTranslationsError
 }
 
-func (application *recordingTranslationApplication) GetEntityTranslation(_ context.Context, query translationapp.GetEntityTranslationQuery) (translationapp.Entry, error) {
+func (application *recordingTranslationApplication) GetEntityTranslation(ctx context.Context, query translationapp.GetEntityTranslationQuery) (translationapp.Entry, error) {
+	application.getTranslationContext = ctx
 	application.getTranslationRequest = &query
 	return application.getTranslationResponse, application.getTranslationError
-}
-
-func (application *recordingTranslationApplication) RegenerateEntityTranslations(ctx context.Context, command translationapp.RegenerateEntityTranslationsCommand) ([]translationapp.Job, error) {
-	application.regenerateContext = ctx
-	application.regenerateRequest = &command
-	return application.regenerateResponse, application.regenerateError
 }
 
 func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF(_ context.Context, command translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error) {
