@@ -3,7 +3,6 @@ package ogpostgres
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -27,7 +26,7 @@ type RenderConfig interface {
 type Projection interface {
 	Handles(og.Target) bool
 	ReleasePending(context.Context, *gorm.DB, og.Target, string) error
-	Complete(context.Context, *gorm.DB, og.Target, string, time.Time, string) error
+	Complete(context.Context, *gorm.DB, og.Target, string, string) error
 }
 
 // RequestSource owns canonical request snapshots for one entity family.

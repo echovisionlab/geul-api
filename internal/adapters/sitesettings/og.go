@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
@@ -265,14 +264,13 @@ func (p *Projection) Complete(
 	tx *gorm.DB,
 	target og.Target,
 	assetID string,
-	now time.Time,
 	cdnDomain string,
 ) error {
 	if err := validateTarget(target); err != nil {
 		return err
 	}
 	result := tx.WithContext(ctx).Table("site_settings").Where("id = ?", 1).
-		Updates(structured.Fields{"site_og_asset_id": assetID, "updated_at": now})
+		Update("site_og_asset_id", assetID)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -2,7 +2,6 @@ package series
 
 import (
 	"testing"
-	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -22,7 +21,7 @@ func TestProjectionCompletionUsesTargetRowExistence(t *testing.T) {
 
 	err := NewProjection().Complete(t.Context(), db, og.Target{
 		EntityType: "series", EntityID: entityID, Locale: new("ko"), Kind: "locale",
-	}, assetID, time.Now().UTC(), "https://cdn.example.com")
+	}, assetID, "https://cdn.example.com")
 	require.NoError(t, err)
 	var stored *string
 	require.NoError(t, db.Table("series_translation").Select("og_asset_id").Where("entity_id = ? AND locale = 'ko'", entityID).Scan(&stored).Error)
@@ -36,7 +35,7 @@ func TestProjectionCompletionRejectsMissingTargetRow(t *testing.T) {
 	seedSeriesProjectionReadyAsset(t, db, assetID)
 	err := NewProjection().Complete(t.Context(), db, og.Target{
 		EntityType: "series", EntityID: uuid.NewString(), Locale: new("ko"), Kind: "locale",
-	}, assetID, time.Now().UTC(), "https://cdn.example.com")
+	}, assetID, "https://cdn.example.com")
 	require.ErrorIs(t, err, og.ErrTranslationTargetMissing)
 }
 

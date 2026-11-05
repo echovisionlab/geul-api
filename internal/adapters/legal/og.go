@@ -379,7 +379,6 @@ func (p *Projection) Complete(
 	tx *gorm.DB,
 	target og.Target,
 	assetID string,
-	_ time.Time,
 	cdnDomain string,
 ) error {
 	if err := validateTarget(target); err != nil {

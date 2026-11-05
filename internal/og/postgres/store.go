@@ -501,12 +501,12 @@ func (s *store) ReleasePendingProjection(ctx context.Context, target og.Target) 
 	return projection.ReleasePending(ctx, s.tx, target, s.ports.CDNDomain)
 }
 
-func (s *store) CompleteProjection(ctx context.Context, target og.Target, assetID string, now time.Time) error {
+func (s *store) CompleteProjection(ctx context.Context, target og.Target, assetID string) error {
 	projection, err := s.projectionFor(target)
 	if err != nil {
 		return err
 	}
-	return projection.Complete(ctx, s.tx, target, assetID, now, s.ports.CDNDomain)
+	return projection.Complete(ctx, s.tx, target, assetID, s.ports.CDNDomain)
 }
 
 func (s *store) projectionFor(target og.Target) (Projection, error) {

@@ -45,6 +45,36 @@ func TestRichTextUnitsPreserveStyledRunsWhenApplied(t *testing.T) {
 	require.True(t, content[1].GetText().GetStyles().GetBold())
 }
 
+func TestRichTextResultsKeepTheEdgeWhitespaceTheTranslatorWrote(t *testing.T) {
+	t.Parallel()
+	block := paragraphBlock("block-1",
+		&contentv1.RichTextInline{Value: &contentv1.RichTextInline_Link{Link: &contentv1.RichTextLink{
+			Href: "mailto:support@example.test", Content: []*contentv1.RichTextStyledText{{Text: "support@example.test"}},
+		}}},
+		&contentv1.RichTextInline{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "으로 보내 주세요."}}},
+	)
+	units, err := ExtractRichTextUnits(block, RichTextUnitScope{
+		EntityType: "page", EntityID: "page-1", SourceLocale: "ko",
+		ContainerID: "block-1", UnitPrefix: "block:block-1", PathPrefix: "block:block-1",
+	})
+	require.NoError(t, err)
+	require.Len(t, units, 1)
+
+	target := []XLIFFInline{units[0].SourceInline[0], units[0].SourceInline[1]}
+	target[1].Children = []XLIFFInline{{Kind: XLIFFInlineText, Text: " is where to send it."}}
+	translatedText, err := ProjectXLIFFInline(target, units[0].OriginalData)
+	require.NoError(t, err)
+	result := UnitResult{
+		UnitID: units[0].UnitID, TranslatedText: translatedText,
+		OriginalData: units[0].OriginalData, TargetInline: target,
+	}
+	require.NoError(t, ApplyRichTextResults(block, "block:block-1", map[string]UnitResult{result.UnitID: result}))
+
+	content := block.GetParagraph().GetContent()
+	require.Equal(t, "support@example.test", content[0].GetLink().GetContent()[0].GetText())
+	require.Equal(t, " is where to send it.", content[1].GetText().GetText())
+}
+
 func TestRichTextResultsReorderCodesWithoutChangingProtectedStructure(t *testing.T) {
 	t.Parallel()
 	bold := true

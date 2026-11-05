@@ -414,8 +414,10 @@ func rebuildRichTextTopLevelNode(node XLIFFInline, originalData []XLIFFOriginalD
 			if err != nil {
 				return nil, err
 			}
+			// Run boundaries fall in different places per language, so a run
+			// keeps the edge whitespace the translator wrote.
 			run := proto.Clone(sourceRun).(*contentv1.RichTextStyledText)
-			run.Text = preserveInlineTranslationWhitespace(sourceRun.GetText(), text)
+			run.Text = text
 			return &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Text{Text: run}}, nil
 		}
 		if sourceLink, ok := authority.links[node.ID]; ok {
@@ -434,7 +436,7 @@ func rebuildRichTextTopLevelNode(node XLIFFInline, originalData []XLIFFOriginalD
 					return nil, err
 				}
 				run := proto.Clone(sourceRun).(*contentv1.RichTextStyledText)
-				run.Text = preserveInlineTranslationWhitespace(sourceRun.GetText(), text)
+				run.Text = text
 				link.Content = append(link.Content, run)
 			}
 			return &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Link{Link: link}}, nil
