@@ -38,16 +38,16 @@ const programEventCreateInputJSONSchema = `{
     "title":{"type":"string","minLength":1},
     "slug":{"type":"string","minLength":1,"maxLength":160,"description":"Unique event route segment using lowercase letters, digits, and hyphens; no slash."},
     "source_locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "type_id":{"description":"Event Type UUID from program_event_type_list.","allOf":[` + uuidJSONSchema + `]},
+    "type_id":{"description":"Event Type UUID from reference_search with reference_type=program_event_type.","allOf":[` + uuidJSONSchema + `]},
     "starts_at":{"type":"string","format":"date-time","description":"RFC 3339 instant with an explicit UTC offset, such as 2026-10-10T19:00:00+09:00."},
     "ends_at":{"type":"string","format":"date-time","description":"Optional RFC 3339 end instant, at or after starts_at."},
     "timezone":{"type":"string","minLength":1,"maxLength":100,"description":"IANA timezone for local event display, such as Asia/Seoul or UTC. The timestamp offset specifies the instant independently."},
     "all_day":{"type":"boolean","default":false},"location_mode":` + programEventLocationModeJSONSchema + `,
     "map_place_id":{"description":"Map Place UUID from map_place_list. Required when location_mode is map_place or hybrid.","allOf":[` + uuidJSONSchema + `]},
-    "summary":{"type":"string"},"series_id":{"description":"Series UUID from program_event_series_list.","allOf":[` + uuidJSONSchema + `]},"series_order":{"type":"integer"},
+    "summary":{"type":"string"},"series_id":{"description":"Series UUID from reference_search with reference_type=program_event_series.","allOf":[` + uuidJSONSchema + `]},"series_order":{"type":"integer"},
     "poster_file_id":{"description":"File UUID from file_list, file_upload, or file_transfer.","allOf":[` + uuidJSONSchema + `]},
     "ticket_url":{"type":"string"},"stream_url":{"type":"string"},"external_url":{"type":"string"},
-    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"labels":{"description":"Label IDs from label_list.","allOf":[` + programEventLabelsJSONSchema + `]},
+    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"labels":{"description":"Label IDs from document_list with document_type=label.","allOf":[` + programEventLabelsJSONSchema + `]},
     "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"credits":{"description":"Resolve Artist IDs with reference_search reference_type=artist and Member IDs with member_admin_list or reference_search reference_type=member.","allOf":[` + programEventCreditsJSONSchema + `]}
   }
 }`
@@ -56,23 +56,23 @@ const programEventSettingsUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id"],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
-    "slug":{"type":"string","minLength":1,"maxLength":160},"type_id":{"description":"Event Type UUID from program_event_type_list.","allOf":[` + uuidJSONSchema + `]},
+    "slug":{"type":"string","minLength":1,"maxLength":160},"type_id":{"description":"Event Type UUID from reference_search with reference_type=program_event_type.","allOf":[` + uuidJSONSchema + `]},
     "starts_at":{"type":"string","format":"date-time","description":"RFC 3339 instant with an explicit UTC offset."},
     "ends_at":{"type":"string","format":"date-time"},
     "clear_ends_at":{"type":"boolean","default":false,"description":"Remove the end instant. When true, takes precedence over ends_at."},
     "timezone":{"type":"string","minLength":1,"maxLength":100,"description":"IANA timezone, such as Asia/Seoul or UTC."},
     "all_day":{"type":"boolean"},"location_mode":` + programEventLocationModeJSONSchema + `,
     "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list. An empty string clears it only if the resulting location mode permits no place. Switching to online or tba clears it automatically."},
-    "series_id":{"type":"string","description":"Canonical Series UUID from program_event_series_list, or an empty string to remove the relation."},
+    "series_id":{"type":"string","description":"Canonical Series UUID from reference_search with reference_type=program_event_series, or an empty string to remove the relation."},
     "series_order":{"type":"integer"},"clear_series_order":{"type":"boolean","default":false,"description":"Remove series_order. When true, takes precedence over series_order."},
     "poster_file_id":{"type":"string","description":"File UUID from file_list, file_upload, or file_transfer, or an empty string to remove the primary poster relation."},
     "ticket_url":{"type":"string","description":"An empty string removes the URL."},
     "stream_url":{"type":"string","description":"An empty string removes the URL."},
     "external_url":{"type":"string","description":"An empty string removes the URL."},
-    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"observed_artists":{"description":"Unchanged artists from program_event_settings_get. Required with artists.","allOf":[` + programEventArtistsJSONSchema + `]},
-    "labels":{"description":"Label IDs from label_list.","allOf":[` + programEventLabelsJSONSchema + `]},"observed_labels":{"description":"Unchanged labels from program_event_settings_get. Required with labels.","allOf":[` + programEventLabelsJSONSchema + `]},
-    "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"observed_clients":{"description":"Unchanged clients from program_event_settings_get. Required with clients.","allOf":[` + programEventClientsJSONSchema + `]},
-    "credits":{"description":"Retain existing credit IDs from program_event_settings_get. Resolve Artist IDs with reference_search reference_type=artist and Member IDs with member_admin_list or reference_search reference_type=member.","allOf":[` + programEventCreditsJSONSchema + `]}
+    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"observed_artists":{"description":"Unchanged artists from document_settings_get. Required with artists.","allOf":[` + programEventArtistsJSONSchema + `]},
+    "labels":{"description":"Label IDs from document_list with document_type=label.","allOf":[` + programEventLabelsJSONSchema + `]},"observed_labels":{"description":"Unchanged labels from document_settings_get. Required with labels.","allOf":[` + programEventLabelsJSONSchema + `]},
+    "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"observed_clients":{"description":"Unchanged clients from document_settings_get. Required with clients.","allOf":[` + programEventClientsJSONSchema + `]},
+    "credits":{"description":"Retain existing credit IDs from document_settings_get. Resolve Artist IDs with reference_search reference_type=artist and Member IDs with member_admin_list or reference_search reference_type=member.","allOf":[` + programEventCreditsJSONSchema + `]}
   }
 }`
 

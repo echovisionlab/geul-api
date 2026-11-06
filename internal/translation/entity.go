@@ -2,13 +2,18 @@ package translation
 
 import "strings"
 
+// EntityUnitID is the stable ID of an entity-level field's translation unit.
+func EntityUnitID(fieldName string) string {
+	return "entity:" + fieldName
+}
+
 // NewEntityUnit creates a stable entity-level translation unit.
 func NewEntityUnit(entityType, entityID, sourceLocale, fieldName, sourceText string) Unit {
 	return Unit{
-		UnitID:        "entity:" + fieldName,
+		UnitID:        EntityUnitID(fieldName),
 		EntityType:    entityType,
 		EntityID:      entityID,
-		Path:          "entity:" + fieldName,
+		Path:          EntityUnitID(fieldName),
 		ContainerType: ContainerTypeEntity,
 		ContainerID:   entityID,
 		FieldName:     fieldName,

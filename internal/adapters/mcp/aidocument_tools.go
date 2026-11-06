@@ -11,90 +11,52 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	"github.com/google/uuid"
 )
 
 const (
-	ToolDocumentOpen     = "document_open"
-	ToolDocumentRead     = "document_read"
-	ToolParagraphCreate  = "document_paragraph_create"
-	ToolParagraphUpdate  = "document_paragraph_update"
-	ToolHeadingCreate    = "document_heading_create"
-	ToolHeadingUpdate    = "document_heading_update"
-	ToolTableCreate      = "document_table_create"
-	ToolBlockDelete      = "document_block_delete"
-	ToolMetadataUpdate   = "document_metadata_update"
-	ToolDocumentValidate = "document_validate"
-	ToolDocumentApply    = "document_apply"
+	ToolDocumentRead   = "document_read"
+	ToolBlockDelete    = "document_block_delete"
+	ToolMetadataUpdate = "document_metadata_update"
+	ToolDocumentApply  = "document_apply"
+	ToolBlockCreate    = "document_block_create"
+	ToolBlockUpdate    = "document_block_update"
 )
 
 var documentTools = toolRegistry[AIDocumentTools]{
 	defineTool(mcpserver.Tool{
-		Name: ToolDocumentOpen, Title: "Open AI document",
-		Description: "Optional: return a document's revisions and locale state without blocks. document_read returns the same envelope, so read directly when you already have d. " +
-			"Use d returned by document_list or another listing tool; never pass a URL slug as d.",
-		InputSchema: openInputSchema(), OutputSchema: openOutputSchema(),
+		Name: ToolBlockCreate, Title: "Create document block",
+		Description: "Create one plain-text paragraph or heading, or a rectangular table of plain-text rows, in a Page rich-text section or Post body; a paragraph also works in any document with blocks. Revisions are optional because this only adds a block. " +
+			"A Page requires parent_block_id, a rich-text section; after_block_id must be a sibling. Omit after_block_id to insert first, or for a table to append. The server assigns the Block UUID." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(blockCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(true, false, false),
+		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
-	}, (*AIDocumentTools).open),
+	}, (*AIDocumentTools).createBlock),
+	defineTool(mcpserver.Tool{
+		Name: ToolBlockUpdate, Title: "Update document block",
+		Description: "Replace the whole text of one paragraph or heading with plain text, and a heading's level and alignment. To change a word or sentence, document_text_replace is cheaper. Refused when the block has marks, links, colors, breaks or site variables, because plain text would remove them; use document_text_replace or document_text_format. " +
+			"Pass document_revision (and target_revision for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(blockUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
+		SecuritySchemes: oauthSecuritySchemes(),
+		Annotations:     toolAnnotations(false, true, false),
+		Meta:            oauthSecurityMeta(),
+	}, (*AIDocumentTools).updateBlock),
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentRead, Title: "Read AI document",
-		Description: "Read a document. m=outline lists blocks as [handle,kind,parent,order,preview,relations] (trailing empties left out); preview is the start of the block's locale text: use it to find the blocks to read or change. " +
-			"Add q=<text> to an outline to list only blocks whose text contains it (case and spacing ignored), with the preview around the match: the fastest way to find a sentence. " +
-			"m=blocks returns full values for the handles in b; m=fields returns selected values ([block,field] or [block,relation,item,field]). outline accepts no selectors. " +
-			"Pages default to 256 outline nodes or 128 blocks/fields; n sets up to 256. Follow next until it is null and do not mix pages from different revisions. " +
-			"Site variable atoms are [\"siteVariable\",key] or [\"siteVariable\",key,true]. Use d from document_list or another listing tool." + syncRequiredGuidance,
+		Description: "Read a document. mode=metadata returns only its revisions and locale state. mode=outline lists blocks with their kind, parent, order and a preview: the start of the block's locale text. Use it to find the blocks to read or change. " +
+			"Add query to an outline to list only blocks whose text contains it (ignoring case, with runs of spaces counting as one), with the preview around the match: the fastest way to find a sentence. " +
+			"mode=blocks returns full values for block_ids; mode=fields returns only the selected fields. An outline accepts no selectors. " +
+			"Pages default to 256 outline blocks or 128 blocks/fields; limit sets up to 256. Follow next_cursor until it is null and do not mix pages from different revisions. " +
+			"Use the document_id from document_list or another listing tool." + syncRequiredGuidance,
 		InputSchema: readInputSchema(), OutputSchema: projectionOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*AIDocumentTools).read),
 	defineTool(mcpserver.Tool{
-		Name: ToolParagraphCreate, Title: "Create document paragraph",
-		Description: "Create one plain-text Paragraph Block in an existing document. " +
-			"Revisions are optional because this only adds a block. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(false, false, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*AIDocumentTools).createParagraph),
-	defineTool(mcpserver.Tool{
-		Name: ToolParagraphUpdate, Title: "Update document paragraph",
-		Description: "Replace the text of one existing Paragraph Block with plain text. To change a word or sentence, document_text_replace is cheaper. Refused when the paragraph has marks, links, colors, breaks or site variables, because plain text would remove them; " +
-			"use document_text_replace, or write that paragraph's full inline content with document_apply fs content [\"i\",...]. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(false, true, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*AIDocumentTools).updateParagraph),
-	defineTool(mcpserver.Tool{Name: ToolHeadingCreate, Title: "Create document heading",
-		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Revisions are optional because this only adds a block. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
-		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
-		return tools.mutateHeading(ctx, call, false)
-	}),
-	defineTool(mcpserver.Tool{Name: ToolHeadingUpdate, Title: "Update document heading",
-		Description: "Replace an existing heading's text with plain text and optionally its level (1..3) and alignment, in a Page or Post. Refused when the heading has formatting; use document_text_replace or document_apply for it. Omitted level and alignment are preserved. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits." + syncRequiredGuidance,
-		InputSchema: headingInputSchema(true), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
-		return tools.mutateHeading(ctx, call, true)
-	}),
-	defineTool(mcpserver.Tool{
-		Name: ToolTextReplace, Title: "Replace text in document",
-		Description: "Replace one exact piece of text (a word or sentence) inside existing blocks while keeping the marks, links and colors around it: the cheapest way to fix a sentence in a long or formatted block. " +
-			"find must occur exactly once in this locale's text, copied exactly (case and spacing matter), within block_id when given or else anywhere in the document; an empty replace deletes it. " +
-			"Works for every document type and translation, with no read first: revisions are optional because find guards the edit. It changes nothing and says so when find is missing or occurs more than once." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(textReplaceInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(false, true, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*AIDocumentTools).replaceText),
-	defineTool(mcpserver.Tool{Name: ToolTableCreate, Title: "Create document table",
-		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Revisions are optional because this only adds a block. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
-		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, (*AIDocumentTools).createTable),
-	defineTool(mcpserver.Tool{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
-			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
+			"Pass document_revision (and target_revision for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -104,25 +66,16 @@ var documentTools = toolRegistry[AIDocumentTools]{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
 		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, Terms of Service or Privacy Policy, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release and legal policies have no summary field. Legal policy titles can be edited in every lifecycle with the required source or translation permissions; editing sends no notice email. " +
 			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
-			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
+			"Pass document_revision (and target_revision for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*AIDocumentTools).updateMetadata),
 	defineTool(mcpserver.Tool{
-		Name: ToolDocumentValidate, Title: "Validate AI document mutation",
-		Description: "Dry-run compact typed DCDP/1 operations without mutating the document when the user explicitly asks to validate or preview an advanced batch. " +
-			"If the user then chooses to apply it, pass the returned normalized operations to document_apply." + syncRequiredGuidance,
-		InputSchema: mutationInputSchema(), OutputSchema: validationOutputSchema(),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(true, false, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*AIDocumentTools).validate),
-	defineTool(mcpserver.Tool{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
-		Description: "Apply an advanced typed DCDP/1 operation batch that the focused tools cannot represent. " +
-			"Use it to keep formatting when editing text: send the block's full inline content read with m=blocks. Up to 100 operations apply atomically in one call. Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Use schema-defined tuples; document_validate is optional unless the user requests a dry run. Page rich blocks require a rich-text section parent. Heading level is ['n','1'|'2'|'3']. Tables use bi plus fs table (shared UUID rows/cells, id equal to handle, header flags) and fs tableContent (locale cell inline content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
+		Description: "Apply a typed operation batch that the focused tools cannot represent, or with dry_run check it and get the normalized operations without changing anything. " +
+			"To change words, links or marks, document_text_replace and document_text_format are simpler and need no read. Up to 100 operations apply atomically in one call. Pass document_revision (and target_revision for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. Page rich blocks require a rich-text section parent. A table needs insert_block plus set_field table (shared UUID rows/cells, id equal to handle, header flags) and set_field tableContent (locale cell content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: acceptedOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -134,13 +87,7 @@ func mutationInputSchema() json.RawMessage {
 	return json.RawMessage(mutationInputJSONSchema)
 }
 
-func validationOutputSchema() json.RawMessage {
-	return outputSchemaWithSync(validationOutputJSONSchema)
-}
-
-func openInputSchema() json.RawMessage  { return json.RawMessage(openInputJSONSchema) }
-func openOutputSchema() json.RawMessage { return json.RawMessage(openOutputJSONSchema) }
-func readInputSchema() json.RawMessage  { return json.RawMessage(readInputJSONSchema) }
+func readInputSchema() json.RawMessage { return json.RawMessage(readInputJSONSchema) }
 func projectionOutputSchema() json.RawMessage {
 	return outputSchemaWithSync(projectionOutputJSONSchema)
 }
@@ -185,47 +132,36 @@ func (tools *AIDocumentTools) CallTool(ctx context.Context, _ mcpserver.Principa
 }
 
 type openArguments struct {
-	Profile  core.Domain            `json:"p"`
-	Document core.DocumentReference `json:"d"`
-	Locale   core.Locale            `json:"l"`
+	DocumentType core.Domain            `json:"document_type"`
+	DocumentID   core.DocumentReference `json:"document_id"`
+	Locale       core.Locale            `json:"locale"`
+}
+
+type readFieldSelection struct {
+	Block    core.BlockID        `json:"block_id"`
+	Relation core.RelationID     `json:"relation_id,omitempty"`
+	Item     core.RelationItemID `json:"item_id,omitempty"`
+	Field    core.FieldID        `json:"field"`
 }
 
 type readArguments struct {
-	Profile  core.Domain            `json:"p"`
-	Document core.DocumentReference `json:"d"`
-	Locale   core.Locale            `json:"l"`
-	Mode     core.ReadMode          `json:"m"`
-	Blocks   []core.BlockID         `json:"b,omitempty"`
-	Fields   [][]string             `json:"f,omitempty"`
-	Limit    int                    `json:"n,omitempty"`
-	Cursor   core.Cursor            `json:"c,omitempty"`
-	Query    string                 `json:"q,omitempty"`
+	DocumentType core.Domain            `json:"document_type"`
+	DocumentID   core.DocumentReference `json:"document_id"`
+	Locale       core.Locale            `json:"locale"`
+	Mode         core.ReadMode          `json:"mode"`
+	Blocks       []core.BlockID         `json:"block_ids,omitempty"`
+	Fields       []readFieldSelection   `json:"fields,omitempty"`
+	Limit        int                    `json:"limit,omitempty"`
+	Cursor       core.Cursor            `json:"cursor,omitempty"`
+	Query        string                 `json:"query,omitempty"`
 }
 
 type focusedMutationArguments struct {
-	Profile                  core.Domain            `json:"document_type"`
-	Document                 core.DocumentReference `json:"document_id"`
+	DocumentType             core.Domain            `json:"document_type"`
+	DocumentID               core.DocumentReference `json:"document_id"`
 	Locale                   core.Locale            `json:"locale"`
 	ExpectedDocumentRevision core.Revision          `json:"expected_document_revision"`
 	ExpectedTargetRevision   *core.Revision         `json:"expected_target_revision,omitempty"`
-}
-
-type paragraphCreateArguments struct {
-	focusedMutationArguments
-	Parent core.BlockID `json:"parent_block_id,omitempty"`
-	After  core.BlockID `json:"after_block_id,omitempty"`
-	Text   *string      `json:"text"`
-}
-
-type paragraphUpdateArguments struct {
-	focusedMutationArguments
-	Block core.BlockID `json:"block_id"`
-	Text  *string      `json:"text"`
-}
-
-type blockDeleteArguments struct {
-	focusedMutationArguments
-	Block core.BlockID `json:"block_id"`
 }
 
 type metadataUpdateArguments struct {
@@ -238,19 +174,22 @@ type metadataUpdateArguments struct {
 	DocumentLayout *documentLayoutArguments `json:"document_layout,omitempty"`
 }
 
+// readModeMetadata asks document_read for the envelope with no blocks.
+const readModeMetadata core.ReadMode = "metadata"
+
 func (tools *AIDocumentTools) open(ctx context.Context, _ string, call toolCall[openArguments]) (mcpserver.ToolResult, error) {
 	var input openArguments
 	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	if err := validateMCPDocumentReference(input.Document); err != nil {
+	if err := validateMCPDocumentReference(input.DocumentID); err != nil {
 		return executionError(err)
 	}
-	if err := requireLocale(input.Locale, "l"); err != nil {
+	if err := requireLocale(input.Locale, "locale"); err != nil {
 		return executionError(err)
 	}
 	metadata, err := tools.application.Open(ctx, core.OpenRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID}, Locale: input.Locale,
 	})
 	if err != nil {
 		return expectedToolError(err)
@@ -267,25 +206,21 @@ func (tools *AIDocumentTools) read(ctx context.Context, _ string, call toolCall[
 	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	if err := validateMCPDocumentReference(input.Document); err != nil {
+	if err := validateMCPDocumentReference(input.DocumentID); err != nil {
 		return executionError(err)
 	}
-	if err := requireLocale(input.Locale, "l"); err != nil {
+	if err := requireLocale(input.Locale, "locale"); err != nil {
 		return executionError(err)
+	}
+	if input.Mode == readModeMetadata {
+		return tools.open(ctx, ToolDocumentRead, toolCall[openArguments]{Arguments: withoutArguments(call.Arguments, "mode")})
 	}
 	request := core.ReadRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID}, Locale: input.Locale,
 		Mode: input.Mode, Blocks: input.Blocks, Limit: defaultReadLimit(input.Mode, input.Limit), Cursor: input.Cursor, Query: input.Query,
 	}
-	for index, field := range input.Fields {
-		switch len(field) {
-		case 2:
-			request.Fields = append(request.Fields, core.FieldSelection{Block: core.BlockID(field[0]), Field: core.FieldID(field[1])})
-		case 4:
-			request.Fields = append(request.Fields, core.FieldSelection{Block: core.BlockID(field[0]), Relation: core.RelationID(field[1]), Item: core.RelationItemID(field[2]), Field: core.FieldID(field[3])})
-		default:
-			return executionError(fmt.Errorf("field selector %d must contain 2 or 4 stable handles", index))
-		}
+	for _, field := range input.Fields {
+		request.Fields = append(request.Fields, core.FieldSelection{Block: field.Block, Relation: field.Relation, Item: field.Item, Field: field.Field})
 	}
 	projection, err := tools.application.Read(ctx, request)
 	if err != nil {
@@ -304,26 +239,21 @@ func (tools *AIDocumentTools) read(ctx context.Context, _ string, call toolCall[
 
 // MCP reads default to pages large enough that typical documents fit in one
 // call: outline nodes are small, block values are larger.
-const (
-	defaultOutlineReadLimit = 256
-	defaultValueReadLimit   = 128
-)
-
 func defaultReadLimit(mode core.ReadMode, requested int) int {
 	if requested != 0 {
 		return requested
 	}
 	if mode == core.ReadOutline {
-		return defaultOutlineReadLimit
+		return core.DefaultOutlineReadLimit
 	}
-	return defaultValueReadLimit
+	return core.DefaultValueReadLimit
 }
 
 // rejectFormattedReplacement keeps the plain-text focused tools from silently
 // dropping marks, links, colors or breaks from an existing block's content.
 func (tools *AIDocumentTools) rejectFormattedReplacement(ctx context.Context, input focusedMutationArguments, block core.BlockID) error {
 	projection, err := tools.application.Read(ctx, core.ReadRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID}, Locale: input.Locale,
 		Mode: core.ReadFields, Fields: []core.FieldSelection{{Block: block, Field: "content"}},
 	})
 	if err != nil {
@@ -333,71 +263,11 @@ func (tools *AIDocumentTools) rejectFormattedReplacement(ctx context.Context, in
 		for _, field := range node.Localized {
 			if field.ID == "content" && core.HasInlineFormatting(field.Value) {
 				return &core.InputError{Message: "block " + string(block) + " has formatting (marks, links, colors, breaks or site variables) that plain-text replacement would remove; " +
-					"change the words with document_text_replace, or read it with document_read m=blocks and write the full inline content with document_apply fs content [\"i\",...]"}
+					"change it with document_text_replace or document_text_format, or read it with document_read mode=blocks and write its content with document_apply"}
 			}
 		}
 	}
 	return nil
-}
-
-func (tools *AIDocumentTools) createParagraph(ctx context.Context, _ string, call toolCall[paragraphCreateArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	var input paragraphCreateArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if input.Text == nil {
-		return executionError(errors.New("text is required and must be a string"))
-	}
-	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id"); err != nil {
-		return executionError(err)
-	}
-	focused, err := withCurrentRevisions(ctx, tools.application, input.focusedMutationArguments)
-	if err != nil {
-		return expectedToolError(err)
-	}
-	block := core.BlockID(uuid.NewString())
-	request, err := focusedApplyRequest(focused, []core.Operation{
-		core.InsertBlockOperation(block, "paragraph", input.Parent, input.After),
-		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(*input.Text))),
-	})
-	if err != nil {
-		return executionError(err)
-	}
-	return tools.applyRequest(ctx, request, block)
-}
-
-func (tools *AIDocumentTools) updateParagraph(ctx context.Context, _ string, call toolCall[paragraphUpdateArguments]) (mcpserver.ToolResult, error) {
-	var input paragraphUpdateArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if input.Text == nil {
-		return executionError(errors.New("text is required and must be a string"))
-	}
-	if err := tools.rejectFormattedReplacement(ctx, input.focusedMutationArguments, input.Block); err != nil {
-		return expectedToolError(err)
-	}
-	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
-		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(*input.Text))),
-	})
-	if err != nil {
-		return executionError(err)
-	}
-	return tools.applyRequest(ctx, request, "")
-}
-
-func (tools *AIDocumentTools) deleteBlock(ctx context.Context, _ string, call toolCall[blockDeleteArguments]) (mcpserver.ToolResult, error) {
-	var input blockDeleteArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{core.DeleteBlockOperation(input.Block)})
-	if err != nil {
-		return executionError(err)
-	}
-	return tools.applyRequest(ctx, request, "")
 }
 
 func (tools *AIDocumentTools) updateMetadata(ctx context.Context, _ string, call toolCall[metadataUpdateArguments]) (mcpserver.ToolResult, error) {
@@ -413,16 +283,16 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, _ string, call
 	if input.Summary != nil && input.ClearSummary {
 		return executionError(errors.New("summary and clear_summary cannot be used together"))
 	}
-	if input.Profile == core.DomainRelease && (input.Summary != nil || input.ClearSummary) {
+	if input.DocumentType == core.DomainRelease && (input.Summary != nil || input.ClearSummary) {
 		return executionError(errors.New("Release documents have no summary field"))
 	}
-	if (input.Profile == core.DomainTerms || input.Profile == core.DomainPrivacy) && (input.Summary != nil || input.ClearSummary) {
-		return executionError(fmt.Errorf("%s documents have no summary field", input.Profile))
+	if (input.DocumentType == core.DomainTerms || input.DocumentType == core.DomainPrivacy) && (input.Summary != nil || input.ClearSummary) {
+		return executionError(fmt.Errorf("%s documents have no summary field", input.DocumentType))
 	}
-	if input.Profile != core.DomainPost && (input.CategoryIDs != nil || input.TagIDs != nil) {
+	if input.DocumentType != core.DomainPost && (input.CategoryIDs != nil || input.TagIDs != nil) {
 		return executionError(errors.New("category_ids and tag_ids are supported only for Post documents"))
 	}
-	if input.DocumentLayout != nil && input.Profile != core.DomainPage {
+	if input.DocumentLayout != nil && input.DocumentType != core.DomainPage {
 		return executionError(errors.New("document_layout here is supported only for Page documents; use post_settings_update for Post layout"))
 	}
 	operations := make([]core.Operation, 0, 4)
@@ -495,14 +365,14 @@ func withCurrentRevisions(ctx context.Context, application AIDocumentApplication
 	if input.ExpectedDocumentRevision != "" {
 		return input, nil
 	}
-	if err := validateMCPDocumentReference(input.Document); err != nil {
+	if err := validateMCPDocumentReference(input.DocumentID); err != nil {
 		return input, err
 	}
 	if err := requireLocale(input.Locale, "locale"); err != nil {
 		return input, err
 	}
 	metadata, err := application.Open(ctx, core.OpenRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID}, Locale: input.Locale,
 	})
 	if err != nil {
 		return input, err
@@ -513,7 +383,7 @@ func withCurrentRevisions(ctx context.Context, application AIDocumentApplication
 }
 
 func focusedApplyRequest(input focusedMutationArguments, operations []core.Operation) (core.ApplyRequest, error) {
-	if err := validateMCPDocumentReference(input.Document); err != nil {
+	if err := validateMCPDocumentReference(input.DocumentID); err != nil {
 		return core.ApplyRequest{}, err
 	}
 	if err := requireLocale(input.Locale, "locale"); err != nil {
@@ -521,8 +391,8 @@ func focusedApplyRequest(input focusedMutationArguments, operations []core.Opera
 	}
 	return core.ApplyRequest{
 		Protocol:                 core.ProtocolVersion,
-		Profile:                  input.Profile,
-		Document:                 input.Document,
+		Profile:                  input.DocumentType,
+		Document:                 input.DocumentID,
 		Locale:                   input.Locale,
 		ExpectedDocumentRevision: input.ExpectedDocumentRevision,
 		ExpectedTargetRevision:   input.ExpectedTargetRevision,
@@ -530,7 +400,7 @@ func focusedApplyRequest(input focusedMutationArguments, operations []core.Opera
 	}, nil
 }
 
-func (tools *AIDocumentTools) validate(ctx context.Context, _ string, call toolCall[core.ApplyRequest]) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) validate(ctx context.Context, _ string, call toolCall[documentApplyArguments]) (mcpserver.ToolResult, error) {
 	arguments := call.Arguments
 	request, err := decodeMutation(arguments)
 	if err != nil {
@@ -554,8 +424,24 @@ func (tools *AIDocumentTools) validate(ctx context.Context, _ string, call toolC
 	return structuredResult(encoded, false)
 }
 
-func (tools *AIDocumentTools) apply(ctx context.Context, _ string, call toolCall[core.ApplyRequest]) (mcpserver.ToolResult, error) {
+// documentApplyArguments is the operation batch and whether to only check it.
+type documentApplyArguments struct {
+	core.ApplyRequest
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+func (tools *AIDocumentTools) apply(ctx context.Context, name string, call toolCall[documentApplyArguments]) (mcpserver.ToolResult, error) {
 	arguments := call.Arguments
+	var dryRun bool
+	if raw, present := arguments["dry_run"]; present {
+		if err := json.Unmarshal(raw, &dryRun); err != nil {
+			return executionError(errors.New("dry_run must be a boolean"))
+		}
+		arguments = withoutArguments(arguments, "dry_run")
+	}
+	if dryRun {
+		return tools.validate(ctx, name, toolCall[documentApplyArguments]{Arguments: arguments})
+	}
 	request, err := decodeMutation(arguments)
 	if err != nil {
 		return executionError(err)
@@ -589,7 +475,7 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 }
 
 func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error) {
-	encoded, err := json.Marshal(arguments)
+	encoded, err := json.Marshal(withoutArguments(arguments, "dry_run"))
 	if err != nil {
 		return core.ApplyRequest{}, err
 	}
@@ -606,13 +492,13 @@ func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error
 // requireLocale names what to pass when a document locale is missing.
 func requireLocale(locale core.Locale, argument string) error {
 	if locale == "" {
-		return fmt.Errorf("%s is required: pass the document's source_locale from document_list (s in any document_read result) or a translation locale", argument)
+		return fmt.Errorf("%s is required: pass the document's source_locale from document_list or document_read, or a translation locale", argument)
 	}
 	return nil
 }
 
 func validateMCPDocumentReference(reference core.DocumentReference) error {
-	_, err := uuidutil.ParseCanonical(string(reference), "d")
+	_, err := uuidutil.ParseCanonical(string(reference), "document_id")
 	return err
 }
 

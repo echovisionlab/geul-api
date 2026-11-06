@@ -3,31 +3,42 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 	"strings"
-	"time"
 
+	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/artist"
+	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	"github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/label"
+	"github.com/echovisionlab/geul-api/internal/legal"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/menu"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/series"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const ToolDocumentList = "document_list"
+
+const (
+	documentListDefaultLimit = 20
+	documentListMaxLimit     = 100
+	documentListMaxOffset    = 1<<31 - 1
+)
 
 var documentDiscoveryTools = toolRegistry[DocumentDiscoveryTools]{
 	defineTool(mcpserver.Tool{
 		Name:  ToolDocumentList,
 		Title: "List accessible documents",
-		Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. " +
-			"Search source titles, or Artist source names and real names. Use this when the document UUID is unknown. " +
-			"Pass the returned d unchanged, with source_locale as l, to document_read; a slug or URL is not a document ID.",
+		Description: "List documents of one type through the owning service's authorized management list. " +
+			"query matches source titles, or Artist source names and real names; Menus and legal policies have no such search, so for them it filters the returned page. Use this when the document UUID is unknown. " +
+			"Pass the returned document_id unchanged, with source_locale as locale, to document_read; a slug or URL is not a document ID.",
 		InputSchema:     json.RawMessage(documentListInputJSONSchema),
 		OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
@@ -62,44 +73,78 @@ type ArtistDocumentDiscovery interface {
 	ListArtistsAdmin(context.Context, artist.ListArtistsQuery) (artist.AdminArtistPage, error)
 }
 
+// DocumentDiscoveryDeps holds each document type's authorized management list.
+type DocumentDiscoveryDeps struct {
+	Posts          PostDocumentDiscovery
+	Works          WorkDocumentDiscovery
+	Pages          PageDocumentDiscovery
+	ProgramEvents  ProgramEventDocumentDiscovery
+	Releases       ReleaseDocumentDiscovery
+	Artists        ArtistDocumentDiscovery
+	Labels         LabelDocumentDiscovery
+	Menus          MenuDocumentDiscovery
+	Forms          FormDocumentDiscovery
+	PostSeries     PostSeriesDocumentDiscovery
+	Policies       PolicyDocumentDiscovery
+	Campaigns      CampaignDocumentDiscovery
+	EmailTemplates EmailTemplateDocumentDiscovery
+	EmailLayouts   EmailLayoutDocumentDiscovery
+}
+
 // DocumentDiscoveryTools owns only document selection metadata. DCDP reads
 // and mutations remain in AIDocumentTools.
 type DocumentDiscoveryTools struct {
-	posts         PostDocumentDiscovery
-	works         WorkDocumentDiscovery
-	pages         PageDocumentDiscovery
-	programEvents ProgramEventDocumentDiscovery
-	releases      ReleaseDocumentDiscovery
-	artists       ArtistDocumentDiscovery
+	lists DocumentDiscoveryDeps
 }
 
-func NewDocumentDiscoveryTools(
-	posts PostDocumentDiscovery,
-	works WorkDocumentDiscovery,
-	pages PageDocumentDiscovery,
-	programEvents ProgramEventDocumentDiscovery,
-	releases ReleaseDocumentDiscovery,
-	artists ArtistDocumentDiscovery,
-) (*DocumentDiscoveryTools, error) {
-	if interfaceValueIsNil(posts) {
-		return nil, errors.New("MCP Post document discovery is required")
+type LabelDocumentDiscovery interface {
+	ListLabelsAdmin(context.Context, label.ListLabelsQuery) (label.AdminLabelPage, error)
+}
+
+type FormDocumentDiscovery interface {
+	ListFormsAdmin(context.Context, form.ListFormsAdminQuery) (form.FormList, error)
+}
+
+type PostSeriesDocumentDiscovery interface {
+	ListSeriesAdmin(context.Context, series.ListSeriesAdminQuery) (series.SeriesPage, error)
+}
+
+type MenuDocumentDiscovery interface {
+	ListMenus(context.Context, menu.ListMenusQuery) (menu.MenuPage, error)
+}
+
+// PolicyDocumentDiscovery lists the versions of one legal policy.
+type PolicyDocumentDiscovery interface {
+	ListPolicyVersions(context.Context, legal.PolicyKind, legal.ListPolicyVersionsQuery) (legal.PolicyPage, error)
+}
+
+type CampaignDocumentDiscovery interface {
+	ListCampaigns(context.Context, campaign.ListCampaignsQuery) (campaign.CampaignPage, error)
+}
+
+type EmailTemplateDocumentDiscovery interface {
+	ListEmailTemplates(context.Context, emailauthoring.ListEmailTemplatesQuery) (emailauthoring.EmailTemplatePage, error)
+}
+
+type EmailLayoutDocumentDiscovery interface {
+	ListEmailLayouts(context.Context, emailauthoring.ListEmailLayoutsQuery) (emailauthoring.EmailLayoutPage, error)
+}
+
+func NewDocumentDiscoveryTools(lists DocumentDiscoveryDeps) (*DocumentDiscoveryTools, error) {
+	for _, list := range []struct {
+		name  string
+		value any
+	}{
+		{"Post", lists.Posts}, {"Work", lists.Works}, {"Page", lists.Pages}, {"Program Event", lists.ProgramEvents},
+		{"Release", lists.Releases}, {"Artist", lists.Artists}, {"Label", lists.Labels}, {"Menu", lists.Menus},
+		{"Form", lists.Forms}, {"Post Series", lists.PostSeries}, {"Policy", lists.Policies}, {"Campaign", lists.Campaigns},
+		{"Email Template", lists.EmailTemplates}, {"Email Layout", lists.EmailLayouts},
+	} {
+		if interfaceValueIsNil(list.value) {
+			return nil, fmt.Errorf("MCP %s document discovery is required", list.name)
+		}
 	}
-	if interfaceValueIsNil(works) {
-		return nil, errors.New("MCP Work document discovery is required")
-	}
-	if interfaceValueIsNil(pages) {
-		return nil, errors.New("MCP Page document discovery is required")
-	}
-	if interfaceValueIsNil(programEvents) {
-		return nil, errors.New("MCP Program Event document discovery is required")
-	}
-	if interfaceValueIsNil(releases) {
-		return nil, errors.New("MCP Release document discovery is required")
-	}
-	if interfaceValueIsNil(artists) {
-		return nil, errors.New("MCP Artist document discovery is required")
-	}
-	return &DocumentDiscoveryTools{posts: posts, works: works, pages: pages, programEvents: programEvents, releases: releases, artists: artists}, nil
+	return &DocumentDiscoveryTools{lists: lists}, nil
 }
 
 func (*DocumentDiscoveryTools) ToolNames() []string { return documentDiscoveryTools.names() }
@@ -117,158 +162,54 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	return documentDiscoveryTools.call(tools, ctx, name, arguments)
 }
 
-func (tools *DocumentDiscoveryTools) listDocuments(
-	ctx context.Context,
-	profile string,
-	query string,
-	limit int,
-	offset int,
-) ([]map[string]any, int64, int, error) {
-	if limit == 0 {
-		limit = 20
-	}
-	switch profile {
-	case "post":
-		listed, err := tools.posts.ListAIDocuments(ctx, postdomain.AIDocumentListInput{
-			Query: query, Limit: limit, Offset: offset,
-		})
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, len(listed.Items))
-		for index, item := range listed.Items {
-			document := discoveryDocument("post", item.ID, item.Title, item.Slug, item.SourceLocale, item.Status, item.UpdatedAt)
-			document["configuration_revision"] = item.ConfigurationRevision
-			documents[index] = document
-		}
-		return documents, listed.Total, listed.Limit, nil
-	case "work":
-		listed, err := tools.works.ListWorksAdmin(ctx, workdomain.ListWorksAdminQuery{
-			Page:    workdomain.Page{Limit: int32(limit), Offset: int32(offset)},
-			Filters: discoverySearchFilters(query),
-			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
-		})
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, 0, len(listed.Works))
-		for _, item := range listed.Works {
-			work := item.View
-			documents = append(documents, discoveryDocument(
-				"work", work.ID, work.Title, work.Slug, work.SourceLocale,
-				strings.TrimPrefix(workdomain.WorkStatusName(work.Status), "WORK_STATUS_"), timestamppb.New(work.UpdatedAt).AsTime(),
-			))
-		}
-		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
-	case "page":
-		list, err := tools.pages.ListPagesAdmin(ctx, pagedomain.ListPagesAdminQuery{
-			Page:    pagedomain.Paging{Limit: int32(limit), Offset: int32(offset)},
-			Filters: discoverySearchFilters(query),
-			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
-		})
-		listed, err := renderPage(list, err, pagedomain.PageListMessage)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, 0, len(listed.Pages))
-		for _, page := range listed.Pages {
-			if page == nil || page.UpdatedAt == nil {
-				continue
-			}
-			documents = append(documents, discoveryDocument(
-				"page", page.Id, page.Title, page.Slug, page.SourceLocale,
-				strings.TrimPrefix(page.Status.String(), "PAGE_STATUS_"), page.UpdatedAt.AsTime(),
-			))
-		}
-		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
-	case "program_event":
-		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, programevent.ListProgramEventsQuery{
-			Limit: int32(limit), Offset: int32(offset),
-			Filters: discoverySearchFilters(query),
-			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
-		})
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, 0, len(listed.Events))
-		for _, summary := range listed.Events {
-			event := programevent.EventSummaryMessage(summary)
-			documents = append(documents, discoveryDocument(
-				"program_event", event.Id, event.Title, event.Slug, event.SourceLocale,
-				strings.TrimPrefix(event.Status.String(), "PROGRAM_EVENT_STATUS_"), event.UpdatedAt.AsTime(),
-			))
-		}
-		pagination := programevent.PaginationMessage(listed.Pagination)
-		return documents, int64(pagination.GetTotal()), int(pagination.GetLimit()), nil
-	case "release":
-		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
-			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
-			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
-		})
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, 0, len(listed.Releases))
-		for _, item := range releasedomain.ReleasesWithStatsMessage(listed.Releases) {
-			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
-				continue
-			}
-			release := item.Release
-			documents = append(documents, discoveryDocument(
-				"release", release.Id, release.Title, release.Slug, release.SourceLocale,
-				release.Status, release.UpdatedAt.AsTime(),
-			))
-		}
-		return documents, listed.Total, int(listed.Limit), nil
-	case "artist":
-		listed, err := tools.artists.ListArtistsAdmin(ctx, artist.ListArtistsQuery{
-			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
-			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
-		})
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		documents := make([]map[string]any, 0, len(listed.Artists))
-		for _, item := range listed.Artists {
-			listedArtist := item.Artist.Artist
-			if listedArtist.UpdatedAt == nil {
-				continue
-			}
-			documents = append(documents, discoveryDocument(
-				"artist", listedArtist.ID, item.Artist.Name, listedArtist.Slug, listedArtist.SourceLocale,
-				string(listedArtist.Status), *listedArtist.UpdatedAt,
-			))
-		}
-		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
-	default:
-		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
-	}
+type documentListArguments struct {
+	DocumentType core.Domain `json:"document_type"`
+	Query        string      `json:"query,omitempty"`
+	Status       string      `json:"status,omitempty"`
+	Limit        int         `json:"limit,omitempty"`
+	Offset       int         `json:"offset,omitempty"`
 }
 
-func discoverySearchFilters(query string) []*commonv1.FilterSpec {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
+func (tools *DocumentDiscoveryTools) list(ctx context.Context, _ string, call toolCall[documentListArguments]) (mcpserver.ToolResult, error) {
+	if err := rejectNullArguments(call.Arguments, "query", "status", "limit", "offset"); err != nil {
+		return executionError(err)
 	}
-	return []*commonv1.FilterSpec{{Field: "search", Op: commonv1.FilterOp_FILTER_OP_ILIKE, Value: query}}
-}
-
-func discoveryDocument(profile, id, title string, slug *string, sourceLocale, status string, updatedAt time.Time) map[string]any {
-	status = strings.TrimPrefix(status, "POST_STATUS_")
-	status = strings.TrimPrefix(status, "WORK_STATUS_")
-	status = strings.TrimPrefix(status, "PAGE_STATUS_")
-	status = strings.TrimPrefix(status, "PROGRAM_EVENT_STATUS_")
-	status = strings.TrimPrefix(status, "RELEASE_STATUS_")
-	status = strings.TrimPrefix(status, "ARTIST_STATUS_")
-	document := map[string]any{
-		"p": profile, "d": id, "title": title,
-		"source_locale": sourceLocale, "status": strings.ToLower(status),
-		"updated_at": updatedAt.UTC().Format(time.RFC3339),
+	var input documentListArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
 	}
-	if slug != nil {
-		document["slug"] = *slug
+	if !slices.Contains(listedDocumentTypes, input.DocumentType) {
+		return executionError(unknownDocumentTypeError())
 	}
-	return document
+	_, limitSupplied := call.Arguments["limit"]
+	if input.Limit < 0 || input.Limit > documentListMaxLimit || (limitSupplied && input.Limit == 0) {
+		return executionError(fmt.Errorf("limit must be between 1 and %d, or omitted for the default", documentListMaxLimit))
+	}
+	if input.Status != "" && !slices.Contains(statusFilteredDocumentTypes, input.DocumentType) {
+		return executionError(fmt.Errorf("a %s list has no status filter; it works for %s", input.DocumentType, strings.Join(documentTypeNames(statusFilteredDocumentTypes), ", ")))
+	}
+	if input.Offset < 0 || input.Offset > documentListMaxOffset {
+		return executionError(fmt.Errorf("offset must be between 0 and %d", documentListMaxOffset))
+	}
+	listed, err := tools.listDocuments(ctx, documentListRequest{
+		documentType: input.DocumentType, query: input.Query, status: input.Status, limit: input.Limit, offset: input.Offset,
+	})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	output := struct {
+		Documents  []listedDocument `json:"documents"`
+		Total      int64            `json:"total"`
+		NextOffset *int             `json:"next_offset"`
+	}{Documents: listed.documents, Total: listed.total}
+	if next := input.Offset + listed.limit; int64(next) < listed.total {
+		output.NextOffset = &next
+	}
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
+	}
+	return structuredResult(encoded, false)
 }
 
 var (
@@ -276,49 +217,3 @@ var (
 	_ mcpserver.ToolDispatcher = (*DocumentDiscoveryTools)(nil)
 	_ ToolProvider             = (*DocumentDiscoveryTools)(nil)
 )
-
-func (tools *DocumentDiscoveryTools) list(ctx context.Context, name string, call toolCall[documentListArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	var input documentListArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
-		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
-	}
-	_, limitSupplied := arguments["limit"]
-	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
-		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
-	}
-	if input.Offset < 0 || input.Offset > 1<<31-1 {
-		return executionError(errors.New("offset must be between 0 and 2147483647"))
-	}
-	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
-	if err != nil {
-		return expectedToolError(err)
-	}
-	var nextOffset any
-	if int64(input.Offset+limit) < total {
-		nextOffset = input.Offset + limit
-	}
-	encoded, err := json.Marshal(map[string]any{
-		"documents":   documents,
-		"total":       total,
-		"next_offset": nextOffset,
-	})
-	if err != nil {
-		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
-	}
-	return structuredResult(encoded, false)
-}
-
-type documentListArguments = struct {
-	Profile string `json:"p"`
-	Query   string `json:"q,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
-	Offset  int    `json:"offset,omitempty"`
-}

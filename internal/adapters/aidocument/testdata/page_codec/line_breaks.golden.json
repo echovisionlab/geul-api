@@ -1,125 +1,115 @@
 [
-  [
-    "0198a7c0-0000-7000-8000-000000000001",
-    "rich-text",
-    "",
-    0,
-    [
-      [
-        "settings",
-        [
-          "o",
-          []
-        ]
-      ]
-    ],
-    null,
-    null,
-    null
-  ],
-  [
-    "0198a7c0-0000-7000-8000-000000000002",
-    "paragraph",
-    "0198a7c0-0000-7000-8000-000000000001",
-    0,
-    null,
-    [
-      [
-        "content",
-        [
-          "i",
-          [
-            [
-              "t",
-              "First"
-            ],
-            [
-              "br"
-            ],
-            [
-              "t",
-              "Second"
-            ],
-            [
-              "br"
-            ],
-            [
-              "t",
-              "Third"
-            ],
-            [
-              "br"
-            ]
+  {
+    "block_id": "0198a7c0-0000-7000-8000-000000000001",
+    "kind": "rich-text",
+    "order": 0,
+    "shared_fields": [
+      {
+        "field": "settings",
+        "value": {
+          "type": "object",
+          "fields": []
+        }
+      }
+    ]
+  },
+  {
+    "block_id": "0198a7c0-0000-7000-8000-000000000002",
+    "kind": "paragraph",
+    "parent_block_id": "0198a7c0-0000-7000-8000-000000000001",
+    "order": 0,
+    "localized_fields": [
+      {
+        "field": "content",
+        "value": {
+          "type": "rich_text",
+          "content": [
+            {
+              "type": "text",
+              "text": "First"
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "type": "text",
+              "text": "Second"
+            },
+            {
+              "type": "hard_break"
+            },
+            {
+              "type": "text",
+              "text": "Third"
+            },
+            {
+              "type": "hard_break"
+            }
           ]
-        ]
-      ]
-    ],
-    null,
-    null
-  ],
-  [
-    "0198a7c0-0000-7000-8000-000000000003",
-    "external-video",
-    "",
-    1,
-    [
-      [
-        "settings",
-        [
-          "o",
-          []
-        ]
-      ],
-      [
-        "data",
-        [
-          "o",
-          [
-            [
-              "props",
-              [
-                "o",
-                [
-                  [
-                    "uri",
-                    [
-                      "t",
-                      "https://example.com/video"
-                    ]
-                  ]
+        }
+      }
+    ]
+  },
+  {
+    "block_id": "0198a7c0-0000-7000-8000-000000000003",
+    "kind": "external-video",
+    "order": 1,
+    "shared_fields": [
+      {
+        "field": "settings",
+        "value": {
+          "type": "object",
+          "fields": []
+        }
+      },
+      {
+        "field": "data",
+        "value": {
+          "type": "object",
+          "fields": [
+            {
+              "field": "props",
+              "value": {
+                "type": "object",
+                "fields": [
+                  {
+                    "field": "uri",
+                    "value": {
+                      "type": "text",
+                      "text": "https://example.com/video"
+                    }
+                  }
                 ]
-              ]
-            ]
+              }
+            }
           ]
-        ]
-      ]
+        }
+      }
     ],
-    [
-      [
-        "locale-data",
-        [
-          "o",
-          [
-            [
-              "props",
-              [
-                "o",
-                [
-                  [
-                    "caption",
-                    [
-                      "t",
-                      "Line\nbreak"
-                    ]
-                  ]
+    "localized_fields": [
+      {
+        "field": "locale-data",
+        "value": {
+          "type": "object",
+          "fields": [
+            {
+              "field": "props",
+              "value": {
+                "type": "object",
+                "fields": [
+                  {
+                    "field": "caption",
+                    "value": {
+                      "type": "text",
+                      "text": "Line\nbreak"
+                    }
+                  }
                 ]
-              ]
-            ]
+              }
+            }
           ]
-        ]
-      ]
-    ],
-    null,
-    null
-  ]
+        }
+      }
+    ]
+  }
 ]

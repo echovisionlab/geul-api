@@ -10,7 +10,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/documentsearch"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 )
@@ -18,22 +21,19 @@ import (
 const ToolDocumentSearch = "document_search"
 
 const (
-	// documentSearchScanLimit bounds the documents read by one call; next_offset
-	// continues the scan.
-	documentSearchScanLimit = 50
-	// documentSearchBlocksPerDocument keeps one document from filling the result.
-	documentSearchBlocksPerDocument = 5
+	// documentSearchDefaultBlocks and documentSearchMaxBlocks bound the blocks one
+	// document adds to a result.
+	documentSearchDefaultBlocks = 20
+	documentSearchMaxBlocks     = 256
+	documentSearchMaxLocales    = 64
 )
-
-// documentSearchProfiles is the scan order when no profile is given.
-var documentSearchProfiles = []string{"page", "post", "work", "program_event", "release", "artist"}
 
 var documentSearchTools = toolRegistry[DocumentSearchTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentSearch, Title: "Search document text",
-		Description: "Find which documents contain some text, across document bodies, titles and slugs, including link addresses, ignoring case. Use it when you do not know which document holds a sentence, a label or a link; document_list only matches titles. " +
-			"Each match gives d, its slug and title, and up to five blocks as [handle, preview] to read or edit. Searches each document's source locale, or l when given. " +
-			"Omit p to search every type. One call reads up to 50 documents: continue with next_offset until it is null.",
+		Description: "Find which documents contain some text, across every document type's bodies, titles and slugs, including link addresses, ignoring case; runs of spaces count as one. Use it when you do not know which document holds a sentence, a label or a link; document_list only matches titles. " +
+			"Each match gives its document_id, slug and title, and the matching blocks with a preview of each; document_text_replace and document_text_format can act on them with no further read. " +
+			"Searches each document's source locale, or the given locales. Omit document_type to search every type. One call reads up to 100 candidates: continue with next_offset until it is null.",
 		InputSchema: json.RawMessage(documentSearchInputJSONSchema), OutputSchema: json.RawMessage(documentSearchOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -41,49 +41,46 @@ var documentSearchTools = toolRegistry[DocumentSearchTools]{
 	}, (*DocumentSearchTools).search),
 }
 
-const documentSearchInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["q"],
-  "properties":{
-    "q":{"type":"string","minLength":1,"maxLength":200,"description":"Text to find, ignoring case and spacing."},
-    "p":{"enum":["page","post","work","program_event","release","artist"],"description":"Search only this document type. Omit to search every type."},
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Search this locale instead of each document's source locale."},
-    "offset":{"type":"integer","minimum":0,"maximum":2147483647,"default":0,"description":"next_offset from the previous call."}
-  }
-}`
-
-const documentSearchOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["matches","scanned","total","next_offset"],
-  "properties":{
-    "matches":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["p","d","title","source_locale"],"properties":{
-      "p":{"type":"string","description":"Document type, passed as p to document_read."},
-      "d":{"type":"string","description":"Document UUID, passed as d to document_read."},
-      "title":{"type":"string"},"slug":{"type":"string"},"source_locale":{"type":"string"},
-      "blocks":{"type":"array","description":"Matching blocks as [handle, preview around the match].","items":{"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2}},
-      "more_blocks":{"type":"integer","minimum":1,"description":"Further matching blocks; list them with document_read m=outline q."}
-    }}},
-    "scanned":{"type":"integer","minimum":0,"description":"Documents read by this call."},
-    "unreadable":{"type":"integer","minimum":1,"description":"Documents this call could not read, which were left out."},
-    "total":{"type":"integer","minimum":0,"description":"Documents in the searched types."},
-    "next_offset":{"type":["integer","null"],"description":"Pass as offset to continue; null when every document was read."}
-  }
-}`
-
-// DocumentSearchTools answers "which document says this" by listing through the
-// owning services and reading each document's outline, so authorization and the
-// meaning of a match stay with the tools a caller would use by hand.
-type DocumentSearchTools struct {
-	discovery *DocumentDiscoveryTools
-	documents AIDocumentApplication
+// DocumentSearcher is the use case behind document_search.
+type DocumentSearcher interface {
+	Search(ctx context.Context, query documentsearch.Query) (documentsearch.Result, error)
 }
 
-func NewDocumentSearchTools(discovery *DocumentDiscoveryTools, documents AIDocumentApplication) (*DocumentSearchTools, error) {
-	if discovery == nil {
-		return nil, errors.New("MCP document search discovery is required")
+// DocumentSearchTools translates document_search calls into the search use case.
+type DocumentSearchTools struct {
+	searcher DocumentSearcher
+}
+
+func NewDocumentSearchTools(searcher DocumentSearcher) (*DocumentSearchTools, error) {
+	if interfaceValueIsNil(searcher) {
+		return nil, errors.New("MCP document searcher is required")
 	}
-	if interfaceValueIsNil(documents) {
-		return nil, errors.New("MCP document search application is required")
+	return &DocumentSearchTools{searcher: searcher}, nil
+}
+
+// DocumentSearchReader reads documents for a search, telling apart a read the caller
+// may not make from one that failed.
+type DocumentSearchReader struct {
+	application AIDocumentApplication
+}
+
+func NewDocumentSearchReader(application AIDocumentApplication) (*DocumentSearchReader, error) {
+	if interfaceValueIsNil(application) {
+		return nil, errors.New("MCP document search reader needs the document application")
 	}
-	return &DocumentSearchTools{discovery: discovery, documents: documents}, nil
+	return &DocumentSearchReader{application: application}, nil
+}
+
+func (reader *DocumentSearchReader) Read(ctx context.Context, request core.ReadRequest) (core.Projection, error) {
+	projection, err := reader.application.Read(ctx, request)
+	if err == nil {
+		return projection, nil
+	}
+	switch errs.CodeOf(err) {
+	case connect.CodeNotFound, connect.CodePermissionDenied, connect.CodeUnauthenticated:
+		return core.Projection{}, fmt.Errorf("%w: %w", documentsearch.ErrAccessRefused, err)
+	}
+	return core.Projection{}, err
 }
 
 func (*DocumentSearchTools) ToolNames() []string { return documentSearchTools.names() }
@@ -97,144 +94,117 @@ func (tools *DocumentSearchTools) CallTool(ctx context.Context, _ mcpserver.Prin
 }
 
 type documentSearchArguments struct {
-	Query   string      `json:"q"`
-	Profile string      `json:"p,omitempty"`
-	Locale  core.Locale `json:"l,omitempty"`
-	Offset  int         `json:"offset,omitempty"`
+	Query        string        `json:"query"`
+	DocumentType core.Domain   `json:"document_type,omitempty"`
+	Locales      []core.Locale `json:"locales,omitempty"`
+	BlockLimit   int           `json:"block_limit,omitempty"`
+	Offset       int           `json:"offset,omitempty"`
+	Exhaustive   bool          `json:"exhaustive,omitempty"`
+}
+
+// normalize checks the arguments, fills in their defaults, and returns the
+// document types to search.
+func (input *documentSearchArguments) normalize() ([]core.Domain, error) {
+	input.Query = strings.TrimSpace(input.Query)
+	if input.Query == "" || utf8.RuneCountInString(input.Query) > core.MaxReadQueryRunes {
+		return nil, fmt.Errorf("query must contain 1 to %d characters", core.MaxReadQueryRunes)
+	}
+	if input.Offset < 0 || input.Offset > documentListMaxOffset {
+		return nil, fmt.Errorf("offset must be between 0 and %d", documentListMaxOffset)
+	}
+	if input.BlockLimit == 0 {
+		input.BlockLimit = documentSearchDefaultBlocks
+	}
+	if input.BlockLimit < 1 || input.BlockLimit > documentSearchMaxBlocks {
+		return nil, fmt.Errorf("block_limit must be between 1 and %d", documentSearchMaxBlocks)
+	}
+	if len(input.Locales) > documentSearchMaxLocales {
+		return nil, fmt.Errorf("locales must contain at most %d locales", documentSearchMaxLocales)
+	}
+	for _, locale := range input.Locales {
+		if err := validateLocaleCode(locale); err != nil {
+			return nil, err
+		}
+	}
+	if input.DocumentType == "" {
+		return listedDocumentTypes, nil
+	}
+	if !slices.Contains(listedDocumentTypes, input.DocumentType) {
+		return nil, unknownDocumentTypeError()
+	}
+	return []core.Domain{input.DocumentType}, nil
+}
+
+type documentSearchBlock struct {
+	Block   core.BlockID `json:"block_id"`
+	Preview string       `json:"preview,omitempty"`
 }
 
 type documentSearchMatch struct {
-	Profile      string      `json:"p"`
-	Document     any         `json:"d"`
-	Title        any         `json:"title"`
-	Slug         any         `json:"slug,omitempty"`
-	SourceLocale any         `json:"source_locale"`
-	Blocks       [][2]string `json:"blocks,omitempty"`
-	MoreBlocks   int         `json:"more_blocks,omitempty"`
+	DocumentType core.Domain            `json:"document_type"`
+	DocumentID   core.DocumentReference `json:"document_id"`
+	Title        string                 `json:"title"`
+	Slug         *string                `json:"slug,omitempty"`
+	SourceLocale core.Locale            `json:"source_locale"`
+	Locale       core.Locale            `json:"locale,omitempty"`
+	Blocks       []documentSearchBlock  `json:"blocks,omitempty"`
+	MoreBlocks   int                    `json:"more_blocks,omitempty"`
 }
 
 type documentSearchOutput struct {
 	Matches    []documentSearchMatch `json:"matches"`
 	Scanned    int                   `json:"scanned"`
 	Unreadable int                   `json:"unreadable,omitempty"`
-	Total      int64                 `json:"total"`
 	NextOffset *int                  `json:"next_offset"`
 }
 
+func newDocumentSearchOutput(result documentsearch.Result) documentSearchOutput {
+	output := documentSearchOutput{
+		Matches: make([]documentSearchMatch, len(result.Matches)),
+		Scanned: result.Scanned, Unreadable: result.Unreadable, NextOffset: result.NextOffset,
+	}
+	for index, match := range result.Matches {
+		blocks := make([]documentSearchBlock, len(match.Blocks))
+		for position, block := range match.Blocks {
+			blocks[position] = documentSearchBlock{Block: block.Block, Preview: block.Preview}
+		}
+		output.Matches[index] = documentSearchMatch{
+			DocumentType: match.Document.DocumentType, DocumentID: match.Document.DocumentID, Title: match.Document.Title,
+			Slug: match.Document.Slug, SourceLocale: match.Document.SourceLocale,
+			Locale: match.Locale, Blocks: blocks, MoreBlocks: match.MoreBlocks,
+		}
+	}
+	return output
+}
+
 func (tools *DocumentSearchTools) search(ctx context.Context, _ string, call toolCall[documentSearchArguments]) (mcpserver.ToolResult, error) {
-	if err := rejectNullArguments(call.Arguments, "p", "l", "offset"); err != nil {
+	if err := rejectNullArguments(call.Arguments, "document_type", "locales", "block_limit", "offset", "exhaustive"); err != nil {
 		return executionError(err)
 	}
 	var input documentSearchArguments
 	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	input.Query = strings.TrimSpace(input.Query)
-	if input.Query == "" || utf8.RuneCountInString(input.Query) > core.MaxReadQueryRunes {
-		return executionError(fmt.Errorf("q must contain 1 to %d characters", core.MaxReadQueryRunes))
+	documentTypes, err := input.normalize()
+	if err != nil {
+		return executionError(err)
 	}
-	if input.Offset < 0 || input.Offset > 1<<31-1 {
-		return executionError(errors.New("offset must be between 0 and 2147483647"))
+	result, err := tools.searcher.Search(ctx, documentsearch.Query{
+		Text: input.Query, DocumentTypes: documentTypes, Locales: input.Locales,
+		BlockLimit: input.BlockLimit, Offset: input.Offset, Exhaustive: input.Exhaustive,
+	})
+	if errors.Is(err, documentsearch.ErrIndexUnavailable) {
+		slog.ErrorContext(ctx, "MCP document search index failed", failurecause.Attr(err))
+		return executionError(errors.New("the search index could not answer; try again, or pass exhaustive to read every document"))
 	}
-	profiles := documentSearchProfiles
-	if input.Profile != "" {
-		if !slices.Contains(documentSearchProfiles, input.Profile) {
-			return executionError(fmt.Errorf("p must be one of %s", strings.Join(documentSearchProfiles, ", ")))
-		}
-		profiles = []string{input.Profile}
-	}
-	if input.Locale != "" {
-		if err := validateCompactLocale(input.Locale); err != nil {
-			return executionError(err)
-		}
-	}
-	output, err := tools.scan(ctx, profiles, input)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	encoded, err := json.Marshal(output)
+	encoded, err := json.Marshal(newDocumentSearchOutput(result))
 	if err != nil {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document search: %w", err)
 	}
 	return structuredResult(encoded, false)
-}
-
-// scan reads the profiles' lists as one sequence that offset indexes, up to the
-// scan limit, and matches each listed document.
-func (tools *DocumentSearchTools) scan(ctx context.Context, profiles []string, input documentSearchArguments) (documentSearchOutput, error) {
-	output := documentSearchOutput{Matches: []documentSearchMatch{}}
-	skip := input.Offset
-	for _, profile := range profiles {
-		remaining := documentSearchScanLimit - output.Scanned
-		// With nothing left to read, this listing still adds to the total.
-		listed, total, _, err := tools.discovery.listDocuments(ctx, profile, "", max(remaining, 1), skip)
-		if err != nil {
-			return documentSearchOutput{}, err
-		}
-		output.Total += total
-		if int64(skip) >= total {
-			skip -= int(total)
-			continue
-		}
-		skip = 0
-		if remaining <= 0 {
-			continue
-		}
-		for _, document := range listed {
-			output.Scanned++
-			match, found, err := tools.matchDocument(ctx, profile, document, input)
-			if err != nil {
-				output.Unreadable++
-				slog.WarnContext(ctx, "MCP document search skipped a document", failurecause.Attr(err), "domain", profile, "document_id", document["d"])
-				continue
-			}
-			if found {
-				output.Matches = append(output.Matches, match)
-			}
-		}
-	}
-	if next := input.Offset + output.Scanned; int64(next) < output.Total {
-		output.NextOffset = &next
-	}
-	return output, nil
-}
-
-func (tools *DocumentSearchTools) matchDocument(ctx context.Context, profile string, document map[string]any, input documentSearchArguments) (documentSearchMatch, bool, error) {
-	id, _ := document["d"].(string)
-	locale := input.Locale
-	if locale == "" {
-		source, _ := document["source_locale"].(string)
-		locale = core.Locale(source)
-	}
-	projection, err := tools.documents.Read(ctx, core.ReadRequest{
-		Document: core.DocumentIdentity{Domain: core.Domain(profile), Reference: core.DocumentReference(id)},
-		Locale:   locale, Mode: core.ReadOutline, Query: input.Query, Limit: defaultOutlineReadLimit,
-	})
-	if err != nil {
-		return documentSearchMatch{}, false, err
-	}
-	match := documentSearchMatch{Profile: profile, Document: document["d"], Title: document["title"], Slug: document["slug"], SourceLocale: document["source_locale"]}
-	for _, node := range projection.Nodes {
-		if len(match.Blocks) == documentSearchBlocksPerDocument {
-			match.MoreBlocks++
-			continue
-		}
-		match.Blocks = append(match.Blocks, [2]string{string(node.ID), projection.Previews[node.ID]})
-	}
-	if len(match.Blocks) != 0 || documentSearchNameMatches(document, input.Query) {
-		return match, true, nil
-	}
-	return documentSearchMatch{}, false, nil
-}
-
-func documentSearchNameMatches(document map[string]any, query string) bool {
-	needle := strings.ToLower(query)
-	for _, key := range []string{"title", "slug"} {
-		if value, ok := document[key].(string); ok && strings.Contains(strings.ToLower(value), needle) {
-			return true
-		}
-	}
-	return false
 }
 
 var (

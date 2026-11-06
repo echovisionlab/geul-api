@@ -350,7 +350,7 @@ func TestValidateOperationRejectsMalformedShapeDirectly(t *testing.T) {
 		{"no payload", Operation{Kind: OperationSetField},
 			tableIssue(3, IssueInvalidOperation, "", "operation must contain exactly one typed payload")},
 		{"payload of another kind", Operation{Kind: OperationUnsetField, SetField: &SetField{}},
-			tableIssue(3, IssueInvalidOperation, "", `operation kind "fu" does not match its payload`)},
+			tableIssue(3, IssueInvalidOperation, "", `operation kind "unset_field" does not match its payload`)},
 		{"unknown kind", Operation{Kind: "zz", SetField: &SetField{}},
 			tableIssue(3, IssueInvalidOperation, "", `operation kind "zz" does not match its payload`)},
 	} {

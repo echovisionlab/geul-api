@@ -15,25 +15,6 @@ const managementDocumentLayoutJSONSchema = `{
   }
 }`
 
-const postSettingsOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","title","source_locale","status","document_revision","configuration_revision","comments_enabled","document_layout","category_ids","tag_ids","allowed_actions"],
-  "properties":{
-    "document_type":{"const":"post"},"document_id":` + uuidJSONSchema + `,
-    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
-    "source_locale":{"type":"string"},"status":{"enum":["draft","scheduled","published","archived"]},
-    "document_revision":{"type":"string","description":"Exact source content revision returned by the owning Post service."},
-    "configuration_revision":{"type":"string","format":"uuid","description":"Copy unchanged to expected_configuration_revision for Post settings edits."},
-    "comments_enabled":{"type":"boolean"},"map_place_id":` + uuidJSONSchema + `,
-    "document_layout":` + managementDocumentLayoutJSONSchema + `,
-    "category_ids":{"type":"array","items":` + uuidJSONSchema + `},"tag_ids":{"type":"array","items":` + uuidJSONSchema + `},
-    "series_id":` + uuidJSONSchema + `,"series_order":{"type":"integer"},"featured_image_file_id":` + uuidJSONSchema + `,
-    "allowed_actions":{"type":"array","items":{"enum":["edit","publish_now","schedule","cancel_schedule","unpublish","archive","republish","delete","add_author","remove_author","manage_collaborators","view_versions","restore_version","manage_share_links","moderate_comments"]}},
-    "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"},
-    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
-  }
-}`
-
 const pageAccessPolicyJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["mode"],
   "description":"Who can read the Page. public: every visitor; authenticated: signed-in members; conditions: members matching allowed_roles, user_tag_ids, or newsletter_subscriber, combined by match. Administrators who manage the Page can always read it.",
@@ -41,22 +22,8 @@ const pageAccessPolicyJSONSchema = `{
     "mode":{"enum":["public","authenticated","conditions"]},
     "match":{"enum":["any","all"],"description":"conditions only. any accepts one selected condition group; all requires every selected group. Default any."},
     "allowed_roles":{"type":"array","uniqueItems":true,"items":{"enum":["author","admin"]},"description":"conditions only. Signed-in members without these roles use authenticated mode or user_tag_ids instead."},
-    "user_tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"conditions only. Member tag IDs from member_tag_list."},
+    "user_tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"conditions only. Member tag IDs from reference_search with reference_type=member_tag."},
     "newsletter_subscriber":{"type":"boolean","description":"conditions only. Active newsletter subscribers."}
-  }
-}`
-
-const pageSettingsOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","title","source_locale","status","document_revision","show_title","document_layout","access_policy"],
-  "properties":{
-    "document_type":{"const":"page"},"document_id":` + uuidJSONSchema + `,
-    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
-    "source_locale":{"type":"string"},"status":{"enum":["draft","published"]},"document_revision":{"type":"string"},
-    "show_title":{"type":"boolean"},"document_layout":` + managementDocumentLayoutJSONSchema + `,
-    "access_policy":` + pageAccessPolicyJSONSchema + `,
-    "featured_image_file_id":` + uuidJSONSchema + `,
-    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
   }
 }`
 
@@ -77,7 +44,7 @@ const postSettingsUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id","expected_configuration_revision"],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
-    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from post_settings_get, document_list, or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
+    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from document_settings_get, document_list, or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "comments_enabled":{"type":"boolean"},
     "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place, or an empty string to remove the relation."},
@@ -99,15 +66,6 @@ const postConfigurationMutationOutputJSONSchema = `{
     "comments_enabled":{"type":"boolean"},"map_place_id":` + uuidJSONSchema + `,"document_layout":` + managementDocumentLayoutJSONSchema + `,
     "updated_at":{"type":"string","format":"date-time"},
     "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"}
-  }
-}`
-
-const postScheduleInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["document_id","scheduled_at","scheduled_time_zone"],
-  "properties":{
-    "document_id":` + documentReferenceJSONSchema + `,
-    "scheduled_at":{"type":"string","format":"date-time"},
-    "scheduled_time_zone":{"type":"string","minLength":1,"maxLength":100}
   }
 }`
 
@@ -134,30 +92,16 @@ const workSettingsUpdateInputJSONSchema = `{
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "type":{"enum":["music_project","portfolio","article","contribution"]},
     "metadata":{"type":"object","description":"Requires observed_metadata in the same call."},
-    "observed_metadata":{"type":"object","description":"Required when metadata is supplied. Copy metadata returned by work_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
+    "observed_metadata":{"type":"object","description":"Required when metadata is supplied. Copy metadata returned by document_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
     "featured":{"type":"boolean"},
     "client_ids":{"description":"Client IDs from reference_search with reference_type=client. Requires observed_client_ids in the same call.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
-    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"Required when client_ids is supplied. Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
+    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"Required when client_ids is supplied. Copy client_ids returned by document_settings_get before editing, including an empty array when no clients were present."},
     "year":{"type":"integer","minimum":1,"maximum":9999},
     "month":{"type":"integer","minimum":1,"maximum":12},
     "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place, or an empty string to remove the relation."},
     "until_year":{"type":"integer","minimum":1,"maximum":9999},
     "until_month":{"type":"integer","minimum":1,"maximum":12},
     "is_present":{"type":"boolean","description":"Setting true clears the stored until date. Setting false for a currently present Work requires until_year and until_month in the same call."}
-  }
-}`
-
-const workSettingsOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","metadata","client_ids","type","featured","year","month","is_present","document_revision"],
-  "properties":{
-    "document_type":{"const":"work"},"document_id":` + uuidJSONSchema + `,
-    "metadata":{"type":"object"},"client_ids":{"type":"array","items":` + uuidJSONSchema + `},
-    "slug":{"type":"string"},"type":{"enum":["music_project","portfolio","article","contribution"]},
-    "featured":{"type":"boolean"},"year":{"type":"integer"},"month":{"type":"integer"},
-    "until_year":{"type":"integer"},"until_month":{"type":"integer"},"is_present":{"type":"boolean"},
-    "map_place_id":` + uuidJSONSchema + `,
-    "document_revision":{"type":"string","description":"Content document revision; Work settings edits use observed metadata/client values instead of this revision."}
   }
 }`
 

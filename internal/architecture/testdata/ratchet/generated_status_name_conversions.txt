@@ -1,4 +1,4 @@
 # Inline generated status name conversions (.String() on a *_STATUS_* value,
 # *Status_value lookups) per package. Map stored statuses in one function per
 # domain (docs/architecture.md); lower with -update.
-10 internal/adapters/mcp
+4 internal/adapters/mcp

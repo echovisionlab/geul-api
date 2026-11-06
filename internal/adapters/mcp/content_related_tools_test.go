@@ -31,7 +31,7 @@ func TestContentRelatedToolDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != len(contentRelatedTools) || len(listed) != 17 {
+	if len(listed) != 16 {
 		t.Fatalf("listed %d related content tools", len(listed))
 	}
 	for _, tool := range listed {
@@ -94,13 +94,6 @@ func TestContentRelatedToolsRouteVersionsAndSlugCheck(t *testing.T) {
 		t.Fatalf("versions = %#v %#v", posts.versions, versions.StructuredContent)
 	}
 
-	slug, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSlugCheck, toolArguments(t, `{"document_type":"post","slug":"available-slug","exclude_document_id":"`+managementPostID+`"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if posts.slug.ExcludePostID == nil || *posts.slug.ExcludePostID != managementPostID || slug.StructuredContent["available"] != true {
-		t.Fatalf("slug = %#v %#v", posts.slug, slug.StructuredContent)
-	}
 }
 
 func TestWorkCreditUpdatesReturnCurrentFieldsWithoutClaimingChange(t *testing.T) {
@@ -259,7 +252,6 @@ type recordingPostRelated struct {
 	PostRelatedApplication
 	collaborator *postdomain.PostParticipantCommand
 	versions     *postdomain.ListPostVersionsQuery
-	slug         *postdomain.CheckSlugAvailableQuery
 }
 
 func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, command postdomain.PostParticipantCommand) (postdomain.Participant, error) {
@@ -274,11 +266,6 @@ func (r *recordingPostRelated) ListPostVersions(_ context.Context, query postdom
 		Versions:   []postdomain.Version{{ID: "66666666-6666-4666-8666-666666666666", Version: 1, Title: "Version", CanonicalHash: "hash", SourceLocale: "ko", CreatedAt: time.Now()}},
 		Pagination: postdomain.Pagination{Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore},
 	}, nil
-}
-
-func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, query postdomain.CheckSlugAvailableQuery) (bool, error) {
-	r.slug = &query
-	return true, nil
 }
 
 func TestWorkCreditSchemasHaveNoRootCombinators(t *testing.T) {
@@ -386,8 +373,4 @@ func (*recordingPageRelated) DeletePageFeaturedImage(context.Context, pagedomain
 
 func (*recordingPageRelated) RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (pagedomain.Detail, error) {
 	return pagedomain.Detail{}, errors.New("restore page version is not part of this test")
-}
-
-func (*recordingPageRelated) CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (bool, error) {
-	return false, errors.New("check page slug is not part of this test")
 }

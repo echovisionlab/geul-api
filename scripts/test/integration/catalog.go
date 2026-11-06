@@ -60,6 +60,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/authentication/postgres",
 			"./internal/campaign/postgres",
 			"./internal/contentblock",
+			"./internal/documentsearch/postgres",
 			"./internal/email/emailtest",
 			"./internal/emailauthoring/postgres",
 			"./internal/emaildelivery/postgres",
@@ -124,6 +125,7 @@ var integrationCatalog = []integrationBand{
 		Packages: []string{
 			"./internal/account",
 			"./internal/adapters/collaboration",
+			"./internal/adapters/mcp",
 			"./internal/adapters/og",
 			"./internal/artist",
 			"./internal/artist/public",

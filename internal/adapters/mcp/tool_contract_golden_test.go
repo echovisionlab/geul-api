@@ -27,11 +27,11 @@ const toolContractGoldenPath = "testdata/tools.golden.json"
 // same catalog as the composed server.
 func allToolProviders() []ToolProvider {
 	return []ToolProvider{
-		&DocumentDiscoveryTools{}, &DocumentSearchTools{}, &MenuDiscoveryTools{}, &ReferenceDiscoveryTools{}, &ProgramEventReferenceTools{},
-		&MusicReferenceTools{}, &PageReferenceTools{}, &ContentManagementTools{}, &LegalPolicyTools{}, &EmailLayoutSourceTools{},
+		&DocumentDiscoveryTools{}, &DocumentSearchTools{}, &MenuDiscoveryTools{}, &FileListTools{}, &ReferenceSearchTools{}, &DocumentOperationTools{},
+		&ContentManagementTools{}, &LegalPolicyTools{}, &EmailLayoutSourceTools{},
 		&ProgramEventManagementTools{}, &ProgramEventMediaTools{}, &ReleaseManagementTools{}, &ReleaseRelationTools{},
 		&TrackManagementTools{}, &MapPlaceManagementTools{}, &MapThemeManagementTools{}, &MemberAdminTools{},
-		&MemberTagTools{}, &AdminSettingsTools{}, &OAuthAppTools{}, &ContentRelatedTools{}, &AIDocumentTools{},
+		&AdminSettingsTools{}, &OAuthAppTools{}, &ContentRelatedTools{}, &AIDocumentTools{}, &DocumentTextTools{},
 		&DocumentCatalogTools{}, &TranslationTools{}, &FileTools{}, &FileBlockTools{}, &FileManagerTools{},
 	}
 }

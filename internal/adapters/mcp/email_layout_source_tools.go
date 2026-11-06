@@ -18,7 +18,7 @@ const (
 )
 
 var emailLayoutSourceTools = toolRegistry[EmailLayoutSourceTools]{
-	defineTool(oauthTool(ToolEmailLayoutSourceGet, "Get Email Layout source markup", "Read an Email Layout's source-locale wrapper markup and document_revision. layout_id is the UUID in the admin Email Layouts editor URL. The markup includes private <!--geul-unit:...--> markers that bind translations to source text; edit that text with document tools (p=email_layout), not here.", emailLayoutSourceGetInputJSONSchema, emailLayoutSourceOutputJSONSchema, true, false), (*EmailLayoutSourceTools).get),
+	defineTool(oauthTool(ToolEmailLayoutSourceGet, "Get Email Layout source markup", "Read an Email Layout's source-locale wrapper markup and document_revision. layout_id is the UUID in the admin Email Layouts editor URL. The markup includes private <!--geul-unit:...--> markers that bind translations to source text; edit that text with document tools (document_type=email_layout), not here.", emailLayoutSourceGetInputJSONSchema, emailLayoutSourceOutputJSONSchema, true, false), (*EmailLayoutSourceTools).get),
 	defineTool(oauthTool(ToolEmailLayoutSourceReplace, "Replace Email Layout source markup", "Change Email Layout wrapper markup such as image sizes, attributes or inline styles that document tools cannot edit. Pass the exact current document_revision and a find string that occurs exactly once in source_markup. The result is validated like an editor save and must keep every translatable unit and its source text, so all locales keep their translations. Reread with email_layout_source_get after a revision conflict; never blindly retry.", emailLayoutSourceReplaceInputJSONSchema, emailLayoutSourceReplaceOutputJSONSchema, false, false), (*EmailLayoutSourceTools).replace),
 }
 

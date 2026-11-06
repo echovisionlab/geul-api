@@ -45,19 +45,19 @@ type OpenRequest struct {
 	Locale   Locale
 }
 
-// OpenMetadata is the compact protocol discovery result before any content
+// OpenMetadata is the protocol discovery result before any content
 // projection is selected.
 type OpenMetadata struct {
-	Protocol         string            `json:"v"`
-	Profile          Domain            `json:"p"`
-	Catalog          string            `json:"c"`
-	Document         DocumentReference `json:"d"`
-	DocumentRevision Revision          `json:"dr"`
-	TargetRevision   *Revision         `json:"tr,omitempty"`
-	SourceLocale     Locale            `json:"s"`
-	Locale           Locale            `json:"l"`
-	LocaleRole       LocaleRole        `json:"lr"`
-	LocaleExists     bool              `json:"le"`
+	Protocol         string            `json:"-"`
+	Profile          Domain            `json:"document_type"`
+	Catalog          string            `json:"catalog_fingerprint"`
+	Document         DocumentReference `json:"document_id"`
+	DocumentRevision Revision          `json:"document_revision"`
+	TargetRevision   *Revision         `json:"target_revision,omitempty"`
+	SourceLocale     Locale            `json:"source_locale"`
+	Locale           Locale            `json:"locale"`
+	LocaleRole       LocaleRole        `json:"locale_role"`
+	LocaleExists     bool              `json:"locale_exists"`
 }
 
 func (m OpenMetadata) Identity() DocumentIdentity {
@@ -544,10 +544,10 @@ func validateReadRequest(request ReadRequest) error {
 	}
 	if request.Query != "" {
 		if request.Mode != ReadOutline {
-			return errors.New("q searches only an outline read; use m=outline")
+			return errors.New("query searches only an outline read; use mode outline")
 		}
 		if strings.TrimSpace(request.Query) == "" || utf8.RuneCountInString(request.Query) > MaxReadQueryRunes {
-			return fmt.Errorf("q must contain 1 to %d characters of text", MaxReadQueryRunes)
+			return fmt.Errorf("query must contain 1 to %d characters of text", MaxReadQueryRunes)
 		}
 	}
 	switch request.Mode {

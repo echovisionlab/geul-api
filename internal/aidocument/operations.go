@@ -1,28 +1,28 @@
 package aidocument
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 type OperationKind string
 
 const (
-	OperationSetField           OperationKind = "fs"
-	OperationUnsetField         OperationKind = "fu"
-	OperationInsertBlock        OperationKind = "bi"
-	OperationDeleteBlock        OperationKind = "bd"
-	OperationMoveBlock          OperationKind = "bm"
-	OperationReplaceBlockKind   OperationKind = "bk"
-	OperationInsertRelationItem OperationKind = "ri"
-	OperationDeleteRelationItem OperationKind = "rd"
-	OperationMoveRelationItem   OperationKind = "rm"
-	OperationAttachFile         OperationKind = "fa"
-	OperationDetachFile         OperationKind = "fd"
-	OperationCreateTranslation  OperationKind = "lc"
-	OperationDeleteTranslation  OperationKind = "ld"
+	OperationSetField           OperationKind = "set_field"
+	OperationUnsetField         OperationKind = "unset_field"
+	OperationInsertBlock        OperationKind = "insert_block"
+	OperationDeleteBlock        OperationKind = "delete_block"
+	OperationMoveBlock          OperationKind = "move_block"
+	OperationReplaceBlockKind   OperationKind = "replace_block_kind"
+	OperationInsertRelationItem OperationKind = "insert_relation_item"
+	OperationDeleteRelationItem OperationKind = "delete_relation_item"
+	OperationMoveRelationItem   OperationKind = "move_relation_item"
+	OperationAttachFile         OperationKind = "attach_file"
+	OperationDetachFile         OperationKind = "detach_file"
+	OperationCreateTranslation  OperationKind = "create_translation"
+	OperationDeleteTranslation  OperationKind = "delete_translation"
 )
 
 type FieldTarget struct {
@@ -55,77 +55,24 @@ func (s FieldPathSegment) MarshalJSON() ([]byte, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	if s.Field != "" {
-		return json.Marshal([]any{"f", s.Field})
-	}
-	return json.Marshal([]any{"i", s.Item})
+	return json.Marshal(wireFieldPathSegment(s))
 }
 
 func (s *FieldPathSegment) UnmarshalJSON(data []byte) error {
-	*s = FieldPathSegment{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireFieldPathSegment
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("field path segment: %w", err)
 	}
-	if len(parts) != 2 {
-		return errors.New("compact field path segment must contain exactly two items")
-	}
-	var kind string
-	if err := json.Unmarshal(parts[0], &kind); err != nil {
-		return err
-	}
-	switch kind {
-	case "f":
-		if err := json.Unmarshal(parts[1], &s.Field); err != nil {
-			return err
-		}
-	case "i":
-		if err := json.Unmarshal(parts[1], &s.Item); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported field path segment %q", kind)
-	}
+	*s = FieldPathSegment(wire)
 	return s.validate()
 }
 
+type wireFieldPathSegment struct {
+	Field FieldID        `json:"field,omitempty"`
+	Item  RelationItemID `json:"item_id,omitempty"`
+}
+
 func (t FieldTarget) relationItem() bool { return t.Relation != "" || t.Item != "" }
-
-func (t FieldTarget) MarshalJSON() ([]byte, error) {
-	if len(t.Path) != 0 {
-		return json.Marshal([]any{t.Block, t.Relation, t.Item, t.Field, t.Path})
-	}
-	return json.Marshal([]any{t.Block, t.Relation, t.Item, t.Field})
-}
-
-func (t *FieldTarget) UnmarshalJSON(data []byte) error {
-	*t = FieldTarget{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
-	}
-	if len(parts) != 4 && len(parts) != 5 {
-		return errors.New("compact field target must contain four items plus an optional typed path")
-	}
-	targets := []any{&t.Block, &t.Relation, &t.Item, &t.Field}
-	for index := range targets {
-		if bytes.Equal(bytes.TrimSpace(parts[index]), []byte("null")) {
-			return fmt.Errorf("compact field target item %d cannot be null", index)
-		}
-		if err := json.Unmarshal(parts[index], targets[index]); err != nil {
-			return fmt.Errorf("compact field target item %d: %w", index, err)
-		}
-	}
-	if len(parts) == 5 {
-		if err := json.Unmarshal(parts[4], &t.Path); err != nil {
-			return fmt.Errorf("compact field target path: %w", err)
-		}
-		if len(t.Path) == 0 {
-			return errors.New("compact field target path must not be empty; omit it for a whole-field operation")
-		}
-	}
-	return nil
-}
 
 type SetField struct {
 	Target FieldTarget
@@ -319,53 +266,101 @@ func (o Operation) validateShape() error {
 	return nil
 }
 
+// wireOperation is the JSON shape of Operation: op names the operation and
+// decides which of the other fields it carries. A field operation addresses its
+// field with block_id, field and, for a relation item, relation_id and item_id.
+type wireOperation struct {
+	Op               OperationKind      `json:"op"`
+	Block            *BlockID           `json:"block_id,omitempty"`
+	Relation         *RelationID        `json:"relation_id,omitempty"`
+	Item             *RelationItemID    `json:"item_id,omitempty"`
+	Field            *FieldID           `json:"field,omitempty"`
+	Path             []FieldPathSegment `json:"path,omitempty"`
+	Value            *Value             `json:"value,omitempty"`
+	File             *FileReference     `json:"file_id,omitempty"`
+	Kind             *string            `json:"kind,omitempty"`
+	Parent           *BlockID           `json:"parent_block_id,omitempty"`
+	AfterBlock       *BlockID           `json:"after_block_id,omitempty"`
+	AfterItem        *RelationItemID    `json:"after_item_id,omitempty"`
+	TargetBlock      *BlockID           `json:"target_block_id,omitempty"`
+	TargetRelationID *RelationID        `json:"target_relation_id,omitempty"`
+}
+
+func wireFieldOperation(op OperationKind, target FieldTarget) wireOperation {
+	wire := wireOperation{Op: op, Block: &target.Block, Field: &target.Field, Path: target.Path}
+	if target.Relation != "" {
+		wire.Relation = &target.Relation
+	}
+	if target.Item != "" {
+		wire.Item = &target.Item
+	}
+	return wire
+}
+
+// optionalHandle leaves out the empty handle that means "none".
+func optionalHandle[T ~string](value T) *T {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func kindString[T ~string](kind T) *string {
+	value := string(kind)
+	return &value
+}
+
 func (o Operation) MarshalJSON() ([]byte, error) {
 	if err := o.validateShape(); err != nil {
 		return nil, err
 	}
+	wire := wireOperation{Op: o.Kind}
 	switch o.Kind {
 	case OperationSetField:
-		return json.Marshal([]any{o.Kind, o.SetField.Target, o.SetField.Value})
+		wire = wireFieldOperation(o.Kind, o.SetField.Target)
+		wire.Value = &o.SetField.Value
 	case OperationUnsetField:
-		return json.Marshal([]any{o.Kind, o.UnsetField.Target})
+		wire = wireFieldOperation(o.Kind, o.UnsetField.Target)
 	case OperationInsertBlock:
-		return json.Marshal([]any{o.Kind, o.InsertBlock.Block, o.InsertBlock.Kind, o.InsertBlock.Parent, o.InsertBlock.After})
+		op := o.InsertBlock
+		wire.Block, wire.Kind, wire.Parent, wire.AfterBlock = &op.Block, kindString(op.Kind), optionalHandle(op.Parent), optionalHandle(op.After)
 	case OperationDeleteBlock:
-		return json.Marshal([]any{o.Kind, o.DeleteBlock.Block})
+		wire.Block = &o.DeleteBlock.Block
 	case OperationMoveBlock:
-		return json.Marshal([]any{o.Kind, o.MoveBlock.Block, o.MoveBlock.Parent, o.MoveBlock.After})
+		op := o.MoveBlock
+		wire.Block, wire.Parent, wire.AfterBlock = &op.Block, optionalHandle(op.Parent), optionalHandle(op.After)
 	case OperationReplaceBlockKind:
-		return json.Marshal([]any{o.Kind, o.ReplaceBlockKind.Block, o.ReplaceBlockKind.Kind})
+		op := o.ReplaceBlockKind
+		wire.Block, wire.Kind = &op.Block, kindString(op.Kind)
 	case OperationInsertRelationItem:
-		return json.Marshal([]any{o.Kind, o.InsertRelationItem.Block, o.InsertRelationItem.Relation, o.InsertRelationItem.Item, o.InsertRelationItem.Kind, o.InsertRelationItem.After})
+		op := o.InsertRelationItem
+		wire.Block, wire.Relation, wire.Item, wire.Kind, wire.AfterItem = &op.Block, &op.Relation, &op.Item, kindString(op.Kind), optionalHandle(op.After)
 	case OperationDeleteRelationItem:
-		return json.Marshal([]any{o.Kind, o.DeleteRelationItem.Block, o.DeleteRelationItem.Relation, o.DeleteRelationItem.Item})
+		op := o.DeleteRelationItem
+		wire.Block, wire.Relation, wire.Item = &op.Block, &op.Relation, &op.Item
 	case OperationMoveRelationItem:
-		return json.Marshal([]any{o.Kind, o.MoveRelationItem.Block, o.MoveRelationItem.Relation, o.MoveRelationItem.Item, o.MoveRelationItem.TargetBlock, o.MoveRelationItem.Target, o.MoveRelationItem.After})
+		op := o.MoveRelationItem
+		wire.Block, wire.Relation, wire.Item = &op.Block, &op.Relation, &op.Item
+		wire.TargetBlock, wire.TargetRelationID, wire.AfterItem = &op.TargetBlock, &op.Target, optionalHandle(op.After)
 	case OperationAttachFile:
-		return json.Marshal([]any{o.Kind, o.AttachFile.Target, o.AttachFile.File})
+		wire = wireFieldOperation(o.Kind, o.AttachFile.Target)
+		wire.File = &o.AttachFile.File
 	case OperationDetachFile:
-		return json.Marshal([]any{o.Kind, o.DetachFile.Target})
+		wire = wireFieldOperation(o.Kind, o.DetachFile.Target)
 	case OperationCreateTranslation, OperationDeleteTranslation:
-		return json.Marshal([]any{o.Kind})
 	default:
-		return nil, fmt.Errorf("unsupported operation kind %q", o.Kind)
+		return nil, fmt.Errorf("unsupported operation %q", o.Kind)
 	}
+	return json.Marshal(wire)
 }
 
 func (o *Operation) UnmarshalJSON(data []byte) error {
 	*o = Operation{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireOperation
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("operation: %w", err)
 	}
-	if len(parts) == 0 {
-		return errors.New("compact operation cannot be empty")
-	}
-	if err := json.Unmarshal(parts[0], &o.Kind); err != nil {
-		return err
-	}
-	decoded, err := decodeOperation(o.Kind, compactItem{label: "operation", kind: string(o.Kind), parts: parts})
+	decoded, err := wire.operation()
 	if err != nil {
 		return err
 	}
@@ -373,141 +368,124 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 	return o.validateShape()
 }
 
-func decodeOperation(kind OperationKind, item compactItem) (Operation, error) {
-	operation := Operation{Kind: kind}
-	var err error
-	switch kind {
+// require reports a missing field, and any field the operation does not take.
+func (w wireOperation) require(fields ...string) error {
+	present := map[string]bool{
+		"block_id": w.Block != nil, "relation_id": w.Relation != nil, "item_id": w.Item != nil, "field": w.Field != nil,
+		"path": w.Path != nil, "value": w.Value != nil, "file_id": w.File != nil, "kind": w.Kind != nil,
+		"parent_block_id": w.Parent != nil, "after_block_id": w.AfterBlock != nil, "after_item_id": w.AfterItem != nil,
+		"target_block_id": w.TargetBlock != nil, "target_relation_id": w.TargetRelationID != nil,
+	}
+	optional := wireOperationOptionalFields[w.Op]
+	for _, field := range fields {
+		if !present[field] {
+			return fmt.Errorf("operation %q needs %s", w.Op, field)
+		}
+	}
+	for field, set := range present {
+		if set && !slices.Contains(fields, field) && !slices.Contains(optional, field) {
+			return fmt.Errorf("operation %q does not take %s", w.Op, field)
+		}
+	}
+	return nil
+}
+
+var (
+	wireFieldAddressOptional    = []string{"relation_id", "item_id", "path"}
+	wireOperationOptionalFields = map[OperationKind][]string{
+		OperationSetField:           wireFieldAddressOptional,
+		OperationUnsetField:         wireFieldAddressOptional,
+		OperationAttachFile:         wireFieldAddressOptional,
+		OperationDetachFile:         wireFieldAddressOptional,
+		OperationInsertBlock:        {"parent_block_id", "after_block_id"},
+		OperationMoveBlock:          {"parent_block_id", "after_block_id"},
+		OperationInsertRelationItem: {"after_item_id"},
+		OperationMoveRelationItem:   {"after_item_id"},
+	}
+)
+
+func handleOrEmpty[T ~string](value *T) T {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (w wireOperation) fieldTarget() FieldTarget {
+	return FieldTarget{
+		Block: handleOrEmpty(w.Block), Relation: handleOrEmpty(w.Relation), Item: handleOrEmpty(w.Item),
+		Field: handleOrEmpty(w.Field), Path: w.Path,
+	}
+}
+
+func (w wireOperation) operation() (Operation, error) {
+	var required []string
+	switch w.Op {
 	case OperationSetField:
-		return decodeSetField(item)
-	case OperationUnsetField:
-		return decodeUnsetField(item)
+		required = []string{"block_id", "field", "value"}
 	case OperationAttachFile:
-		return decodeAttachFile(item)
-	case OperationDetachFile:
-		return decodeDetachFile(item)
-	case OperationInsertBlock:
-		payload := &InsertBlock{}
-		operation.InsertBlock = payload
-		err = item.decode(5, &payload.Block, &payload.Kind, &payload.Parent, &payload.After)
-	case OperationDeleteBlock:
-		payload := &DeleteBlock{}
-		operation.DeleteBlock = payload
-		err = item.decode(2, &payload.Block)
-	case OperationMoveBlock:
-		payload := &MoveBlock{}
-		operation.MoveBlock = payload
-		err = item.decode(4, &payload.Block, &payload.Parent, &payload.After)
-	case OperationReplaceBlockKind:
-		payload := &ReplaceBlockKind{}
-		operation.ReplaceBlockKind = payload
-		err = item.decode(3, &payload.Block, &payload.Kind)
+		required = []string{"block_id", "field", "file_id"}
+	case OperationUnsetField, OperationDetachFile:
+		required = []string{"block_id", "field"}
+	case OperationInsertBlock, OperationReplaceBlockKind:
+		required = []string{"block_id", "kind"}
+	case OperationDeleteBlock, OperationMoveBlock:
+		required = []string{"block_id"}
 	case OperationInsertRelationItem:
-		payload := &InsertRelationItem{}
-		operation.InsertRelationItem = payload
-		err = item.decode(6, &payload.Block, &payload.Relation, &payload.Item, &payload.Kind, &payload.After)
+		required = []string{"block_id", "relation_id", "item_id", "kind"}
 	case OperationDeleteRelationItem:
-		payload := &DeleteRelationItem{}
-		operation.DeleteRelationItem = payload
-		err = item.decode(4, &payload.Block, &payload.Relation, &payload.Item)
+		required = []string{"block_id", "relation_id", "item_id"}
 	case OperationMoveRelationItem:
-		payload := &MoveRelationItem{}
-		operation.MoveRelationItem = payload
-		err = item.decode(7, &payload.Block, &payload.Relation, &payload.Item, &payload.TargetBlock, &payload.Target, &payload.After)
+		required = []string{"block_id", "relation_id", "item_id", "target_block_id", "target_relation_id"}
+	case OperationCreateTranslation, OperationDeleteTranslation:
+	default:
+		return Operation{}, fmt.Errorf("unsupported operation %q", w.Op)
+	}
+	if err := w.require(required...); err != nil {
+		return Operation{}, err
+	}
+	if w.Path != nil && len(w.Path) == 0 {
+		return Operation{}, errors.New("field path must not be empty; omit it for a whole-field operation")
+	}
+	block := handleOrEmpty(w.Block)
+	switch w.Op {
+	case OperationSetField:
+		return Operation{Kind: w.Op, SetField: &SetField{Target: w.fieldTarget(), Value: *w.Value}}, nil
+	case OperationUnsetField:
+		return Operation{Kind: w.Op, UnsetField: &UnsetField{Target: w.fieldTarget()}}, nil
+	case OperationAttachFile:
+		return Operation{Kind: w.Op, AttachFile: &AttachFile{Target: w.fieldTarget(), File: *w.File}}, nil
+	case OperationDetachFile:
+		return Operation{Kind: w.Op, DetachFile: &DetachFile{Target: w.fieldTarget()}}, nil
+	case OperationInsertBlock:
+		return InsertBlockOperation(block, BlockKind(*w.Kind), handleOrEmpty(w.Parent), handleOrEmpty(w.AfterBlock)), nil
+	case OperationDeleteBlock:
+		return DeleteBlockOperation(block), nil
+	case OperationMoveBlock:
+		return MoveBlockOperation(block, handleOrEmpty(w.Parent), handleOrEmpty(w.AfterBlock)), nil
+	case OperationReplaceBlockKind:
+		return ReplaceBlockKindOperation(block, BlockKind(*w.Kind)), nil
+	case OperationInsertRelationItem:
+		return InsertRelationItemOperation(block, *w.Relation, *w.Item, RelationItemKind(*w.Kind), handleOrEmpty(w.AfterItem)), nil
+	case OperationDeleteRelationItem:
+		return DeleteRelationItemOperation(block, *w.Relation, *w.Item), nil
+	case OperationMoveRelationItem:
+		return MoveRelationItemOperation(block, *w.Relation, *w.Item, *w.TargetBlock, *w.TargetRelationID, handleOrEmpty(w.AfterItem)), nil
 	case OperationCreateTranslation:
-		operation.CreateTranslation = &CreateTranslation{}
-		err = item.decode(1)
-	case OperationDeleteTranslation:
-		operation.DeleteTranslation = &DeleteTranslation{}
-		err = item.decode(1)
+		return CreateTranslationOperation(), nil
 	default:
-		err = fmt.Errorf("unsupported operation kind %q", kind)
-	}
-	if err != nil {
-		return Operation{}, err
-	}
-	return operation, nil
-}
-
-// The field-target decoders rebuild targets without a nested path through the
-// public constructors, so a decoded batch has the same shape as a constructed
-// one.
-
-func decodeSetField(item compactItem) (Operation, error) {
-	payload := &SetField{}
-	if err := item.decode(3, &payload.Target, &payload.Value); err != nil {
-		return Operation{}, err
-	}
-	target := payload.Target
-	switch {
-	case target.relationItem() && len(target.Path) == 0:
-		return SetRelationFieldOperation(target.Block, target.Relation, target.Item, target.Field, payload.Value), nil
-	case !target.relationItem() && len(target.Path) == 0:
-		return SetFieldOperation(target.Block, target.Field, payload.Value), nil
-	case !target.relationItem():
-		return SetNestedFieldOperation(target.Block, target.Field, target.Path, payload.Value), nil
-	default:
-		return Operation{Kind: OperationSetField, SetField: payload}, nil
-	}
-}
-
-func decodeUnsetField(item compactItem) (Operation, error) {
-	payload := &UnsetField{}
-	if err := item.decode(2, &payload.Target); err != nil {
-		return Operation{}, err
-	}
-	target := payload.Target
-	switch {
-	case target.relationItem() && len(target.Path) == 0:
-		return UnsetRelationFieldOperation(target.Block, target.Relation, target.Item, target.Field), nil
-	case !target.relationItem() && len(target.Path) == 0:
-		return UnsetFieldOperation(target.Block, target.Field), nil
-	case !target.relationItem():
-		return UnsetNestedFieldOperation(target.Block, target.Field, target.Path), nil
-	default:
-		return Operation{Kind: OperationUnsetField, UnsetField: payload}, nil
-	}
-}
-
-func decodeAttachFile(item compactItem) (Operation, error) {
-	payload := &AttachFile{}
-	if err := item.decode(3, &payload.Target, &payload.File); err != nil {
-		return Operation{}, err
-	}
-	target := payload.Target
-	switch {
-	case target.relationItem() && len(target.Path) == 0:
-		return AttachRelationFileOperation(target.Block, target.Relation, target.Item, target.Field, payload.File), nil
-	case !target.relationItem() && len(target.Path) == 0:
-		return AttachFileOperation(target.Block, target.Field, payload.File), nil
-	default:
-		return Operation{Kind: OperationAttachFile, AttachFile: payload}, nil
-	}
-}
-
-func decodeDetachFile(item compactItem) (Operation, error) {
-	payload := &DetachFile{}
-	if err := item.decode(2, &payload.Target); err != nil {
-		return Operation{}, err
-	}
-	target := payload.Target
-	switch {
-	case target.relationItem() && len(target.Path) == 0:
-		return DetachRelationFileOperation(target.Block, target.Relation, target.Item, target.Field), nil
-	case !target.relationItem() && len(target.Path) == 0:
-		return DetachFileOperation(target.Block, target.Field), nil
-	default:
-		return Operation{Kind: OperationDetachFile, DetachFile: payload}, nil
+		return DeleteTranslationOperation(), nil
 	}
 }
 
 type ApplyRequest struct {
-	Protocol                 string            `json:"v"`
-	Profile                  Domain            `json:"p"`
-	Document                 DocumentReference `json:"d"`
-	Locale                   Locale            `json:"l"`
-	ExpectedDocumentRevision Revision          `json:"edr"`
-	ExpectedTargetRevision   *Revision         `json:"etr,omitempty"`
-	Operations               []Operation       `json:"o"`
+	Protocol                 string            `json:"-"`
+	Profile                  Domain            `json:"document_type"`
+	Document                 DocumentReference `json:"document_id"`
+	Locale                   Locale            `json:"locale"`
+	ExpectedDocumentRevision Revision          `json:"expected_document_revision"`
+	ExpectedTargetRevision   *Revision         `json:"expected_target_revision,omitempty"`
+	Operations               []Operation       `json:"operations"`
 }
 
 func (r ApplyRequest) Identity() DocumentIdentity {

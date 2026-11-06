@@ -66,7 +66,7 @@ func TestDocumentReadSyncPreservesSelectorsAndDropsOnlyContinuation(t *testing.T
 				cursorErr = fmt.Errorf("read failed: %w", cursorErr)
 			}
 			application := &recordingAIDocumentApplication{readError: cursorErr}
-			arguments := toolArguments(t, `{"p":"post","d":"`+syncTestDocument+`","l":"en","m":"fields","b":["paragraph-a"],"f":[["paragraph-a","content"]],"n":256,"c":"expired"}`)
+			arguments := toolArguments(t, `{"document_type":"post","document_id":"`+syncTestDocument+`","locale":"en","mode":"fields","block_ids":["paragraph-a"],"fields":[{"block_id":"paragraph-a","field":"content"}],"limit":256,"cursor":"expired"}`)
 			result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentRead, arguments)
 			if err != nil {
 				t.Fatal(err)
@@ -74,7 +74,7 @@ func TestDocumentReadSyncPreservesSelectorsAndDropsOnlyContinuation(t *testing.T
 			recipe := map[string]any{}
 			inputJSON, _ := json.Marshal(arguments)
 			json.Unmarshal(inputJSON, &recipe)
-			delete(recipe, "c")
+			delete(recipe, "cursor")
 			assertDocumentSync(t, result, "read_continuation_invalid", "document-current", &target, nil, true, recipe)
 			if application.readCalls != 1 || application.readRequest.Cursor != "expired" {
 				t.Fatalf("read retried or cursor replaced: %+v", application)
@@ -126,7 +126,7 @@ func TestDocumentMutationSyncCoversConflictCarriers(t *testing.T) {
 					if code == core.ConflictTargetRevision {
 						reason = "target_revision_changed"
 					}
-					assertDocumentSync(t, result, reason, "document-current", &target, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "en", "m": "blocks", "b": []any{"paragraph-a"}, "n": float64(1)})
+					assertDocumentSync(t, result, reason, "document-current", &target, conflict.AffectedHandles, false, map[string]any{"document_type": "post", "document_id": syncTestDocument, "locale": "en", "mode": "blocks", "block_ids": []any{"paragraph-a"}, "limit": float64(1)})
 					request := application.applyRequest
 					if tool == ToolDocumentValidate {
 						request = application.validateRequest
@@ -150,7 +150,7 @@ func TestFocusedDocumentMutationUsesSyncContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDocumentSync(t, result, "document_revision_changed", "current", nil, conflict.AffectedHandles, false, map[string]any{"p": "post", "d": syncTestDocument, "l": "ko", "m": "blocks", "b": []any{"paragraph-a"}, "n": float64(1)})
+	assertDocumentSync(t, result, "document_revision_changed", "current", nil, conflict.AffectedHandles, false, map[string]any{"document_type": "post", "document_id": syncTestDocument, "locale": "ko", "mode": "blocks", "block_ids": []any{"paragraph-a"}, "limit": float64(1)})
 	if application.applyCalls != 1 || application.applyRequest.ExpectedDocumentRevision != "stale" {
 		t.Fatal("focused mutation retried or replaced CAS")
 	}
@@ -162,7 +162,7 @@ func TestDocumentReadStaleCursorThroughHTTPReturnsNormalResult(t *testing.T) {
 	config.Registry = tools
 	config.Dispatcher = tools
 	response := httptest.NewRecorder()
-	newHTTPTestHandler(t, config).ServeHTTP(response, mcpHTTPRequest(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_read","arguments":{"p":"post","d":"`+syncTestDocument+`","l":"ko","m":"outline","c":"expired"}}}`))
+	newHTTPTestHandler(t, config).ServeHTTP(response, mcpHTTPRequest(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_read","arguments":{"document_type":"post","document_id":"`+syncTestDocument+`","locale":"ko","mode":"outline","cursor":"expired"}}}`))
 	var body map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -189,12 +189,12 @@ func TestDocumentMutationRequiresExplicitFreshRequestAfterSync(t *testing.T) {
 	recipe := result.StructuredContent["read"].(map[string]any)["arguments"].(map[string]any)
 	encoded, _ := json.Marshal(recipe)
 	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentRead, toolArguments(t, string(encoded)))
-	if err != nil || read.StructuredContent["tr"] != "target-current" {
+	if err != nil || read.StructuredContent["target_revision"] != "target-current" {
 		t.Fatalf("reread = %+v, %v", read, err)
 	}
 	application.readResult.Mode = core.ReadFields
 	application.readResult.Nodes = []core.Node{{ID: "paragraph-a", Kind: "paragraph", Localized: []core.FieldValue{{ID: "content", Value: core.Text("Concurrent value")}}}}
-	latest, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentRead, toolArguments(t, `{"p":"post","d":"`+syncTestDocument+`","l":"en","m":"fields","f":[["paragraph-a","content"]]}`))
+	latest, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentRead, toolArguments(t, `{"document_type":"post","document_id":"`+syncTestDocument+`","locale":"en","mode":"fields","fields":[{"block_id":"paragraph-a","field":"content"}]}`))
 	if err != nil || !strings.Contains(latest.Content[0]["text"].(string), "Concurrent value") {
 		t.Fatalf("latest targets = %+v, %v", latest, err)
 	}
@@ -209,7 +209,7 @@ func TestDocumentMutationRequiresExplicitFreshRequestAfterSync(t *testing.T) {
 	application.applyError = nil
 	application.applyResult = core.ApplyResult{DocumentRevision: "document-stale", TargetRevision: revisionPointer("target-next"), Changed: true}
 	applied, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentApply, args)
-	if err != nil || applied.IsError || applied.StructuredContent["tr"] != "target-next" || application.applyCalls != 2 || application.readCalls != 2 || *application.applyRequest.ExpectedTargetRevision != "target-current" || !reflect.DeepEqual(application.applyRequest.Operations, []core.Operation{reassessed}) {
+	if err != nil || applied.IsError || applied.StructuredContent["target_revision"] != "target-next" || application.applyCalls != 2 || application.readCalls != 2 || *application.applyRequest.ExpectedTargetRevision != "target-current" || !reflect.DeepEqual(application.applyRequest.Operations, []core.Operation{reassessed}) {
 		t.Fatalf("explicit recovery = %+v, %v; application=%+v", applied, err, application)
 	}
 }
@@ -283,7 +283,7 @@ func TestDocumentSyncSchemasPreserveSuccessAndRootReferences(t *testing.T) {
 				t.Fatalf("sync schema contract = %#v", sync)
 			}
 			recipe := properties["read"].(map[string]any)["properties"].(map[string]any)["arguments"].(map[string]any)["properties"].(map[string]any)
-			if recipe["c"] != nil || recipe["n"].(map[string]any)["maximum"] != float64(256) {
+			if recipe["cursor"] != nil || recipe["limit"].(map[string]any)["maximum"] != float64(256) {
 				t.Fatalf("read recipe must restart and admit valid page limit: %#v", recipe)
 			}
 			assertSchemaRootRefsResolve(t, root, root)

@@ -18,38 +18,23 @@ import (
 
 const (
 	ToolReleaseCreate         = "release_create"
-	ToolReleaseSettingsGet    = "release_settings_get"
 	ToolReleaseSettingsUpdate = "release_settings_update"
-	ToolReleasePublish        = "release_publish"
-	ToolReleaseUnpublish      = "release_unpublish"
-	ToolReleaseDelete         = "release_delete"
 	ToolReleaseArtworkSet     = "release_artwork_set"
 	ToolReleaseArtworkRemove  = "release_artwork_remove"
-	ToolReleaseSlugCheck      = "release_slug_check"
 )
 
 var releaseManagementTools = toolRegistry[ReleaseManagementTools]{
 	defineTool(oauthTool(ToolReleaseCreate, "Create Release", "Create a draft Release with an empty typed document in the explicit source locale. Use document_read before adding body text with document_apply. Edit the locale-owned title with document_metadata_update. Resolve related artist, label, genre, style, format, and credit references before using the Release relation tools.", releaseCreateInputJSONSchema, releaseSettingsOutputJSONSchema, false, false), (*ReleaseManagementTools).create),
-	defineTool(oauthTool(ToolReleaseSettingsGet, "Get Release settings", "Read authorized Release root settings and its current content document revision without returning the body or media delivery URLs. Use document_read for localized title and body editing, and release_relations_get for relation observations.", contentIDInputJSONSchema, releaseSettingsOutputJSONSchema, true, false), (*ReleaseManagementTools).getSettings),
 	defineTool(oauthTool(ToolReleaseSettingsUpdate, "Update Release settings", "Update Release slug, type, catalog number, release date, or streaming URLs through the existing Release service. Read the locale-owned title with document_read and edit it with document_metadata_update using the exact current revision. Use Release relation tools for relations. The content document revision is not a settings compare-and-set token.", releaseSettingsUpdateInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).updateSettings),
-	defineTool(oauthTool(ToolReleasePublish, "Publish Release", "Publish a draft Release through the existing lifecycle. Publishing an already published Release returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
-	defineTool(oauthTool(ToolReleaseUnpublish, "Unpublish Release", "Move a published Release back to draft through the existing lifecycle. A Release already in draft returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
-	defineTool(oauthTool(ToolReleaseDelete, "Delete Release", "Permanently delete a Release and its owned state when allowed by the existing Release service.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
 	defineTool(oauthTool(ToolReleaseArtworkSet, "Set Release artwork", "Reuse an existing attachable File as Release artwork through the existing Release service. Resolve file_id with file_list. This changes the artwork relation without uploading or deleting File bytes. success reports an accepted native operation; it does not distinguish a changed relation from an existing attachment.", releaseArtworkSetInputJSONSchema, releaseArtworkOutputJSONSchema, false, true), (*ReleaseManagementTools).setArtwork),
 	defineTool(oauthTool(ToolReleaseArtworkRemove, "Remove Release artwork", "Remove the Release artwork relation through the existing Release service without deleting File bytes. success also covers an already absent artwork relation.", contentIDInputJSONSchema, releaseArtworkOutputJSONSchema, false, true), (*ReleaseManagementTools).removeArtwork),
-	defineTool(oauthTool(ToolReleaseSlugCheck, "Check Release slug", "Check Release route availability through the existing authorized service. Supply exclude_document_id when checking the current Release's slug. Availability is advisory; creation or update checks again when writing.", releaseSlugCheckInputJSONSchema, releaseSlugCheckOutputJSONSchema, true, false), (*ReleaseManagementTools).checkSlug),
 }
 
 type ReleaseManagementApplication interface {
-	GetRelease(context.Context, releasedomain.GetReleaseQuery) (releasedomain.View, error)
 	CreateRelease(context.Context, releasedomain.CreateReleaseCommand) (releasedomain.View, error)
 	UpdateRelease(context.Context, releasedomain.UpdateReleaseCommand) (releasedomain.ReleaseUpdate, error)
-	PublishRelease(context.Context, releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error)
-	UnpublishRelease(context.Context, releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error)
-	DeleteRelease(context.Context, releasedomain.DeleteReleaseCommand) error
 	SetReleaseArtwork(context.Context, releasedomain.SetReleaseArtworkCommand) (*mediaasset.Reference, error)
 	DeleteReleaseArtwork(context.Context, releasedomain.DeleteReleaseArtworkCommand) error
-	CheckReleaseSlugAvailable(context.Context, releasedomain.CheckReleaseSlugQuery) (bool, error)
 }
 
 type ReleaseManagementTools struct {
@@ -99,7 +84,7 @@ func (tools *ReleaseManagementTools) create(ctx context.Context, _ string, call 
 	if strings.TrimSpace(input.Title) == "" {
 		return executionError(errors.New("title is required"))
 	}
-	if err := validateCompactLocale(core.Locale(input.SourceLocale)); err != nil {
+	if err := validateLocaleCode(core.Locale(input.SourceLocale)); err != nil {
 		return executionError(fmt.Errorf("source_locale: %w", err))
 	}
 	releaseType, err := parseReleaseType(input.Type)
@@ -121,21 +106,6 @@ func (tools *ReleaseManagementTools) create(ctx context.Context, _ string, call 
 	output := releaseSettingsOutput(releasedomain.ReleaseMessage(created))
 	output["changed"] = true
 	return contentResult(output)
-}
-
-func (tools *ReleaseManagementTools) getSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
-	var input contentIDArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("document_id", input.DocumentID); err != nil {
-		return executionError(err)
-	}
-	release, err := tools.application.GetRelease(ctx, releasedomain.GetReleaseQuery{ID: input.DocumentID})
-	if err != nil {
-		return expectedToolError(err)
-	}
-	return contentResult(releaseSettingsOutput(releasedomain.ReleaseMessage(release)))
 }
 
 type releaseSettingsArguments struct {
@@ -201,40 +171,6 @@ func (tools *ReleaseManagementTools) updateSettings(ctx context.Context, _ strin
 	return contentResult(output)
 }
 
-func (tools *ReleaseManagementTools) mutateLifecycle(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
-	var input contentIDArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("document_id", input.DocumentID); err != nil {
-		return executionError(err)
-	}
-	if name == ToolReleaseDelete {
-		if err := tools.application.DeleteRelease(ctx, releasedomain.DeleteReleaseCommand{ID: input.DocumentID}); err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "changed": true, "deleted": true})
-	}
-	var change releasedomain.LifecycleChange
-	var err error
-	if name == ToolReleasePublish {
-		change, err = tools.application.PublishRelease(ctx, releasedomain.PublishReleaseCommand{ID: input.DocumentID})
-	} else {
-		change, err = tools.application.UnpublishRelease(ctx, releasedomain.UnpublishReleaseCommand{ID: input.DocumentID})
-	}
-	if err != nil {
-		return expectedToolError(err)
-	}
-	output := map[string]any{
-		"document_type": "release", "document_id": change.ID, "changed": change.Changed,
-		"status": contentStatus(string(change.Status), "RELEASE_STATUS_"), "updated_at": timestampString(timestamppb.New(change.UpdatedAt)),
-	}
-	if change.PublishedAt != nil {
-		output["published_at"] = timestampString(timestamppb.New(*change.PublishedAt))
-	}
-	return contentResult(output)
-}
-
 type releaseArtworkArguments struct {
 	DocumentID string `json:"document_id"`
 	FileID     string `json:"file_id"`
@@ -274,36 +210,6 @@ func (tools *ReleaseManagementTools) removeArtwork(ctx context.Context, _ string
 		return expectedToolError(err)
 	}
 	return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "success": true})
-}
-
-type releaseSlugArguments struct {
-	Slug              string  `json:"slug"`
-	ExcludeDocumentID *string `json:"exclude_document_id,omitempty"`
-}
-
-func (tools *ReleaseManagementTools) checkSlug(ctx context.Context, _ string, call toolCall[releaseSlugArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	var input releaseSlugArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if _, supplied := arguments["slug"]; !supplied {
-		return executionError(errors.New("slug is required"))
-	}
-	if err := rejectNullArguments(arguments, "slug", "exclude_document_id"); err != nil {
-		return executionError(err)
-	}
-	if input.ExcludeDocumentID != nil {
-		if err := validateUUID("exclude_document_id", *input.ExcludeDocumentID); err != nil {
-			return executionError(err)
-		}
-	}
-	available, err := tools.application.CheckReleaseSlugAvailable(ctx, releasedomain.CheckReleaseSlugQuery{Slug: input.Slug, ExcludeReleaseID: input.ExcludeDocumentID})
-	if err != nil {
-		return expectedToolError(err)
-	}
-	return contentResult(map[string]any{"document_type": "release", "slug": input.Slug, "available": available})
 }
 
 func parseReleaseType(value string) (releasedomain.Type, error) {

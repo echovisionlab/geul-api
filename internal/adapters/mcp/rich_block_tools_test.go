@@ -254,7 +254,7 @@ func TestPageCatalogExposesEnumsBoundsIdentityAndParentKinds(t *testing.T) {
 	document := documentCatalogFixture()
 	document.Catalog = codec.Catalog()
 	document.Nodes = nil
-	result, err := mustDocumentCatalogTools(t, &documentCatalogPort{document: document}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"p":"page","d":"44444444-4444-4444-8444-444444444444","l":"ko"}`))
+	result, err := mustDocumentCatalogTools(t, &documentCatalogPort{document: document}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"document_type":"page","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestPageCatalogExposesEnumsBoundsIdentityAndParentKinds(t *testing.T) {
 		fields[field["block_kind"].(string)+"/"+field["field"].(string)] = field
 	}
 	levels := fields["heading/level"]["enum_values"].([]any)
-	if len(levels) != 3 || levels[0] != float64(1) || levels[2] != float64(3) || fields["heading/level"]["kind"] != "n" {
+	if len(levels) != 3 || levels[0] != float64(1) || levels[2] != float64(3) || fields["heading/level"]["kind"] != "number" {
 		t.Fatalf("heading levels=%v", levels)
 	}
 	table := fields["table/table"]

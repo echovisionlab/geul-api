@@ -16,31 +16,19 @@ import (
 
 const (
 	ToolProgramEventCreate         = "program_event_create"
-	ToolProgramEventSettingsGet    = "program_event_settings_get"
 	ToolProgramEventSettingsUpdate = "program_event_settings_update"
-	ToolProgramEventPublish        = "program_event_publish"
-	ToolProgramEventArchive        = "program_event_archive"
-	ToolProgramEventDelete         = "program_event_delete"
 )
 
 var programEventManagementTools = toolRegistry[ProgramEventManagementTools]{
-	defineTool(oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with program_event_type_list and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_paragraph_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false), (*ProgramEventManagementTools).create),
-	defineTool(oauthTool(ToolProgramEventSettingsGet, "Get Program Event settings", "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_read; use their exact revisions for document edits.", contentIDInputJSONSchema, programEventSettingsOutputJSONSchema, true, false), (*ProgramEventManagementTools).getSettings),
-	defineTool(oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from program_event_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).updateSettings),
-	defineTool(oauthTool(ToolProgramEventPublish, "Publish Program Event", "Publish a draft event or restore an archived event using the existing event lifecycle. Restoring an archived event preserves its original publication date.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
-	defineTool(oauthTool(ToolProgramEventArchive, "Archive Program Event", "Move a published event to archived using the existing event lifecycle. This does not move the event to draft; program_event_publish restores an archived event.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
-	defineTool(oauthTool(ToolProgramEventDelete, "Delete Program Event", "Permanently delete an event when permitted by the existing event service and its current lifecycle.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with reference_search with reference_type=program_event_type and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_block_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false), (*ProgramEventManagementTools).create),
+	defineTool(oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from document_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).updateSettings),
 }
 
 // ProgramEventManagementApplication is the Program Event use cases the
 // management tools call; authorization and audit stay in programevent.Service.
 type ProgramEventManagementApplication interface {
-	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (programevent.EventView, error)
 	CreateProgramEvent(context.Context, programevent.CreateProgramEventCommand) (programevent.EventView, error)
 	UpdateProgramEvent(context.Context, programevent.UpdateProgramEventCommand) (programevent.EventUpdate, error)
-	PublishProgramEvent(context.Context, programevent.PublishProgramEventCommand) (programevent.LifecycleChange, error)
-	ArchiveProgramEvent(context.Context, programevent.ArchiveProgramEventCommand) (programevent.LifecycleChange, error)
-	DeleteProgramEvent(context.Context, programevent.DeleteProgramEventCommand) error
 }
 
 type ProgramEventManagementTools struct {
@@ -137,21 +125,6 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, _ string, 
 	output := programEventSettingsOutput(programevent.EventMessage(created))
 	output["changed"] = true
 	return contentResult(output)
-}
-
-func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
-	var input contentIDArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("document_id", input.DocumentID); err != nil {
-		return executionError(err)
-	}
-	event, err := tools.application.GetProgramEvent(ctx, programevent.GetProgramEventQuery{ID: input.DocumentID})
-	if err != nil {
-		return expectedToolError(err)
-	}
-	return contentResult(programEventSettingsOutput(programevent.EventMessage(event)))
 }
 
 type programEventSettingsArguments struct {
@@ -295,41 +268,6 @@ func containsNil[Row any](rows *[]*Row) bool {
 		}
 	}
 	return false
-}
-
-func (tools *ProgramEventManagementTools) mutateLifecycle(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
-	var input contentIDArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("document_id", input.DocumentID); err != nil {
-		return executionError(err)
-	}
-	if name == ToolProgramEventDelete {
-		if err := tools.application.DeleteProgramEvent(ctx, programevent.DeleteProgramEventCommand{ID: input.DocumentID}); err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"document_type": "program_event", "document_id": input.DocumentID, "changed": true, "deleted": true})
-	}
-	var change programevent.LifecycleChange
-	var err error
-	if name == ToolProgramEventPublish {
-		change, err = tools.application.PublishProgramEvent(ctx, programevent.PublishProgramEventCommand{ID: input.DocumentID})
-	} else {
-		change, err = tools.application.ArchiveProgramEvent(ctx, programevent.ArchiveProgramEventCommand{ID: input.DocumentID})
-	}
-	if err != nil {
-		return expectedToolError(err)
-	}
-	var publishedAt *timestamppb.Timestamp
-	if change.PublishedAt != nil {
-		publishedAt = timestamppb.New(*change.PublishedAt)
-	}
-	return contentResult(map[string]any{
-		"document_type": "program_event", "document_id": change.ID, "changed": change.Changed,
-		"status":       contentStatus(string(change.Status), "PROGRAM_EVENT_STATUS_"),
-		"published_at": optionalProgramEventTimestamp(publishedAt), "updated_at": timestampString(timestamppb.New(change.UpdatedAt)),
-	})
 }
 
 func parseProgramEventTimestamp(field, value string) (*time.Time, error) {

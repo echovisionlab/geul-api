@@ -154,8 +154,10 @@ type registeredContentSupport struct {
 	legalPolicies       *legal.Service
 	mapTheme            *maptheme.Service
 	emailAuthoringUnits mutation.UnitOfWork[emailauthoring.Store]
+	emailAuthoring      *emailauthoring.Service
 	mailAdapters        *emaildelivery.Service
 	campaignUnits       campaign.Units
+	campaigns           *campaign.Service
 	siteSettings        *sitesettings.Service
 	memberCriteria      *membercriteria.Service
 	oauthApps           *oauthapp.Service
@@ -191,7 +193,7 @@ func (c contentApplicationRegistration) registerSupport(postComposition register
 		return registeredContentSupport{}, err
 	}
 
-	emailAuthoringUnits, err := r.registerEmailAuthoring(collaborationRuntime, emailAuthoringReferences)
+	emailAuthoringUnits, emailAuthoringService, err := r.registerEmailAuthoring(collaborationRuntime, emailAuthoringReferences)
 	if err != nil {
 		return registeredContentSupport{}, err
 	}
@@ -205,7 +207,7 @@ func (c contentApplicationRegistration) registerSupport(postComposition register
 		return registeredContentSupport{}, err
 	}
 
-	campaignUnits, err := r.registerCampaign(collaborationRuntime)
+	campaignUnits, campaignService, err := r.registerCampaign(collaborationRuntime)
 	if err != nil {
 		return registeredContentSupport{}, err
 	}
@@ -218,7 +220,7 @@ func (c contentApplicationRegistration) registerSupport(postComposition register
 	return registeredContentSupport{
 		series: seriesService, legalUnits: legalUnits, legalPolicies: legalPolicyService,
 		mapTheme: mapThemeService, emailAuthoringUnits: emailAuthoringUnits, mailAdapters: mailAdapterService,
-		campaignUnits: campaignUnits, siteSettings: administration.siteSettings,
+		campaignUnits: campaignUnits, campaigns: campaignService, emailAuthoring: emailAuthoringService, siteSettings: administration.siteSettings,
 		memberCriteria: administration.memberCriteria, oauthApps: administration.oauthApps,
 	}, nil
 }
@@ -257,30 +259,33 @@ func (c contentApplicationRegistration) registerAIDocumentApplications(music reg
 		legal:          internal.legalDocuments,
 		series:         support.series,
 	}, contentMCPApplications{
-		legalPolicies: support.legalPolicies,
-		categories:    music.references,
-		tags:          music.references,
-		clients:       music.references,
-		mapPlaces:     music.references,
-		members:       members,
-		artists:       music.artist,
-		files:         c.files,
-		eventTypes:    documents.programEvent,
-		eventSeries:   documents.programEvent,
-		labels:        music.label,
-		genres:        music.references,
-		styles:        music.references,
-		formats:       music.references,
-		forms:         documents.form,
-		postSeries:    support.series,
-		tracks:        music.release,
-		mapThemes:     support.mapTheme,
-		menus:         documents.menu,
-		menuSettings:  support.siteSettings,
-		siteSettings:  support.siteSettings,
-		mailAdapters:  support.mailAdapters,
-		oauthApps:     support.oauthApps,
-		criteria:      support.memberCriteria,
+		legalPolicies:    support.legalPolicies,
+		campaigns:        support.campaigns,
+		emailTemplates:   support.emailAuthoring,
+		emailLayoutLists: support.emailAuthoring,
+		categories:       music.references,
+		tags:             music.references,
+		clients:          music.references,
+		mapPlaces:        music.references,
+		members:          members,
+		artists:          music.artist,
+		files:            c.files,
+		eventTypes:       documents.programEvent,
+		eventSeries:      documents.programEvent,
+		labels:           music.label,
+		genres:           music.references,
+		styles:           music.references,
+		formats:          music.references,
+		forms:            documents.form,
+		postSeries:       support.series,
+		tracks:           music.release,
+		mapThemes:        support.mapTheme,
+		menus:            documents.menu,
+		menuSettings:     support.siteSettings,
+		siteSettings:     support.siteSettings,
+		mailAdapters:     support.mailAdapters,
+		oauthApps:        support.oauthApps,
+		criteria:         support.memberCriteria,
 	}, translations, c.files)
 }
 

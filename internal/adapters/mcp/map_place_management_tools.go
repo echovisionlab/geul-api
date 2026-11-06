@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -125,12 +126,18 @@ func (tools *MapPlaceManagementTools) listPlaces(ctx context.Context, _ string, 
 	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	pagination, err := (programEventReferenceListArguments{Limit: input.Limit, Offset: input.Offset}).pagination()
-	if err != nil {
-		return executionError(err)
+	limit := referenceSearchDefaultLimit
+	if input.Limit != nil {
+		limit = *input.Limit
+	}
+	if limit < 1 || limit > referenceSearchMaximumLimit {
+		return executionError(fmt.Errorf("limit must be between 1 and %d", referenceSearchMaximumLimit))
+	}
+	if input.Offset < 0 {
+		return executionError(fmt.Errorf("offset must be between 0 and %d", documentListMaxOffset))
 	}
 	listed, err := tools.application.ListMapPlacesAdmin(ctx, referencecatalog.ListMapPlacesAdminQuery{
-		Filters: discoverySearchFilters(input.Query), Limit: pagination.GetLimit(), Offset: pagination.GetOffset(),
+		Filters: discoverySearchFilters(input.Query), Limit: limit, Offset: input.Offset,
 	})
 	if err != nil {
 		return expectedToolError(err)

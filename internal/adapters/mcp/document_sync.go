@@ -74,8 +74,8 @@ func mutationSyncResult(request core.ApplyRequest, conflict *core.Conflict) (mcp
 	}
 	// Reread only the existing blocks the edit targeted; a batch that only
 	// inserts blocks needs the outline to find its parents again.
-	recipe := readArguments{Profile: request.Profile, Document: request.Document, Locale: request.Locale, Mode: core.ReadOutline, Limit: defaultOutlineReadLimit}
-	if blocks := core.ExistingTargetBlocks(request.Operations); len(blocks) > 0 && len(blocks) <= defaultOutlineReadLimit {
+	recipe := readArguments{DocumentType: request.Profile, DocumentID: request.Document, Locale: request.Locale, Mode: core.ReadOutline, Limit: core.DefaultOutlineReadLimit}
+	if blocks := core.ExistingTargetBlocks(request.Operations); len(blocks) > 0 && len(blocks) <= core.DefaultOutlineReadLimit {
 		recipe.Mode, recipe.Blocks, recipe.Limit = core.ReadBlocks, blocks, len(blocks)
 	}
 	return syncRequiredResult(reason, conflict.CurrentDocumentRevision, conflict.CurrentTargetRevision, conflict.AffectedHandles, recipe, false)

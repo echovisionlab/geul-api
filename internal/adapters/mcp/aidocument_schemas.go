@@ -2,44 +2,10 @@ package mcp
 
 const domainJSONSchema = `{"enum":["post","page","work","program_event","release","artist","label","menu","email_template","email_layout","campaign","form","privacy","terms","post_series"]}`
 
+// plainLocaleJSONSchema is a locale code where its property's name says enough.
+const plainLocaleJSONSchema = `{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"}`
+
 const documentReferenceJSONSchema = `{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Canonical document UUID returned by document_list or another authenticated document surface; never a slug or URL."}`
-
-const documentListInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["p"],
-  "properties":{
-    "p":{"enum":["post","work","page","program_event","release","artist"],"description":"The discoverable DCDP document domain."},
-    "q":{"type":"string","maxLength":200,"description":"Optional case-insensitive source-title substring, or Artist source-name or real-name substring."},
-    "limit":{"type":"integer","minimum":1,"maximum":50,"default":20},
-    "offset":{"type":"integer","minimum":0,"maximum":2147483647,"default":0}
-  }
-}`
-
-const documentListOutputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["documents","total","next_offset"],
-  "properties":{
-    "documents":{"type":"array","items":{
-      "type":"object","additionalProperties":false,
-      "required":["p","d","title","source_locale","status","updated_at"],
-      "properties":{
-        "p":{"enum":["post","work","page","program_event","release","artist"]},
-        "d":` + uuidJSONSchema + `,
-        "title":{"type":"string"},
-        "slug":{"type":"string"},
-        "source_locale":{"type":"string","minLength":1,"maxLength":35},
-        "status":{"type":"string","minLength":1},
-        "updated_at":{"type":"string","format":"date-time"},
-        "configuration_revision":{"type":"string","format":"uuid","description":"Post settings revision for post_settings_update. Separate from the content document revision."}
-      },
-      "allOf":[{"if":{"properties":{"p":{"const":"post"}},"required":["p"]},"then":{"required":["configuration_revision"]}}]
-    }},
-    "total":{"type":"integer","minimum":0},
-    "next_offset":{"type":["integer","null"],"minimum":0}
-  }
-}`
 
 const documentMetadataUpdateInputJSONSchema = `{
   "type":"object",
@@ -48,7 +14,7 @@ const documentMetadataUpdateInputJSONSchema = `{
   "properties":{
     "document_type":{"enum":["post","work","page","program_event","release","terms","privacy"]},
     "document_id":` + documentReferenceJSONSchema + `,
-    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
+    "locale":` + plainLocaleJSONSchema + `,
     "expected_document_revision":{"type":"string","minLength":1,"maxLength":256},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256},
     "title":{"type":"string"},
@@ -60,83 +26,103 @@ const documentMetadataUpdateInputJSONSchema = `{
   }
 }`
 
-const openInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["p","d","l"],
-  "properties":{
-    "p":` + domainJSONSchema + `,
-    "d":` + documentReferenceJSONSchema + `,
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"}
-  }
-}`
+// documentEnvelopeOutputProperties is what every document read returns about
+// the document itself.
+const documentEnvelopeOutputProperties = `
+    "document_type":` + domainJSONSchema + `,
+    "catalog_fingerprint":{"type":"string","minLength":1,"maxLength":256},
+    "document_id":` + uuidJSONSchema + `,
+    "document_revision":{"type":"string","minLength":1,"maxLength":256},
+    "target_revision":{"type":"string","minLength":1,"maxLength":256},
+    "source_locale":` + plainLocaleJSONSchema + `,
+    "locale":` + plainLocaleJSONSchema + `,
+    "locale_role":{"enum":["source","non_source"]},
+    "locale_exists":{"type":"boolean"}`
 
-const openOutputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["v","p","c","d","dr","s","l","lr","le"],
-  "properties":{
-    "v":{"const":"dcdp/1"},
-    "p":` + domainJSONSchema + `,
-    "c":{"type":"string","minLength":1,"maxLength":256},
-    "d":` + uuidJSONSchema + `,
-    "dr":{"type":"string","minLength":1,"maxLength":256},
-    "tr":{"type":"string","minLength":1,"maxLength":256},
-    "s":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "lr":{"enum":["source","non_source"]},
-    "le":{"type":"boolean"}
-  }
-}`
+const readFieldSelectionJSONSchema = `{"type":"object","additionalProperties":false,"required":["block_id","field"],"properties":{
+  "block_id":{"type":"string","minLength":1,"maxLength":160},
+  "relation_id":{"type":"string","minLength":1,"maxLength":120,"description":"With item_id, reads a relation item's field."},
+  "item_id":{"type":"string","minLength":1,"maxLength":160},
+  "field":{"type":"string","minLength":1,"maxLength":120}
+}}`
 
 const readInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["p","d","l","m"],
+  "required":["document_type","document_id","locale","mode"],
   "properties":{
-    "p":` + domainJSONSchema + `,
-    "d":` + documentReferenceJSONSchema + `,
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "m":{"enum":["outline","blocks","fields"]},
-    "b":{"type":"array","maxItems":256,"description":"Required and non-empty for blocks mode; omit in outline and fields modes.","items":{"type":"string","minLength":1,"maxLength":160}},
-    "f":{"type":"array","maxItems":256,"description":"Required and non-empty for fields mode; omit in outline and blocks modes.","items":{"oneOf":[
-      {"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"string"},{"type":"string"}],"items":false,"minItems":4,"maxItems":4}
-    ]}},
-    "n":{"type":"integer","minimum":0,"maximum":256},
-    "c":{"type":"string","maxLength":4096},
-    "q":{"type":"string","minLength":1,"maxLength":200,"description":"Outline only: list just the blocks whose text in this locale contains q, ignoring case and spacing; each preview shows the text around the match."}
+    "document_type":` + domainJSONSchema + `,
+    "document_id":` + documentReferenceJSONSchema + `,
+    "locale":` + plainLocaleJSONSchema + `,
+    "mode":{"enum":["metadata","outline","blocks","fields"],"description":"metadata: revisions and locale state only. outline: every block with a preview. blocks: full values of block_ids. fields: only the selected fields."},
+    "block_ids":{"type":"array","maxItems":256,"description":"Required and non-empty for blocks mode; omit in outline and fields modes.","items":{"type":"string","minLength":1,"maxLength":160}},
+    "fields":{"type":"array","maxItems":256,"description":"Required and non-empty for fields mode; omit in outline and blocks modes.","items":` + readFieldSelectionJSONSchema + `},
+    "limit":{"type":"integer","minimum":0,"maximum":256},
+    "cursor":{"type":"string","maxLength":4096,"description":"next_cursor from the previous page."},
+    "query":{"type":"string","minLength":1,"maxLength":200,"description":"Outline only: list just the blocks whose text in this locale contains query, ignoring case, with runs of spaces counting as one; each preview shows the text around the match."}
   }
 }`
 
-// Advertise compact inputs as homogeneous arrays for connector compatibility.
-// The server decoder enforces each tag's exact positions, length, and types.
+// documentValueDefinitions are the value shapes operations write and reads
+// return. Each alternative is an object told apart by its type, which connectors
+// project cleanly.
+const documentValueDefinitions = `
+    "inlineItem":{"description":"One piece of rich text, told apart by type.","anyOf":[
+      {"type":"object","additionalProperties":false,"required":["type","text"],"properties":{"type":{"const":"text"},"text":{"type":"string"}}},
+      {"type":"object","additionalProperties":false,"required":["type","content"],"properties":{"type":{"enum":["bold","italic","underline","strike","code"]},"content":{"type":"array","items":{"$ref":"#/$defs/inlineItem"}}}},
+      {"type":"object","additionalProperties":false,"required":["type","color","content"],"properties":{"type":{"enum":["text_color","background_color"]},"color":{"type":"string","minLength":1,"maxLength":64},"content":{"type":"array","items":{"$ref":"#/$defs/inlineItem"}}}},
+      {"type":"object","additionalProperties":false,"required":["type","url","content"],"properties":{"type":{"const":"link"},"url":{"type":"string","minLength":1,"maxLength":2048},"content":{"type":"array","items":{"$ref":"#/$defs/inlineItem"}}}},
+      {"type":"object","additionalProperties":false,"required":["type"],"properties":{"type":{"const":"hard_break"}}},
+      {"type":"object","additionalProperties":false,"required":["type","key"],"properties":{"type":{"const":"site_variable"},"key":{"enum":["site.title","site.url","site.companyName","contact.legalEmail","contact.email"]},"linked":{"const":true,"description":"Only site.url and contact.* may be linked."}}},
+      {"type":"object","additionalProperties":false,"required":["type","expression"],"properties":{"type":{"const":"math"},"expression":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["type","handle"],"properties":{"type":{"const":"placeholder"},"handle":{"type":"string","minLength":1,"maxLength":160}}}
+    ]},
+    "value":{"description":"A typed field value. document_catalog names the type each field takes.","anyOf":[
+      {"type":"object","additionalProperties":false,"required":["type","text"],"properties":{"type":{"const":"text"},"text":{"type":"string"}}},
+      {"type":"object","additionalProperties":false,"required":["type","number"],"properties":{"type":{"const":"number"},"number":{"type":"string","minLength":1,"description":"Canonical decimal string."}}},
+      {"type":"object","additionalProperties":false,"required":["type","boolean"],"properties":{"type":{"const":"boolean"},"boolean":{"type":"boolean"}}},
+      {"type":"object","additionalProperties":false,"required":["type","content"],"properties":{"type":{"const":"rich_text"},"content":{"type":"array","items":{"$ref":"#/$defs/inlineItem"}}}},
+      {"type":"object","additionalProperties":false,"required":["type","items"],"properties":{"type":{"const":"list"},"items":{"type":"array","items":{"$ref":"#/$defs/listItem"}}}},
+      {"type":"object","additionalProperties":false,"required":["type","fields"],"properties":{"type":{"const":"object"},"fields":{"type":"array","items":{"$ref":"#/$defs/namedField"}}}}
+    ]},
+    "listItem":{"type":"object","additionalProperties":false,"required":["value"],"properties":{"item_id":{"type":"string","minLength":1,"maxLength":160,"description":"Stable item handle; leave out on every item of a positional list."},"value":{"$ref":"#/$defs/value"}}},
+    "namedField":{"type":"object","additionalProperties":false,"required":["field","value"],"properties":{"field":{"type":"string","minLength":1,"maxLength":120},"value":{"$ref":"#/$defs/value"}}},
+    "fieldPathSegment":{"type":"object","additionalProperties":false,"description":"One step into a nested value: exactly one of field and item_id.","properties":{"field":{"type":"string","minLength":1,"maxLength":120},"item_id":{"type":"string","minLength":1,"maxLength":160}}}`
+
+// fieldAddressProperties addresses a field: on a block, or with relation_id and
+// item_id on a relation item, and with path inside a nested value.
+const fieldAddressProperties = `"block_id":{"type":"string","minLength":1,"maxLength":160},"relation_id":{"type":"string","minLength":1,"maxLength":120},"item_id":{"type":"string","minLength":1,"maxLength":160},"field":{"type":"string","minLength":1,"maxLength":120},"path":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/fieldPathSegment"}}`
+
+const blockHandleProperty = `{"type":"string","minLength":1,"maxLength":160}`
+
 const mutationInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["v","p","d","l","edr","o"],
+  "required":["document_type","document_id","locale","expected_document_revision","operations"],
   "properties":{
-    "v":{"const":"dcdp/1"},
-    "p":` + domainJSONSchema + `,
-    "d":` + documentReferenceJSONSchema + `,
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "edr":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
-    "etr":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision tr returned for a non-source locale; omit when tr was not returned."},
-    "o":{"type":"array","minItems":1,"maxItems":100,"description":"Typed DCDP operations for advanced batches. For ordinary plain-text paragraph writes, use the focused paragraph tools. A prior document_validate dry run is optional.","items":{"$ref":"#/$defs/operation"}}
+    "document_type":` + domainJSONSchema + `,
+    "document_id":` + documentReferenceJSONSchema + `,
+    "locale":` + plainLocaleJSONSchema + `,
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"document_revision from your latest document_read or the previous edit."},
+    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target_revision returned for a non-source locale; omit when none was returned."},
+    "operations":{"type":"array","minItems":1,"maxItems":100,"description":"Operations applied together: all or none. To change words, links or marks use document_text_replace or document_text_format instead.","items":{"$ref":"#/$defs/operation"}},
+    "dry_run":{"type":"boolean","default":false,"description":"Check the operations and return them normalized, changing nothing."}
   },
-  "$defs":{
-    "operation":{
-      "type":"array","minItems":1,"maxItems":7,"items":{"$ref":"#/$defs/compactPayload"},
-      "description":"One compact typed mutation. Preserve the following exact tag, positions, length, and types; the server decoder validates them. Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text use field content and value [\"i\",[[\"t\",text]]]. Unset field: [\"fu\",fieldTarget]. Insert block: [\"bi\",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]; set content with fs in the same batch. Delete block: [\"bd\",blockHandle]. Move block: [\"bm\",blockHandle,parentBlockHandle,afterBlockHandle]. Replace block kind: [\"bk\",blockHandle,newBlockKind]. Insert relation item: [\"ri\",blockHandle,relationHandle,newItemHandle,itemKind,afterItemHandle]. Delete relation item: [\"rd\",blockHandle,relationHandle,itemHandle]. Move relation item: [\"rm\",sourceBlockHandle,sourceRelationHandle,itemHandle,targetBlockHandle,targetRelationHandle,afterItemHandle]. Attach verified File: [\"fa\",fieldTarget,fileHandle]. Detach File: [\"fd\",fieldTarget]. Translation lifecycle: [\"lc\"] creates the requested non-source translation; [\"ld\"] deletes it. Either must be the only operation in its batch. Use stable handles from document_read and new unique stable handles for inserted blocks/items. Page rich blocks require a rich-text section parent. Heading level uses [\"n\",\"1\"], [\"n\",\"2\"], or [\"n\",\"3\"]. A table needs bi plus fs table (shared rows/cells with UUID id fields equal to their handles and header flags) and fs tableContent (locale rows/cells with inline content) in one batch. Pages forbid inline math. See document_catalog for kinds and field shapes. Use the empty string when no parent, predecessor, relation, or relation item applies."
-    },
-    "compactPayload":{
-      "description":"Compact wire payloads use strings, booleans, and nested arrays. Field target: [block,\"\",\"\",field] for a block field or [block,relation,item,field] for a relation-item field; an optional fifth item is a nested field path of [\"f\",field] or [\"i\",stableItemHandle] segments. Typed values: [\"t\",text], [\"b\",boolean], [\"n\",canonical-number-string], [\"i\",inline-items], [\"l\",[[optionalStableItemHandle,typedValue],...]], or [\"o\",[[field,typedValue],...]]. Inline items: [\"t\",text], [mark,inline-items] where mark is b/em/u/s/code, [colorMark,color,inline-items] where colorMark is fg/bg, [\"a\",URL,inline-items], [\"br\"], [\"math\",expression], or [\"ph\",placeholderHandle], [\"siteVariable\",key] or [\"siteVariable\",key,true]. Site variable keys are site.title, site.url, site.companyName, contact.legalEmail, contact.email. Only site.url/contact.* may be linked. Do not send untagged field scalars, null, objects, or native JSON numbers; numeric values use canonical decimal strings. The server decoder validates all tag-specific slot constraints.",
-      "anyOf":[
-        {"type":"string"},
-        {"type":"boolean"},
-        {"type":"array","items":{"$ref":"#/$defs/compactPayload"}}
-      ]
-    }
+  "$defs":{` + documentValueDefinitions + `,
+    "operation":{"description":"One mutation, told apart by op. Use handles from document_read, and new unique handles for inserted blocks and items. A Page's rich blocks need a rich-text section as parent; heading level is a text value. See document_catalog for block kinds and field types.","anyOf":[
+      {"type":"object","additionalProperties":false,"required":["op","block_id","field","value"],"properties":{"op":{"const":"set_field"},` + fieldAddressProperties + `,"value":{"$ref":"#/$defs/value"}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","field"],"properties":{"op":{"const":"unset_field"},` + fieldAddressProperties + `}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","kind"],"description":"Set its content with set_field in the same batch.","properties":{"op":{"const":"insert_block"},"block_id":` + blockHandleProperty + `,"kind":{"type":"string","minLength":1},"parent_block_id":` + blockHandleProperty + `,"after_block_id":` + blockHandleProperty + `}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id"],"properties":{"op":{"const":"delete_block"},"block_id":` + blockHandleProperty + `}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id"],"properties":{"op":{"const":"move_block"},"block_id":` + blockHandleProperty + `,"parent_block_id":` + blockHandleProperty + `,"after_block_id":` + blockHandleProperty + `}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","kind"],"properties":{"op":{"const":"replace_block_kind"},"block_id":` + blockHandleProperty + `,"kind":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","relation_id","item_id","kind"],"properties":{"op":{"const":"insert_relation_item"},"block_id":` + blockHandleProperty + `,"relation_id":{"type":"string","minLength":1},"item_id":{"type":"string","minLength":1},"kind":{"type":"string","minLength":1},"after_item_id":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","relation_id","item_id"],"properties":{"op":{"const":"delete_relation_item"},"block_id":` + blockHandleProperty + `,"relation_id":{"type":"string","minLength":1},"item_id":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","relation_id","item_id","target_block_id","target_relation_id"],"properties":{"op":{"const":"move_relation_item"},"block_id":` + blockHandleProperty + `,"relation_id":{"type":"string","minLength":1},"item_id":{"type":"string","minLength":1},"target_block_id":` + blockHandleProperty + `,"target_relation_id":{"type":"string","minLength":1},"after_item_id":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","field","file_id"],"description":"Attach a verified File.","properties":{"op":{"const":"attach_file"},` + fieldAddressProperties + `,"file_id":{"type":"string","minLength":1}}},
+      {"type":"object","additionalProperties":false,"required":["op","block_id","field"],"properties":{"op":{"const":"detach_file"},` + fieldAddressProperties + `}},
+      {"type":"object","additionalProperties":false,"required":["op"],"description":"Create or delete the requested non-source translation. Must be the only operation in its batch.","properties":{"op":{"enum":["create_translation","delete_translation"]}}}
+    ]}
   }
 }`
 
@@ -144,180 +130,82 @@ const validationOutputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
   "properties":{
-    "o":{"type":"array","items":{"type":"array"}},
-    "i":{"type":"array","items":{"type":"array","prefixItems":[
-      {"type":"integer","minimum":0},{"type":"string"},{"type":"string"},{"type":"string"}
-    ],"items":false,"minItems":4,"maxItems":4}},
-    "x":{"type":"array","prefixItems":[
-      {"enum":["document_revision_conflict","target_revision_conflict"]},{"type":"string"},{"type":["string","null"]},{"type":"array","items":{"type":"string"}}
-    ],"items":false,"minItems":4,"maxItems":4}
+    "operations":{"type":"array","description":"The normalized operations, ready to pass to document_apply.","items":{"type":"object"}},
+    "issues":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["operation_index","code","handle","message"],"properties":{
+      "operation_index":{"type":"integer","minimum":0},"code":{"type":"string"},"handle":{"type":"string"},"message":{"type":"string"}
+    }}},
+    "conflict":{"type":"object","additionalProperties":false,"required":["code","current_document_revision","current_target_revision","affected_handles"],"properties":{
+      "code":{"enum":["document_revision_conflict","target_revision_conflict"]},"current_document_revision":{"type":"string"},"current_target_revision":{"type":["string","null"]},"affected_handles":{"type":"array","items":{"type":"string"}}
+    }}
   }
 }`
+
+// acceptedChangesProperty lists what an accepted mutation did, operation by
+// operation.
+const acceptedChangesProperty = `"changes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["operation_index","op","affected_handles"],"properties":{
+      "operation_index":{"type":"integer","minimum":0},
+      "op":{"type":"string"},
+      "affected_handles":{"type":"array","items":{"type":"string"}}
+    }}}`
 
 const acceptedOutputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["dr","c"],
+  "required":["document_revision","changes"],
   "properties":{
-    "dr":{"type":"string","minLength":1,"maxLength":256},
-    "tr":{"type":"string","minLength":1,"maxLength":256},
-    "c":{"type":"array","items":{"type":"array","prefixItems":[
-      {"type":"integer","minimum":0},
-      {"enum":["fs","fu","bi","bd","bm","bk","ri","rd","rm","fa","fd","lc","ld"]},
-      {"type":"array","items":{"type":"string"}}
-    ],"items":false,"minItems":3,"maxItems":3}}
-  }
-}`
-
-const paragraphCreateInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["document_type","document_id","locale","text"],
-  "properties":{
-    "document_type":` + domainJSONSchema + `,
-    "document_id":` + documentReferenceJSONSchema + `,
-    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Optional here, because this only adds a block: omit it to use the current revision."},
-    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
-    "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle returned by document_read. Required for Page documents and must identify a rich-text section."},
-    "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert. Omit to insert at the beginning of the selected parent, or at the top level when parent_block_id is omitted."},
-    "text":{"type":"string","description":"Plain text for the new Paragraph Block."}
-  }
-}`
-
-const textReplaceInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["document_type","document_id","locale","find","replace"],
-  "properties":{
-    "document_type":` + domainJSONSchema + `,
-    "document_id":` + documentReferenceJSONSchema + `,
-    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Optional: find already guards this edit, so omit it to use the current revision. Pass it to refuse the edit if anything changed since your read."},
-    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
-    "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Optional Block handle to search in; omit to search the whole document."},
-    "find":{"type":"string","minLength":1,"maxLength":2000,"description":"Exact text to replace, copied from document_read; must occur exactly once and sit inside one formatted run."},
-    "replace":{"type":"string","maxLength":20000,"description":"Replacement text; empty deletes find. It takes the formatting of the run it replaces."}
-  }
-}`
-
-const paragraphUpdateInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["document_type","document_id","locale","expected_document_revision","block_id","text"],
-  "properties":{
-    "document_type":` + domainJSONSchema + `,
-    "document_id":` + documentReferenceJSONSchema + `,
-    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Locale to edit."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
-    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision for a non-source locale; omit when none was returned."},
-    "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing Paragraph Block handle returned by document_read."},
-    "text":{"type":"string","description":"Replacement plain text for the Paragraph Block."}
-  }
-}`
-
-const blockDeleteInputJSONSchema = `{
-  "type":"object",
-  "additionalProperties":false,
-  "required":["document_type","document_id","locale","expected_document_revision","block_id"],
-  "properties":{
-    "document_type":` + domainJSONSchema + `,
-    "document_id":` + documentReferenceJSONSchema + `,
-    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$","description":"Source locale whose structure is being edited."},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
-    "expected_target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Exact current target revision when one was returned."},
-    "block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing Block handle returned by document_read."}
+    "document_revision":{"type":"string","minLength":1,"maxLength":256},
+    "target_revision":{"type":"string","minLength":1,"maxLength":256},
+    ` + acceptedChangesProperty + `
   }
 }`
 
 const focusedMutationOutputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["dr","c"],
+  "required":["document_revision","changes"],
   "properties":{
-    "dr":{"type":"string","minLength":1,"maxLength":256,"description":"Current document revision after the operation; unchanged for target-only changes and semantic no-ops."},
-    "tr":{"type":"string","minLength":1,"maxLength":256,"description":"Current target revision after the operation for an existing non-source locale; unchanged for semantic no-ops."},
-    "block_id":{"type":"string","format":"uuid","description":"Canonical UUID assigned to the newly created Paragraph Block."},
-    "c":{"type":"array","items":{"type":"array","prefixItems":[
-      {"type":"integer","minimum":0},
-      {"enum":["fs","fu","bi","bd"]},
-      {"type":"array","items":{"type":"string"}}
-    ],"items":false,"minItems":3,"maxItems":3}}
+    "document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Current document revision after the operation; unchanged for target-only changes and semantic no-ops."},
+    "target_revision":{"type":"string","minLength":1,"maxLength":256,"description":"Current target revision after the operation for an existing non-source locale; unchanged for semantic no-ops."},
+    "block_id":{"type":"string","format":"uuid","description":"Canonical UUID assigned to the newly created Block."},
+    ` + acceptedChangesProperty + `
   }
 }`
 
 const projectionOutputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["v","p","c","d","dr","s","l","lr","le","m","n","next"],
-  "properties":{
-    "v":{"const":"dcdp/1"},
-    "p":` + domainJSONSchema + `,
-    "c":{"type":"string"},
-    "d":` + uuidJSONSchema + `,
-    "dr":{"type":"string"},
-    "tr":{"type":"string"},
-    "s":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "lr":{"enum":["source","non_source"]},
-    "le":{"type":"boolean"},
-    "m":{"enum":["outline","blocks","fields"]},
-    "q":{"type":"string"},
-    "n":{"type":["array","null"],"items":{"anyOf":[{"$ref":"#/$defs/node"},{"$ref":"#/$defs/outlineNode"}]}},
-    "next":{"type":["string","null"]}
+  "required":["document_type","catalog_fingerprint","document_id","document_revision","source_locale","locale","locale_role","locale_exists"],
+  "properties":{` + documentEnvelopeOutputProperties + `,
+    "mode":{"enum":["outline","blocks","fields"],"description":"Left out for mode=metadata, which returns no blocks."},
+    "query":{"type":"string"},
+    "blocks":{"type":["array","null"],"items":{"anyOf":[{"$ref":"#/$defs/block"},{"$ref":"#/$defs/outlineBlock"}]}},
+    "next_cursor":{"type":["string","null"]}
   },
-  "$defs":{
-    "inline":{"oneOf":[
-      {"type":"array","prefixItems":[{"const":"t"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"enum":["b","em","u","s","code"]},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"enum":["fg","bg"]},{"type":"string","minLength":1,"maxLength":64},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","prefixItems":[{"const":"a"},{"type":"string","minLength":1,"maxLength":2048},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","prefixItems":[{"const":"br"}],"items":false,"minItems":1,"maxItems":1},
-      {"type":"array","prefixItems":[{"const":"siteVariable"},{"enum":["site.title","site.url","site.companyName","contact.legalEmail","contact.email"]},{"const":true}],"items":false,"minItems":2,"maxItems":3},
-      {"type":"array","prefixItems":[{"enum":["math","ph"]},{"type":"string"}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "listItem":{"type":"array","prefixItems":[{"type":"string","maxLength":160},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "objectField":{"type":"array","prefixItems":[{"type":"string","minLength":1,"maxLength":120},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "value":{"oneOf":[
-      {"type":"array","prefixItems":[{"enum":["t","n"]},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"b"},{"type":"boolean"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"i"},{"type":"array","items":{"$ref":"#/$defs/inline"}}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"l"},{"type":"array","items":{"$ref":"#/$defs/listItem"}}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"o"},{"type":"array","items":{"$ref":"#/$defs/objectField"}}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "fieldPathSegment":{"oneOf":[
-      {"type":"array","prefixItems":[{"const":"f"},{"type":"string","minLength":1,"maxLength":120}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"i"},{"type":"string","minLength":1,"maxLength":160}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "fieldPath":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/fieldPathSegment"}},
-    "field":{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "file":{"oneOf":[
-      {"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/fieldPath"},{"type":"string"}],"items":false,"minItems":3,"maxItems":3}
-    ]},
-    "relationItem":{"type":"array","prefixItems":[
-      {"type":"string"},{"type":"string"},{"type":"integer"},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/field"}},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/field"}},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/file"}}
-    ],"items":false,"minItems":6,"maxItems":6},
-    "relation":{"type":"array","prefixItems":[
-      {"type":"string"},{"type":["array","null"],"items":{"$ref":"#/$defs/relationItem"}}
-    ],"items":false,"minItems":2,"maxItems":2},
-    "node":{"type":"array","prefixItems":[
-      {"type":"string"},{"type":"string"},{"type":"string"},{"type":"integer"},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/field"}},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/field"}},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/file"}},
-      {"type":["array","null"],"items":{"$ref":"#/$defs/relation"}}
-    ],"items":false,"minItems":8,"maxItems":8},
-    "outlineNode":{"type":"array","description":"Outline node [handle,kind,parent,order,preview,relations]; trailing empty items are left out.","prefixItems":[
-      {"type":"string"},{"type":"string"},{"type":"string"},{"type":"integer"},{"type":"string"},
-      {"type":"array","items":{"type":"array","prefixItems":[
-        {"type":"string"},
-        {"type":"array","items":{"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"integer"}],"items":false,"minItems":3,"maxItems":3}}
-      ],"items":false,"minItems":2,"maxItems":2}}
-    ],"items":false,"minItems":4,"maxItems":6}
+  "$defs":{` + documentValueDefinitions + `,
+    "file":{"type":"object","additionalProperties":false,"required":["field","file_id"],"properties":{"field":{"type":"string"},"path":{"type":"array","items":{"$ref":"#/$defs/fieldPathSegment"}},"file_id":{"type":"string"}}},
+    "relationItem":{"type":"object","additionalProperties":false,"required":["item_id","kind","order"],"properties":{
+      "item_id":{"type":"string"},"kind":{"type":"string"},"order":{"type":"integer"},
+      "shared_fields":{"type":"array","items":{"$ref":"#/$defs/namedField"}},
+      "localized_fields":{"type":"array","items":{"$ref":"#/$defs/namedField"}},
+      "files":{"type":"array","items":{"$ref":"#/$defs/file"}}
+    }},
+    "relation":{"type":"object","additionalProperties":false,"required":["relation_id","items"],"properties":{
+      "relation_id":{"type":"string"},"items":{"type":"array","items":{"$ref":"#/$defs/relationItem"}}
+    }},
+    "block":{"type":"object","additionalProperties":false,"description":"A block with its field values, in blocks and fields modes.","required":["block_id","kind","order"],"properties":{
+      "block_id":{"type":"string"},"kind":{"type":"string"},"parent_block_id":{"type":"string"},"order":{"type":"integer"},
+      "shared_fields":{"type":"array","items":{"$ref":"#/$defs/namedField"}},
+      "localized_fields":{"type":"array","items":{"$ref":"#/$defs/namedField"}},
+      "files":{"type":"array","items":{"$ref":"#/$defs/file"}},
+      "relations":{"type":"array","items":{"$ref":"#/$defs/relation"}}
+    }},
+    "outlineBlock":{"type":"object","additionalProperties":false,"description":"A block's place and a preview of its text, in outline mode.","required":["block_id","kind","order"],"properties":{
+      "block_id":{"type":"string"},"kind":{"type":"string"},"parent_block_id":{"type":"string"},"order":{"type":"integer"},"preview":{"type":"string"},
+      "relations":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["relation_id","items"],"properties":{
+        "relation_id":{"type":"string"},
+        "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["item_id","kind","order"],"properties":{"item_id":{"type":"string"},"kind":{"type":"string"},"order":{"type":"integer"}}}}
+      }}}
+    }}
   }
 }`
 
@@ -338,18 +226,15 @@ const documentSyncOutputJSONSchema = `{
       "properties":{
         "tool":{"const":"document_read"},
         "arguments":{
-          "type":"object","additionalProperties":false,"required":["p","d","l","m"],
+          "type":"object","additionalProperties":false,"required":["document_type","document_id","locale","mode"],
           "properties":{
-            "p":` + domainJSONSchema + `,
-            "d":` + uuidJSONSchema + `,
-            "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-            "m":{"enum":["outline","blocks","fields"]},
-            "b":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":160}},
-            "f":{"type":"array","maxItems":256,"items":{"oneOf":[
-              {"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-              {"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"string"},{"type":"string"}],"items":false,"minItems":4,"maxItems":4}
-            ]}},
-            "n":{"type":"integer","minimum":0,"maximum":256}
+            "document_type":` + domainJSONSchema + `,
+            "document_id":` + uuidJSONSchema + `,
+            "locale":` + plainLocaleJSONSchema + `,
+            "mode":{"enum":["outline","blocks","fields"]},
+            "block_ids":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":160}},
+            "fields":{"type":"array","maxItems":256,"items":` + readFieldSelectionJSONSchema + `},
+            "limit":{"type":"integer","minimum":0,"maximum":256}
           }
         }
       }

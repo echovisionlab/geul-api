@@ -55,7 +55,7 @@ var fileBlockTools = toolRegistry[FileBlockTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileCaptionUpdate, Title: "Update a File Block caption",
 		Description: "Set the plain-text caption of one existing File Block, including an image. Caption is locale-owned; an empty string explicitly clears it in the requested locale. " +
-			"Pass dr (and tr for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. File attachment and bytes are unchanged." + syncRequiredGuidance,
+			"Pass document_revision (and target_revision for a translation) from your latest document_read or the previous edit; no reread is needed between consecutive edits. File attachment and bytes are unchanged." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileCaptionUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	}, (*FileBlockTools).updateCaption),
@@ -187,7 +187,7 @@ func (tools *FileBlockTools) add(ctx context.Context, _ string, call toolCall[do
 	if err := validateFileBlockMutationIdentity(input.focusedMutationArguments); err != nil {
 		return executionError(err)
 	}
-	if input.Profile == core.DomainPage && input.Parent == "" {
+	if input.DocumentType == core.DomainPage && input.Parent == "" {
 		return executionError(errors.New("parent_block_id is required for Page File Blocks"))
 	}
 	fileID, err := canonicalFileBlockUUID(input.FileID, "file_id")
@@ -294,7 +294,7 @@ func (tools *FileBlockTools) remove(ctx context.Context, _ string, call toolCall
 
 func (tools *FileBlockTools) requireFileBlock(ctx context.Context, input focusedMutationArguments, block core.BlockID) error {
 	projection, err := tools.documents.Read(ctx, core.ReadRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document},
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID},
 		Locale:   input.Locale, Mode: core.ReadBlocks, Blocks: []core.BlockID{block}, Limit: 1,
 	})
 	if err != nil {
@@ -325,10 +325,10 @@ func expectedOrExecutionError(err error) (mcpserver.ToolResult, error) {
 }
 
 func validateFileBlockMutationIdentity(input focusedMutationArguments) error {
-	if _, err := fileBlockEntityType(string(input.Profile)); err != nil {
+	if _, err := fileBlockEntityType(string(input.DocumentType)); err != nil {
 		return err
 	}
-	_, err := canonicalFileBlockUUID(string(input.Document), "document_id")
+	_, err := canonicalFileBlockUUID(string(input.DocumentID), "document_id")
 	return err
 }
 

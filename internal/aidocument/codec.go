@@ -8,59 +8,66 @@ import (
 	"io"
 )
 
-// Projection is the canonical compact read result. A field absent from a node
+// Projection is the canonical read result. A field absent from a node
 // is missing; a present text field whose value is "" is explicitly empty.
 type Projection struct {
-	Protocol         string            `json:"v"`
-	Profile          Domain            `json:"p"`
-	Catalog          string            `json:"c"`
-	Document         DocumentReference `json:"d"`
-	DocumentRevision Revision          `json:"dr"`
-	TargetRevision   *Revision         `json:"tr,omitempty"`
-	SourceLocale     Locale            `json:"s"`
-	Locale           Locale            `json:"l"`
-	LocaleRole       LocaleRole        `json:"lr"`
-	LocaleExists     bool              `json:"le"`
-	Mode             ReadMode          `json:"m"`
+	Protocol         string            `json:"-"`
+	Profile          Domain            `json:"document_type"`
+	Catalog          string            `json:"catalog_fingerprint"`
+	Document         DocumentReference `json:"document_id"`
+	DocumentRevision Revision          `json:"document_revision"`
+	TargetRevision   *Revision         `json:"target_revision,omitempty"`
+	SourceLocale     Locale            `json:"source_locale"`
+	Locale           Locale            `json:"locale"`
+	LocaleRole       LocaleRole        `json:"locale_role"`
+	LocaleExists     bool              `json:"locale_exists"`
+	Mode             ReadMode          `json:"mode"`
 	// Query is the outline search that selected Nodes, if any.
-	Query string `json:"q,omitempty"`
-	Nodes []Node `json:"n"`
+	Query string `json:"query,omitempty"`
+	Nodes []Node `json:"blocks"`
 	// Previews holds each outline node's locale text preview: its start, or
 	// the text around the match for a search. EncodeProjection writes it into
-	// the compact outline node; other read modes return full values instead.
+	// the outline block; other read modes return full values instead.
 	Previews map[BlockID]string `json:"-"`
-	Next     *Cursor            `json:"next"`
+	Next     *Cursor            `json:"next_cursor"`
 }
 
 // projectionFields is Projection without its methods, for encoding outline
-// nodes in their own compact shape.
+// blocks in their own shape.
 type projectionFields Projection
 
-// outlineNode is the compact outline wire shape: [handle, kind, parent,
-// order, preview, relations]. Trailing empty values are left out, so most
-// nodes are four or five items.
-type outlineNode struct {
-	node    Node
-	preview string
+// outlineBlock is one block of an outline read: where it sits and a preview of
+// its text, without its field values.
+type outlineBlock struct {
+	ID        BlockID           `json:"block_id"`
+	Kind      BlockKind         `json:"kind"`
+	Parent    BlockID           `json:"parent_block_id,omitempty"`
+	Order     int               `json:"order"`
+	Preview   string            `json:"preview,omitempty"`
+	Relations []outlineRelation `json:"relations,omitempty"`
 }
 
-func (n outlineNode) MarshalJSON() ([]byte, error) {
-	parts := []any{n.node.ID, n.node.Kind, n.node.Parent, n.node.Order}
-	if n.preview != "" || len(n.node.Relations) != 0 {
-		parts = append(parts, n.preview)
-	}
-	if len(n.node.Relations) != 0 {
-		relations := make([]any, 0, len(n.node.Relations))
-		for _, relation := range n.node.Relations {
-			items := make([]any, 0, len(relation.Items))
-			for _, item := range relation.Items {
-				items = append(items, []any{item.ID, item.Kind, item.Order})
-			}
-			relations = append(relations, []any{relation.ID, items})
+type outlineRelation struct {
+	ID    RelationID            `json:"relation_id"`
+	Items []outlineRelationItem `json:"items"`
+}
+
+type outlineRelationItem struct {
+	ID    RelationItemID   `json:"item_id"`
+	Kind  RelationItemKind `json:"kind"`
+	Order int              `json:"order"`
+}
+
+func newOutlineBlock(node Node, preview string) outlineBlock {
+	block := outlineBlock{ID: node.ID, Kind: node.Kind, Parent: node.Parent, Order: node.Order, Preview: preview}
+	for _, relation := range node.Relations {
+		items := make([]outlineRelationItem, 0, len(relation.Items))
+		for _, item := range relation.Items {
+			items = append(items, outlineRelationItem{ID: item.ID, Kind: item.Kind, Order: item.Order})
 		}
-		parts = append(parts, relations)
+		block.Relations = append(block.Relations, outlineRelation{ID: relation.ID, Items: items})
 	}
-	return json.Marshal(parts)
+	return block
 }
 
 func EncodeOpenMetadata(metadata OpenMetadata) ([]byte, error) {
@@ -123,14 +130,14 @@ func EncodeProjection(projection Projection) ([]byte, error) {
 	if projection.Mode != ReadOutline {
 		return json.Marshal(projection)
 	}
-	nodes := make([]outlineNode, len(projection.Nodes))
+	blocks := make([]outlineBlock, len(projection.Nodes))
 	for index, node := range projection.Nodes {
-		nodes[index] = outlineNode{node: node, preview: projection.Previews[node.ID]}
+		blocks[index] = newOutlineBlock(node, projection.Previews[node.ID])
 	}
 	return json.Marshal(struct {
 		projectionFields
-		Nodes []outlineNode `json:"n"`
-	}{projectionFields(projection), nodes})
+		Blocks []outlineBlock `json:"blocks"`
+	}{projectionFields(projection), blocks})
 }
 
 func EncodeApplyRequest(request ApplyRequest) ([]byte, error) {
@@ -148,6 +155,7 @@ func DecodeApplyRequest(data []byte) (ApplyRequest, error) {
 	if err := decodeStrict(data, &request); err != nil {
 		return ApplyRequest{}, err
 	}
+	request.Protocol = ProtocolVersion
 	if err := request.validateEnvelope(); err != nil {
 		return ApplyRequest{}, err
 	}
@@ -172,317 +180,357 @@ func decodeStrict(data []byte, target any) error {
 	return nil
 }
 
+// wireValue is the JSON shape of Value: type names the one payload it carries.
+type wireValue struct {
+	Type    ValueKind      `json:"type"`
+	Text    *string        `json:"text,omitempty"`
+	Number  *string        `json:"number,omitempty"`
+	Boolean *bool          `json:"boolean,omitempty"`
+	Content *[]InlineItem  `json:"content,omitempty"`
+	Items   *[]ListItem    `json:"items,omitempty"`
+	Fields  *[]ObjectField `json:"fields,omitempty"`
+}
+
 func (v Value) MarshalJSON() ([]byte, error) {
 	if err := v.validate(); err != nil {
 		return nil, err
 	}
-	if v.Kind == ValueKindBoolean {
-		return json.Marshal([]any{v.Kind, v.Boolean})
+	wire := wireValue{Type: v.Kind}
+	switch v.Kind {
+	case ValueKindBoolean:
+		wire.Boolean = &v.Boolean
+	case ValueKindInline:
+		wire.Content = nonNilSlice(v.Inline)
+	case ValueKindList:
+		wire.Items = nonNilSlice(v.List)
+	case ValueKindObject:
+		wire.Fields = nonNilSlice(v.Object)
+	case ValueKindNumber:
+		wire.Number = &v.Text
+	default:
+		wire.Text = &v.Text
 	}
-	if v.Kind == ValueKindInline {
-		items := v.Inline
-		if items == nil {
-			items = []InlineItem{}
-		}
-		return json.Marshal([]any{v.Kind, items})
-	}
-	if v.Kind == ValueKindList {
-		items := v.List
-		if items == nil {
-			items = []ListItem{}
-		}
-		return json.Marshal([]any{v.Kind, items})
-	}
-	if v.Kind == ValueKindObject {
-		fields := v.Object
-		if fields == nil {
-			fields = []ObjectField{}
-		}
-		return json.Marshal([]any{v.Kind, fields})
-	}
-	return json.Marshal([]any{v.Kind, v.Text})
+	return json.Marshal(wire)
 }
 
 func (v *Value) UnmarshalJSON(data []byte) error {
 	*v = Value{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireValue
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("value: %w", err)
 	}
-	if len(parts) != 2 {
-		return errors.New("compact value must contain exactly two items")
-	}
-	if err := json.Unmarshal(parts[0], &v.Kind); err != nil {
-		return err
-	}
-	if bytes.Equal(bytes.TrimSpace(parts[1]), []byte("null")) {
-		return errors.New("compact value payload cannot be null")
-	}
-	switch v.Kind {
+	v.Kind = wire.Type
+	present := countPresent(wire.Text != nil, wire.Number != nil, wire.Boolean != nil, wire.Content != nil, wire.Items != nil, wire.Fields != nil)
+	var matches bool
+	switch wire.Type {
+	case ValueKindText:
+		if matches = wire.Text != nil; matches {
+			v.Text = *wire.Text
+		}
+	case ValueKindNumber:
+		if matches = wire.Number != nil; matches {
+			v.Text = *wire.Number
+		}
 	case ValueKindBoolean:
-		if err := json.Unmarshal(parts[1], &v.Boolean); err != nil {
-			return err
+		if matches = wire.Boolean != nil; matches {
+			v.Boolean = *wire.Boolean
 		}
 	case ValueKindInline:
-		if err := json.Unmarshal(parts[1], &v.Inline); err != nil {
-			return err
+		if matches = wire.Content != nil; matches {
+			v.Inline = *wire.Content
 		}
 	case ValueKindList:
-		if err := json.Unmarshal(parts[1], &v.List); err != nil {
-			return err
+		if matches = wire.Items != nil; matches {
+			v.List = *wire.Items
 		}
 	case ValueKindObject:
-		if err := json.Unmarshal(parts[1], &v.Object); err != nil {
-			return err
+		if matches = wire.Fields != nil; matches {
+			v.Object = *wire.Fields
 		}
 	default:
-		if err := json.Unmarshal(parts[1], &v.Text); err != nil {
-			return err
-		}
+		return fmt.Errorf("unsupported value type %q", wire.Type)
+	}
+	if !matches || present != 1 {
+		return fmt.Errorf("value of type %q needs exactly its %s field", wire.Type, valuePayloadName(wire.Type))
 	}
 	return v.validate()
+}
+
+func valuePayloadName(kind ValueKind) string {
+	switch kind {
+	case ValueKindInline:
+		return "content"
+	case ValueKindList:
+		return "items"
+	case ValueKindObject:
+		return "fields"
+	default:
+		return string(kind)
+	}
+}
+
+func countPresent(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}
+
+// nonNilSlice writes a nil slice as an empty JSON array.
+func nonNilSlice[T any](items []T) *[]T {
+	if items == nil {
+		items = []T{}
+	}
+	return &items
+}
+
+// wireInlineItem is the JSON shape of InlineItem. type decides which of the
+// other fields it carries.
+type wireInlineItem struct {
+	Type       InlineKind    `json:"type"`
+	Text       *string       `json:"text,omitempty"`
+	Key        *string       `json:"key,omitempty"`
+	Linked     *bool         `json:"linked,omitempty"`
+	Expression *string       `json:"expression,omitempty"`
+	Handle     *string       `json:"handle,omitempty"`
+	URL        *string       `json:"url,omitempty"`
+	Color      *string       `json:"color,omitempty"`
+	Content    *[]InlineItem `json:"content,omitempty"`
 }
 
 func (i InlineItem) MarshalJSON() ([]byte, error) {
 	if err := i.validate(0); err != nil {
 		return nil, err
 	}
+	wire := wireInlineItem{Type: i.Kind}
 	switch i.Kind {
+	case InlineKindText:
+		wire.Text = &i.Text
 	case InlineKindSiteVariable:
+		wire.Key = &i.Text
 		if i.Linked {
-			return json.Marshal([]any{i.Kind, i.Text, true})
+			wire.Linked = &i.Linked
 		}
-		return json.Marshal([]any{i.Kind, i.Text})
-	case InlineKindText, InlineKindMath, InlineKindPlaceholder:
-		return json.Marshal([]any{i.Kind, i.Text})
+	case InlineKindMath:
+		wire.Expression = &i.Text
+	case InlineKindPlaceholder:
+		wire.Handle = &i.Text
 	case InlineKindBold, InlineKindItalic, InlineKindUnderline, InlineKindStrike, InlineKindCode:
-		return json.Marshal([]any{i.Kind, i.Children})
+		wire.Content = nonNilSlice(i.Children)
 	case InlineKindTextColor, InlineKindBackground:
-		return json.Marshal([]any{i.Kind, i.Target, i.Children})
+		wire.Color, wire.Content = &i.Target, nonNilSlice(i.Children)
 	case InlineKindLink:
-		return json.Marshal([]any{i.Kind, i.Target, i.Children})
+		wire.URL, wire.Content = &i.Target, nonNilSlice(i.Children)
 	case InlineKindHardBreak:
-		return json.Marshal([]any{i.Kind})
 	default:
-		return nil, fmt.Errorf("unsupported inline item kind %q", i.Kind)
+		return nil, fmt.Errorf("unsupported inline item type %q", i.Kind)
 	}
+	return json.Marshal(wire)
 }
 
 func (i *InlineItem) UnmarshalJSON(data []byte) error {
 	*i = InlineItem{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireInlineItem
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("inline item: %w", err)
 	}
-	if len(parts) == 0 {
-		return errors.New("compact inline item cannot be empty")
-	}
-	if err := json.Unmarshal(parts[0], &i.Kind); err != nil {
-		return err
-	}
-	item := compactItem{label: "inline item", kind: string(i.Kind), parts: parts}
-	var err error
-	switch i.Kind {
+	i.Kind = wire.Type
+	present := countPresent(wire.Text != nil, wire.Key != nil, wire.Linked != nil, wire.Expression != nil, wire.Handle != nil, wire.URL != nil, wire.Color != nil, wire.Content != nil)
+	var valid bool
+	switch wire.Type {
+	case InlineKindText:
+		valid = wire.Text != nil && present == 1
+		i.Text = derefString(wire.Text)
 	case InlineKindSiteVariable:
-		err = i.decodeSiteVariable(item)
-	case InlineKindText, InlineKindMath, InlineKindPlaceholder:
-		err = item.decode(2, &i.Text)
+		valid = wire.Key != nil && present == 1+countPresent(wire.Linked != nil)
+		i.Text = derefString(wire.Key)
+		if wire.Linked != nil {
+			if !*wire.Linked {
+				return errors.New("site_variable linked must be true or left out")
+			}
+			i.Linked = true
+		}
+	case InlineKindMath:
+		valid = wire.Expression != nil && present == 1
+		i.Text = derefString(wire.Expression)
+	case InlineKindPlaceholder:
+		valid = wire.Handle != nil && present == 1
+		i.Text = derefString(wire.Handle)
 	case InlineKindBold, InlineKindItalic, InlineKindUnderline, InlineKindStrike, InlineKindCode:
-		err = item.decode(2, &i.Children)
-	case InlineKindTextColor, InlineKindBackground, InlineKindLink:
-		err = item.decode(3, &i.Target, &i.Children)
+		valid = wire.Content != nil && present == 1
+	case InlineKindTextColor, InlineKindBackground:
+		valid = wire.Color != nil && wire.Content != nil && present == 2
+		i.Target = derefString(wire.Color)
+	case InlineKindLink:
+		valid = wire.URL != nil && wire.Content != nil && present == 2
+		i.Target = derefString(wire.URL)
 	case InlineKindHardBreak:
-		err = item.decode(1)
+		valid = present == 0
 	default:
-		err = fmt.Errorf("unsupported inline item kind %q", i.Kind)
+		return fmt.Errorf("unsupported inline item type %q", wire.Type)
 	}
-	if err != nil {
-		return err
+	if !valid {
+		return fmt.Errorf("inline item of type %q has missing or extra fields", wire.Type)
+	}
+	if wire.Content != nil {
+		i.Children = *wire.Content
 	}
 	return i.validate(0)
 }
 
-// decodeSiteVariable reads ["siteVariable", key] or the linked form
-// ["siteVariable", key, true].
-func (i *InlineItem) decodeSiteVariable(item compactItem) error {
-	if len(item.parts) != 3 {
-		return item.decode(2, &i.Text)
+func derefString(value *string) string {
+	if value == nil {
+		return ""
 	}
-	if err := item.decode(3, &i.Text, &i.Linked); err != nil {
-		return err
-	}
-	if !i.Linked {
-		return errors.New("siteVariable third item must be true")
-	}
-	return nil
-}
-
-// compactItem is a decoded compact array whose first item names its kind.
-type compactItem struct {
-	label string
-	kind  string
-	parts []json.RawMessage
-}
-
-// decode requires exactly want array items and decodes the items after the
-// kind into targets, rejecting explicit nulls.
-func (c compactItem) decode(want int, targets ...any) error {
-	if len(c.parts) != want {
-		return fmt.Errorf("%s %q must contain exactly %d items", c.label, c.kind, want)
-	}
-	for index, target := range targets {
-		if bytes.Equal(bytes.TrimSpace(c.parts[index+1]), []byte("null")) {
-			return fmt.Errorf("%s %q item %d cannot be null", c.label, c.kind, index+1)
-		}
-		if err := json.Unmarshal(c.parts[index+1], target); err != nil {
-			return fmt.Errorf("%s %q item %d: %w", c.label, c.kind, index+1, err)
-		}
-	}
-	return nil
+	return *value
 }
 
 func (i ListItem) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{i.ID, i.Value})
+	return json.Marshal(struct {
+		ID    RelationItemID `json:"item_id,omitempty"`
+		Value Value          `json:"value"`
+	}{i.ID, i.Value})
 }
 
 func (i *ListItem) UnmarshalJSON(data []byte) error {
 	*i = ListItem{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire struct {
+		ID    RelationItemID `json:"item_id"`
+		Value *Value         `json:"value"`
 	}
-	if len(parts) != 2 {
-		return errors.New("compact list item must contain exactly two items")
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("list item: %w", err)
 	}
-	if err := json.Unmarshal(parts[0], &i.ID); err != nil {
-		return err
+	if wire.Value == nil {
+		return errors.New("list item needs value")
 	}
-	return json.Unmarshal(parts[1], &i.Value)
-}
-
-func (f ObjectField) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{f.ID, f.Value})
-}
-
-func (f *ObjectField) UnmarshalJSON(data []byte) error {
-	*f = ObjectField{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
-	}
-	if len(parts) != 2 {
-		return errors.New("compact object field must contain exactly two items")
-	}
-	if err := json.Unmarshal(parts[0], &f.ID); err != nil {
-		return err
-	}
-	return json.Unmarshal(parts[1], &f.Value)
-}
-
-func (f FieldValue) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{f.ID, f.Value})
-}
-
-func (f *FieldValue) UnmarshalJSON(data []byte) error {
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
-	}
-	if len(parts) != 2 {
-		return errors.New("compact field must contain exactly two items")
-	}
-	if err := json.Unmarshal(parts[0], &f.ID); err != nil {
-		return err
-	}
-	return json.Unmarshal(parts[1], &f.Value)
-}
-
-func (f FileBinding) MarshalJSON() ([]byte, error) {
-	if len(f.Path) != 0 {
-		return json.Marshal([]any{f.Field, f.Path, f.File})
-	}
-	return json.Marshal([]any{f.Field, f.File})
-}
-
-func (f *FileBinding) UnmarshalJSON(data []byte) error {
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
-	}
-	if len(parts) != 2 && len(parts) != 3 {
-		return errors.New("compact file binding must contain a field, optional typed path, and File handle")
-	}
-	if err := json.Unmarshal(parts[0], &f.Field); err != nil {
-		return err
-	}
-	if len(parts) == 2 {
-		return json.Unmarshal(parts[1], &f.File)
-	}
-	if err := json.Unmarshal(parts[1], &f.Path); err != nil {
-		return err
-	}
-	return json.Unmarshal(parts[2], &f.File)
-}
-
-func (n Node) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{n.ID, n.Kind, n.Parent, n.Order, n.Shared, n.Localized, n.Files, n.Relations})
-}
-
-func (n *Node) UnmarshalJSON(data []byte) error {
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
-	}
-	if len(parts) != 8 {
-		return errors.New("compact node must contain exactly eight items")
-	}
-	*n = Node{}
-	targets := []any{&n.ID, &n.Kind, &n.Parent, &n.Order, &n.Shared, &n.Localized, &n.Files, &n.Relations}
-	for index := range targets {
-		if err := json.Unmarshal(parts[index], targets[index]); err != nil {
-			return fmt.Errorf("compact node item %d: %w", index, err)
-		}
-	}
+	i.ID, i.Value = wire.ID, *wire.Value
 	return nil
 }
 
+func (f ObjectField) MarshalJSON() ([]byte, error) {
+	return marshalNamedField(f.ID, f.Value)
+}
+
+func (f *ObjectField) UnmarshalJSON(data []byte) error {
+	id, value, err := unmarshalNamedField(data)
+	f.ID, f.Value = id, value
+	return err
+}
+
+func (f FieldValue) MarshalJSON() ([]byte, error) {
+	return marshalNamedField(f.ID, f.Value)
+}
+
+func (f *FieldValue) UnmarshalJSON(data []byte) error {
+	id, value, err := unmarshalNamedField(data)
+	f.ID, f.Value = id, value
+	return err
+}
+
+func marshalNamedField(id FieldID, value Value) ([]byte, error) {
+	return json.Marshal(struct {
+		Field FieldID `json:"field"`
+		Value Value   `json:"value"`
+	}{id, value})
+}
+
+func unmarshalNamedField(data []byte) (FieldID, Value, error) {
+	var wire struct {
+		Field FieldID `json:"field"`
+		Value *Value  `json:"value"`
+	}
+	if err := decodeStrict(data, &wire); err != nil {
+		return "", Value{}, fmt.Errorf("field: %w", err)
+	}
+	if wire.Field == "" || wire.Value == nil {
+		return "", Value{}, errors.New("field needs field and value")
+	}
+	return wire.Field, *wire.Value, nil
+}
+
+type wireFileBinding struct {
+	Field FieldID            `json:"field"`
+	Path  []FieldPathSegment `json:"path,omitempty"`
+	File  FileReference      `json:"file_id"`
+}
+
+func (f FileBinding) MarshalJSON() ([]byte, error) {
+	return json.Marshal(wireFileBinding(f))
+}
+
+func (f *FileBinding) UnmarshalJSON(data []byte) error {
+	var wire wireFileBinding
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("file binding: %w", err)
+	}
+	f.Field, f.Path, f.File = wire.Field, wire.Path, wire.File
+	return nil
+}
+
+type wireNode struct {
+	ID        BlockID       `json:"block_id"`
+	Kind      BlockKind     `json:"kind"`
+	Parent    BlockID       `json:"parent_block_id,omitempty"`
+	Order     int           `json:"order"`
+	Shared    []FieldValue  `json:"shared_fields,omitempty"`
+	Localized []FieldValue  `json:"localized_fields,omitempty"`
+	Files     []FileBinding `json:"files,omitempty"`
+	Relations []Relation    `json:"relations,omitempty"`
+}
+
+func (n Node) MarshalJSON() ([]byte, error) {
+	return json.Marshal(wireNode(n))
+}
+
+func (n *Node) UnmarshalJSON(data []byte) error {
+	var wire wireNode
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("block: %w", err)
+	}
+	*n = Node(wire)
+	return nil
+}
+
+type wireRelation struct {
+	ID    RelationID     `json:"relation_id"`
+	Items []RelationItem `json:"items"`
+}
+
 func (r Relation) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{r.ID, r.Items})
+	return json.Marshal(wireRelation{r.ID, *nonNilSlice(r.Items)})
 }
 
 func (r *Relation) UnmarshalJSON(data []byte) error {
-	*r = Relation{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireRelation
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("relation: %w", err)
 	}
-	if len(parts) != 2 {
-		return errors.New("compact relation must contain exactly two items")
-	}
-	if err := json.Unmarshal(parts[0], &r.ID); err != nil {
-		return err
-	}
-	return json.Unmarshal(parts[1], &r.Items)
+	*r = Relation(wire)
+	return nil
+}
+
+type wireRelationItem struct {
+	ID        RelationItemID   `json:"item_id"`
+	Kind      RelationItemKind `json:"kind"`
+	Order     int              `json:"order"`
+	Shared    []FieldValue     `json:"shared_fields,omitempty"`
+	Localized []FieldValue     `json:"localized_fields,omitempty"`
+	Files     []FileBinding    `json:"files,omitempty"`
 }
 
 func (i RelationItem) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{i.ID, i.Kind, i.Order, i.Shared, i.Localized, i.Files})
+	return json.Marshal(wireRelationItem(i))
 }
 
 func (i *RelationItem) UnmarshalJSON(data []byte) error {
-	*i = RelationItem{}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(data, &parts); err != nil {
-		return err
+	var wire wireRelationItem
+	if err := decodeStrict(data, &wire); err != nil {
+		return fmt.Errorf("relation item: %w", err)
 	}
-	if len(parts) != 6 {
-		return errors.New("compact relation item must contain exactly six items")
-	}
-	targets := []any{&i.ID, &i.Kind, &i.Order, &i.Shared, &i.Localized, &i.Files}
-	for index := range targets {
-		if err := json.Unmarshal(parts[index], targets[index]); err != nil {
-			return fmt.Errorf("compact relation item %d: %w", index, err)
-		}
-	}
+	*i = RelationItem(wire)
 	return nil
 }

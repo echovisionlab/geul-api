@@ -160,9 +160,10 @@ func TestLegalPolicyToolsCatalog(t *testing.T) {
 	require.NoError(t, err)
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	require.NoError(t, err)
-	require.Len(t, listed, 7)
-	require.Equal(t, toolDefinitionNames(listed), tools.ToolNames())
+	require.Len(t, listed, 6)
+	names := make([]string, 0, len(listed))
 	for _, tool := range listed {
+		names = append(names, tool.Name)
 		assertMCPToolOAuthSecurity(t, tool)
 		for _, schema := range []json.RawMessage{tool.InputSchema, tool.OutputSchema} {
 			var value map[string]any
@@ -171,10 +172,11 @@ func TestLegalPolicyToolsCatalog(t *testing.T) {
 			require.Equal(t, false, value["additionalProperties"])
 		}
 	}
-	require.Contains(t, listed[2].Description, "Creation sends no notice email")
-	require.Contains(t, listed[3].Description, "seven days before")
-	require.Contains(t, listed[5].Description, "effective notice email")
-	require.Contains(t, listed[6].Description, "including versions with notice delivery history")
+	require.Equal(t, names, tools.ToolNames())
+	require.Contains(t, listed[1].Description, "Creation sends no notice email")
+	require.Contains(t, listed[2].Description, "seven days before")
+	require.Contains(t, listed[4].Description, "effective notice email")
+	require.Contains(t, listed[5].Description, "including versions with notice delivery history")
 	listed[0].InputSchema[0] = '['
 	listed[0].Annotations["readOnlyHint"] = false
 	again, err := tools.ListTools(t.Context(), mcpserver.Principal{})
@@ -209,19 +211,6 @@ func TestLegalPolicyDiscoveryAndCreationUseOwnersWithoutLifecycleSideEffects(t *
 			require.NotContains(t, string(encoded), "body must not leak")
 			require.NotContains(t, string(encoded), "snapshot_digest")
 			require.Equal(t, kind, result.StructuredContent["document_type"])
-			result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPolicyList, toolArguments(t, `{"document_type":"`+kind+`","status":"archived","limit":1,"offset":2}`))
-			require.NoError(t, err)
-			require.EqualValues(t, 3, result.StructuredContent["next_offset"])
-			require.EqualValues(t, 4, result.StructuredContent["total"])
-			if kind == "terms" {
-				request := owner.request.(*managev1.ListTermsVersionsRequest)
-				require.Equal(t, managev1.TermsStatus_TERMS_STATUS_ARCHIVED, request.GetStatus())
-				require.Equal(t, int32(2), request.Pagination.Offset)
-			} else {
-				request := owner.request.(*managev1.ListPrivacyVersionsRequest)
-				require.Equal(t, managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED, request.GetStatus())
-				require.Equal(t, int32(2), request.Pagination.Offset)
-			}
 		})
 	}
 }
@@ -287,11 +276,6 @@ func TestLegalPolicyRejectsMalformedArgumentsBeforeCallingOwner(t *testing.T) {
 		{ToolPolicyCreate, `{"document_type":"terms","title":"  "}`},
 		{ToolPolicyCreate, `{"document_type":"terms","send_email":true}`},
 		{ToolPolicyGet, `{"document_type":"terms","document_id":"slug"}`},
-		{ToolPolicyList, `{"document_type":"privacy","status":"published"}`},
-		{ToolPolicyList, `{"document_type":"privacy","limit":0}`},
-		{ToolPolicyList, `{"document_type":"privacy","limit":51}`},
-		{ToolPolicyList, `{"document_type":"privacy","offset":-1}`},
-		{ToolPolicyList, `{"document_type":"privacy","limit":null}`},
 		{ToolPolicyDelete, `{"document_type":"terms","document_id":"` + policyTestID + `"}`},
 		{ToolPolicyActivateNow, `{"document_type":"terms","document_id":"` + policyTestID + `","expected_document_revision":"stale-text"}`},
 		{ToolPolicySchedule, `{"document_type":"terms","document_id":"` + policyTestID + `","expected_document_revision":"` + policyTestRevision + `","effective_from":"2026-10-20"}`},
@@ -313,12 +297,12 @@ func TestLegalPolicyRejectsMalformedArgumentsBeforeCallingOwner(t *testing.T) {
 
 func TestLegalPolicyPreservesOwnerDenialAndLifecycleGuardsWithoutRetry(t *testing.T) {
 	for _, kind := range []string{"terms", "privacy"} {
-		for _, name := range []string{ToolPolicyGet, ToolPolicyCreate, ToolPolicyList, ToolPolicySchedule, ToolPolicyScheduleCancel, ToolPolicyActivateNow, ToolPolicyDelete} {
+		for _, name := range []string{ToolPolicyGet, ToolPolicyCreate, ToolPolicySchedule, ToolPolicyScheduleCancel, ToolPolicyActivateNow, ToolPolicyDelete} {
 			for _, code := range []connect.Code{connect.CodePermissionDenied, connect.CodeNotFound, connect.CodeFailedPrecondition, connect.CodeAborted} {
 				owner := &recordingLegalPolicies{err: connect.NewError(code, errors.New("owner rejected the operation"))}
 				tools, _ := NewLegalPolicyTools(owner)
 				args := toolArguments(t, `{"document_type":"`+kind+`"}`)
-				if name != ToolPolicyCreate && name != ToolPolicyList {
+				if name != ToolPolicyCreate {
 					args["document_id"], _ = json.Marshal(policyTestID)
 				}
 				if name == ToolPolicySchedule || name == ToolPolicyActivateNow || name == ToolPolicyDelete {
@@ -345,7 +329,7 @@ func TestLegalPolicyTitleUsesDocumentMutationCoordinator(t *testing.T) {
 		args := toolArguments(t, `{"document_type":"`+kind+`","document_id":"`+policyTestID+`","locale":"ko","expected_document_revision":"`+policyTestRevision+`","title":"수정된 정책"}`)
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, args)
 		require.NoError(t, err)
-		require.Equal(t, "new-revision", result.StructuredContent["dr"])
+		require.Equal(t, "new-revision", result.StructuredContent["document_revision"])
 		request := application.applyRequest
 		require.Equal(t, core.Domain(kind), request.Profile)
 		require.Equal(t, core.Revision(policyTestRevision), request.ExpectedDocumentRevision)

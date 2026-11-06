@@ -102,7 +102,7 @@ func TestDocumentCatalogKeepsOnlyRequestedBlockKinds(t *testing.T) {
 func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 	port := &documentCatalogPort{document: documentCatalogFixture()}
 	tools := mustDocumentCatalogTools(t, port)
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"p":"page","d":"44444444-4444-4444-8444-444444444444","l":"ko"}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"document_type":"page","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 		t.Fatalf("owning read request/result = %+v / %+v", port.request, result)
 	}
 	output := result.StructuredContent
-	for key, want := range map[string]any{"v": core.ProtocolVersion, "p": "page", "d": string(port.document.Identity.Reference), "c": "typed-catalog", "dr": "shared-rev", "tr": "target-rev", "s": "en", "l": "ko", "lr": "non_source", "le": true} {
+	for key, want := range map[string]any{"document_type": "page", "document_id": string(port.document.Identity.Reference), "catalog_fingerprint": "typed-catalog", "document_revision": "shared-rev", "target_revision": "target-rev", "source_locale": "en", "locale": "ko", "locale_role": "non_source", "locale_exists": true} {
 		if output[key] != want {
 			t.Fatalf("metadata %s=%v, want %v", key, output[key], want)
 		}
@@ -123,10 +123,10 @@ func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 		field := raw.(map[string]any)
 		fields[field["field"].(string)] = field
 	}
-	if fields["title"]["ownership"] != "locale" || fields["title"]["translatable"] != true || fields["title"]["kind"] != "t" {
+	if fields["title"]["ownership"] != "locale" || fields["title"]["translatable"] != true || fields["title"]["kind"] != "text" {
 		t.Fatalf("title=%v", fields["title"])
 	}
-	for field, kind := range map[string]string{"enabled": "b", "amount": "n", "content": "i"} {
+	for field, kind := range map[string]string{"enabled": "boolean", "amount": "number", "content": "rich_text"} {
 		if fields[field]["kind"] != kind {
 			t.Fatalf("%s kind=%v, want %s", field, fields[field]["kind"], kind)
 		}
@@ -136,14 +136,14 @@ func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 	}
 	units := fields["units"]
 	identity := units["identity"].(map[string]any)
-	if units["kind"] != "l" || identity["kind"] != "field" || identity["field"] != "name" {
+	if units["kind"] != "list" || identity["kind"] != "field" || identity["field"] != "name" {
 		t.Fatalf("stable list=%v", units)
 	}
 	item := units["item"].(map[string]any)
 	nested := item["fields"].([]any)
 	asset := nested[0].(map[string]any)
 	assetShape := asset["schema"].(map[string]any)
-	if item["kind"] != "o" || asset["field"] != "asset" || assetShape["file"] != true || assetShape["ownership"] != "shared" || assetShape["kind"] != nil {
+	if item["kind"] != "object" || asset["field"] != "asset" || assetShape["file"] != true || assetShape["ownership"] != "shared" || assetShape["kind"] != nil {
 		t.Fatalf("nested File=%v", units)
 	}
 	if got := fields["fixed"]["identity"].(map[string]any)["handles"]; !reflect.DeepEqual(got, []any{"vertex", "common"}) {
@@ -163,7 +163,7 @@ func TestDocumentCatalogReturnsAuthorizedRecursiveTypedShapes(t *testing.T) {
 		t.Fatalf("relations=%v", relation)
 	}
 	relationFields := output["relation_fields"].([]any)
-	if len(relationFields) != 2 || relationFields[0].(map[string]any)["kind"] != "o" || relationFields[1].(map[string]any)["file"] != true {
+	if len(relationFields) != 2 || relationFields[0].(map[string]any)["kind"] != "object" || relationFields[1].(map[string]any)["file"] != true {
 		t.Fatalf("relation fields=%v", relationFields)
 	}
 	encoded := result.Content[0]["text"].(string)
@@ -183,7 +183,7 @@ func TestDocumentCatalogOwningDenialAndInputErrorsReturnNoCatalog(t *testing.T) 
 	for _, code := range []connect.Code{connect.CodePermissionDenied, connect.CodeNotFound} {
 		t.Run(code.String(), func(t *testing.T) {
 			port := &documentCatalogPort{document: documentCatalogFixture(), loadErr: connect.NewError(code, errors.New("owning read denied"))}
-			result, err := mustDocumentCatalogTools(t, port).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"p":"page","d":"44444444-4444-4444-8444-444444444444","l":"ko"}`))
+			result, err := mustDocumentCatalogTools(t, port).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, `{"document_type":"page","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko"}`))
 			var execution *mcpserver.ToolExecutionError
 			if !errors.As(err, &execution) || port.loads != 1 || result.StructuredContent != nil || result.Content != nil {
 				t.Fatalf("denial exposed catalog: result=%+v error=%v", result, err)
@@ -191,11 +191,11 @@ func TestDocumentCatalogOwningDenialAndInputErrorsReturnNoCatalog(t *testing.T) 
 		})
 	}
 	for _, input := range []string{
-		`{"p":"page","d":"slug","l":"ko"}`,
-		`{"p":"page","d":null,"l":"ko"}`,
-		`{"p":"page","d":"44444444-4444-4444-8444-444444444444","l":"ko","catalog":"override"}`,
-		`{"p":"unknown","d":"44444444-4444-4444-8444-444444444444","l":"ko"}`,
-		`{"p":"page","d":"44444444-4444-4444-8444-444444444444","l":null}`,
+		`{"document_type":"page","document_id":"slug","locale":"ko"}`,
+		`{"document_type":"page","document_id":null,"locale":"ko"}`,
+		`{"document_type":"page","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","catalog":"override"}`,
+		`{"document_type":"unknown","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko"}`,
+		`{"document_type":"page","document_id":"44444444-4444-4444-8444-444444444444","locale":null}`,
 	} {
 		port := &documentCatalogPort{document: documentCatalogFixture()}
 		result, err := mustDocumentCatalogTools(t, port).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentCatalog, toolArguments(t, input))

@@ -11,57 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func headingInputSchema(update bool) json.RawMessage {
-	base := paragraphCreateInputJSONSchema
-	if update {
-		base = paragraphUpdateInputJSONSchema
-	}
-	var schema map[string]any
-	if err := json.Unmarshal([]byte(base), &schema); err != nil {
-		panic(err)
-	}
-	properties := schema["properties"].(map[string]any)
-	properties["document_type"] = map[string]any{"enum": []string{"page", "post"}}
-	properties["text"] = map[string]any{"type": "string", "description": "Plain text for the heading."}
-	properties["level"] = map[string]any{"type": "integer", "enum": []int{1, 2, 3}, "description": "Heading level."}
-	properties["alignment"] = map[string]any{"type": "string", "enum": []string{"left", "center", "right"}}
-	if update {
-		properties["block_id"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 160, "description": "Existing heading Block handle returned by document_read."}
-	}
-	if update {
-		// Translated text updates leave the shared level and alignment untouched.
-		properties["level"] = map[string]any{"type": "integer", "enum": []int{1, 2, 3}, "description": "Heading level; omit to keep it (required to change it, source locale only)."}
-	} else {
-		schema["required"] = append(schema["required"].([]any), "level")
-	}
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		panic(err)
-	}
-	return encoded
-}
-
-func tableCreateInputSchema() json.RawMessage {
-	var schema map[string]any
-	if err := json.Unmarshal([]byte(paragraphCreateInputJSONSchema), &schema); err != nil {
-		panic(err)
-	}
-	properties := schema["properties"].(map[string]any)
-	properties["document_type"] = map[string]any{"enum": []string{"page", "post"}}
-	delete(properties, "text")
-	required := schema["required"].([]any)
-	required[len(required)-1] = "rows"
-	properties["rows"] = map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "description": "Rectangular rows of plain-text cells.", "items": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string"}}}
-	properties["header_row"] = map[string]any{"type": "boolean", "description": "Mark the first row as headers (default false)."}
-	properties["header_column"] = map[string]any{"type": "boolean", "description": "Mark the first column as headers (default false)."}
-	properties["after_block_id"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 160, "description": "Insert after this sibling; omit to append to the selected Page rich-text section or Post body."}
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		panic(err)
-	}
-	return encoded
-}
-
 type headingArguments struct {
 	focusedMutationArguments
 	Parent    core.BlockID `json:"parent_block_id,omitempty"`
@@ -73,19 +22,27 @@ type headingArguments struct {
 }
 
 func validateRichBlockProfile(input focusedMutationArguments, parent core.BlockID, create bool) error {
-	if input.Profile != core.DomainPage && input.Profile != core.DomainPost {
+	if input.DocumentType != core.DomainPage && input.DocumentType != core.DomainPost {
 		return errors.New("document_type must be page or post")
 	}
-	if create && input.Profile == core.DomainPage && parent == "" {
+	if create && input.DocumentType == core.DomainPage && parent == "" {
 		return errors.New("Page rich blocks require parent_block_id identifying a rich-text section")
 	}
-	if input.Profile == core.DomainPost && parent != "" {
+	if input.DocumentType == core.DomainPost && parent != "" {
 		return errors.New("Post body blocks must omit parent_block_id")
 	}
 	return nil
 }
 
-func (tools *AIDocumentTools) mutateHeading(ctx context.Context, call toolCall[headingArguments], update bool) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) createHeading(ctx context.Context, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
+	return tools.writeHeading(ctx, call, false)
+}
+
+func (tools *AIDocumentTools) updateHeading(ctx context.Context, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
+	return tools.writeHeading(ctx, call, true)
+}
+
+func (tools *AIDocumentTools) writeHeading(ctx context.Context, call toolCall[headingArguments], update bool) (mcpserver.ToolResult, error) {
 	arguments := call.Arguments
 
 	var input headingArguments

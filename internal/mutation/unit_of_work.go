@@ -2,6 +2,7 @@ package mutation
 
 import (
 	"context"
+	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"gorm.io/gorm"
@@ -89,7 +90,7 @@ type postgres[S any] struct {
 }
 
 func (p postgres[S]) Transaction(ctx context.Context, lockAuthorization bool, work func(Tx[S]) error) error {
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return transactionBase(ctx, p.db).Transaction(func(tx *gorm.DB) error {
 		if lockAuthorization {
 			if err := authzmutation.LockTransaction(tx); err != nil {
 				return err
@@ -104,6 +105,9 @@ func (p postgres[S]) RelationshipTransaction(
 	writer authzmutation.RelationshipWriter,
 	work func(Tx[S], authzmutation.WriteRelationships) error,
 ) error {
+	if joinedTransaction(ctx) != nil {
+		return errors.New("a mutation that writes relationships cannot join a shared transaction")
+	}
 	_, err := authzmutation.Execute(ctx, p.db, writer, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		return work(NewTx(p.bind(tx), tx, nil), write)
 	})

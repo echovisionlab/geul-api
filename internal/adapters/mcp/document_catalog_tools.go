@@ -17,7 +17,7 @@ const ToolDocumentCatalog = "document_catalog"
 var documentCatalogTools = toolRegistry[DocumentCatalogTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolDocumentCatalog, Title: "Describe document catalog",
-		Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified. Pass k with the block kinds you are about to write: a Page's whole catalog is tens of kilobytes.",
+		Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified. Pass block_kinds with the kinds you are about to write: a Page's whole catalog is tens of kilobytes.",
 		InputSchema: documentCatalogInputSchema(), OutputSchema: documentCatalogOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 	}, (*DocumentCatalogTools).describe),
@@ -193,7 +193,7 @@ func projectCatalogShape(schema core.FieldSchema) catalogShape {
 
 type documentCatalogArguments struct {
 	openArguments
-	Kinds []core.BlockKind `json:"k,omitempty"`
+	Kinds []core.BlockKind `json:"block_kinds,omitempty"`
 }
 
 // keepBlockKinds narrows a catalog to the kinds a caller is about to write. The
@@ -215,14 +215,14 @@ func (tools *DocumentCatalogTools) describe(ctx context.Context, name string, ca
 	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
-	if err := rejectNullArguments(call.Arguments, "k"); err != nil {
+	if err := rejectNullArguments(call.Arguments, "block_kinds"); err != nil {
 		return executionError(err)
 	}
-	if err := validateMCPDocumentReference(input.Document); err != nil {
+	if err := validateMCPDocumentReference(input.DocumentID); err != nil {
 		return executionError(err)
 	}
 	description, err := tools.application.Describe(ctx, core.OpenRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+		Document: core.DocumentIdentity{Domain: input.DocumentType, Reference: input.DocumentID}, Locale: input.Locale,
 	})
 	if err != nil {
 		return expectedToolError(err)

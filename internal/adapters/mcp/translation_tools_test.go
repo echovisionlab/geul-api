@@ -38,7 +38,6 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 	}
 	wantAnnotations := map[string]map[string]any{
 		ToolTranslationList:        toolAnnotations(true, false, false),
-		ToolTranslationGet:         toolAnnotations(true, false, false),
 		ToolTranslationXLIFFExport: toolAnnotations(false, false, false),
 		ToolTranslationXLIFFImport: toolAnnotations(false, true, false),
 		ToolTranslationUnitsGet:    toolAnnotations(true, false, false),
@@ -105,22 +104,18 @@ func TestTranslationToolsListAndGetReturnMetadataWithoutTranslationBody(t *testi
 	}
 	tools := mustTranslationTools(t, application)
 
-	listed, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationList, toolArguments(t, `{"p":"post","d":"post-a"}`))
+	listed, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationList, toolArguments(t, `{"document_type":"post","document_id":"post-a"}`))
 	if err != nil {
 		t.Fatalf("translation_list error = %v", err)
 	}
-	got, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationGet, toolArguments(t, `{"p":"post","d":"post-a","l":"en"}`))
-	if err != nil {
-		t.Fatalf("translation_get error = %v", err)
-	}
-	combined := listed.Content[0]["text"].(string) + got.Content[0]["text"].(string)
-	for _, forbidden := range []string{"secret title", "secret html", "type", "content", "<p>"} {
+	combined := listed.Content[0]["text"].(string)
+	for _, forbidden := range []string{"secret title", "secret html", `"type":`, "content", "<p>"} {
 		if strings.Contains(strings.ToLower(combined), strings.ToLower(forbidden)) {
 			t.Fatalf("translation metadata leaked body %q: %s", forbidden, combined)
 		}
 	}
-	if !strings.Contains(combined, `"l":"en"`) || application.getTranslationRequest.Locale != "en" {
-		t.Fatalf("translation metadata/request mismatch: %s %+v", combined, application.getTranslationRequest)
+	if !strings.Contains(combined, `"locale":"en"`) {
+		t.Fatalf("translation metadata mismatch: %s", combined)
 	}
 }
 
@@ -142,14 +137,12 @@ func TestTranslationToolsXLIFFUsesOnlyArtifactReferenceAndUploadedFileID(t *test
 	}
 	tools := mustTranslationTools(t, application)
 
-	exported, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{
-		"p":"post","d":"post-a","l":"en","m":"patch","u":["block-a/content"]
-	}`))
+	exported, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","unit_ids":["block-a/content"]}`))
 	if err != nil {
 		t.Fatalf("translation_xliff_export error = %v", err)
 	}
 	exportText := exported.Content[0]["text"].(string)
-	if !strings.Contains(exportText, `"f":"`+testTranslationArtifactID+`"`) || !strings.Contains(exportText, `"u":"https://cdn.example/xliff/signed"`) {
+	if !strings.Contains(exportText, `"file_id":"`+testTranslationArtifactID+`"`) || !strings.Contains(exportText, `"url":"https://cdn.example/xliff/signed"`) {
 		t.Fatalf("XLIFF export omitted artifact reference: %s", exportText)
 	}
 	for _, forbidden := range []string{"<xliff", "base64", "blob", "source text", "target text"} {
@@ -159,7 +152,7 @@ func TestTranslationToolsXLIFFUsesOnlyArtifactReferenceAndUploadedFileID(t *test
 	}
 
 	imported, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport, toolArguments(t, `{
-		"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`","er":"target-revision-a"
+		"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"`+testTranslationArtifactID+`","expected_target_revision":"target-revision-a"
 	}`))
 	if err != nil {
 		t.Fatalf("translation_xliff_import error = %v", err)
@@ -176,14 +169,14 @@ func TestTranslationToolsRejectInlineXLIFFAndInvalidLifecycleArguments(t *testin
 		tool      string
 		arguments string
 	}{
-		{name: "inline XML", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","f":"` + testTranslationArtifactID + `","xml":"<xliff/>"}`},
-		{name: "base64", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","f":"` + testTranslationArtifactID + `","base64":"AAAA"}`},
-		{name: "blob", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","f":"` + testTranslationArtifactID + `","blob":[1,2]}`},
-		{name: "file payload in file ID", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","f":"data:application/xml;base64,AAAA"}`},
-		{name: "patch export without units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch"}`},
-		{name: "replace export with units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"replace","u":["block-a/content"]}`},
-		{name: "empty unit handle", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","u":[""]}`},
-		{name: "zero UUID file", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"replace","f":"00000000-0000-0000-0000-000000000000"}`},
+		{name: "inline XML", tool: ToolTranslationXLIFFImport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"` + testTranslationArtifactID + `","xml":"<xliff/>"}`},
+		{name: "base64", tool: ToolTranslationXLIFFImport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"` + testTranslationArtifactID + `","base64":"AAAA"}`},
+		{name: "blob", tool: ToolTranslationXLIFFImport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"` + testTranslationArtifactID + `","blob":[1,2]}`},
+		{name: "file payload in file ID", tool: ToolTranslationXLIFFImport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"data:application/xml;base64,AAAA"}`},
+		{name: "patch export without units", tool: ToolTranslationXLIFFExport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch"}`},
+		{name: "replace export with units", tool: ToolTranslationXLIFFExport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace","unit_ids":["block-a/content"]}`},
+		{name: "empty unit handle", tool: ToolTranslationXLIFFExport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","unit_ids":[""]}`},
+		{name: "zero UUID file", tool: ToolTranslationXLIFFImport, arguments: `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace","file_id":"00000000-0000-0000-0000-000000000000"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -202,8 +195,8 @@ func TestTranslationToolsRejectOptionalNullBeforeApplicationCall(t *testing.T) {
 		tool      string
 		arguments string
 	}{
-		{"replace export selection", ToolTranslationXLIFFExport, `{"p":"post","d":"post-a","l":"en","m":"replace","u":null}`},
-		{"import revision", ToolTranslationXLIFFImport, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"` + testTranslationArtifactID + `","er":null}`},
+		{"replace export selection", ToolTranslationXLIFFExport, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace","unit_ids":null}`},
+		{"import revision", ToolTranslationXLIFFImport, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"patch","file_id":"` + testTranslationArtifactID + `","expected_target_revision":null}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			application := &recordingTranslationApplication{}
@@ -226,14 +219,14 @@ func TestTranslationToolsRejectInlineArtifactReferencesAndInvalidApplicationOutp
 		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
 	}}
 	tools := mustTranslationTools(t, application)
-	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`)); err == nil || result.Content != nil {
+	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace"}`)); err == nil || result.Content != nil {
 		t.Fatalf("inline artifact response was exposed: %+v, %v", result, err)
 	}
 
 	application.importResponse = translationapp.XLIFFImport{
 		TargetRevision: "revision-a", AffectedUnitHandles: []string{""},
 	}
-	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace","f":"`+testTranslationArtifactID+`"}`)); err == nil || result.Content != nil {
+	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport, toolArguments(t, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace","file_id":"`+testTranslationArtifactID+`"}`)); err == nil || result.Content != nil {
 		t.Fatalf("empty affected unit was exposed: %+v, %v", result, err)
 	}
 }
@@ -264,23 +257,23 @@ func TestTranslationToolsPreserveOwningMenuUnitHandles(t *testing.T) {
 	}
 	tools := mustTranslationTools(t, application)
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport,
-		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"patch","u":["`+handle+`"]}`))
+		toolArguments(t, `{"document_type":"menu","document_id":"`+menuID+`","locale":"en","mode":"patch","unit_ids":["`+handle+`"]}`))
 	if err != nil || !reflect.DeepEqual(application.exportRequest.UnitHandles, []string{handle}) {
 		t.Fatalf("owning Menu handle export = %+v, %v", application.exportRequest, err)
 	}
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport,
-		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"replace","f":"`+testTranslationArtifactID+`"}`))
+		toolArguments(t, `{"document_type":"menu","document_id":"`+menuID+`","locale":"en","mode":"replace","file_id":"`+testTranslationArtifactID+`"}`))
 	if err != nil {
 		t.Fatalf("successful import was rejected while encoding its owning handle: %v", err)
 	}
-	if result.StructuredContent["c"] != true || !reflect.DeepEqual(result.StructuredContent["u"], []any{handle}) {
+	if result.StructuredContent["changed"] != true || !reflect.DeepEqual(result.StructuredContent["unit_ids"], []any{handle}) {
 		t.Fatalf("successful import result = %+v", result.StructuredContent)
 	}
 
 	// An opaque handle is still subject to the application's current manifest.
 	application.exportError = connect.NewError(connect.CodeInvalidArgument, errors.New("unknown unit handles"))
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport,
-		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"patch","u":["unknown/2"]}`))
+		toolArguments(t, `{"document_type":"menu","document_id":"`+menuID+`","locale":"en","mode":"patch","unit_ids":["unknown/2"]}`))
 	var execution *mcpserver.ToolExecutionError
 	if !errors.As(err, &execution) {
 		t.Fatalf("owning manifest rejection was not preserved: %v", err)
@@ -298,8 +291,8 @@ func TestTranslationToolsPreserveSafeConnectErrorsAndHideInternalFailures(t *tes
 		{name: "internal", applicationErr: connect.NewError(connect.CodeInternal, errors.New("database password leaked"))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			tools := mustTranslationTools(t, &recordingTranslationApplication{getTranslationError: test.applicationErr})
-			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationGet, toolArguments(t, `{"p":"post","d":"post-a","l":"en"}`))
+			tools := mustTranslationTools(t, &recordingTranslationApplication{listTranslationsError: test.applicationErr})
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationList, toolArguments(t, `{"document_type":"post","document_id":"post-a"}`))
 			var execution *mcpserver.ToolExecutionError
 			if errors.As(err, &execution) != test.wantExecution || result.Content != nil {
 				t.Fatalf("CallTool() = %+v, %v, execution=%v", result, err, execution)
@@ -313,9 +306,9 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing
 		Protocol: core.ProtocolVersion, Profile: core.DomainPost, Catalog: "catalog-a", Document: "post-a",
 		DocumentRevision: "revision-a", SourceLocale: "ko", Locale: "ko", LocaleRole: core.LocaleRoleSource, LocaleExists: true,
 	}}
-	translationApplication := &recordingTranslationApplication{getTranslationResponse: translationapp.Entry{
+	translationApplication := &recordingTranslationApplication{listTranslationsResponse: translationapp.EntityTranslations{SourceLocale: "ko", Entries: []translationapp.Entry{{
 		EntityType: "post", EntityID: "post-a", Locale: "en", UpdatedAt: time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC),
-	}}
+	}}}}
 	documentTools, err := NewAIDocumentTools(documentApplication)
 	if err != nil {
 		t.Fatal(err)
@@ -340,8 +333,8 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing
 		}
 	}
 
-	callResponse := serveMCPAdapterRequest(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"translation_get","arguments":{"p":"post","d":"post-a","l":"en"}}}`)
-	if callResponse.Code != 200 || !strings.Contains(callResponse.Body.String(), `\"l\":\"en\"`) {
+	callResponse := serveMCPAdapterRequest(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"translation_list","arguments":{"document_type":"post","document_id":"post-a"}}}`)
+	if callResponse.Code != 200 || !strings.Contains(callResponse.Body.String(), `\"locale\":\"en\"`) {
 		t.Fatalf("tools/call = %d %s", callResponse.Code, callResponse.Body.String())
 	}
 	user := auth.GetUser(translationApplication.getTranslationContext)
@@ -386,10 +379,12 @@ type recordingTranslationApplication struct {
 	unitsPutResponse         translationapp.XLIFFImport
 	unitsEditRequest         *translationapp.EditTranslationUnitsCommand
 	unitsEditResponse        map[string]translationapp.XLIFFImport
+	unitsEditError           error
 	unitsByLocale            map[string]translationapp.TranslationUnits
 }
 
-func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
+func (application *recordingTranslationApplication) ListEntityTranslations(ctx context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
+	application.getTranslationContext = ctx
 	application.listTranslationsRequest = &query
 	return application.listTranslationsResponse, application.listTranslationsError
 }
@@ -425,7 +420,33 @@ func (application *recordingTranslationApplication) PutEntityTranslationUnits(_ 
 
 func (application *recordingTranslationApplication) EditEntityTranslationUnits(_ context.Context, command translationapp.EditTranslationUnitsCommand) (map[string]translationapp.XLIFFImport, error) {
 	application.unitsEditRequest = &command
-	return application.unitsEditResponse, nil
+	return application.unitsEditResponse, application.unitsEditError
+}
+
+// One document's failure must not stop or hide the others, and a malformed call
+// must not write anything.
+func TestTranslationUnitsPutWritesManyDocumentsSeparately(t *testing.T) {
+	application := &recordingTranslationApplication{unitsEditResponse: map[string]translationapp.XLIFFImport{"en": {TargetRevision: "r", Changed: true}}}
+	tools := mustTranslationTools(t, application)
+	edit := `"edits":[{"source":"a","targets":{"en":"b"}}]`
+
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"documents":[
+		{"document_type":"page","document_id":"page-a",`+edit+`},
+		{"document_type":"post","document_id":"post-b",`+edit+`}]}`))
+
+	if err != nil || result.IsError || result.StructuredContent["applied"] != float64(2) {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+
+	application.unitsEditError = connect.NewError(connect.CodeInvalidArgument, errors.New("no unit has the source text"))
+	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"documents":[{"document_type":"page","document_id":"page-a",`+edit+`}]}`))
+	if err != nil || !result.IsError || result.StructuredContent["failed"] != float64(1) {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+	failed := result.StructuredContent["documents"].([]any)[0].(map[string]any)
+	if !strings.Contains(failed["error"].(string), "no unit has the source text") {
+		t.Fatalf("failed = %+v", failed)
+	}
 }
 
 func mustTranslationTools(t *testing.T, application *recordingTranslationApplication) *TranslationTools {
@@ -451,7 +472,7 @@ func TestTranslationToolsRejectXLIFFArtifactWithoutExpiry(t *testing.T) {
 		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
 	}}
 	tools := mustTranslationTools(t, application)
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"document_type":"post","document_id":"post-a","locale":"en","mode":"replace"}`))
 	if err == nil || !strings.Contains(err.Error(), "incomplete XLIFF artifact reference") || result.Content != nil {
 		t.Fatalf("missing artifact expiry: result=%+v, error=%v", result, err)
 	}
@@ -468,20 +489,20 @@ func TestTranslationUnitsToolsPassUnitsAndMarkupThrough(t *testing.T) {
 	}
 	tools := mustTranslationTools(t, application)
 
-	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","u":["entity:title"]}`))
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"document_type":"post","document_id":"post-a","locale":"ko","unit_ids":["entity:title"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := application.unitsGetRequest; got == nil || got.TargetLocale != "ko" || !reflect.DeepEqual(got.UnitHandles, []string{"entity:title"}) {
 		t.Fatalf("units get request = %+v", got)
 	}
-	units := read.StructuredContent["u"].([]any)
-	if read.StructuredContent["r"] != revision || len(units) != 1 ||
-		units[0].(map[string]any)["s"] != `<pc id="r1">Night</pc> walks` {
+	units := read.StructuredContent["units"].([]any)
+	if read.StructuredContent["target_revision"] != revision || len(units) != 1 ||
+		units[0].(map[string]any)["source"] != `<pc id="r1">Night</pc> walks` {
 		t.Fatalf("units get result = %+v", read.StructuredContent)
 	}
 
-	written, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","er":"revision-a","u":{"entity:title":"<pc id=\"r1\">밤</pc> 산책"}}`))
+	written, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"documents":[{"document_type":"post","document_id":"post-a","locale":"ko","expected_target_revision":"revision-a","unit_targets":{"entity:title":"<pc id=\"r1\">밤</pc> 산책"}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +510,7 @@ func TestTranslationUnitsToolsPassUnitsAndMarkupThrough(t *testing.T) {
 		got.Targets["entity:title"] != `<pc id="r1">밤</pc> 산책` {
 		t.Fatalf("units put request = %+v", got)
 	}
-	if written.StructuredContent["r"] != "revision-b" || written.StructuredContent["c"] != true {
+	if written.StructuredContent["documents"].([]any)[0].(map[string]any)["target_revision"] != "revision-b" || written.StructuredContent["documents"].([]any)[0].(map[string]any)["changed"] != true {
 		t.Fatalf("units put result = %+v", written.StructuredContent)
 	}
 }
@@ -515,32 +536,32 @@ func TestTranslationUnitsReadSeveralLocalesInOneCall(t *testing.T) {
 	}
 	tools := mustTranslationTools(t, application)
 
-	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a","q":"CONTACT"}`))
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"document_type":"page","document_id":"page-a","query":"CONTACT"}`))
 	if err != nil {
 		t.Fatalf("translation_units_get error = %v", err)
 	}
 	want := map[string]any{
-		"s": "ko",
-		"r": map[string]any{"en": "revision-en", "de": "revision-de"},
-		"u": []any{map[string]any{
-			"i": "section:s1:block:b1:typed:paragraph/content", "g": "block:s1", "s": "지원 문의",
-			"t": map[string]any{"en": "Contact support"},
+		"source_locale":    "ko",
+		"target_revisions": map[string]any{"en": "revision-en", "de": "revision-de"},
+		"units": []any{map[string]any{
+			"unit_id": "section:s1:block:b1:typed:paragraph/content", "group_id": "block:s1", "source": "지원 문의",
+			"targets": map[string]any{"en": "Contact support"},
 		}},
 	}
 	if !reflect.DeepEqual(read.StructuredContent, want) {
 		t.Fatalf("read = %#v, want %#v", read.StructuredContent, want)
 	}
 
-	byBlock, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a","ls":["en"],"b":["b2"]}`))
+	byBlock, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"document_type":"page","document_id":"page-a","locales":["en"],"block_ids":["b2"]}`))
 	if err != nil {
 		t.Fatalf("translation_units_get(b) error = %v", err)
 	}
-	units := byBlock.StructuredContent["u"].([]any)
-	if len(units) != 1 || units[0].(map[string]any)["s"] != marked || units[0].(map[string]any)["p"] != "앞\n뒤" {
+	units := byBlock.StructuredContent["units"].([]any)
+	if len(units) != 1 || units[0].(map[string]any)["source"] != marked || units[0].(map[string]any)["plain_source"] != "앞\n뒤" {
 		t.Fatalf("a marked-up unit must keep its markup and offer plain source: %#v", units)
 	}
 
-	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"p":"page","d":"page-a"}`)); err == nil {
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsGet, toolArguments(t, `{"document_type":"page","document_id":"page-a"}`)); err == nil {
 		t.Fatal("reading every locale without a selection succeeded")
 	}
 }
@@ -553,7 +574,7 @@ func TestTranslationUnitsPutEditsGoThroughInOneCommand(t *testing.T) {
 	tools := mustTranslationTools(t, application)
 
 	written, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t,
-		`{"p":"page","d":"page-a","e":[{"s":"지원 문의","b":"b1","t":{"en":"Contact support","de":"Support kontaktieren"}}]}`))
+		`{"documents":[{"document_type":"page","document_id":"page-a","edits":[{"source":"지원 문의","block_id":"b1","targets":{"en":"Contact support","de":"Support kontaktieren"}}]}]}`))
 	if err != nil {
 		t.Fatalf("translation_units_put error = %v", err)
 	}
@@ -562,16 +583,19 @@ func TestTranslationUnitsPutEditsGoThroughInOneCommand(t *testing.T) {
 		command.Edits[0].Targets["de"] != "Support kontaktieren" {
 		t.Fatalf("edit command = %+v", command)
 	}
-	want := map[string]any{"r": map[string]any{"en": "r-en", "de": "r-de"}, "c": map[string]any{"en": true, "de": false}}
+	want := map[string]any{"applied": float64(1), "failed": float64(0), "documents": []any{map[string]any{
+		"document_type": "page", "document_id": "page-a", "status": "applied",
+		"locales": map[string]any{"en": map[string]any{"target_revision": "r-en", "changed": true}, "de": map[string]any{"target_revision": "r-de", "changed": false}},
+	}}}
 	if !reflect.DeepEqual(written.StructuredContent, want) {
 		t.Fatalf("result = %#v", written.StructuredContent)
 	}
 
 	for name, arguments := range map[string]string{
-		"edits mixed with one locale": `{"p":"page","d":"page-a","l":"en","e":[{"s":"a","t":{"en":"b"}}]}`,
-		"no source":                   `{"p":"page","d":"page-a","e":[{"t":{"en":"b"}}]}`,
-		"no targets":                  `{"p":"page","d":"page-a","e":[{"s":"a","t":{}}]}`,
-		"nothing to write":            `{"p":"page","d":"page-a"}`,
+		"edits mixed with one locale": `{"documents":[{"document_type":"page","document_id":"page-a","locale":"en","edits":[{"source":"a","targets":{"en":"b"}}]}]}`,
+		"no source":                   `{"documents":[{"document_type":"page","document_id":"page-a","edits":[{"targets":{"en":"b"}}]}]}`,
+		"no targets":                  `{"documents":[{"document_type":"page","document_id":"page-a","edits":[{"source":"a","targets":{}}]}]}`,
+		"nothing to write":            `{"document_type":"page","document_id":"page-a"}`,
 	} {
 		if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, arguments)); err == nil {
 			t.Fatalf("%s succeeded", name)
@@ -583,7 +607,7 @@ func TestTranslationUnitsPutRejectsAnEmptyTargetSet(t *testing.T) {
 	application := &recordingTranslationApplication{}
 	tools := mustTranslationTools(t, application)
 
-	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"p":"post","d":"post-a","l":"ko","u":{}}`))
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationUnitsPut, toolArguments(t, `{"documents":[{"document_type":"post","document_id":"post-a","locale":"ko","unit_targets":{}}]}`))
 
 	if err == nil || application.unitsPutRequest != nil {
 		t.Fatalf("empty target set: error=%v request=%+v", err, application.unitsPutRequest)

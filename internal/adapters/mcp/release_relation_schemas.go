@@ -59,7 +59,7 @@ const releaseArtistsSetInputJSONSchema = `{
 }`
 const releaseLabelsSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","labels","observed_labels"],
-  "properties":{"release_id":` + documentReferenceJSONSchema + `,"labels":{"description":"Label IDs from label_list.","allOf":[` + releaseRelationLabelsJSONSchema + `]},"observed_labels":` + releaseRelationLabelsJSONSchema + `,"order_intent":` + releaseRelationOrderIntentJSONSchema + `}
+  "properties":{"release_id":` + documentReferenceJSONSchema + `,"labels":{"description":"Label IDs from document_list with document_type=label.","allOf":[` + releaseRelationLabelsJSONSchema + `]},"observed_labels":` + releaseRelationLabelsJSONSchema + `,"order_intent":` + releaseRelationOrderIntentJSONSchema + `}
 }`
 const releaseCategoriesSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","category_ids","observed_category_ids"],
@@ -67,15 +67,15 @@ const releaseCategoriesSetInputJSONSchema = `{
 }`
 const releaseGenresSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","genre_ids","observed_genre_ids"],
-  "properties":{"release_id":` + documentReferenceJSONSchema + `,"genre_ids":{"description":"Genre IDs from genre_list.","allOf":[` + releaseRelationIDsJSONSchema + `]},"observed_genre_ids":` + releaseRelationIDsJSONSchema + `}
+  "properties":{"release_id":` + documentReferenceJSONSchema + `,"genre_ids":{"description":"Genre IDs from reference_search with reference_type=genre.","allOf":[` + releaseRelationIDsJSONSchema + `]},"observed_genre_ids":` + releaseRelationIDsJSONSchema + `}
 }`
 const releaseStylesSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","style_ids","observed_style_ids"],
-  "properties":{"release_id":` + documentReferenceJSONSchema + `,"style_ids":{"description":"Style IDs from style_list.","allOf":[` + releaseRelationIDsJSONSchema + `]},"observed_style_ids":` + releaseRelationIDsJSONSchema + `}
+  "properties":{"release_id":` + documentReferenceJSONSchema + `,"style_ids":{"description":"Style IDs from reference_search with reference_type=style.","allOf":[` + releaseRelationIDsJSONSchema + `]},"observed_style_ids":` + releaseRelationIDsJSONSchema + `}
 }`
 const releaseFormatsSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","formats","observed_formats"],
-  "properties":{"release_id":` + documentReferenceJSONSchema + `,"formats":{"description":"Format IDs from format_list.","allOf":[` + releaseRelationFormatsJSONSchema + `]},"observed_formats":` + releaseRelationFormatsJSONSchema + `}
+  "properties":{"release_id":` + documentReferenceJSONSchema + `,"formats":{"description":"Format IDs from reference_search with reference_type=format.","allOf":[` + releaseRelationFormatsJSONSchema + `]},"observed_formats":` + releaseRelationFormatsJSONSchema + `}
 }`
 const releaseCreditsSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","credits","observed_credits"],

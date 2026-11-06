@@ -12,55 +12,43 @@ import (
 	mcpadapter "github.com/echovisionlab/geul-api/internal/adapters/mcp"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/documentsearch"
+	"github.com/echovisionlab/geul-api/internal/documenttext"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
-const mcpServerImplementationVersion = "21"
+const mcpServerImplementationVersion = "22"
 
-const mcpServerInstructions = "Find UUIDs with document_list (p=post, p=work, p=page, p=program_event, p=release or p=artist), policy_list (p=terms or p=privacy) " +
-	"and menu_list (p=menu; menu_locations_get for placement); document_search finds which documents hold some text or link. Pass d unchanged, never a slug or URL. " +
-	"Change a word or sentence with document_text_replace, which keeps formatting and needs no read first. " +
-	"Set translations with translation_units_put e: give the source text and its target per locale, with no read first. " +
-	"Read several locales at once with translation_units_get b or q. Adding a paragraph, heading, table or File needs no revision. " +
-	"To find a block use document_read m=outline: q=<text> lists only blocks containing it or linking to it. " +
-	"For other edits read the target handles with m=blocks, then use focused tools or document_apply, passing dr (and tr for a translation) " +
-	"from your latest read or the previous edit's result; consecutive edits need no reread. " +
-	"Plain-text paragraph/heading tools refuse a block with marks, links, colors or breaks. " +
-	"Editing the source locale changes every translation's tr. " +
+const mcpServerInstructions = "Find UUIDs with document_list for any document_type or document_search for text or links; menu_locations_get gives menu placement. Pass document_id unchanged, never a slug or URL. " +
+	"Change words with document_text_replace, links or formatting with document_text_format: both keep other formatting, need no read, and take many edits across documents and locales. " +
+	"To change a source text and its translations together, put translations on the source edit: one transaction. " +
+	"Set translations alone with translation_units_put edits, over many documents, with no read first; read several locales at once with translation_units_get block_ids or query. Adding a paragraph, heading, table or File needs no revision. " +
+	"To find a block use document_read mode=outline with query. For other edits read the target with mode=blocks, then use focused tools or document_apply, passing document_revision (and target_revision for a translation) " +
+	"from your latest read or the previous edit; consecutive edits need no reread. Plain-text paragraph/heading tools refuse a block with marks, links, colors or breaks. Editing the source locale changes every translation's target_revision. " +
 	"A sync_required result with isError=false and applied=false means no change was applied: " +
 	"run the returned read recipe, compare the latest values with the intended edit, keep concurrent values, and retry with the new revisions. " +
-	"Never just replace an expected revision and resend stale operations; " +
-	"affected_handles are pending targets, not proof that concurrent edits are disjoint. " +
-	"Stop after 3 cycles per task edit and report it as pending; " +
-	"ask only about incompatible intentions or deleted targets, not routine version changes. " +
+	"Never just replace an expected revision and resend stale operations; affected_handles are pending targets, not proof that concurrent edits are disjoint. " +
+	"Stop after 3 cycles per task edit and report it as pending; ask only about incompatible intentions or deleted targets, not routine version changes. " +
 	"For read_continuation_invalid, discard previous pages and restart without a cursor. " +
-	"Use document_validate only for requested dry runs and document_catalog k=<kinds> for field shapes, block kinds, relations and File ownership. " +
-	"Email Layout wrapper markup is edited with email_layout_source_get/replace; " +
-	"its text with document tools (p=email_layout). policy_create creates an empty draft without email; " +
-	"edits send no email. policy_schedule and policy_activate_now start notice email delivery. " +
-	"policy_delete allows every lifecycle and retains delivery history. " +
-	"Read settings before focused management tools: post_settings_update needs configuration_revision. " +
-	"Use work_settings_get before updating Work metadata or clients; " +
-	"pass read values as observed_metadata or observed_client_ids. " +
-	"Post/Page/Release unpublish returns to draft; archived Posts can return to draft; Program Events archive; " +
+	"Use document_catalog block_kinds for field shapes and File ownership. " +
+	"Email Layout wrapper markup is edited with email_layout_source_get/replace; its text with document tools. policy_create creates an empty draft without email; " +
+	"edits send no email. policy_schedule and policy_activate_now start notice email delivery. policy_delete allows every lifecycle and retains delivery history. " +
+	"Read document_settings_get before a *_settings_update: post_settings_update needs configuration_revision. " +
+	"Pass read Work values as observed_metadata or observed_client_ids. " +
+	"Change publication with document_publish and delete with document_delete, both over many documents. " +
 	"Read release_relations_get or track_list before relation edits and keep observed snapshots and order_intent. " +
-	"Resolve references with reference_search and the label, event type/series, genre/style/format, form, post_series, map_theme and member_tag lists. " +
-	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; " +
-	"sender changes keep credentials and may send verification email. " +
-	"Pass oauth_app_get's revision to oauth_app_update/delete/secret_rotate; updates replace all settings; " +
-	"a client_secret is shown once. To upload a local file: file_transfer t=presigned_multipart, PUT the bytes to the returned URLs, then complete. " +
-	"file_upload for chat attachments, keeping correlation_id on retries; " +
-	"only the returned File UUID can be attached. file_list browses folders. " +
-	"Read deletion impacts before file_delete; referenced Files are rejected. " +
-	"expected_file_id guards the exact attachment. Preserve returned handles and browser media bundles. " +
-	"document_file_add/replace/remove handle document images and attachments, document_file_caption_update localized captions; " +
-	"removing a Block keeps File bytes; Page placements need a rich-text parent. " +
+	"Resolve references with reference_search, and map themes with map_theme_list. " +
+	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; sender changes keep credentials and may send verification email. " +
+	"Pass oauth_app_get's revision to oauth_app_update/delete/secret_rotate; updates replace all settings; a client_secret is shown once. " +
+	"To upload a local file: file_transfer transport=presigned_multipart, PUT the bytes to the returned URLs, then complete. " +
+	"file_upload for chat attachments, keeping correlation_id on retries; attach only the returned File UUID. file_list browses folders. " +
+	"Read deletion impacts before file_delete. expected_file_id guards the exact attachment. Keep returned handles and media bundles. " +
+	"document_file_add/replace/remove handle document images and attachments, document_file_caption_update localized captions; removing a Block keeps File bytes; Page placements need a rich-text parent. " +
 	"Read document_file_download_policy_get before updating and copy its IDs into observed_policy.access and observed_policy.member_criteria_ids. " +
-	"For Track audio use file_transfer k=track_audio with the current audio_original_file_id as expected_current_file_id. " +
-	"Program Event media: read program_event_media_list first; " +
-	"adding the same event/role/file upserts alt/caption and omitted values clear them."
+	"For Track audio use file_transfer kind=track_audio with the current audio_original_file_id as expected_current_file_id. " +
+	"Program Event media: read program_event_media_list first; adding the same event/role/file upserts alt/caption and omitted values clear them."
 
 // aiDocumentDomainRegistrations makes the complete production DCDP catalog
 // explicit at the composition root. The adapter registry independently rejects
@@ -117,6 +105,10 @@ type aiDocumentMCPConfig struct {
 	editorCollabURL           string
 	editorCollabHTTPClient    connect.HTTPClient
 	allowedOrigins            []string
+	// documentTransaction lets one MCP call change a document's source and
+	// translations in one transaction.
+	documentTransaction documenttext.Transaction
+	documentSearchIndex documentsearch.Index
 }
 
 type contentMCPApplications struct {
@@ -133,25 +125,28 @@ type contentMCPApplications struct {
 		mcpadapter.MemberAdminReader
 		mcpadapter.MemberTagReader
 	}
-	artists      mcpadapter.ArtistReferenceDiscovery
-	files        mcpadapter.FileReferenceDiscovery
-	eventTypes   mcpadapter.ProgramEventTypeReferenceDiscovery
-	eventSeries  mcpadapter.ProgramEventSeriesReferenceDiscovery
-	labels       mcpadapter.LabelReferenceDiscovery
-	genres       mcpadapter.GenreReferenceDiscovery
-	styles       mcpadapter.StyleReferenceDiscovery
-	formats      mcpadapter.FormatReferenceDiscovery
-	forms        mcpadapter.FormReferenceDiscovery
-	postSeries   mcpadapter.PostSeriesReferenceDiscovery
-	tracks       mcpadapter.TrackManagementApplication
-	mapThemes    mcpadapter.MapThemeManagement
-	menus        mcpadapter.MenuDiscovery
-	menuSettings mcpadapter.MenuLocationReader
-	siteSettings mcpadapter.SiteSettingsAdminApplication
-	mailAdapters mcpadapter.MailAdapterAdminApplication
-	emailLayouts mcpadapter.EmailLayoutSourceApplication
-	oauthApps    mcpadapter.OAuthAppAdminApplication
-	criteria     mcpadapter.MemberCriteriaReader
+	artists          mcpadapter.ArtistReferenceDiscovery
+	files            mcpadapter.FileReferenceDiscovery
+	eventTypes       mcpadapter.ProgramEventTypeReferenceDiscovery
+	eventSeries      mcpadapter.ProgramEventSeriesReferenceDiscovery
+	labels           mcpadapter.LabelDocumentDiscovery
+	genres           mcpadapter.GenreReferenceDiscovery
+	styles           mcpadapter.StyleReferenceDiscovery
+	formats          mcpadapter.FormatReferenceDiscovery
+	forms            mcpadapter.FormDocumentDiscovery
+	postSeries       mcpadapter.PostSeriesDocumentDiscovery
+	tracks           mcpadapter.TrackManagementApplication
+	mapThemes        mcpadapter.MapThemeManagement
+	menus            mcpadapter.MenuDocumentDiscovery
+	menuSettings     mcpadapter.MenuLocationReader
+	siteSettings     mcpadapter.SiteSettingsAdminApplication
+	mailAdapters     mcpadapter.MailAdapterAdminApplication
+	emailLayouts     mcpadapter.EmailLayoutSourceApplication
+	campaigns        mcpadapter.CampaignDocumentDiscovery
+	emailTemplates   mcpadapter.EmailTemplateDocumentDiscovery
+	emailLayoutLists mcpadapter.EmailLayoutDocumentDiscovery
+	oauthApps        mcpadapter.OAuthAppAdminApplication
+	criteria         mcpadapter.MemberCriteriaReader
 }
 
 func newAIDocumentMCPComposition(
@@ -159,26 +154,31 @@ func newAIDocumentMCPComposition(
 	posts interface {
 		mcpadapter.PostDocumentDiscovery
 		mcpadapter.PostManagementApplication
+		mcpadapter.PostOperationApplication
 		mcpadapter.PostRelatedApplication
 	},
 	works interface {
 		mcpadapter.WorkDocumentDiscovery
 		mcpadapter.WorkManagementApplication
+		mcpadapter.WorkOperationApplication
 		mcpadapter.WorkRelatedApplication
 	},
 	pages interface {
 		mcpadapter.PageDocumentDiscovery
 		mcpadapter.PageManagementApplication
+		mcpadapter.PageOperationApplication
 		mcpadapter.PageRelatedApplication
 	},
 	programEvents interface {
 		mcpadapter.ProgramEventDocumentDiscovery
 		mcpadapter.ProgramEventManagementApplication
+		mcpadapter.ProgramEventOperationApplication
 		mcpadapter.ProgramEventMediaApplication
 	},
 	releases interface {
 		mcpadapter.ReleaseDocumentDiscovery
 		mcpadapter.ReleaseManagementApplication
+		mcpadapter.ReleaseOperationApplication
 		mcpadapter.ReleaseRelationApplication
 	},
 	artists mcpadapter.ArtistDocumentDiscovery,
@@ -231,15 +231,40 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document catalog tools: %w", err)
 	}
-	discoveryTools, err := mcpadapter.NewDocumentDiscoveryTools(posts, works, pages, programEvents, releases, artists)
+	discoveryTools, err := mcpadapter.NewDocumentDiscoveryTools(mcpadapter.DocumentDiscoveryDeps{
+		Posts: posts, Works: works, Pages: pages, ProgramEvents: programEvents, Releases: releases, Artists: artists,
+		Labels: references.labels, Menus: references.menus, Forms: references.forms, PostSeries: references.postSeries,
+		Policies: references.legalPolicies, Campaigns: references.campaigns,
+		EmailTemplates: references.emailTemplates, EmailLayouts: references.emailLayoutLists,
+	})
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document discovery tools: %w", err)
 	}
-	searchTools, err := mcpadapter.NewDocumentSearchTools(discoveryTools, mcpApplication)
+	translationUnits, err := mcpadapter.NewDocumentTranslationUnits(translation)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document translation units: %w", err)
+	}
+	textEditor, err := documenttext.NewService(mcpApplication, translationUnits, cfg.documentTransaction)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize document text service: %w", err)
+	}
+	textTools, err := mcpadapter.NewDocumentTextTools(textEditor)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document text tools: %w", err)
+	}
+	searchReader, err := mcpadapter.NewDocumentSearchReader(mcpApplication)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document search reader: %w", err)
+	}
+	searcher, err := documentsearch.NewService(discoveryTools, searchReader, cfg.documentSearchIndex)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize document search service: %w", err)
+	}
+	searchTools, err := mcpadapter.NewDocumentSearchTools(searcher)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document search tools: %w", err)
 	}
-	menuTools, err := mcpadapter.NewMenuDiscoveryTools(references.menus, references.menuSettings)
+	menuTools, err := mcpadapter.NewMenuDiscoveryTools(references.menuSettings)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP menu discovery tools: %w", err)
 	}
@@ -279,21 +304,9 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Map Theme management tools: %w", err)
 	}
-	musicReferenceTools, err := mcpadapter.NewMusicReferenceTools(references.genres, references.styles, references.formats)
-	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP music reference tools: %w", err)
-	}
-	pageReferenceTools, err := mcpadapter.NewPageReferenceTools(references.forms, references.postSeries)
-	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Page reference tools: %w", err)
-	}
 	eventMediaTools, err := mcpadapter.NewProgramEventMediaTools(programEvents)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Program Event media tools: %w", err)
-	}
-	memberTagTools, err := mcpadapter.NewMemberTagTools(references.members)
-	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Member tag tools: %w", err)
 	}
 	memberAdminTools, err := mcpadapter.NewMemberAdminTools(references.members)
 	if err != nil {
@@ -311,21 +324,9 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP related content tools: %w", err)
 	}
-	referenceTools, err := mcpadapter.NewReferenceDiscoveryTools(
-		references.categories,
-		references.tags,
-		references.clients,
-		references.mapPlaces,
-		references.members,
-		references.artists,
-		references.files,
-	)
+	fileListTools, err := mcpadapter.NewFileListTools(references.files)
 	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP content reference discovery tools: %w", err)
-	}
-	eventReferenceTools, err := mcpadapter.NewProgramEventReferenceTools(references.eventTypes, references.eventSeries, references.labels)
-	if err != nil {
-		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Program Event reference tools: %w", err)
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP File list tools: %w", err)
 	}
 	translationTools, err := mcpadapter.NewTranslationTools(translation)
 	if err != nil {
@@ -347,11 +348,26 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP File Manager tools: %w", err)
 	}
+	operationTools, err := mcpadapter.NewDocumentOperationTools(mcpadapter.DocumentOperationApplications{
+		Posts: posts, Works: works, Pages: pages, Releases: releases, Events: programEvents,
+	})
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document operation tools: %w", err)
+	}
+	referenceSearchTools, err := mcpadapter.NewReferenceSearchTools(mcpadapter.ReferenceSearchApplications{
+		Categories: references.categories, Tags: references.tags, Clients: references.clients, MapPlaces: references.mapPlaces,
+		Members: references.members, Artists: references.artists,
+		Genres: references.genres, Styles: references.styles, Formats: references.formats,
+		EventTypes: references.eventTypes, EventSeries: references.eventSeries, MemberTags: references.members,
+	})
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP reference search tools: %w", err)
+	}
 	toolSet, err := mcpadapter.NewToolSet(
-		discoveryTools, searchTools, menuTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
+		discoveryTools, searchTools, menuTools, fileListTools, referenceSearchTools, operationTools,
 		managementTools, policyTools, emailLayoutSourceTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
-		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools, adminSettingsTools,
-		oauthAppTools, relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
+		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, adminSettingsTools,
+		oauthAppTools, relatedTools, documentTools, textTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
 	)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP tool set: %w", err)

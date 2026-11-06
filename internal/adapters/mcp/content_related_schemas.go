@@ -62,11 +62,6 @@ const documentVersionRestoreInputJSONSchema = `{
   "properties":{"document_type":{"enum":["post","work","page"]},"document_id":` + documentReferenceJSONSchema + `,"version_id":{"description":"Version UUID from document_versions_list for this document.","allOf":[` + uuidJSONSchema + `]}}
 }`
 
-const documentSlugCheckInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["document_type","slug"],
-  "properties":{"document_type":{"enum":["post","work","page"]},"slug":{"type":"string","minLength":1},"exclude_document_id":` + documentReferenceJSONSchema + `}
-}`
-
 const contentActionOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["resource_type","resource_id","changed"],
   "properties":{
@@ -113,9 +108,4 @@ const documentVersionsOutputJSONSchema = `{
     "versions":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["version_id","version","title","canonical_hash","source_locale","created_at","contributors"],"properties":{"version_id":` + uuidJSONSchema + `,"version":{"type":"integer"},"title":{"type":"string"},"summary":{"type":"string"},"canonical_hash":{"type":"string"},"source_locale":{"type":"string"},"created_at":{"type":"string","format":"date-time"},"contributors":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["member_id","nickname"],"properties":{"member_id":` + uuidJSONSchema + `,"nickname":{"type":"string"}}}}}}},
     "total":{"type":"integer"},"has_more":{"type":"boolean"},"next_offset":{"type":"integer"}
   }
-}`
-
-const documentSlugCheckOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["document_type","slug","available"],
-  "properties":{"document_type":{"enum":["post","work","page"]},"slug":{"type":"string"},"available":{"type":"boolean"}}
 }`

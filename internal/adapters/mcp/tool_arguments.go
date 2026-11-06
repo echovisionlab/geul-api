@@ -52,3 +52,14 @@ func rejectUnadvertisedArguments(arguments mcpserver.ToolArguments, advertised .
 	}
 	return nil
 }
+
+// withoutArguments copies arguments without the named ones.
+func withoutArguments(arguments mcpserver.ToolArguments, names ...string) mcpserver.ToolArguments {
+	kept := make(mcpserver.ToolArguments, len(arguments))
+	for name, value := range arguments {
+		if !slices.Contains(names, name) {
+			kept[name] = value
+		}
+	}
+	return kept
+}

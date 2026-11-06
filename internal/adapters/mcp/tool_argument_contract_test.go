@@ -28,18 +28,15 @@ const contractProbeField = "__contract_probe__"
 // toolProbeVariants supplies the discriminator values a tool reads before it
 // picks the struct to decode into; each probe runs once per variant.
 var toolProbeVariants = map[string][]map[string]any{
-	ToolFileTransfer: {{"a": "begin"}, {"a": "status"}, {"a": "complete"}},
+	ToolFileTransfer: {{"action": "begin"}, {"action": "status"}, {"action": "complete"}},
 }
 
 // acceptedUnadvertisedFields lists struct fields a decoder accepts although
 // the schema does not advertise them, keyed by "tool path.field". Each one
 // must be rejected by the handler before it is used.
 var acceptedUnadvertisedFields = map[string]string{
-	"document_heading_create block_id":        "shared heading struct; create rejects a supplied block_id",
-	"document_heading_update after_block_id":  "shared heading struct; update rejects after_block_id",
-	"document_heading_update parent_block_id": "shared heading struct; update rejects parent_block_id",
-	"map_place_create clear_image":            "shared settings struct; create rejects clear_image",
-	"map_place_create map_place_id":           "shared settings struct; create rejects map_place_id",
+	"map_place_create clear_image":  "shared settings struct; create rejects clear_image",
+	"map_place_create map_place_id": "shared settings struct; create rejects map_place_id",
 }
 
 type schemaStep struct {

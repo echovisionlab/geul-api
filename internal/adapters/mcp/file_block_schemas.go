@@ -25,7 +25,7 @@ const documentFileReplaceInputJSONSchema = `{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"document_revision from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256},
     "block_id":` + uuidJSONSchema + `,
     "file_id":` + uuidJSONSchema + `
@@ -39,7 +39,7 @@ const documentFileRemoveInputJSONSchema = `{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"dr from your latest document_read or the previous edit."},
+    "expected_document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"document_revision from your latest document_read or the previous edit."},
     "expected_target_revision":{"type":"string","minLength":1,"maxLength":256},
     "block_id":` + uuidJSONSchema + `
   }
@@ -60,14 +60,12 @@ const documentFileCaptionUpdateInputJSONSchema = `{
 }`
 
 const documentFileMutationOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["dr","c"],
+  "type":"object","additionalProperties":false,"required":["document_revision","changes"],
   "properties":{
-    "dr":{"type":"string","minLength":1,"maxLength":256,"description":"New document revision."},
-    "tr":{"type":"string","minLength":1,"maxLength":256},
+    "document_revision":{"type":"string","minLength":1,"maxLength":256,"description":"New document revision."},
+    "target_revision":{"type":"string","minLength":1,"maxLength":256},
     "block_id":{"type":"string","format":"uuid","description":"Canonical UUID assigned to a newly added File Block."},
-    "c":{"type":"array","items":{"type":"array","prefixItems":[
-      {"type":"integer","minimum":0},{"enum":["bi","fa","bd","fs"]},{"type":"array","items":{"type":"string"}}
-    ],"items":false,"minItems":3,"maxItems":3}}
+    ` + acceptedChangesProperty + `
   }
 }`
 

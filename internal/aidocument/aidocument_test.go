@@ -109,6 +109,7 @@ func decodeOpenMetadataForTest(data []byte) (OpenMetadata, error) {
 	if err := decodeStrict(data, &metadata); err != nil {
 		return OpenMetadata{}, err
 	}
+	metadata.Protocol = ProtocolVersion
 	if err := metadata.validate(); err != nil {
 		return OpenMetadata{}, err
 	}
@@ -120,6 +121,7 @@ func decodeProjectionForTest(data []byte) (Projection, error) {
 	if err := decodeStrict(data, &projection); err != nil {
 		return Projection{}, err
 	}
+	projection.Protocol = ProtocolVersion
 	if err := projection.validate(); err != nil {
 		return Projection{}, err
 	}
@@ -127,7 +129,7 @@ func decodeProjectionForTest(data []byte) (Projection, error) {
 	return projection, nil
 }
 
-func TestProjectionRoundTripIsDeterministicCompactAndPreservesExplicitEmpty(t *testing.T) {
+func TestProjectionRoundTripIsDeterministicAndPreservesExplicitEmpty(t *testing.T) {
 	document := testDocument("en", true)
 	projection := Projection{
 		Protocol: ProtocolVersion, Profile: document.Identity.Domain, Catalog: document.Catalog.Fingerprint,
@@ -168,7 +170,7 @@ func TestProjectionRoundTripIsDeterministicCompactAndPreservesExplicitEmpty(t *t
 	if !bytes.Equal(first, third) {
 		t.Fatalf("equivalent node and field order encoded differently:\n%s\n%s", first, third)
 	}
-	if !bytes.Contains(first, []byte(`["content",["t",""]]`)) {
+	if !bytes.Contains(first, []byte(`{"field":"content","value":{"type":"text","text":""}}`)) {
 		t.Fatalf("explicit empty value was not preserved: %s", first)
 	}
 	for _, forbidden := range []string{"tiptap", "prosemirror", "yjs", "rawHtml", "base64", "data:"} {
@@ -181,44 +183,22 @@ func TestProjectionRoundTripIsDeterministicCompactAndPreservesExplicitEmpty(t *t
 	if err := json.Unmarshal(first, &shape); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"c", "d", "dr", "l", "le", "lr", "m", "n", "next", "p", "s", "tr", "v"}
+	wantKeys := []string{"blocks", "catalog_fingerprint", "document_id", "document_revision", "document_type", "locale", "locale_exists", "locale_role", "mode", "next_cursor", "source_locale", "target_revision"}
 	if len(shape) != len(wantKeys) {
 		t.Fatalf("unexpected envelope shape: %v", shape)
 	}
 	for _, key := range wantKeys {
 		if _, ok := shape[key]; !ok {
-			t.Fatalf("missing compact envelope key %q", key)
+			t.Fatalf("missing envelope key %q", key)
 		}
 	}
 	var nodeShape []json.RawMessage
-	if err := json.Unmarshal(shape["n"], &nodeShape); err != nil || len(nodeShape) == 0 {
+	if err := json.Unmarshal(shape["blocks"], &nodeShape); err != nil || len(nodeShape) == 0 {
 		t.Fatalf("invalid node list: %v", err)
 	}
-	var firstNode []json.RawMessage
-	if err := json.Unmarshal(nodeShape[0], &firstNode); err != nil || len(firstNode) != 8 {
-		t.Fatalf("node is not the eight-slot compact tuple: %v %s", err, nodeShape[0])
-	}
-
-	verbose, err := json.Marshal(struct {
-		Protocol         string
-		Profile          Domain
-		Catalog          string
-		Document         DocumentReference
-		DocumentRevision Revision
-		TargetRevision   *Revision
-		SourceLocale     Locale
-		Locale           Locale
-		LocaleRole       LocaleRole
-		LocaleExists     bool
-		ReadMode         ReadMode
-		DocumentNodes    []Node
-	}{ProtocolVersion, projection.Profile, projection.Catalog, projection.Document, projection.DocumentRevision, projection.TargetRevision,
-		projection.SourceLocale, projection.Locale, projection.LocaleRole, projection.LocaleExists, projection.Mode, projection.Nodes})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first) >= len(verbose) {
-		t.Fatalf("compact projection is not smaller than equivalent descriptive envelope: compact=%d verbose=%d", len(first), len(verbose))
+	var firstNode map[string]json.RawMessage
+	if err := json.Unmarshal(nodeShape[0], &firstNode); err != nil || firstNode["block_id"] == nil || firstNode["kind"] == nil {
+		t.Fatalf("block is not a named object: %v %s", err, nodeShape[0])
 	}
 }
 
@@ -259,14 +239,14 @@ func TestApplyRequestRoundTripsEveryTypedOperation(t *testing.T) {
 	if !bytes.Equal(encoded, reencoded) {
 		t.Fatalf("apply encoding is not deterministic:\n%s\n%s", encoded, reencoded)
 	}
-	if !bytes.Contains(encoded, []byte(`["fs",["root","","","title"],["t",""]]`)) {
+	if !bytes.Contains(encoded, []byte(`{"op":"set_field","block_id":"root","field":"title","value":{"type":"text","text":""}}`)) {
 		t.Fatalf("apply encoding lost explicit empty: %s", encoded)
 	}
-	if !bytes.Contains(encoded, []byte(`["fs",["paragraph-b","","","rich"],["i",[]]]`)) {
+	if !bytes.Contains(encoded, []byte(`{"op":"set_field","block_id":"paragraph-b","field":"rich","value":{"type":"rich_text","content":[]}}`)) {
 		t.Fatalf("apply encoding lost explicit empty rich value: %s", encoded)
 	}
-	if strings.Contains(string(encoded), "path") || strings.Contains(string(encoded), "html") {
-		t.Fatalf("apply wire exposed an untyped path or HTML: %s", encoded)
+	if !bytes.Contains(encoded, []byte(`"path":[{"field":"caption"}]`)) || strings.Contains(string(encoded), "html") {
+		t.Fatalf("apply wire lost a typed path or exposed HTML: %s", encoded)
 	}
 
 	for _, localeOperation := range []Operation{CreateTranslationOperation(), DeleteTranslationOperation()} {
@@ -505,11 +485,11 @@ func TestDecodeRejectsUnknownCanonicalSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire = bytes.Replace(wire, []byte(`"next":null`), []byte(`"next":null,"tiptap":{}`), 1)
+	wire = bytes.Replace(wire, []byte(`"next_cursor":null`), []byte(`"next_cursor":null,"tiptap":{}`), 1)
 	if _, err := decodeProjectionForTest(wire); err == nil {
 		t.Fatal("unknown editor-native surface was accepted")
 	}
-	if _, err := DecodeApplyRequest([]byte(`{"v":"dcdp/1","p":"post","d":"doc-handle","l":"en","er":"rev-7","o":[["json_patch","/nodes/0",{}]]}`)); err == nil {
+	if _, err := DecodeApplyRequest([]byte(`{"document_type":"post","document_id":"doc-handle","locale":"en","expected_document_revision":"rev-7","operations":[{"op":"json_patch","path":"/nodes/0"}]}`)); err == nil {
 		t.Fatal("generic JSON Patch operation was accepted")
 	}
 	if _, err := EncodeApplyRequest(applyRequest("ko", "rev-7",
@@ -566,12 +546,12 @@ func TestDecodeRejectsNullOptionalHandlesBeforeRootMove(t *testing.T) {
 	}
 }
 
-func TestCompactDecodersResetReusedReceivers(t *testing.T) {
+func TestDecodersResetReusedReceivers(t *testing.T) {
 	var operation Operation
-	if err := json.Unmarshal([]byte(`["rm","root","credits","credit-primary","root","credits","credit-secondary"]`), &operation); err != nil {
+	if err := json.Unmarshal([]byte(`{"op":"move_relation_item","block_id":"root","relation_id":"credits","item_id":"credit-primary","target_block_id":"root","target_relation_id":"credits","after_item_id":"credit-secondary"}`), &operation); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`["ld"]`), &operation); err != nil {
+	if err := json.Unmarshal([]byte(`{"op":"delete_translation"}`), &operation); err != nil {
 		t.Fatal(err)
 	}
 	if operation.Kind != OperationDeleteTranslation || operation.DeleteTranslation == nil ||
@@ -580,10 +560,10 @@ func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	}
 
 	var value Value
-	if err := json.Unmarshal([]byte(`["i",[["a","https://example.com",[["t","link"]]]]]`), &value); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"rich_text","content":[{"type":"link","url":"https://example.com","content":[{"type":"text","text":"link"}]}]}`), &value); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`["b",false]`), &value); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"boolean","boolean":false}`), &value); err != nil {
 		t.Fatal(err)
 	}
 	if value.Kind != ValueKindBoolean || value.Text != "" || value.Inline != nil || value.Boolean {
@@ -591,10 +571,10 @@ func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	}
 
 	var inline InlineItem
-	if err := json.Unmarshal([]byte(`["a","https://example.com",[["t","link"]]]`), &inline); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"link","url":"https://example.com","content":[{"type":"text","text":"link"}]}`), &inline); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(`["br"]`), &inline); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"hard_break"}`), &inline); err != nil {
 		t.Fatal(err)
 	}
 	if inline.Kind != InlineKindHardBreak || inline.Text != "" || inline.Target != "" || inline.Children != nil {
@@ -602,11 +582,14 @@ func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	}
 }
 
-func TestCompactValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.T) {
+func TestValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.T) {
 	for _, wire := range []string{
-		`["t",null]`, `["b",null]`, `["n",null]`, `["i",null]`, `["l",null]`, `["o",null]`,
-		`["i",[["t",null]]]`, `["i",[["a",null,[["t","link"]]]]]`,
-		`["i",[["b",null]]]`, `["i",[["fg",null,[["t","color"]]]]]`,
+		`{"type":"text","text":null}`, `{"type":"boolean","boolean":null}`, `{"type":"number","number":null}`,
+		`{"type":"rich_text","content":null}`, `{"type":"list","items":null}`, `{"type":"object","fields":null}`,
+		`{"type":"rich_text","content":[{"type":"text","text":null}]}`,
+		`{"type":"rich_text","content":[{"type":"link","url":null,"content":[{"type":"text","text":"link"}]}]}`,
+		`{"type":"rich_text","content":[{"type":"bold","content":null}]}`,
+		`{"type":"rich_text","content":[{"type":"text_color","color":null,"content":[{"type":"text","text":"color"}]}]}`,
 	} {
 		t.Run(wire, func(t *testing.T) {
 			var value Value
@@ -616,7 +599,8 @@ func TestCompactValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.
 		})
 	}
 	for _, wire := range []string{
-		`["t",""]`, `["b",false]`, `["i",[]]`, `["l",[]]`, `["o",[]]`, `["i",[["t",""]]]`,
+		`{"type":"text","text":""}`, `{"type":"boolean","boolean":false}`, `{"type":"rich_text","content":[]}`,
+		`{"type":"list","items":[]}`, `{"type":"object","fields":[]}`, `{"type":"rich_text","content":[{"type":"text","text":""}]}`,
 	} {
 		t.Run(wire, func(t *testing.T) {
 			var value Value
@@ -626,6 +610,43 @@ func TestCompactValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.
 			encoded, err := json.Marshal(value)
 			if err != nil || string(encoded) != wire {
 				t.Fatalf("explicit empty changed: %s, %v", encoded, err)
+			}
+		})
+	}
+}
+
+// A wrong field is what a caller gets wrong most often; the decoder must name it
+// rather than ignore it and write something else.
+func TestOperationAndValueRejectWrongFields(t *testing.T) {
+	for _, wire := range []string{
+		`{"op":"set_field","block_id":"b","field":"f"}`,
+		`{"op":"set_field","block_id":"b","field":"f","value":{"type":"text","text":"x"},"kind":"paragraph"}`,
+		`{"op":"delete_block"}`,
+		`{"op":"delete_block","block_id":"b","parent_block_id":"p"}`,
+		`{"op":"insert_block","block_id":"b"}`,
+		`{"op":"move_relation_item","block_id":"b","relation_id":"r","item_id":"i"}`,
+		`{"op":"create_translation","block_id":"b"}`,
+		`{"op":"set_field","block_id":"b","field":"f","value":{"type":"text","text":"x"},"path":[]}`,
+		`{"op":"nope"}`,
+		`{"op":"delete_block","block_id":"b","extra":true}`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var operation Operation
+			if err := json.Unmarshal([]byte(wire), &operation); err == nil {
+				t.Fatalf("decoded as %+v", operation)
+			}
+		})
+	}
+	for _, wire := range []string{
+		`{"type":"text"}`, `{"type":"text","text":"x","number":"1"}`, `{"type":"nope","text":"x"}`, `{"type":"text","text":"x","extra":1}`,
+		`{"type":"rich_text","content":[{"type":"bold","text":"x"}]}`,
+		`{"type":"rich_text","content":[{"type":"link","content":[]}]}`,
+		`{"type":"rich_text","content":[{"type":"hard_break","text":"x"}]}`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var value Value
+			if err := json.Unmarshal([]byte(wire), &value); err == nil {
+				t.Fatalf("decoded as %+v", value)
 			}
 		})
 	}

@@ -390,10 +390,11 @@ func assertBatchRangeErrorBoundaries(t *testing.T, application *core.Service, re
 	require.NoError(t, err)
 	var arguments mcpserver.ToolArguments
 	require.NoError(t, json.Unmarshal(encoded, &arguments))
-	for _, tool := range []string{mcpadapter.ToolDocumentValidate, mcpadapter.ToolDocumentApply} {
-		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, tool, arguments)
+	for _, dryRun := range []string{"false", "true"} {
+		arguments["dry_run"] = json.RawMessage(dryRun)
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, mcpadapter.ToolDocumentApply, arguments)
 		var execution *mcpserver.ToolExecutionError
-		require.ErrorAs(t, err, &execution, "tool %s", tool)
+		require.ErrorAs(t, err, &execution, "dry_run %s", dryRun)
 		require.Contains(t, execution.Message, "value is below minimum")
 	}
 }

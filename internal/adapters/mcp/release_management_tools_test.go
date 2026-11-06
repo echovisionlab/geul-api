@@ -37,10 +37,10 @@ func TestReleaseManagementDescriptorsAndRequiredFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
-	if err != nil || len(listed) != 9 {
+	if err != nil || len(listed) != 4 {
 		t.Fatalf("descriptors = %v, err=%v", listed, err)
 	}
-	want := []string{ToolReleaseCreate, ToolReleaseSettingsGet, ToolReleaseSettingsUpdate, ToolReleasePublish, ToolReleaseUnpublish, ToolReleaseDelete, ToolReleaseArtworkSet, ToolReleaseArtworkRemove, ToolReleaseSlugCheck}
+	want := []string{ToolReleaseCreate, ToolReleaseSettingsUpdate, ToolReleaseArtworkSet, ToolReleaseArtworkRemove}
 	if !reflect.DeepEqual(tools.ToolNames(), want) {
 		t.Fatalf("tool names = %v", tools.ToolNames())
 	}
@@ -85,7 +85,7 @@ func TestReleaseManagementCreateExactFieldsAndCompactSettings(t *testing.T) {
 	if result.StructuredContent["changed"] != true || result.StructuredContent["status"] != "draft" || result.StructuredContent["document_revision"] != releaseManagementRevision || result.StructuredContent["artwork_asset_id"] != releaseManagementAssetID {
 		t.Fatalf("created result = %#v", result.StructuredContent)
 	}
-	settings, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSettingsGet, toolArguments(t, `{"document_id":"`+releaseManagementID+`"}`))
+	settings, err := documentOperationsOver(t, DocumentOperationApplications{Releases: owner}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"release","document_id":"`+releaseManagementID+`"}`))
 	if err != nil || owner.get.ID != releaseManagementID {
 		t.Fatalf("settings result = %#v, err=%v", settings, err)
 	}
@@ -153,38 +153,30 @@ func TestReleaseManagementArtworkNativeResponsesAndSlugRequest(t *testing.T) {
 	if err != nil || owner.removeArtwork.ReleaseID != releaseManagementID || removed.StructuredContent["success"] != true || removed.StructuredContent["og_generation_run_id"] != nil || removed.StructuredContent["changed"] != nil {
 		t.Fatalf("artwork removal = %#v, err=%v", removed.StructuredContent, err)
 	}
-	checked, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSlugCheck, toolArguments(t, `{"slug":"album","exclude_document_id":"`+releaseManagementID+`"}`))
-	if err != nil || owner.slug.Slug != "album" || owner.slug.ExcludeReleaseID == nil || *owner.slug.ExcludeReleaseID != releaseManagementID || checked.StructuredContent["available"] != true {
-		t.Fatalf("slug result = %#v, err=%v", checked.StructuredContent, err)
-	}
-	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSlugCheck, toolArguments(t, `{"slug":""}`))
-	if err != nil || owner.slug.Slug != "" || owner.slug.ExcludeReleaseID != nil {
-		t.Fatalf("explicit empty slug did not preserve native request: %+v, err=%v", owner.slug, err)
-	}
 }
 
-func TestReleaseManagementLifecyclePreservesNativeChangesAndStatuses(t *testing.T) {
+func TestReleaseLifecycleReportsWhetherItChanged(t *testing.T) {
 	owner := newRecordingReleaseManagement()
-	tools, _ := NewReleaseManagementTools(owner)
-	arguments := toolArguments(t, `{"document_id":"`+releaseManagementID+`"}`)
+	tools := documentOperationsOver(t, DocumentOperationApplications{Releases: owner})
+	documents := `"documents":[{"document_type":"release","document_id":"` + releaseManagementID + `"}]`
 	for _, test := range []struct {
-		tool, status string
-		changed      bool
-	}{
-		{ToolReleasePublish, "published", true}, {ToolReleasePublish, "published", false},
-		{ToolReleaseUnpublish, "draft", true}, {ToolReleaseUnpublish, "draft", false},
-	} {
-		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.tool, arguments)
-		if err != nil || result.StructuredContent["status"] != test.status || result.StructuredContent["changed"] != test.changed || result.StructuredContent["document_id"] != releaseManagementID {
-			t.Fatalf("%s = %#v, err=%v", test.tool, result.StructuredContent, err)
+		action  string
+		changed bool
+	}{{"publish", true}, {"publish", false}, {"unpublish", true}, {"unpublish", false}} {
+		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentPublish, toolArguments(t, `{"action":"`+test.action+`",`+documents+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if outcomes, applied, _ := batchOutput(t, result); applied != 1 || *outcomes[0].Changed != test.changed {
+			t.Fatalf("%s = %#v", test.action, result.StructuredContent)
 		}
 	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseDelete, arguments)
-	if err != nil || owner.deleted.ID != releaseManagementID || result.StructuredContent["deleted"] != true {
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentDelete, toolArguments(t, `{`+documents+`}`))
+	if err != nil || owner.deleted.ID != releaseManagementID {
 		t.Fatalf("delete = %#v, err=%v", result.StructuredContent, err)
 	}
-	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, "release_archive", arguments); !errors.Is(err, mcpserver.ErrUnknownTool) {
-		t.Fatalf("unsupported native lifecycle accepted: %v", err)
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentPublish, toolArguments(t, `{"action":"archive",`+documents+`}`)); err == nil {
+		t.Fatal("a Release has no archive")
 	}
 }
 
@@ -200,12 +192,7 @@ func TestReleaseManagementInvalidInputsDoNotReachOwner(t *testing.T) {
 		{ToolReleaseSettingsUpdate, `{"document_id":"` + releaseManagementID + `","release_date":"2026-10-10T00:00:00Z","clear_release_date":true}`},
 		{ToolReleaseSettingsUpdate, `{"document_id":"` + releaseManagementID + `","slug":"album","release_date":null}`},
 		{ToolReleaseSettingsUpdate, `{"document_id":"` + releaseManagementID + `","slug":"album","clear_release_date":null}`},
-		{ToolReleaseSettingsGet, `{"document_id":"album"}`},
 		{ToolReleaseArtworkSet, `{"document_id":"` + releaseManagementID + `","file_id":"not-a-uuid"}`},
-		{ToolReleaseSlugCheck, `{"slug":"album","exclude_document_id":"not-a-uuid"}`},
-		{ToolReleaseSlugCheck, `{}`},
-		{ToolReleaseSlugCheck, `{"slug":null}`},
-		{ToolReleaseSlugCheck, `{"slug":"album","exclude_document_id":null}`},
 	} {
 		t.Run(test.tool+"/"+test.arguments, func(t *testing.T) {
 			owner := newRecordingReleaseManagement()
@@ -221,7 +208,7 @@ func TestReleaseManagementInvalidInputsDoNotReachOwner(t *testing.T) {
 
 func TestReleaseManagementPreservesAuthorityErrorsAndActorContext(t *testing.T) {
 	for _, code := range []connect.Code{connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeInternal, connect.CodeUnavailable} {
-		for _, name := range []string{ToolReleaseCreate, ToolReleaseSettingsGet, ToolReleaseSettingsUpdate, ToolReleasePublish, ToolReleaseUnpublish, ToolReleaseDelete, ToolReleaseArtworkSet, ToolReleaseArtworkRemove, ToolReleaseSlugCheck} {
+		for _, name := range []string{ToolReleaseCreate, ToolReleaseSettingsUpdate, ToolReleaseArtworkSet, ToolReleaseArtworkRemove} {
 			t.Run(code.String()+"/"+name, func(t *testing.T) {
 				owner := newRecordingReleaseManagement()
 				owner.err = connect.NewError(code, errors.New("owning decision"))
@@ -234,8 +221,6 @@ func TestReleaseManagementPreservesAuthorityErrorsAndActorContext(t *testing.T) 
 					arguments = `{"document_id":"` + releaseManagementID + `","catalog_number":"new"}`
 				case ToolReleaseArtworkSet:
 					arguments = `{"document_id":"` + releaseManagementID + `","file_id":"` + releaseManagementFileID + `"}`
-				case ToolReleaseSlugCheck:
-					arguments = `{"slug":"album"}`
 				}
 				ctx := context.WithValue(t.Context(), releaseManagementContextKey{}, "authenticated actor")
 				result, err := tools.CallTool(ctx, mcpserver.Principal{}, name, toolArguments(t, arguments))

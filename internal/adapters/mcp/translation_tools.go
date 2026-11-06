@@ -10,7 +10,6 @@ import (
 
 const (
 	ToolTranslationList        = "translation_list"
-	ToolTranslationGet         = "translation_get"
 	ToolTranslationXLIFFExport = "translation_xliff_export"
 	ToolTranslationXLIFFImport = "translation_xliff_import"
 	ToolTranslationUnitsGet    = "translation_units_get"
@@ -26,14 +25,6 @@ var translationTools = toolRegistry[TranslationTools]{
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
 	}, (*TranslationTools).listTranslations),
-	defineTool(mcpserver.Tool{
-		Name: ToolTranslationGet, Title: "Get document translation metadata",
-		Description: "Get locale presence metadata without returning editor-native content. Read content with document_read.",
-		InputSchema: translationGetInputSchema(), OutputSchema: translationGetOutputSchema(),
-		SecuritySchemes: oauthSecuritySchemes(),
-		Annotations:     toolAnnotations(true, false, false),
-		Meta:            oauthSecurityMeta(),
-	}, (*TranslationTools).getTranslation),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationXLIFFExport, Title: "Export XLIFF 2.2",
 		Description: "Create a short-lived XLIFF 2.2 artifact reference. XML is never returned in tool content.",
@@ -53,9 +44,9 @@ var translationTools = toolRegistry[TranslationTools]{
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationUnitsGet, Title: "Get translation units",
 		Description: "Read a document's translation units: source and targets together, with no XLIFF file and no other read first. " +
-			"Pass l for one whole locale. Omit l, or pass ls, to read several locales at once with each unit listed once and its targets per locale; " +
-			"that form needs b (Block handles), q (text in any locale, ignoring case and markup) or u to keep the result small. " +
-			"Units with several formatted runs use XLIFF 2.2 inline markup; in the several-locale form a one-run unit reads as plain text and p holds a marked-up unit's plain source. " +
+			"Pass locale for one whole locale. Omit locale, or pass locales, to read several locales at once with each unit listed once and its targets per locale; " +
+			"that form needs block_ids, query (text in any locale, ignoring case and markup) or unit_ids to keep the result small. " +
+			"Units with several formatted runs use XLIFF 2.2 inline markup; in the several-locale form a one-run unit reads as plain text and plain_source holds a marked-up unit's plain source. " +
 			"Write back with translation_units_put.",
 		InputSchema: translationUnitsGetInputSchema(), OutputSchema: translationUnitsGetOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
@@ -64,10 +55,11 @@ var translationTools = toolRegistry[TranslationTools]{
 	}, (*TranslationTools).getTranslationUnits),
 	defineTool(mcpserver.Tool{
 		Name: ToolTranslationUnitsPut, Title: "Put translation units",
-		Description: "Set translations; other units keep their values. Preferred: e, a list of edits giving a unit's current source text s and its target per locale t, so one call updates every locale and needs no read first. " +
-			"All locales apply together or none do. s must match the current source exactly, which refuses the write if the source changed; add i (unit ID) or b (Block handle) when several units share that text. " +
+		Description: "Set translations in one or many documents; other units keep their values. Preferred: edits, a list giving a unit's current source text and its targets per locale, so one call updates every locale and needs no read first. " +
+			"All locales apply together or none do. source must match the current source exactly, which refuses the write if the source changed; add unit_id or block_id when several units share that text. " +
 			"Plain text is enough for a one-run unit and keeps its link or formatting; a unit with several runs needs markup keeping its source codes. " +
-			"Alternative: l with u (target per unit ID) and er (the revision r from translation_units_get) for one locale.",
+			"To change the source and its translations together, use document_text_replace with translations. " +
+			"Alternative: locale with unit_targets (target per unit ID) and expected_target_revision (from translation_units_get) for one locale.",
 		InputSchema: translationUnitsPutInputSchema(), OutputSchema: translationUnitsPutOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),

@@ -19,7 +19,7 @@ func translationStructuredResult(encoded []byte, err error) (mcpserver.ToolResul
 	return structuredResult(encoded, false)
 }
 
-func compactTimestamp(value *timestamppb.Timestamp) (*string, error) {
+func timestampText(value *timestamppb.Timestamp) (*string, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -31,50 +31,42 @@ func compactTimestamp(value *timestamppb.Timestamp) (*string, error) {
 }
 
 func encodeTranslationEntries(target *managev1.TranslationTarget, sourceLocale string, entries []*managev1.TranslationEntry) ([]byte, error) {
-	if err := validateCompactLocale(core.Locale(sourceLocale)); err != nil {
+	if err := validateLocaleCode(core.Locale(sourceLocale)); err != nil {
 		return nil, fmt.Errorf("translation application returned invalid source locale: %w", err)
 	}
-	compact := make([][2]any, 0, len(entries))
+	locales := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		metadata, err := compactTranslationEntry(target, entry)
+		metadata, err := translationEntryOutput(target, entry)
 		if err != nil {
 			return nil, err
 		}
-		compact = append(compact, [2]any{metadata.Locale, metadata.UpdatedAt})
+		locales = append(locales, map[string]any{"locale": metadata.Locale, "updated_at": metadata.UpdatedAt})
 	}
-	return json.Marshal(map[string]any{"s": sourceLocale, "e": compact})
+	return json.Marshal(map[string]any{"source_locale": sourceLocale, "locales": locales})
 }
 
-type compactEntry struct {
-	Profile   string  `json:"p"`
-	Document  string  `json:"d"`
-	Locale    string  `json:"l"`
-	UpdatedAt *string `json:"u,omitempty"`
+type translationEntryFields struct {
+	DocumentType string  `json:"document_type"`
+	DocumentID   string  `json:"document_id"`
+	Locale       string  `json:"locale"`
+	UpdatedAt    *string `json:"updated_at,omitempty"`
 }
 
-func compactTranslationEntry(expected *managev1.TranslationTarget, entry *managev1.TranslationEntry) (compactEntry, error) {
+func translationEntryOutput(expected *managev1.TranslationTarget, entry *managev1.TranslationEntry) (translationEntryFields, error) {
 	if entry == nil || entry.Target == nil || expected == nil ||
 		entry.Target.EntityType != expected.EntityType || entry.Target.EntityId != expected.EntityId {
-		return compactEntry{}, errors.New("translation application returned a different locale target")
+		return translationEntryFields{}, errors.New("translation application returned a different locale target")
 	}
 	profile, ok := translationProfile(entry.Target.EntityType)
 	if !ok {
-		return compactEntry{}, errors.New("translation application returned an unsupported locale target")
+		return translationEntryFields{}, errors.New("translation application returned an unsupported locale target")
 	}
-	if err := validateCompactLocale(core.Locale(entry.Locale)); err != nil {
-		return compactEntry{}, err
+	if err := validateLocaleCode(core.Locale(entry.Locale)); err != nil {
+		return translationEntryFields{}, err
 	}
-	updatedAt, err := compactTimestamp(entry.UpdatedAt)
+	updatedAt, err := timestampText(entry.UpdatedAt)
 	if err != nil {
-		return compactEntry{}, err
+		return translationEntryFields{}, err
 	}
-	return compactEntry{Profile: string(profile), Document: entry.Target.EntityId, Locale: entry.Locale, UpdatedAt: updatedAt}, nil
-}
-
-func encodeTranslationEntry(expected *managev1.TranslationTarget, entry *managev1.TranslationEntry) ([]byte, error) {
-	metadata, err := compactTranslationEntry(expected, entry)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(metadata)
+	return translationEntryFields{DocumentType: string(profile), DocumentID: entry.Target.EntityId, Locale: entry.Locale, UpdatedAt: updatedAt}, nil
 }
