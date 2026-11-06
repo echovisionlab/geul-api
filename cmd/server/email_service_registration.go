@@ -28,7 +28,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-func (r serviceRegistration) registerEmailAuthoring(collaborationRuntime *collaborationadapter.Runtime, emailAuthoringReferences *emailauthoringadapter.CampaignDeliveryReferences) (mutation.UnitOfWork[emailauthoring.Store], error) {
+func (r serviceRegistration) registerEmailAuthoring(collaborationRuntime *collaborationadapter.Runtime, emailAuthoringReferences *emailauthoringadapter.CampaignDeliveryReferences) (mutation.UnitOfWork[emailauthoring.Store], *emailauthoring.Service, error) {
 	deps := r.dependencies
 	emailAuthoringRuntime := emailauthoringadapter.NewRuntime()
 	emailAuthoringUnits, err := emailauthoringpostgres.NewUnits(deps.db, emailauthoringpostgres.Ports{
@@ -36,7 +36,7 @@ func (r serviceRegistration) registerEmailAuthoring(collaborationRuntime *collab
 		Checkpoints: collaborationRuntime.Checkpoints, Rendering: emailAuthoringRuntime,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initialize email authoring store: %w", err)
+		return nil, nil, fmt.Errorf("initialize email authoring store: %w", err)
 	}
 	emailAuthoringService, err := emailauthoring.NewService(emailauthoring.Deps{
 		Units: emailAuthoringUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
@@ -44,7 +44,7 @@ func (r serviceRegistration) registerEmailAuthoring(collaborationRuntime *collab
 		CDNDomain: deps.cfg.CDNURL, SiteOrigin: deps.cfg.SiteOrigin,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initialize email authoring service: %w", err)
+		return nil, nil, fmt.Errorf("initialize email authoring service: %w", err)
 	}
 	emailTemplatePath, emailTemplateHandler := managev1connect.NewEmailTemplateServiceHandler(emailauthoring.NewTemplateConnectHandler(emailAuthoringService), r.manageOptions...)
 	deps.mux.Handle(emailTemplatePath, emailTemplateHandler)
@@ -54,7 +54,7 @@ func (r serviceRegistration) registerEmailAuthoring(collaborationRuntime *collab
 	deps.mux.Handle(emailLayoutPath, emailLayoutHandler)
 	slog.Info("Registered service", "path", emailLayoutPath)
 
-	return emailAuthoringUnits, nil
+	return emailAuthoringUnits, emailAuthoringService, nil
 }
 
 func (r serviceRegistration) registerEmailDelivery() (*emaildelivery.Service, error) {
@@ -82,7 +82,7 @@ func (r serviceRegistration) registerEmailDelivery() (*emaildelivery.Service, er
 	return mailAdapterService, nil
 }
 
-func (r serviceRegistration) registerCampaign(collaborationRuntime *collaborationadapter.Runtime) (campaign.Units, error) {
+func (r serviceRegistration) registerCampaign(collaborationRuntime *collaborationadapter.Runtime) (campaign.Units, *campaign.Service, error) {
 	deps := r.dependencies
 	campaignRuntime := campaignadapter.NewRuntime(deps.workerPublisher, deps.telemetryWriter)
 
@@ -92,20 +92,20 @@ func (r serviceRegistration) registerCampaign(collaborationRuntime *collaboratio
 		Members: memberadapter.ContributorMembers{}, Checkpoints: collaborationRuntime.Checkpoints,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initialize campaign store: %w", err)
+		return nil, nil, fmt.Errorf("initialize campaign store: %w", err)
 	}
 	campaignService, err := campaign.NewService(campaign.Deps{
 		Units: campaignUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter, Runtime: campaignRuntime, Clock: time.Now,
 		CDNDomain: deps.cfg.CDNURL, SiteOrigin: deps.cfg.SiteOrigin,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("initialize campaign service: %w", err)
+		return nil, nil, fmt.Errorf("initialize campaign service: %w", err)
 	}
 	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaign.NewConnectHandler(campaignService), r.manageOptions...)
 	deps.mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 
-	return campaignUnits, nil
+	return campaignUnits, campaignService, nil
 }
 
 func (r serviceRegistration) registerMemberCriteria() (*membercriteria.Service, error) {

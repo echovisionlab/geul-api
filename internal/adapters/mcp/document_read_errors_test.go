@@ -18,14 +18,14 @@ func TestDocumentReadInvalidConditionsThroughHTTPAreToolErrors(t *testing.T) {
 		loads                          int
 	}{
 		{"missing fields", "", "fields", "field read requires field selectors only", 0},
-		{"empty fields", `,"f":[]`, "fields", "field read requires field selectors only", 0},
+		{"empty fields", `,"fields":[]`, "fields", "field read requires field selectors only", 0},
 		{"missing blocks", "", "blocks", "block read requires block selectors only", 0},
-		{"empty blocks", `,"b":[]`, "blocks", "block read requires block selectors only", 0},
-		{"outline selectors", `,"b":["private-block"]`, "outline", "outline read does not accept block or field selectors", 0},
-		{"mixed selectors", `,"b":["private-block"],"f":[["private-block","title"]]`, "fields", "field read requires field selectors only", 0},
-		{"unknown block", `,"b":["missing-block"]`, "blocks", "one or more selected blocks do not exist", 1},
-		{"unknown field block", `,"f":[["missing-block","title"]]`, "fields", `selected block "missing-block" does not exist`, 1},
-		{"unknown field", `,"f":[["private-block","missing-field"]]`, "fields", `selected field "missing-field" is not defined`, 1},
+		{"empty blocks", `,"block_ids":[]`, "blocks", "block read requires block selectors only", 0},
+		{"outline selectors", `,"block_ids":["private-block"]`, "outline", "outline read does not accept block or field selectors", 0},
+		{"mixed selectors", `,"block_ids":["private-block"],"fields":[{"block_id":"private-block","field":"title"}]`, "fields", "field read requires field selectors only", 0},
+		{"unknown block", `,"block_ids":["missing-block"]`, "blocks", "one or more selected blocks do not exist", 1},
+		{"unknown field block", `,"fields":[{"block_id":"missing-block","field":"title"}]`, "fields", `selected block "missing-block" does not exist`, 1},
+		{"unknown field", `,"fields":[{"block_id":"private-block","field":"missing-field"}]`, "fields", `selected field "missing-field" is not defined`, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			port := &documentCatalogPort{document: documentCatalogFixture()}
@@ -37,7 +37,7 @@ func TestDocumentReadInvalidConditionsThroughHTTPAreToolErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := callDocumentReadHTTP(t, tools, `"m":"`+tc.mode+`"`+tc.selectors)
+			body := callDocumentReadHTTP(t, tools, `"mode":"`+tc.mode+`"`+tc.selectors)
 			if body["error"] != nil {
 				t.Fatalf("input error became JSON-RPC error: %#v", body)
 			}
@@ -78,7 +78,7 @@ func TestDocumentReadHTTPPreservesPermissionAndInternalFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := callDocumentReadHTTP(t, tools, `"m":"outline"`)
+			body := callDocumentReadHTTP(t, tools, `"mode":"outline"`)
 			if tc.internal {
 				rpc, ok := body["error"].(map[string]any)
 				if !ok || rpc["code"] != float64(-32603) || rpc["message"] != "Internal error" {
@@ -93,7 +93,7 @@ func TestDocumentReadHTTPPreservesPermissionAndInternalFailures(t *testing.T) {
 
 func TestDocumentReadMapsWrappedInputError(t *testing.T) {
 	application := &recordingAIDocumentApplication{readError: fmt.Errorf("private context: %w", &core.InputError{Message: "field read requires field selectors only"})}
-	body := callDocumentReadHTTP(t, mustAIDocumentTools(t, application), `"m":"fields"`)
+	body := callDocumentReadHTTP(t, mustAIDocumentTools(t, application).AIDocumentTools, `"mode":"fields"`)
 	wire, _ := json.Marshal(body)
 	if body["error"] != nil || !strings.Contains(string(wire), "field read requires") || strings.Contains(string(wire), "private context") {
 		t.Fatalf("wrapped input error=%s", wire)
@@ -106,7 +106,7 @@ func callDocumentReadHTTP(t *testing.T, tools *AIDocumentTools, selectors string
 	config.Registry = tools
 	config.Dispatcher = tools
 	response := httptest.NewRecorder()
-	newHTTPTestHandler(t, config).ServeHTTP(response, mcpHTTPRequest(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_read","arguments":{"p":"page","d":"`+syncTestDocument+`","l":"ko",`+selectors+`}}}`))
+	newHTTPTestHandler(t, config).ServeHTTP(response, mcpHTTPRequest(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_read","arguments":{"document_type":"page","document_id":"`+syncTestDocument+`","locale":"ko",`+selectors+`}}}`))
 	var body map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)

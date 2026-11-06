@@ -177,14 +177,6 @@ func cloneToolMeta(value map[string]any) map[string]any {
 	return result
 }
 
-func toolDefinitionNames(tools []mcpserver.Tool) []string {
-	names := make([]string, len(tools))
-	for index, tool := range tools {
-		names[index] = tool.Name
-	}
-	return names
-}
-
 func oauthTool(name, title, description, inputSchema, outputSchema string, readOnly, destructive bool) mcpserver.Tool {
 	return mcpserver.Tool{
 		Name: name, Title: title, Description: description,

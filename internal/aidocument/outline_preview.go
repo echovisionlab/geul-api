@@ -17,6 +17,13 @@ const searchContextRunes = 20
 // MaxReadQueryRunes bounds an outline search query.
 const MaxReadQueryRunes = 200
 
+// DefaultOutlineReadLimit and DefaultValueReadLimit are the blocks one read returns
+// when a caller names no limit: an outline is small, full values are not.
+const (
+	DefaultOutlineReadLimit = 256
+	DefaultValueReadLimit   = 128
+)
+
 // outlinePreviews returns the start of each node's locale-owned text, so an
 // outline can locate the block to read or edit without reading every block.
 // Shared values such as alignment, sizes and URLs are not human text and are
@@ -115,19 +122,41 @@ func nodeLocaleText(node Node, limit int) string {
 
 func nodeLinkAddresses(node Node) string {
 	var addresses []string
-	var visit func(items []InlineItem)
-	visit = func(items []InlineItem) {
-		for _, item := range items {
-			if item.Kind == InlineKindLink && item.Target != "" {
-				addresses = append(addresses, item.Target)
+	for _, field := range node.Localized {
+		appendValueLinks(&addresses, field.Value)
+	}
+	for _, relation := range node.Relations {
+		for _, item := range relation.Items {
+			for _, field := range item.Localized {
+				appendValueLinks(&addresses, field.Value)
 			}
-			visit(item.Children)
 		}
 	}
-	for _, field := range node.Localized {
-		visit(field.Value.Inline)
-	}
 	return strings.Join(addresses, " ")
+}
+
+func appendValueLinks(addresses *[]string, value Value) {
+	switch value.Kind {
+	case ValueKindInline:
+		appendInlineLinks(addresses, value.Inline)
+	case ValueKindList:
+		for _, item := range value.List {
+			appendValueLinks(addresses, item.Value)
+		}
+	case ValueKindObject:
+		for _, field := range value.Object {
+			appendValueLinks(addresses, field.Value)
+		}
+	}
+}
+
+func appendInlineLinks(addresses *[]string, items []InlineItem) {
+	for _, item := range items {
+		if item.Kind == InlineKindLink && item.Target != "" {
+			*addresses = append(*addresses, item.Target)
+		}
+		appendInlineLinks(addresses, item.Children)
+	}
 }
 
 func appendValueText(text *strings.Builder, value Value) {

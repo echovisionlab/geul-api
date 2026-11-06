@@ -12,6 +12,9 @@ import (
 // refuses. A projection that must not see its root deleted or rewritten
 // while it reads several rows uses it. read must not write.
 func ReadLocked(ctx context.Context, db *gorm.DB, read func(tx *gorm.DB) error) error {
+	if shared := joinedTransaction(ctx); shared != nil {
+		return read(shared.db.WithContext(ctx))
+	}
 	return db.WithContext(ctx).Transaction(read, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 }
 
@@ -23,5 +26,8 @@ func ReadLocked(ctx context.Context, db *gorm.DB, read func(tx *gorm.DB) error) 
 // needed, and an authorized read that locks its target and the principal
 // before it projects, use it. read must not write.
 func ReadCurrent(ctx context.Context, db *gorm.DB, read func(tx *gorm.DB) error) error {
+	if shared := joinedTransaction(ctx); shared != nil {
+		return read(shared.db.WithContext(ctx))
+	}
 	return db.WithContext(ctx).Transaction(read)
 }

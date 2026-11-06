@@ -27,15 +27,15 @@ var fileTools = toolRegistry[FileTools]{
 	fileTransferTool(mcpserver.Tool{
 		Name: ToolFileTransfer, Title: "Transfer a File",
 		Description: "Begin, inspect, complete or abort one File ingest through the existing File authority. " +
-			"To upload a local file: begin with t=presigned_multipart returns upload URLs in x.l as [part number, URL, size] tuples; PUT each part's exact bytes to its URL, for example with curl -T, then call complete with h. Nothing else is needed: the bytes are verified at completion. " +
-			"URLs expire in minutes and a large File gets at most 32 at a time; parts takes h and returns URLs for the parts still missing. abort takes h and discards an unfinished session. " +
-			"Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; " +
-			"begin remote_https takes k,t,u and correlation_id; status, parts and abort take h; complete takes h and optional client_media_bundle_id. Other fields are rejected. " +
-			"t=browser_upload_page leaves the bytes to the authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives and gets no upload URLs; " +
+			"To upload a local file: begin with transport=presigned_multipart returns upload.part_uploads; PUT each part's exact bytes to its URL, for example with curl -T, then call complete with session. Nothing else is needed: the bytes are verified at completion. " +
+			"URLs expire in minutes and a large File gets at most 32 at a time; parts takes session and returns URLs for the parts still missing. abort takes session and discards an unfinished session. " +
+			"Field sets per action: begin multipart (transport=browser_upload_page or presigned_multipart) takes kind, transport, file_name, mime_type, file_size and optional last_modified_ms; " +
+			"begin remote_https takes kind, transport, remote_url and correlation_id; status, parts and abort take session; complete takes session and optional client_media_bundle_id. Other fields are rejected. " +
+			"transport=browser_upload_page leaves the bytes to the authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives and gets no upload URLs; " +
 			"complete must pass the client_media_bundle_id returned by status after browser preparation. " +
 			"For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. " +
 			"track_audio requires track_id and attaches through native Track authority/CAS. Omit expected_current_file_id only when the Track has no original audio; otherwise copy its current File UUID. " +
-			"Pass the returned session handle unchanged, including its Track/CAS fields.",
+			"Pass the returned session unchanged, including its Track/CAS fields.",
 		InputSchema: fileTransferInputSchema(), OutputSchema: fileTransferOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, true),
@@ -106,7 +106,7 @@ func (tools *FileTools) upload(ctx context.Context, _ string, call toolCall[file
 	if err != nil {
 		return fileToolCallError(err)
 	}
-	encoded, err := json.Marshal(compactVerifiedFile(file))
+	encoded, err := json.Marshal(verifiedFileOutput(file))
 	if err != nil {
 		return mcpserver.ToolResult{}, err
 	}
@@ -114,22 +114,32 @@ func (tools *FileTools) upload(ctx context.Context, _ string, call toolCall[file
 }
 
 type fileBeginArguments struct {
-	Action                string                     `json:"a"`
-	Kind                  filemedia.MCPFileKind      `json:"k"`
-	Transport             filemedia.MCPFileTransport `json:"t"`
-	FileName              string                     `json:"n,omitempty"`
-	MIMEType              string                     `json:"m,omitempty"`
-	FileSize              int64                      `json:"s,omitempty"`
-	LastModified          *int64                     `json:"lm,omitempty"`
-	RemoteURL             string                     `json:"u,omitempty"`
+	Action                string                     `json:"action"`
+	Kind                  filemedia.MCPFileKind      `json:"kind"`
+	Transport             filemedia.MCPFileTransport `json:"transport"`
+	FileName              string                     `json:"file_name,omitempty"`
+	MIMEType              string                     `json:"mime_type,omitempty"`
+	FileSize              int64                      `json:"file_size,omitempty"`
+	LastModified          *int64                     `json:"last_modified_ms,omitempty"`
+	RemoteURL             string                     `json:"remote_url,omitempty"`
 	TrackID               string                     `json:"track_id,omitempty"`
 	ExpectedCurrentFileID *string                    `json:"expected_current_file_id,omitempty"`
 	CorrelationID         string                     `json:"correlation_id,omitempty"`
 }
 
+// fileSessionReference is the upload session a caller passes back unchanged.
+type fileSessionReference struct {
+	Transport             filemedia.MCPFileTransport `json:"transport"`
+	Kind                  filemedia.MCPFileKind      `json:"kind"`
+	FileID                string                     `json:"file_id"`
+	UploadID              string                     `json:"upload_id"`
+	TrackID               string                     `json:"track_id,omitempty"`
+	ExpectedCurrentFileID *string                    `json:"expected_current_file_id,omitempty"`
+}
+
 type fileSessionArguments struct {
-	Action string   `json:"a"`
-	Handle []string `json:"h"`
+	Action  string                `json:"action"`
+	Session *fileSessionReference `json:"session"`
 }
 
 type fileCompleteArguments struct {
@@ -138,7 +148,7 @@ type fileCompleteArguments struct {
 }
 
 type fileReadArguments struct {
-	FileID string `json:"f"`
+	FileID string `json:"file_id"`
 }
 
 func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mcpserver.ToolResult, error) {
@@ -156,7 +166,7 @@ func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mc
 		if err := call.Begin.Decode(&input); err != nil {
 			return executionError(err)
 		}
-		if err := rejectNullArguments(arguments, "k", "t", "n", "m", "s", "lm", "u", "track_id", "expected_current_file_id", "correlation_id"); err != nil {
+		if err := rejectNullArguments(arguments, "kind", "transport", "file_name", "mime_type", "file_size", "last_modified_ms", "remote_url", "track_id", "expected_current_file_id", "correlation_id"); err != nil {
 			return executionError(err)
 		}
 		if err := validateFileBeginFields(arguments, input); err != nil {
@@ -173,10 +183,10 @@ func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mc
 		if err := call.Status.Decode(&input); err != nil {
 			return executionError(err)
 		}
-		if err := rejectNullArguments(arguments, "h"); err != nil {
+		if err := rejectNullArguments(arguments, "session"); err != nil {
 			return executionError(err)
 		}
-		handle, handleErr := fileSessionHandle(input.Handle)
+		handle, handleErr := fileSessionHandle(input.Session)
 		if handleErr != nil {
 			return executionError(handleErr)
 		}
@@ -186,10 +196,10 @@ func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mc
 		if err := call.Status.Decode(&input); err != nil {
 			return executionError(err)
 		}
-		if err := rejectNullArguments(arguments, "h"); err != nil {
+		if err := rejectNullArguments(arguments, "session"); err != nil {
 			return executionError(err)
 		}
-		handle, handleErr := fileSessionHandle(input.Handle)
+		handle, handleErr := fileSessionHandle(input.Session)
 		if handleErr != nil {
 			return executionError(handleErr)
 		}
@@ -203,10 +213,10 @@ func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mc
 		if err := call.Complete.Decode(&input); err != nil {
 			return executionError(err)
 		}
-		if err := rejectNullArguments(arguments, "h", "client_media_bundle_id"); err != nil {
+		if err := rejectNullArguments(arguments, "session", "client_media_bundle_id"); err != nil {
 			return executionError(err)
 		}
-		handle, handleErr := fileSessionHandle(input.Handle)
+		handle, handleErr := fileSessionHandle(input.Session)
 		if handleErr != nil {
 			return executionError(handleErr)
 		}
@@ -234,7 +244,7 @@ func (tools *FileTools) read(ctx context.Context, _ string, call toolCall[fileRe
 	if err != nil {
 		return fileToolCallError(err)
 	}
-	encoded, err := json.Marshal(compactVerifiedFile(file))
+	encoded, err := json.Marshal(verifiedFileOutput(file))
 	if err != nil {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP File handle: %w", err)
 	}
@@ -242,7 +252,7 @@ func (tools *FileTools) read(ctx context.Context, _ string, call toolCall[fileRe
 }
 
 func fileTransferAction(arguments mcpserver.ToolArguments) (string, error) {
-	raw, ok := arguments["a"]
+	raw, ok := arguments["action"]
 	if !ok {
 		return "", errors.New("file transfer action is required")
 	}
@@ -259,28 +269,28 @@ func fileTransferAction(arguments mcpserver.ToolArguments) (string, error) {
 
 // validateFileBeginFields enforces the per-transport and per-kind field sets
 // that the flat file_transfer input schema can no longer express. Strict
-// decoding already rejects fields foreign to begin (h, client_media_bundle_id);
+// decoding already rejects fields foreign to begin (session, client_media_bundle_id);
 // this check rejects present-but-inapplicable fields even when empty, before
 // the facade validates values.
 func validateFileBeginFields(arguments mcpserver.ToolArguments, input fileBeginArguments) error {
-	for _, name := range []string{"k", "t"} {
+	for _, name := range []string{"kind", "transport"} {
 		if _, ok := arguments[name]; !ok {
 			return fmt.Errorf("begin requires %s", name)
 		}
 	}
 	switch input.Transport {
 	case filemedia.MCPFileTransportBrowserUploadPage, filemedia.MCPFileTransportPresignedMultipart:
-		if err := requireFileArguments(arguments, "begin multipart", "n", "m", "s"); err != nil {
+		if err := requireFileArguments(arguments, "begin multipart", "file_name", "mime_type", "file_size"); err != nil {
 			return err
 		}
-		if err := forbidFileArguments(arguments, "begin multipart", "u", "correlation_id"); err != nil {
+		if err := forbidFileArguments(arguments, "begin multipart", "remote_url", "correlation_id"); err != nil {
 			return err
 		}
 	case filemedia.MCPFileTransportRemoteHTTPS:
-		if err := requireFileArguments(arguments, "begin remote_https", "u"); err != nil {
+		if err := requireFileArguments(arguments, "begin remote_https", "remote_url"); err != nil {
 			return err
 		}
-		if err := forbidFileArguments(arguments, "begin remote_https", "n", "m", "s", "lm"); err != nil {
+		if err := forbidFileArguments(arguments, "begin remote_https", "file_name", "mime_type", "file_size", "last_modified_ms"); err != nil {
 			return err
 		}
 		if input.Kind != filemedia.MCPFileKindGeneral {
@@ -289,7 +299,7 @@ func validateFileBeginFields(arguments mcpserver.ToolArguments, input fileBeginA
 			}
 		}
 	default:
-		return fmt.Errorf("t must be browser_upload_page, presigned_multipart, or remote_https, got %q", input.Transport)
+		return fmt.Errorf("transport must be browser_upload_page, presigned_multipart, or remote_https, got %q", input.Transport)
 	}
 	if input.Kind == filemedia.MCPFileKindTrackAudio {
 		return requireFileArguments(arguments, "begin track_audio", "track_id")
@@ -315,76 +325,85 @@ func forbidFileArguments(arguments mcpserver.ToolArguments, scope string, names 
 	return nil
 }
 
-func fileSessionHandle(values []string) (filemedia.MCPFileSessionHandle, error) {
-	if len(values) != 4 && len(values) != 6 {
-		return filemedia.MCPFileSessionHandle{}, errors.New("file session handle must contain four values, or six for Track audio")
+func fileSessionHandle(session *fileSessionReference) (filemedia.MCPFileSessionHandle, error) {
+	if session == nil {
+		return filemedia.MCPFileSessionHandle{}, errors.New("session is required: pass the session returned by begin or status")
 	}
-	handle := filemedia.MCPFileSessionHandle{
-		Transport: filemedia.MCPFileTransport(values[0]),
-		Kind:      filemedia.MCPFileKind(values[1]),
-		FileID:    values[2],
-		UploadID:  values[3],
-	}
+	handle := filemedia.MCPFileSessionHandle{Transport: session.Transport, Kind: session.Kind, FileID: session.FileID, UploadID: session.UploadID}
 	if handle.Kind == filemedia.MCPFileKindTrackAudio {
-		if len(values) != 6 {
-			return filemedia.MCPFileSessionHandle{}, errors.New("Track audio session handle must preserve Track ID and current audio CAS")
+		if session.TrackID == "" {
+			return filemedia.MCPFileSessionHandle{}, errors.New("Track audio session must keep its track_id and expected_current_file_id")
 		}
-		handle.TrackID = values[4]
-		if values[5] != "" {
-			handle.ExpectedCurrentFileID = &values[5]
-		}
-	} else if len(values) != 4 {
-		return filemedia.MCPFileSessionHandle{}, errors.New("independent File session handle must contain four values")
+		handle.TrackID, handle.ExpectedCurrentFileID = session.TrackID, session.ExpectedCurrentFileID
+	} else if session.TrackID != "" || session.ExpectedCurrentFileID != nil {
+		return filemedia.MCPFileSessionHandle{}, errors.New("independent File session must not have a track_id or expected_current_file_id")
 	}
 	return handle, nil
 }
 
-type compactFileTransferResult struct {
-	State   filemedia.MCPFileTransferState `json:"s"`
-	Session *compactFileSession            `json:"x,omitempty"`
-	File    *compactFileHandle             `json:"f,omitempty"`
+type fileTransferOutput struct {
+	State   filemedia.MCPFileTransferState `json:"state"`
+	Session *fileSessionOutput             `json:"upload,omitempty"`
+	File    *fileHandleOutput              `json:"file,omitempty"`
 }
 
-type compactFileSession struct {
-	Handle              []string                       `json:"h"`
-	State               filemedia.MCPFileTransferState `json:"s"`
-	FileName            string                         `json:"n,omitempty"`
-	MIMEType            string                         `json:"m,omitempty"`
-	FileSize            int64                          `json:"z,omitempty"`
-	TotalParts          int32                          `json:"p"`
-	ChunkSize           int32                          `json:"c"`
-	UploadedParts       []int32                        `json:"u"`
-	LastActivityAt      string                         `json:"a,omitempty"`
+type filePartOutput struct {
+	PartNumber int32  `json:"part_number"`
+	URL        string `json:"url"`
+	Size       int64  `json:"size"`
+}
+
+type fileSessionOutput struct {
+	Session             fileSessionReference           `json:"session"`
+	State               filemedia.MCPFileTransferState `json:"state"`
+	FileName            string                         `json:"file_name,omitempty"`
+	MIMEType            string                         `json:"mime_type,omitempty"`
+	FileSize            int64                          `json:"file_size,omitempty"`
+	TotalParts          int32                          `json:"total_parts"`
+	ChunkSize           int32                          `json:"chunk_size"`
+	UploadedParts       []int32                        `json:"uploaded_parts"`
+	LastActivityAt      string                         `json:"last_activity_at,omitempty"`
 	ClientMediaBundleID string                         `json:"client_media_bundle_id,omitempty"`
-	PartUploads         [][]any                        `json:"l,omitempty"`
-	PartUploadsExpireAt string                         `json:"e,omitempty"`
+	PartUploads         []filePartOutput               `json:"part_uploads,omitempty"`
+	PartUploadsExpireAt string                         `json:"part_uploads_expire_at,omitempty"`
 }
 
-type compactFileHandle struct {
-	ID                   string  `json:"i"`
-	FileName             string  `json:"n"`
-	Extension            string  `json:"x"`
-	MIMEType             string  `json:"m"`
-	FileSize             int64   `json:"z"`
-	DurationSeconds      *int32  `json:"d,omitempty"`
-	DerivativeStatus     string  `json:"s,omitempty"`
-	DerivativePercentage *int32  `json:"p,omitempty"`
-	References           [][]any `json:"r"`
+type fileReferenceOutput struct {
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	URL       string `json:"url"`
+	Extension string `json:"extension,omitempty"`
+	MIMEType  string `json:"mime_type,omitempty"`
+	FileSize  int64  `json:"file_size,omitempty"`
+	FileName  string `json:"file_name,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+type fileHandleOutput struct {
+	ID                   string                `json:"file_id"`
+	FileName             string                `json:"file_name"`
+	Extension            string                `json:"extension"`
+	MIMEType             string                `json:"mime_type"`
+	FileSize             int64                 `json:"file_size"`
+	DurationSeconds      *int32                `json:"duration_seconds,omitempty"`
+	DerivativeStatus     string                `json:"derivative_status,omitempty"`
+	DerivativePercentage *int32                `json:"derivative_percentage,omitempty"`
+	References           []fileReferenceOutput `json:"references"`
 }
 
 func encodeFileTransferResult(result filemedia.MCPFileTransferResult) ([]byte, error) {
-	compact := compactFileTransferResult{State: result.State}
+	compact := fileTransferOutput{State: result.State}
 	switch result.State {
 	case filemedia.MCPFileTransferInitiated, filemedia.MCPFileTransferUploading, filemedia.MCPFileTransferFinalizing:
 		if result.Session == nil || result.File != nil || result.Session.State != result.State {
 			return nil, errors.New("MCP File facade returned an invalid active transfer result")
 		}
-		compact.Session = compactFileSessionFrom(*result.Session)
+		compact.Session = fileSessionOutputFrom(*result.Session)
 	case filemedia.MCPFileTransferReady:
 		if result.File == nil || result.Session != nil {
 			return nil, errors.New("MCP File facade returned an invalid ready transfer result")
 		}
-		file := compactVerifiedFile(*result.File)
+		file := verifiedFileOutput(*result.File)
 		compact.File = &file
 	case filemedia.MCPFileTransferAborted:
 		if result.Session != nil || result.File != nil {
@@ -400,11 +419,11 @@ func encodeFileTransferResult(result filemedia.MCPFileTransferResult) ([]byte, e
 	return encoded, nil
 }
 
-func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFileSession {
-	result := &compactFileSession{
-		Handle: []string{
-			string(session.Handle.Transport), string(session.Handle.Kind),
-			session.Handle.FileID, session.Handle.UploadID,
+func fileSessionOutputFrom(session filemedia.MCPFileTransferSession) *fileSessionOutput {
+	result := &fileSessionOutput{
+		Session: fileSessionReference{
+			Transport: session.Handle.Transport, Kind: session.Handle.Kind,
+			FileID: session.Handle.FileID, UploadID: session.Handle.UploadID,
 		},
 		State: session.State, FileName: session.FileName, MIMEType: session.MIMEType,
 		FileSize: session.FileSize, TotalParts: session.TotalParts, ChunkSize: session.ChunkSize,
@@ -412,11 +431,8 @@ func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFi
 		ClientMediaBundleID: session.Handle.ClientMediaBundleID,
 	}
 	if session.Handle.Kind == filemedia.MCPFileKindTrackAudio {
-		expectedFileID := ""
-		if session.Handle.ExpectedCurrentFileID != nil {
-			expectedFileID = *session.Handle.ExpectedCurrentFileID
-		}
-		result.Handle = append(result.Handle, session.Handle.TrackID, expectedFileID)
+		result.Session.TrackID = session.Handle.TrackID
+		result.Session.ExpectedCurrentFileID = session.Handle.ExpectedCurrentFileID
 	}
 	if result.UploadedParts == nil {
 		result.UploadedParts = []int32{}
@@ -425,25 +441,25 @@ func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFi
 		result.LastActivityAt = session.LastActivityAt.UTC().Format(time.RFC3339Nano)
 	}
 	for _, part := range session.PartUploads {
-		result.PartUploads = append(result.PartUploads, []any{part.PartNumber, part.URL, part.Size})
+		result.PartUploads = append(result.PartUploads, filePartOutput{PartNumber: part.PartNumber, URL: part.URL, Size: part.Size})
 		result.PartUploadsExpireAt = part.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return result
 }
 
-func compactVerifiedFile(file filemedia.MCPVerifiedFileHandle) compactFileHandle {
-	references := make([][]any, 0, len(file.References))
+func verifiedFileOutput(file filemedia.MCPVerifiedFileHandle) fileHandleOutput {
+	references := make([]fileReferenceOutput, 0, len(file.References))
 	for _, reference := range file.References {
-		var expiresAt any
-		if reference.ExpiresAt != nil {
-			expiresAt = reference.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		compact := fileReferenceOutput{
+			Kind: string(reference.Kind), ID: reference.ID, URL: reference.URL, Extension: reference.Extension,
+			MIMEType: reference.MIMEType, FileSize: reference.FileSize, FileName: reference.FileName,
 		}
-		references = append(references, []any{
-			string(reference.Kind), reference.ID, reference.URL, reference.Extension,
-			reference.MIMEType, reference.FileSize, reference.FileName, expiresAt,
-		})
+		if reference.ExpiresAt != nil {
+			compact.ExpiresAt = reference.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
+		references = append(references, compact)
 	}
-	return compactFileHandle{
+	return fileHandleOutput{
 		ID: file.ID, FileName: file.FileName, Extension: file.Extension, MIMEType: file.MIMEType,
 		FileSize: file.FileSize, DurationSeconds: file.DurationSeconds,
 		DerivativeStatus: file.DerivativeStatus, DerivativePercentage: file.DerivativePercentage,

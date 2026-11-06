@@ -25,6 +25,8 @@ import (
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/documentsearch"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -102,6 +104,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid",
 			editorCollabHTTPClient:    http.DefaultClient,
+			documentTransaction:       compositionDocumentTransaction,
+			documentSearchIndex:       compositionDocumentSearchIndex{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -126,7 +130,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "21", envelope.Result.ServerInfo.Version)
+		require.Equal(t, mcpServerImplementationVersion, envelope.Result.ServerInfo.Version)
 		require.NotContains(t, envelope.Result.Instructions, "DSUB")
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
@@ -136,14 +140,15 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"not proof that concurrent edits are disjoint",
 			"3 cycles per task edit",
 			"not routine version changes",
-			"document_read m=outline",
+			"document_read mode=outline",
 			"consecutive edits need no reread",
 			"refuse a block with marks, links, colors or breaks",
-			"p=release",
-			"p=artist",
-			"menu_list",
+			"document_list for any document_type",
+			"document_text_replace",
+			"document_text_format",
 			"menu_locations_get",
-			"Use work_settings_get before updating Work metadata or clients",
+			"menu_locations_get",
+			"document_settings_get",
 			"observed_policy.member_criteria_ids",
 			"policy_create creates an empty draft without email",
 			"policy_schedule and policy_activate_now start notice email delivery",
@@ -170,9 +175,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		for _, tool := range envelope.Result.Tools {
 			names = append(names, tool.Name)
 		}
-		require.Contains(t, names, "menu_list")
 		require.Contains(t, names, "menu_locations_get")
-		for _, name := range []string{"policy_list", "policy_get", "policy_create", "policy_schedule", "policy_schedule_cancel", "policy_activate_now", "policy_delete"} {
+		for _, name := range []string{"policy_get", "policy_create", "policy_schedule", "policy_schedule_cancel", "policy_activate_now", "policy_delete"} {
 			require.Contains(t, names, name)
 		}
 	})
@@ -215,6 +219,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid",
 			editorCollabHTTPClient:    http.DefaultClient,
+			documentTransaction:       compositionDocumentTransaction,
+			documentSearchIndex:       compositionDocumentSearchIndex{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -241,6 +247,8 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid",
 			editorCollabHTTPClient:    http.DefaultClient,
+			documentTransaction:       compositionDocumentTransaction,
+			documentSearchIndex:       compositionDocumentSearchIndex{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -291,6 +299,8 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid",
 			editorCollabHTTPClient:    http.DefaultClient,
+			documentTransaction:       compositionDocumentTransaction,
+			documentSearchIndex:       compositionDocumentSearchIndex{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -305,19 +315,14 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Contains(t, response.Body.String(), `"name":"document_list"`)
 	require.Contains(t, response.Body.String(), `"name":"reference_search"`)
 	for _, tool := range []string{
-		"post_settings_get", "page_settings_get", "document_catalog",
-		"program_event_create", "program_event_settings_get", "program_event_settings_update",
-		"program_event_publish", "program_event_archive", "program_event_delete",
-		"program_event_type_list", "program_event_series_list", "label_list",
+		"document_catalog",
+		"program_event_create", "program_event_settings_update",
 		"member_admin_list", "member_admin_get",
 		"site_settings_get", "site_settings_update", "mail_adapter_list", "mail_adapter_sender_update",
-		"release_create", "release_settings_get", "release_settings_update", "release_publish", "release_unpublish", "release_delete",
-		"release_artwork_set", "release_artwork_remove", "release_slug_check",
-		"release_relations_get", "release_artists_set", "release_labels_set", "release_categories_set", "release_genres_set", "release_styles_set", "release_formats_set", "release_credits_set",
+		"release_create", "release_settings_update", "release_artwork_set", "release_artwork_remove", "release_relations_get", "release_artists_set", "release_labels_set", "release_categories_set", "release_genres_set", "release_styles_set", "release_formats_set", "release_credits_set",
 		"track_list", "track_create", "track_settings_update", "track_delete", "track_credits_set", "track_reorder",
 		"map_place_get", "map_place_get_many", "map_place_list", "map_place_create", "map_place_settings_update", "map_place_delete",
 		"map_theme_list", "map_theme_resolve", "map_theme_get", "map_theme_create", "map_theme_copy", "map_theme_delete", "map_theme_set_default", "map_theme_settings_update",
-		"genre_list", "style_list", "format_list", "form_list", "post_series_list", "member_tag_list",
 		"oauth_app_list", "oauth_app_get", "oauth_app_create", "oauth_app_update", "oauth_app_delete", "oauth_app_secret_rotate",
 		"oauth_connected_tool_list", "oauth_connected_tool_disconnect", "member_criteria_list",
 		"program_event_media_list", "program_event_media_add", "program_event_media_remove", "program_event_media_reorder",
@@ -347,7 +352,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	response = httptest.NewRecorder()
 	composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{
 		"jsonrpc":"2.0","id":2,"method":"tools/call",
-		"params":{"name":"file_read","arguments":{"f":"`+compositionFileID+`"}}
+		"params":{"name":"file_read","arguments":{"file_id":"`+compositionFileID+`"}}
 	}`))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 
@@ -371,6 +376,8 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid", editorCollabHTTPClient: http.DefaultClient,
+			documentTransaction: compositionDocumentTransaction,
+			documentSearchIndex: compositionDocumentSearchIndex{},
 		}, &compositionSignalPublisher{}, nil,
 	)
 	require.NoError(t, err)
@@ -466,6 +473,7 @@ type compositionSignalPublisher struct{}
 // cases unimplemented; no composition test reaches one.
 type compositionPostApplication struct {
 	mcpadapter.PostManagementApplication
+	mcpadapter.PostOperationApplication
 	mcpadapter.PostRelatedApplication
 }
 
@@ -481,6 +489,7 @@ func (*compositionPostApplication) ListAIDocuments(
 type compositionWorkApplication struct {
 	mcpadapter.WorkDocumentDiscovery
 	mcpadapter.WorkManagementApplication
+	mcpadapter.WorkOperationApplication
 	mcpadapter.WorkRelatedApplication
 }
 
@@ -494,33 +503,49 @@ type compositionFileReferences struct {
 	mcpadapter.FileReferenceDiscovery
 }
 
+// compositionDocumentTransaction stands in for the shared database transaction,
+// which these tests of the composition do not reach.
+func compositionDocumentTransaction(ctx context.Context, work func(context.Context) error) error {
+	return work(ctx)
+}
+
+// compositionDocumentSearchIndex finds nothing; these tests do not search.
+type compositionDocumentSearchIndex struct{}
+
+func (compositionDocumentSearchIndex) Candidates(context.Context, documentsearch.IndexQuery) ([]documentsearch.Document, error) {
+	return nil, nil
+}
+
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
-		legalPolicies: &legal.Service{},
-		categories:    &referencecatalog.Service{},
-		tags:          &referencecatalog.Service{},
-		clients:       &referencecatalog.Service{},
-		mapPlaces:     &referencecatalog.Service{},
-		members:       &member.Service{},
-		artists:       &artistdomain.Service{},
-		files:         &compositionFileReferences{},
-		eventTypes:    &programevent.Service{},
-		eventSeries:   &programevent.Service{},
-		labels:        &label.Service{},
-		genres:        &referencecatalog.Service{},
-		styles:        &referencecatalog.Service{},
-		formats:       &referencecatalog.Service{},
-		forms:         &formdomain.Service{},
-		postSeries:    &series.Service{},
-		tracks:        &releasepkg.Service{},
-		mapThemes:     &maptheme.Service{},
-		menus:         &menu.Service{},
-		menuSettings:  &sitesettings.Service{},
-		siteSettings:  &sitesettings.Service{},
-		mailAdapters:  &emaildelivery.Service{},
-		emailLayouts:  (&emailauthoring.InternalService{}).LayoutAIDocuments(),
-		oauthApps:     &oauthapp.Service{},
-		criteria:      &membercriteria.Service{},
+		campaigns:        &campaign.Service{},
+		emailTemplates:   &emailauthoring.Service{},
+		emailLayoutLists: &emailauthoring.Service{},
+		legalPolicies:    &legal.Service{},
+		categories:       &referencecatalog.Service{},
+		tags:             &referencecatalog.Service{},
+		clients:          &referencecatalog.Service{},
+		mapPlaces:        &referencecatalog.Service{},
+		members:          &member.Service{},
+		artists:          &artistdomain.Service{},
+		files:            &compositionFileReferences{},
+		eventTypes:       &programevent.Service{},
+		eventSeries:      &programevent.Service{},
+		labels:           &label.Service{},
+		genres:           &referencecatalog.Service{},
+		styles:           &referencecatalog.Service{},
+		formats:          &referencecatalog.Service{},
+		forms:            &formdomain.Service{},
+		postSeries:       &series.Service{},
+		tracks:           &releasepkg.Service{},
+		mapThemes:        &maptheme.Service{},
+		menus:            &menu.Service{},
+		menuSettings:     &sitesettings.Service{},
+		siteSettings:     &sitesettings.Service{},
+		mailAdapters:     &emaildelivery.Service{},
+		emailLayouts:     (&emailauthoring.InternalService{}).LayoutAIDocuments(),
+		oauthApps:        &oauthapp.Service{},
+		criteria:         &membercriteria.Service{},
 	}
 }
 
@@ -696,7 +721,7 @@ func completeTestAIDocumentRegistrations(port aidocument.DomainPort) aiDocumentD
 func compositionMCPRequest(authorization string) *http.Request {
 	return compositionMCPJSONRequest(authorization, `{
 		"jsonrpc":"2.0","id":1,"method":"tools/call",
-		"params":{"name":"document_open","arguments":{"p":"post","d":"44444444-4444-4444-8444-444444444444","l":"en"}}
+		"params":{"name":"document_read","arguments":{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"en","mode":"metadata"}}
 	}`)
 }
 
@@ -760,6 +785,8 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid",
 			editorCollabHTTPClient:    http.DefaultClient,
+			documentTransaction:       compositionDocumentTransaction,
+			documentSearchIndex:       compositionDocumentSearchIndex{},
 		},
 		&compositionSignalPublisher{}, nil,
 	)
@@ -770,13 +797,17 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 	} {
 		t.Run(test.profile, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"document_list","arguments":{"p":"`+test.profile+`"}}}`))
+			composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"document_list","arguments":{"document_type":"`+test.profile+`"}}}`))
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 			var envelope struct {
 				Result struct {
 					IsError           bool `json:"isError"`
 					StructuredContent struct {
-						Documents  []struct{ P, D, Title string }
+						Documents []struct {
+							DocumentType string `json:"document_type"`
+							DocumentID   string `json:"document_id"`
+							Title        string `json:"title"`
+						} `json:"documents"`
 						NextOffset *int `json:"next_offset"`
 					} `json:"structuredContent"`
 				} `json:"result"`
@@ -785,8 +816,8 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 			require.False(t, envelope.Result.IsError)
 			require.Len(t, envelope.Result.StructuredContent.Documents, 1)
 			document := envelope.Result.StructuredContent.Documents[0]
-			require.Equal(t, test.profile, document.P)
-			require.Equal(t, test.id, document.D)
+			require.Equal(t, test.profile, document.DocumentType)
+			require.Equal(t, test.id, document.DocumentID)
 			require.Equal(t, test.title, document.Title)
 			require.Nil(t, envelope.Result.StructuredContent.NextOffset)
 			principal := releases.principal

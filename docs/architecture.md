@@ -358,7 +358,11 @@ Rules for a spec:
   `profileEdit.failure` does.
 
 Work that must happen after the commit, such as a metric or a confirmation
-log, follows `Run` in the use case. A read that needs one snapshot of several
+log, follows `Run` in the use case. Inside `mutation.InSharedTransaction`, `Run`
+has not committed yet when it returns, so work that another system must only see
+once committed, such as a relay to Collab, goes through `mutation.AfterCommit`, and
+`mutation.Read` joins the shared read-committed transaction instead of taking its
+own snapshot. A read that needs one snapshot of several
 rows uses `mutation.Read` instead of opening a transaction. PostgreSQL
 refuses row locks in a read-only transaction, so a projection that
 share-locks its root uses `mutation.ReadLocked`, and a check that locks rows

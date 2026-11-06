@@ -1,4 +1,4 @@
-// Package aidocument defines the schema-independent compact document contract
+// Package aidocument defines the schema-independent document contract
 // shared by AI authoring clients and owning-domain adapters.
 package aidocument
 
@@ -90,12 +90,12 @@ func deriveLocaleRole(source, requested Locale) LocaleRole {
 type ValueKind string
 
 const (
-	ValueKindText    ValueKind = "t"
-	ValueKindBoolean ValueKind = "b"
-	ValueKindNumber  ValueKind = "n"
-	ValueKindInline  ValueKind = "i"
-	ValueKindList    ValueKind = "l"
-	ValueKindObject  ValueKind = "o"
+	ValueKindText    ValueKind = "text"
+	ValueKindBoolean ValueKind = "boolean"
+	ValueKindNumber  ValueKind = "number"
+	ValueKindInline  ValueKind = "rich_text"
+	ValueKindList    ValueKind = "list"
+	ValueKindObject  ValueKind = "object"
 )
 
 // Value is a closed typed tree. Lists and objects preserve nested catalog
@@ -123,22 +123,22 @@ type ObjectField struct {
 type InlineKind string
 
 const (
-	InlineKindSiteVariable InlineKind = "siteVariable"
-	InlineKindText         InlineKind = "t"
-	InlineKindBold         InlineKind = "b"
-	InlineKindItalic       InlineKind = "em"
-	InlineKindUnderline    InlineKind = "u"
-	InlineKindStrike       InlineKind = "s"
+	InlineKindSiteVariable InlineKind = "site_variable"
+	InlineKindText         InlineKind = "text"
+	InlineKindBold         InlineKind = "bold"
+	InlineKindItalic       InlineKind = "italic"
+	InlineKindUnderline    InlineKind = "underline"
+	InlineKindStrike       InlineKind = "strike"
 	InlineKindCode         InlineKind = "code"
-	InlineKindTextColor    InlineKind = "fg"
-	InlineKindBackground   InlineKind = "bg"
-	InlineKindLink         InlineKind = "a"
-	InlineKindHardBreak    InlineKind = "br"
+	InlineKindTextColor    InlineKind = "text_color"
+	InlineKindBackground   InlineKind = "background_color"
+	InlineKindLink         InlineKind = "link"
+	InlineKindHardBreak    InlineKind = "hard_break"
 	InlineKindMath         InlineKind = "math"
-	InlineKindPlaceholder  InlineKind = "ph"
+	InlineKindPlaceholder  InlineKind = "placeholder"
 )
 
-// InlineItem is the closed compact rich-text vocabulary. It preserves common
+// InlineItem is the closed rich-text vocabulary. It preserves common
 // inline semantics without exposing an editor-native document representation.
 type InlineItem struct {
 	Linked   bool

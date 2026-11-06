@@ -4,6 +4,7 @@ package emailauthoring_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -216,4 +218,47 @@ func TestEmailTemplateTargetsKeepTheSharedRevisionAcrossWritersIntegration(t *te
 	})
 	require.NoError(t, err)
 	require.NotEqual(t, sourceWrite.DocumentRevision, updated.DocumentRevision)
+}
+
+// A real domain write must join the shared transaction, and a second write of the
+// same root inside it must not wait on the lock the first holds. The MCP text
+// tools depend on both to change a document's locales together.
+func TestEmailTemplateAIDocumentMutationJoinsASharedTransactionIntegration(t *testing.T) {
+	t.Parallel()
+	db := orytest.SetupOryStackWithLocalKratos(t).DB
+	e := newEndToEnd(t, db)
+	created, err := e.service.CreateEmailTemplate(e.ctx, emailauthoring.CreateEmailTemplateCommand{
+		Key: uniqueKey("shared_tx"), Name: "Shared transaction Template", Subject: "Source subject", SourceLocale: "en",
+	})
+	require.NoError(t, err)
+	documents := e.internal.TemplateAIDocuments()
+
+	createTranslation := func(ctx context.Context) error {
+		_, err := documents.ExecuteAIDocumentMutation(ctx, created.ID, "ko", emailcontent.AIDocumentExecutionApply,
+			func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
+				return emailcontent.AIDocumentMutation{
+					Reference: state.Reference, Locale: state.Locale, ExpectedDocumentRevision: state.DocumentRevision,
+					ExpectedSource: state.SourceLocale, ExpectedPresence: state.LocaleExists,
+					ContributorMember: uuid.MustParse(state.ViewerMemberID), CreateTranslation: true,
+				}, nil
+			})
+		return err
+	}
+	translationExists := func(ctx context.Context) bool {
+		state, err := documents.Load(ctx, created.ID, "ko")
+		require.NoError(t, err)
+		return state.LocaleExists
+	}
+
+	refused := errors.New("a later write of the same edit failed")
+	err = mutation.InSharedTransaction(e.ctx, db, func(ctx context.Context) error {
+		require.NoError(t, createTranslation(ctx))
+		require.True(t, translationExists(ctx), "a read in the transaction must see its own write")
+		return refused
+	})
+	require.ErrorIs(t, err, refused)
+	require.False(t, translationExists(e.ctx), "the rollback must undo the finished domain mutation")
+
+	require.NoError(t, mutation.InSharedTransaction(e.ctx, db, createTranslation))
+	require.True(t, translationExists(e.ctx))
 }

@@ -24,50 +24,50 @@ func encodeXLIFFExport(response translationapp.XLIFFExport) ([]byte, error) {
 	if err := validateArtifactURL(artifact.URL); err != nil {
 		return nil, err
 	}
-	expiresAt, err := compactTimestamp(timestamppb.New(artifact.ExpiresAt))
+	expiresAt, err := timestampText(timestamppb.New(artifact.ExpiresAt))
 	if err != nil || expiresAt == nil {
 		return nil, errors.New("translation application returned an invalid XLIFF artifact expiration")
 	}
-	mode, err := compactInterchangeMode(translationapp.InterchangeModeMessage(response.Mode))
+	mode, err := interchangeModeName(translationapp.InterchangeModeMessage(response.Mode))
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCompactLocale(core.Locale(response.SourceLocale)); err != nil {
+	if err := validateLocaleCode(core.Locale(response.SourceLocale)); err != nil {
 		return nil, err
 	}
-	if err := validateCompactLocale(core.Locale(response.TargetLocale)); err != nil {
+	if err := validateLocaleCode(core.Locale(response.TargetLocale)); err != nil {
 		return nil, err
 	}
-	if err := validateCompactOpaque("Translation application XLIFF artifact extension", artifact.Extension, 32); err != nil {
+	if err := validateOpaqueValue("Translation application XLIFF artifact extension", artifact.Extension, 32); err != nil {
 		return nil, err
 	}
-	if err := validateCompactOpaque("Translation application XLIFF artifact MIME type", artifact.MimeType, 128); err != nil {
+	if err := validateOpaqueValue("Translation application XLIFF artifact MIME type", artifact.MimeType, 128); err != nil {
 		return nil, err
 	}
 	artifactOutput := map[string]any{
-		"f": artifact.FileID,
-		"u": artifact.URL,
-		"e": *expiresAt,
-		"x": artifact.Extension,
-		"t": artifact.MimeType,
+		"file_id":    artifact.FileID,
+		"url":        artifact.URL,
+		"expires_at": *expiresAt,
+		"extension":  artifact.Extension,
+		"mime_type":  artifact.MimeType,
 	}
 	if artifact.FileName != nil {
-		if err := validateCompactOpaque("Translation application XLIFF artifact file name", *artifact.FileName, 512); err != nil {
+		if err := validateOpaqueValue("Translation application XLIFF artifact file name", *artifact.FileName, 512); err != nil {
 			return nil, err
 		}
-		artifactOutput["n"] = *artifact.FileName
+		artifactOutput["file_name"] = *artifact.FileName
 	}
 	output := map[string]any{
-		"a": artifactOutput,
-		"s": response.SourceLocale,
-		"l": response.TargetLocale,
-		"m": mode,
+		"artifact":      artifactOutput,
+		"source_locale": response.SourceLocale,
+		"locale":        response.TargetLocale,
+		"mode":          mode,
 	}
 	if response.TargetRevision != nil {
-		if err := validateCompactOpaque("Translation application XLIFF target revision", *response.TargetRevision, 256); err != nil {
+		if err := validateOpaqueValue("Translation application XLIFF target revision", *response.TargetRevision, 256); err != nil {
 			return nil, err
 		}
-		output["r"] = *response.TargetRevision
+		output["target_revision"] = *response.TargetRevision
 	}
 	return json.Marshal(output)
 }
@@ -81,7 +81,7 @@ func validateArtifactURL(value string) error {
 }
 
 func encodeXLIFFImport(response translationapp.XLIFFImport) ([]byte, error) {
-	if err := validateCompactOpaque("Translation application target revision", response.TargetRevision, 256); err != nil {
+	if err := validateOpaqueValue("Translation application target revision", response.TargetRevision, 256); err != nil {
 		return nil, err
 	}
 	duplicate, err := inspectStableUnitHandleSet(response.AffectedUnitHandles)
@@ -94,8 +94,8 @@ func encodeXLIFFImport(response translationapp.XLIFFImport) ([]byte, error) {
 	handles := make([]string, len(response.AffectedUnitHandles))
 	copy(handles, response.AffectedUnitHandles)
 	return json.Marshal(map[string]any{
-		"r": response.TargetRevision,
-		"c": response.Changed,
-		"u": handles,
+		"target_revision": response.TargetRevision,
+		"changed":         response.Changed,
+		"unit_ids":        handles,
 	})
 }

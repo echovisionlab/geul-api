@@ -195,7 +195,7 @@ func TestFileToolsExposeCompactReferenceOnlySurface(t *testing.T) {
 	}
 }
 
-func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
+func TestFileToolsTransferActionsUseOneSession(t *testing.T) {
 	fileID := uuid.NewString()
 	bundleID := uuid.NewString()
 	lastActivity := time.Date(2026, 8, 23, 10, 11, 12, 123, time.FixedZone("test", 9*60*60))
@@ -217,7 +217,7 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 	tools := mustFileTools(t, runtime)
 
 	begin, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
-		`{"a":"begin","k":"audio","t":"presigned_multipart","n":"audio.wav","m":"audio/wav","s":3072,"lm":123}`))
+		`{"action":"begin","kind":"audio","transport":"presigned_multipart","file_name":"audio.wav","mime_type":"audio/wav","file_size":3072,"last_modified_ms":123}`))
 	if err != nil {
 		t.Fatalf("file_transfer(begin) error = %v", err)
 	}
@@ -226,16 +226,16 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 		request.GetUploadType() != managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO {
 		t.Fatalf("initiate request = %+v", request)
 	}
-	session := begin.StructuredContent["x"].(map[string]any)
-	handle := session["h"].([]any)
-	if !reflect.DeepEqual(handle, []any{"presigned_multipart", "audio", fileID, "upload-a"}) || session["s"] != "initiated" {
+	session := begin.StructuredContent["upload"].(map[string]any)
+	handle := session["session"].(map[string]any)
+	if !reflect.DeepEqual(handle, map[string]any{"transport": "presigned_multipart", "kind": "audio", "file_id": fileID, "upload_id": "upload-a"}) || session["state"] != "initiated" {
 		t.Fatalf("begin session = %+v", session)
 	}
 	if strings.Contains(begin.Content[0]["text"].(string), "must-not-leak") {
 		t.Fatalf("begin result leaked runtime-only value: %+v", begin)
 	}
 
-	statusArguments := `{"a":"status","h":["presigned_multipart","audio","` + fileID + `","upload-a"]}`
+	statusArguments := `{"action":"status","session":{"transport":"presigned_multipart","kind":"audio","file_id":"` + fileID + `","upload_id":"upload-a"}}`
 	status, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, statusArguments))
 	if err != nil {
 		t.Fatalf("file_transfer(status) error = %v", err)
@@ -245,11 +245,11 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 		t.Fatalf("status request = %+v", request)
 	}
 	statusText := status.Content[0]["text"].(string)
-	statusSession := status.StructuredContent["x"].(map[string]any)
-	if statusSession["client_media_bundle_id"] != bundleID || !reflect.DeepEqual(statusSession["h"], handle) {
+	statusSession := status.StructuredContent["upload"].(map[string]any)
+	if statusSession["client_media_bundle_id"] != bundleID || !reflect.DeepEqual(statusSession["session"], handle) {
 		t.Fatalf("status changed the four-slot handle or lost bundle metadata: %+v", statusSession)
 	}
-	if !strings.Contains(statusText, `"u":[1,3]`) || !strings.Contains(statusText, `"a":"2026-08-23T01:11:12.000000123Z"`) ||
+	if !strings.Contains(statusText, `"uploaded_parts":[1,3]`) || !strings.Contains(statusText, `"last_activity_at":"2026-08-23T01:11:12.000000123Z"`) ||
 		strings.Contains(statusText, "must-not-leak") {
 		t.Fatalf("status result = %s", statusText)
 	}
@@ -276,40 +276,43 @@ func TestFileToolsPresignedTransferNeedsOnlyBeginAndComplete(t *testing.T) {
 	tools := mustFileTools(t, runtime)
 
 	begin, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
-		`{"a":"begin","k":"image","t":"presigned_multipart","n":"icon.png","m":"image/png","s":1034}`))
+		`{"action":"begin","kind":"image","transport":"presigned_multipart","file_name":"icon.png","mime_type":"image/png","file_size":1034}`))
 	if err != nil {
 		t.Fatalf("file_transfer(begin) error = %v", err)
 	}
-	session := begin.StructuredContent["x"].(map[string]any)
-	wantParts := []any{[]any{float64(1), "https://s3.example/1", float64(1024)}, []any{float64(2), "https://s3.example/2", float64(10)}}
-	if !reflect.DeepEqual(session["l"], wantParts) || session["e"] != "2026-11-06T01:00:00Z" {
-		t.Fatalf("begin upload URLs = %v, expiry %v", session["l"], session["e"])
+	session := begin.StructuredContent["upload"].(map[string]any)
+	wantParts := []any{
+		map[string]any{"part_number": float64(1), "url": "https://s3.example/1", "size": float64(1024)},
+		map[string]any{"part_number": float64(2), "url": "https://s3.example/2", "size": float64(10)},
+	}
+	if !reflect.DeepEqual(session["part_uploads"], wantParts) || session["part_uploads_expire_at"] != "2026-11-06T01:00:00Z" {
+		t.Fatalf("begin upload URLs = %v, expiry %v", session["part_uploads"], session["part_uploads_expire_at"])
 	}
 	if runtime.presignCommand == nil || runtime.presignCommand.FileID != fileID || runtime.presignCommand.UploadID != "upload-i" {
 		t.Fatalf("presign command = %+v", runtime.presignCommand)
 	}
 
-	handle := `["presigned_multipart","image","` + fileID + `","upload-i"]`
-	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"complete","h":`+handle+`}`)); err != nil {
+	handle := `{"transport":"presigned_multipart","kind":"image","file_id":"` + fileID + `","upload_id":"upload-i"}`
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"action":"complete","session":`+handle+`}`)); err != nil {
 		t.Fatalf("file_transfer(complete) error = %v", err)
 	}
 	if runtime.findRequest == nil || runtime.completeRequest == nil {
 		t.Fatalf("complete must reconcile parts first: find %+v, complete %+v", runtime.findRequest, runtime.completeRequest)
 	}
 
-	parts, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"parts","h":`+handle+`}`))
+	parts, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"action":"parts","session":`+handle+`}`))
 	if err != nil {
 		t.Fatalf("file_transfer(parts) error = %v", err)
 	}
-	if got := parts.StructuredContent["x"].(map[string]any)["l"]; !reflect.DeepEqual(got, wantParts) {
+	if got := parts.StructuredContent["upload"].(map[string]any)["part_uploads"]; !reflect.DeepEqual(got, wantParts) {
 		t.Fatalf("parts upload URLs = %v", got)
 	}
 
-	aborted, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"abort","h":`+handle+`}`))
+	aborted, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"action":"abort","session":`+handle+`}`))
 	if err != nil {
 		t.Fatalf("file_transfer(abort) error = %v", err)
 	}
-	if aborted.StructuredContent["s"] != "aborted" || runtime.abortCommand == nil || runtime.abortCommand.UploadID != "upload-i" {
+	if aborted.StructuredContent["state"] != "aborted" || runtime.abortCommand == nil || runtime.abortCommand.UploadID != "upload-i" {
 		t.Fatalf("abort = %+v, command %+v", aborted.StructuredContent, runtime.abortCommand)
 	}
 }
@@ -320,11 +323,11 @@ func TestFileToolsPresignedAudioGetsNoUploadURLs(t *testing.T) {
 		Status: filemediadomain.UploadSessionStatusInitiated,
 	}}
 	begin, err := mustFileTools(t, runtime).CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
-		`{"a":"begin","k":"general","t":"presigned_multipart","n":"a.wav","m":"audio/wav","s":10}`))
+		`{"action":"begin","kind":"general","transport":"presigned_multipart","file_name":"a.wav","mime_type":"audio/wav","file_size":10}`))
 	if err != nil {
 		t.Fatalf("file_transfer(begin) error = %v", err)
 	}
-	if runtime.presignCommand != nil || begin.StructuredContent["x"].(map[string]any)["l"] != nil {
+	if runtime.presignCommand != nil || begin.StructuredContent["upload"].(map[string]any)["part_uploads"] != nil {
 		t.Fatalf("direct audio must keep the browser flow: %+v", begin.StructuredContent)
 	}
 }
@@ -340,7 +343,7 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	}
 	tools := mustFileTools(t, runtime)
 
-	completeArguments := `{"a":"complete","h":["browser_upload_page","video","` + fileID + `","upload-v"],"client_media_bundle_id":"` + bundleID + `"}`
+	completeArguments := `{"action":"complete","session":{"transport":"browser_upload_page","kind":"video","file_id":"` + fileID + `","upload_id":"upload-v"},"client_media_bundle_id":"` + bundleID + `"}`
 	completed, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, completeArguments))
 	if err != nil {
 		t.Fatalf("file_transfer(complete) error = %v", err)
@@ -349,24 +352,24 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 		runtime.completeRequest.GetClientMediaBundleId() != bundleID {
 		t.Fatalf("complete request = %+v", runtime.completeRequest)
 	}
-	if completed.StructuredContent["s"] != "ready" || !strings.Contains(completed.Content[0]["text"].(string), `"r":[["inline"`) {
+	if completed.StructuredContent["state"] != "ready" || !strings.Contains(completed.Content[0]["text"].(string), `"references":[{"kind":"inline"`) {
 		t.Fatalf("complete result = %+v", completed)
 	}
 
 	remote, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
-		`{"a":"begin","k":"video","t":"remote_https","u":"https://example.com/video.mp4","correlation_id":"`+uuid.NewString()+`"}`))
+		`{"action":"begin","kind":"video","transport":"remote_https","remote_url":"https://example.com/video.mp4","correlation_id":"`+uuid.NewString()+`"}`))
 	if err != nil {
 		t.Fatalf("file_transfer(remote begin) error = %v", err)
 	}
-	if runtime.downloadRequest.GetUrl() != "https://example.com/video.mp4" || remote.StructuredContent["s"] != "ready" {
+	if runtime.downloadRequest.GetUrl() != "https://example.com/video.mp4" || remote.StructuredContent["state"] != "ready" {
 		t.Fatalf("remote result/request = %+v / %+v", remote, runtime.downloadRequest)
 	}
 
-	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileRead, fileToolArguments(t, `{"f":"`+fileID+`"}`))
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileRead, fileToolArguments(t, `{"file_id":"`+fileID+`"}`))
 	if err != nil {
 		t.Fatalf("file_read error = %v", err)
 	}
-	if runtime.deliveryRequest.GetFileId() != fileID || read.StructuredContent["i"] != fileID ||
+	if runtime.deliveryRequest.GetFileId() != fileID || read.StructuredContent["file_id"] != fileID ||
 		strings.Contains(read.Content[0]["text"].(string), "sha256-must-not-leak") {
 		t.Fatalf("file_read result/request = %+v / %+v", read, runtime.deliveryRequest)
 	}
@@ -382,7 +385,7 @@ func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
 				completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: fileTestDelivery(fileID)},
 			}
 			tools := mustFileTools(t, runtime)
-			arguments := `{"a":"begin","k":"track_audio","t":"browser_upload_page","track_id":"` + trackID + `","n":"track.wav","m":"audio/wav","s":1024`
+			arguments := `{"action":"begin","kind":"track_audio","transport":"browser_upload_page","track_id":"` + trackID + `","file_name":"track.wav","mime_type":"audio/wav","file_size":1024`
 			if current != "" {
 				arguments += `,"expected_current_file_id":"` + current + `"`
 			}
@@ -390,21 +393,24 @@ func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handle := result.StructuredContent["x"].(map[string]any)["h"]
-			want := []any{"browser_upload_page", "track_audio", fileID, "track-upload", trackID, current}
+			handle := result.StructuredContent["upload"].(map[string]any)["session"]
+			want := map[string]any{"transport": "browser_upload_page", "kind": "track_audio", "file_id": fileID, "upload_id": "track-upload", "track_id": trackID}
+			if current != "" {
+				want["expected_current_file_id"] = current
+			}
 			if !reflect.DeepEqual(handle, want) || runtime.initiateRequest.GetEntityId() != trackID || runtime.initiateRequest.GetExpectedCurrentFileId() != current {
 				t.Fatalf("begin target/CAS = %+v, %+v", handle, runtime.initiateRequest)
 			}
 			encodedHandle, _ := json.Marshal(handle)
-			status, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"status","h":`+string(encodedHandle)+`}`))
+			status, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"action":"status","session":`+string(encodedHandle)+`}`))
 			if err != nil {
 				t.Fatal(err)
 			}
-			statusSession := status.StructuredContent["x"].(map[string]any)
-			if !reflect.DeepEqual(statusSession["h"], want) || runtime.findRequest.GetEntityId() != trackID || runtime.findRequest.GetExpectedCurrentFileId() != current || (runtime.findRequest.ExpectedCurrentFileId == nil) != (current == "") {
+			statusSession := status.StructuredContent["upload"].(map[string]any)
+			if !reflect.DeepEqual(statusSession["session"], want) || runtime.findRequest.GetEntityId() != trackID || runtime.findRequest.GetExpectedCurrentFileId() != current || (runtime.findRequest.ExpectedCurrentFileId == nil) != (current == "") {
 				t.Fatalf("status lost target/CAS = %+v, %+v", statusSession, runtime.findRequest)
 			}
-			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"complete","h":`+string(encodedHandle)+`,"client_media_bundle_id":"`+bundleID+`"}`))
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"action":"complete","session":`+string(encodedHandle)+`,"client_media_bundle_id":"`+bundleID+`"}`))
 			if err != nil || runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetClientMediaBundleId() != bundleID {
 				t.Fatalf("completion bypassed native session: %+v, %v", runtime.completeRequest, err)
 			}
@@ -416,7 +422,7 @@ func TestFileToolsRemoteTrackAudioForwardsStableRetryIdentity(t *testing.T) {
 	fileID, trackID, current, correlationID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	runtime := &recordingMCPFileRuntime{downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: fileTestDelivery(fileID)}}
 	tools := mustFileTools(t, runtime)
-	arguments := fileToolArguments(t, `{"a":"begin","k":"track_audio","t":"remote_https","track_id":"`+trackID+`","expected_current_file_id":"`+current+`","correlation_id":"`+correlationID+`","u":"https://example.com/track.wav"}`)
+	arguments := fileToolArguments(t, `{"action":"begin","kind":"track_audio","transport":"remote_https","track_id":"`+trackID+`","expected_current_file_id":"`+current+`","correlation_id":"`+correlationID+`","remote_url":"https://example.com/track.wav"}`)
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, arguments)
 		if err != nil || result.IsError || runtime.downloadRequest.GetEntityId() != trackID || runtime.downloadRequest.GetExpectedCurrentFileId() != current || runtime.downloadRequest.GetCorrelationId() != correlationID || runtime.downloadRequest.GetEntityType() != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
@@ -428,15 +434,15 @@ func TestFileToolsRemoteTrackAudioForwardsStableRetryIdentity(t *testing.T) {
 func TestFileToolsRejectInvalidTrackAudioTargetsBeforeNativeCall(t *testing.T) {
 	fileID, trackID := uuid.NewString(), uuid.NewString()
 	for _, arguments := range []string{
-		`{"a":"begin","k":"track_audio","t":"presigned_multipart","n":"track.wav","m":"audio/wav","s":1024}`,
-		`{"a":"begin","k":"audio","t":"presigned_multipart","track_id":"` + trackID + `","n":"track.wav","m":"audio/wav","s":1024}`,
-		`{"a":"begin","k":"track_audio","t":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":"","n":"track.wav","m":"audio/wav","s":1024}`,
-		`{"a":"begin","k":"track_audio","t":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":null,"n":"track.wav","m":"audio/wav","s":1024}`,
-		`{"a":"begin","k":"track_audio","t":"remote_https","track_id":"` + trackID + `","u":"https://example.com/track.wav"}`,
-		`{"a":"begin","k":"audio","t":"remote_https","correlation_id":"bad","u":"https://example.com/track.wav"}`,
-		`{"a":"status","h":["presigned_multipart","track_audio","` + fileID + `","upload"]}`,
-		`{"a":"status","h":["presigned_multipart","audio","` + fileID + `","upload","` + trackID + `",""]}`,
-		`{"a":"status","h":["presigned_multipart","track_audio","` + fileID + `","upload","` + trackID + `","bad"]}`,
+		`{"action":"begin","kind":"track_audio","transport":"presigned_multipart","file_name":"track.wav","mime_type":"audio/wav","file_size":1024}`,
+		`{"action":"begin","kind":"audio","transport":"presigned_multipart","track_id":"` + trackID + `","file_name":"track.wav","mime_type":"audio/wav","file_size":1024}`,
+		`{"action":"begin","kind":"track_audio","transport":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":"","file_name":"track.wav","mime_type":"audio/wav","file_size":1024}`,
+		`{"action":"begin","kind":"track_audio","transport":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":null,"file_name":"track.wav","mime_type":"audio/wav","file_size":1024}`,
+		`{"action":"begin","kind":"track_audio","transport":"remote_https","track_id":"` + trackID + `","remote_url":"https://example.com/track.wav"}`,
+		`{"action":"begin","kind":"audio","transport":"remote_https","correlation_id":"bad","remote_url":"https://example.com/track.wav"}`,
+		`{"action":"status","session":{"transport":"presigned_multipart","kind":"track_audio","file_id":"` + fileID + `","upload_id":"upload"}}`,
+		`{"action":"status","session":{"transport":"presigned_multipart","kind":"audio","file_id":"` + fileID + `","upload_id":"upload","track_id":"` + trackID + `"}}`,
+		`{"action":"status","session":{"transport":"presigned_multipart","kind":"track_audio","file_id":"` + fileID + `","upload_id":"upload","track_id":"` + trackID + `","expected_current_file_id":"bad"}}`,
 	} {
 		runtime := &recordingMCPFileRuntime{}
 		tools := mustFileTools(t, runtime)
@@ -457,15 +463,15 @@ func TestFileToolsRejectInlineOrActionIncompatibleArguments(t *testing.T) {
 		arguments string
 	}{
 		{name: "missing action", tool: ToolFileTransfer, arguments: `{}`},
-		{name: "unknown action", tool: ToolFileTransfer, arguments: `{"a":"upload"}`},
-		{name: "inline field", tool: ToolFileTransfer, arguments: `{"a":"begin","k":"image","t":"remote_https","u":"https://example.com/a.png","base64":"AA=="}`},
-		{name: "data URL", tool: ToolFileTransfer, arguments: `{"a":"begin","k":"image","t":"remote_https","u":"data:image/png,AA"}`},
-		{name: "remote metadata", tool: ToolFileTransfer, arguments: `{"a":"begin","k":"image","t":"remote_https","u":"https://example.com/a.png","n":"a.png"}`},
-		{name: "short handle", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image"]}`},
-		{name: "status extra field", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image","` + fileID + `","upload"],"f":"` + fileID + `"}`},
-		{name: "status rejects completion bundle", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image","` + fileID + `","upload"],"client_media_bundle_id":"` + uuid.NewString() + `"}`},
-		{name: "read inline field", tool: ToolFileRead, arguments: `{"f":"` + fileID + `","bytes":"AA=="}`},
-		{name: "read invalid ID", tool: ToolFileRead, arguments: `{"f":"not-a-uuid"}`},
+		{name: "unknown action", tool: ToolFileTransfer, arguments: `{"action":"upload"}`},
+		{name: "inline field", tool: ToolFileTransfer, arguments: `{"action":"begin","kind":"image","transport":"remote_https","remote_url":"https://example.com/a.png","base64":"AA=="}`},
+		{name: "data URL", tool: ToolFileTransfer, arguments: `{"action":"begin","kind":"image","transport":"remote_https","remote_url":"data:image/png,AA"}`},
+		{name: "remote metadata", tool: ToolFileTransfer, arguments: `{"action":"begin","kind":"image","transport":"remote_https","remote_url":"https://example.com/a.png","file_name":"a.png"}`},
+		{name: "short handle", tool: ToolFileTransfer, arguments: `{"action":"status","session":["presigned_multipart","image"]}`},
+		{name: "status extra field", tool: ToolFileTransfer, arguments: `{"action":"status","session":{"transport":"presigned_multipart","kind":"image","file_id":"` + fileID + `","upload_id":"upload"},"file_id":"` + fileID + `"}`},
+		{name: "status rejects completion bundle", tool: ToolFileTransfer, arguments: `{"action":"status","session":{"transport":"presigned_multipart","kind":"image","file_id":"` + fileID + `","upload_id":"upload"},"client_media_bundle_id":"` + uuid.NewString() + `"}`},
+		{name: "read inline field", tool: ToolFileRead, arguments: `{"file_id":"` + fileID + `","bytes":"AA=="}`},
+		{name: "read invalid ID", tool: ToolFileRead, arguments: `{"file_id":"not-a-uuid"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -482,7 +488,7 @@ func TestFileToolsPreserveFacadeAuthorityAndInternalErrorBoundaries(t *testing.T
 	fileID := uuid.NewString()
 	runtime := &recordingMCPFileRuntime{}
 	tools := mustFileTools(t, runtime)
-	arguments := fileToolArguments(t, `{"f":"`+fileID+`"}`)
+	arguments := fileToolArguments(t, `{"file_id":"`+fileID+`"}`)
 
 	runtime.deliveryError = connect.NewError(connect.CodePermissionDenied, errors.New("denied"))
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileRead, arguments)
@@ -517,7 +523,7 @@ func TestFileToolsUseWrappedAuthenticatedContext(t *testing.T) {
 		t.Fatalf("WrapDispatcher() error = %v", err)
 	}
 	principal := validMCPPrincipal()
-	if _, err := dispatcher.CallTool(t.Context(), principal, ToolFileRead, fileToolArguments(t, `{"f":"`+fileID+`"}`)); err != nil {
+	if _, err := dispatcher.CallTool(t.Context(), principal, ToolFileRead, fileToolArguments(t, `{"file_id":"`+fileID+`"}`)); err != nil {
 		t.Fatalf("wrapped file_read error = %v", err)
 	}
 	if runtime.user == nil || runtime.user.IdentityID.String() != principal.IdentityID ||
@@ -598,7 +604,7 @@ func TestFileToolsUploadAttachmentDescriptorAndStrictMapping(t *testing.T) {
 	if runtime.importInput == nil || !reflect.DeepEqual(*runtime.importInput, want) || runtime.downloadRequest != nil {
 		t.Fatalf("native input = %+v", runtime.importInput)
 	}
-	if result.StructuredContent["i"] != fileID || result.StructuredContent["m"] != "video/mp4" || strings.Contains(result.Content[0]["text"].(string), "private") || strings.Contains(result.Content[0]["text"].(string), "opaque") {
+	if result.StructuredContent["file_id"] != fileID || result.StructuredContent["mime_type"] != "video/mp4" || strings.Contains(result.Content[0]["text"].(string), "private") || strings.Contains(result.Content[0]["text"].(string), "opaque") {
 		t.Fatalf("verified attachment result = %+v", result)
 	}
 	for _, invalid := range []string{
@@ -629,7 +635,7 @@ func TestFileTransferInputSchemaIsOneFlatObject(t *testing.T) {
 			t.Fatalf("file_transfer input schema root uses %q", keyword)
 		}
 	}
-	if string(schema["type"]) != `"object"` || string(schema["additionalProperties"]) != "false" || string(schema["required"]) != `["a"]` {
+	if string(schema["type"]) != `"object"` || string(schema["additionalProperties"]) != "false" || string(schema["required"]) != `["action"]` {
 		t.Fatalf("file_transfer input schema root = type %s, additionalProperties %s, required %s", schema["type"], schema["additionalProperties"], schema["required"])
 	}
 	var properties map[string]struct {
@@ -639,7 +645,7 @@ func TestFileTransferInputSchemaIsOneFlatObject(t *testing.T) {
 	if err := json.Unmarshal(schema["properties"], &properties); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"a", "k", "t", "n", "m", "s", "lm", "u", "track_id", "expected_current_file_id", "correlation_id", "h", "client_media_bundle_id"}
+	want := []string{"action", "kind", "transport", "file_name", "mime_type", "file_size", "last_modified_ms", "remote_url", "track_id", "expected_current_file_id", "correlation_id", "session", "client_media_bundle_id"}
 	if len(properties) != len(want) {
 		t.Fatalf("file_transfer input properties = %d, want %d", len(properties), len(want))
 	}
@@ -649,59 +655,59 @@ func TestFileTransferInputSchemaIsOneFlatObject(t *testing.T) {
 			t.Fatalf("file_transfer input property %q missing or undocumented", name)
 		}
 	}
-	if !reflect.DeepEqual(properties["a"].Enum, []string{"begin", "status", "parts", "complete", "abort"}) ||
-		!reflect.DeepEqual(properties["t"].Enum, []string{"browser_upload_page", "presigned_multipart", "remote_https"}) {
-		t.Fatalf("file_transfer action/transport enums = %v / %v", properties["a"].Enum, properties["t"].Enum)
+	if !reflect.DeepEqual(properties["action"].Enum, []string{"begin", "status", "parts", "complete", "abort"}) ||
+		!reflect.DeepEqual(properties["transport"].Enum, []string{"browser_upload_page", "presigned_multipart", "remote_https"}) {
+		t.Fatalf("file_transfer action/transport enums = %v / %v", properties["action"].Enum, properties["transport"].Enum)
 	}
 }
 
 func TestFileToolsTransferEnforcesFlattenedSchemaRules(t *testing.T) {
 	fileID, trackID, current, correlationID, bundleID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	handle := `["presigned_multipart","image","` + fileID + `","upload"]`
-	multipart := `"a":"begin","k":"image","t":"presigned_multipart","n":"a.png","m":"image/png","s":10`
-	remote := `"a":"begin","k":"image","t":"remote_https","u":"https://example.com/a.png","correlation_id":"` + correlationID + `"`
+	handle := `{"transport":"presigned_multipart","kind":"image","file_id":"` + fileID + `","upload_id":"upload"}`
+	multipart := `"action":"begin","kind":"image","transport":"presigned_multipart","file_name":"a.png","mime_type":"image/png","file_size":10`
+	remote := `"action":"begin","kind":"image","transport":"remote_https","remote_url":"https://example.com/a.png","correlation_id":"` + correlationID + `"`
 	tests := []struct {
 		name      string
 		arguments string
 		valid     bool
 	}{
-		{name: "multipart begin", arguments: `{` + multipart + `,"lm":0}`, valid: true},
-		{name: "multipart track_audio begin", arguments: `{"a":"begin","k":"track_audio","t":"browser_upload_page","n":"a.wav","m":"audio/wav","s":10,"track_id":"` + trackID + `","expected_current_file_id":"` + current + `"}`, valid: true},
+		{name: "multipart begin", arguments: `{` + multipart + `,"last_modified_ms":0}`, valid: true},
+		{name: "multipart track_audio begin", arguments: `{"action":"begin","kind":"track_audio","transport":"browser_upload_page","file_name":"a.wav","mime_type":"audio/wav","file_size":10,"track_id":"` + trackID + `","expected_current_file_id":"` + current + `"}`, valid: true},
 		{name: "remote begin", arguments: `{` + remote + `}`, valid: true},
-		{name: "remote general begin without correlation", arguments: `{"a":"begin","k":"general","t":"remote_https","u":"https://example.com/a.pdf"}`, valid: true},
-		{name: "remote track_audio begin", arguments: `{"a":"begin","k":"track_audio","t":"remote_https","u":"https://example.com/a.wav","track_id":"` + trackID + `","correlation_id":"` + correlationID + `"}`, valid: true},
-		{name: "status", arguments: `{"a":"status","h":` + handle + `}`, valid: true},
-		{name: "complete", arguments: `{"a":"complete","h":` + handle + `,"client_media_bundle_id":"` + bundleID + `"}`, valid: true},
+		{name: "remote general begin without correlation", arguments: `{"action":"begin","kind":"general","transport":"remote_https","remote_url":"https://example.com/a.pdf"}`, valid: true},
+		{name: "remote track_audio begin", arguments: `{"action":"begin","kind":"track_audio","transport":"remote_https","remote_url":"https://example.com/a.wav","track_id":"` + trackID + `","correlation_id":"` + correlationID + `"}`, valid: true},
+		{name: "status", arguments: `{"action":"status","session":` + handle + `}`, valid: true},
+		{name: "complete", arguments: `{"action":"complete","session":` + handle + `,"client_media_bundle_id":"` + bundleID + `"}`, valid: true},
 
-		{name: "begin missing kind", arguments: `{"a":"begin","t":"presigned_multipart","n":"a.png","m":"image/png","s":10}`},
-		{name: "begin missing transport", arguments: `{"a":"begin","k":"image","n":"a.png","m":"image/png","s":10}`},
-		{name: "begin unknown transport", arguments: `{"a":"begin","k":"image","t":"inline","n":"a.png","m":"image/png","s":10}`},
-		{name: "begin null kind", arguments: `{"a":"begin","k":null,"t":"presigned_multipart","n":"a.png","m":"image/png","s":10}`},
-		{name: "begin rejects handle", arguments: `{` + multipart + `,"h":` + handle + `}`},
+		{name: "begin missing kind", arguments: `{"action":"begin","transport":"presigned_multipart","file_name":"a.png","mime_type":"image/png","file_size":10}`},
+		{name: "begin missing transport", arguments: `{"action":"begin","kind":"image","file_name":"a.png","mime_type":"image/png","file_size":10}`},
+		{name: "begin unknown transport", arguments: `{"action":"begin","kind":"image","transport":"inline","file_name":"a.png","mime_type":"image/png","file_size":10}`},
+		{name: "begin null kind", arguments: `{"action":"begin","kind":null,"transport":"presigned_multipart","file_name":"a.png","mime_type":"image/png","file_size":10}`},
+		{name: "begin rejects handle", arguments: `{` + multipart + `,"session":` + handle + `}`},
 		{name: "begin rejects bundle", arguments: `{` + multipart + `,"client_media_bundle_id":"` + bundleID + `"}`},
-		{name: "multipart missing name", arguments: `{"a":"begin","k":"image","t":"presigned_multipart","m":"image/png","s":10}`},
-		{name: "multipart missing mime", arguments: `{"a":"begin","k":"image","t":"presigned_multipart","n":"a.png","s":10}`},
-		{name: "multipart missing size", arguments: `{"a":"begin","k":"image","t":"presigned_multipart","n":"a.png","m":"image/png"}`},
-		{name: "multipart null lm", arguments: `{` + multipart + `,"lm":null}`},
-		{name: "multipart rejects url", arguments: `{` + multipart + `,"u":"https://example.com/a.png"}`},
-		{name: "multipart rejects empty url", arguments: `{` + multipart + `,"u":""}`},
+		{name: "multipart missing name", arguments: `{"action":"begin","kind":"image","transport":"presigned_multipart","mime_type":"image/png","file_size":10}`},
+		{name: "multipart missing mime", arguments: `{"action":"begin","kind":"image","transport":"presigned_multipart","file_name":"a.png","file_size":10}`},
+		{name: "multipart missing size", arguments: `{"action":"begin","kind":"image","transport":"presigned_multipart","file_name":"a.png","mime_type":"image/png"}`},
+		{name: "multipart null lm", arguments: `{` + multipart + `,"last_modified_ms":null}`},
+		{name: "multipart rejects url", arguments: `{` + multipart + `,"remote_url":"https://example.com/a.png"}`},
+		{name: "multipart rejects empty url", arguments: `{` + multipart + `,"remote_url":""}`},
 		{name: "multipart rejects correlation", arguments: `{` + multipart + `,"correlation_id":"` + correlationID + `"}`},
-		{name: "remote missing url", arguments: `{"a":"begin","k":"image","t":"remote_https","correlation_id":"` + correlationID + `"}`},
-		{name: "remote rejects name", arguments: `{` + remote + `,"n":"a.png"}`},
-		{name: "remote rejects empty name", arguments: `{` + remote + `,"n":""}`},
-		{name: "remote rejects mime", arguments: `{` + remote + `,"m":"image/png"}`},
-		{name: "remote rejects zero size", arguments: `{` + remote + `,"s":0}`},
-		{name: "remote rejects lm", arguments: `{` + remote + `,"lm":0}`},
-		{name: "remote non-general requires correlation", arguments: `{"a":"begin","k":"image","t":"remote_https","u":"https://example.com/a.png"}`},
-		{name: "track_audio requires track", arguments: `{"a":"begin","k":"track_audio","t":"remote_https","u":"https://example.com/a.wav","correlation_id":"` + correlationID + `"}`},
+		{name: "remote missing url", arguments: `{"action":"begin","kind":"image","transport":"remote_https","correlation_id":"` + correlationID + `"}`},
+		{name: "remote rejects name", arguments: `{` + remote + `,"file_name":"a.png"}`},
+		{name: "remote rejects empty name", arguments: `{` + remote + `,"file_name":""}`},
+		{name: "remote rejects mime", arguments: `{` + remote + `,"mime_type":"image/png"}`},
+		{name: "remote rejects zero size", arguments: `{` + remote + `,"file_size":0}`},
+		{name: "remote rejects lm", arguments: `{` + remote + `,"last_modified_ms":0}`},
+		{name: "remote non-general requires correlation", arguments: `{"action":"begin","kind":"image","transport":"remote_https","remote_url":"https://example.com/a.png"}`},
+		{name: "track_audio requires track", arguments: `{"action":"begin","kind":"track_audio","transport":"remote_https","remote_url":"https://example.com/a.wav","correlation_id":"` + correlationID + `"}`},
 		{name: "non-track rejects track", arguments: `{` + multipart + `,"track_id":"` + trackID + `"}`},
 		{name: "non-track rejects empty track", arguments: `{` + multipart + `,"track_id":""}`},
 		{name: "non-track rejects CAS", arguments: `{` + remote + `,"expected_current_file_id":"` + current + `"}`},
-		{name: "status rejects kind", arguments: `{"a":"status","k":"image","h":` + handle + `}`},
-		{name: "status rejects bundle", arguments: `{"a":"status","h":` + handle + `,"client_media_bundle_id":"` + bundleID + `"}`},
-		{name: "status null handle", arguments: `{"a":"status","h":null}`},
-		{name: "complete rejects url", arguments: `{"a":"complete","h":` + handle + `,"u":"https://example.com/a.png"}`},
-		{name: "complete null bundle", arguments: `{"a":"complete","h":` + handle + `,"client_media_bundle_id":null}`},
+		{name: "status rejects kind", arguments: `{"action":"status","kind":"image","session":` + handle + `}`},
+		{name: "status rejects bundle", arguments: `{"action":"status","session":` + handle + `,"client_media_bundle_id":"` + bundleID + `"}`},
+		{name: "status null handle", arguments: `{"action":"status","session":null}`},
+		{name: "complete rejects url", arguments: `{"action":"complete","session":` + handle + `,"remote_url":"https://example.com/a.png"}`},
+		{name: "complete null bundle", arguments: `{"action":"complete","session":` + handle + `,"client_media_bundle_id":null}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

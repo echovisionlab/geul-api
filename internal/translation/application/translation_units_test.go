@@ -75,6 +75,27 @@ func TestEditTranslationUnitsWritesEveryLocaleFromTheSourceTextAlone(t *testing.
 	require.NoError(t, err)
 }
 
+func TestEditTranslationUnitsPlacesASharedPhraseByItsField(t *testing.T) {
+	e, entity := xliffEnv(t)
+	const inTitleAndSummary = "i"
+	edit := func(fieldUnit string) error {
+		_, err := e.service.EditEntityTranslationUnits(newPrincipal(t).ctx, application.EditTranslationUnitsCommand{
+			Target: targetOf(entity),
+			Edits:  []application.TranslationUnitEdit{{SourceContains: inTitleAndSummary, FieldUnit: fieldUnit, Targets: map[string]string{"ko": "밤"}}},
+		})
+		return err
+	}
+
+	require.Equal(t, connect.CodeInvalidArgument, codeOf(edit("")), "two units hold the phrase, so its text alone cannot place it")
+	require.Empty(t, e.store.FakeDomains().Imported())
+
+	require.NoError(t, edit("entity:summary"))
+	applied := e.store.FakeDomains().Imported()
+	require.Len(t, applied, 1)
+	require.Equal(t, "밤", applied[0].Targets["entity:summary"].TranslatedText)
+	require.NotContains(t, applied[0].Targets, "entity:title")
+}
+
 func TestEditTranslationUnitsRefusesAChangedSourceWithoutApplying(t *testing.T) {
 	for name, edits := range map[string][]application.TranslationUnitEdit{
 		"a source that no longer matches": {{Source: "Old title", Targets: map[string]string{"ko": "x"}}},

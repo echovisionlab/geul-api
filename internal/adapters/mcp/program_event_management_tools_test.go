@@ -39,10 +39,10 @@ func TestProgramEventManagementDescriptors(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
-	if err != nil || len(listed) != 6 {
+	if err != nil || len(listed) != 2 {
 		t.Fatalf("descriptors = %v, err=%v", listed, err)
 	}
-	wantNames := []string{ToolProgramEventCreate, ToolProgramEventSettingsGet, ToolProgramEventSettingsUpdate, ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventDelete}
+	wantNames := []string{ToolProgramEventCreate, ToolProgramEventSettingsUpdate}
 	if !reflect.DeepEqual(tools.ToolNames(), wantNames) {
 		t.Fatalf("names = %v", tools.ToolNames())
 	}
@@ -64,7 +64,7 @@ func TestProgramEventManagementDescriptors(t *testing.T) {
 	if !reflect.DeepEqual(createSchema.Required, []string{"title", "slug", "source_locale", "type_id", "starts_at", "timezone", "location_mode"}) {
 		t.Fatalf("required create fields = %v", createSchema.Required)
 	}
-	if !strings.Contains(listed[4].Description, "does not move the event to draft") {
+	if !strings.Contains(documentPublishInputJSONSchema, "archive does not move a Program Event to draft") {
 		t.Fatal("archive advertises incorrect lifecycle")
 	}
 }
@@ -119,7 +119,7 @@ func TestProgramEventManagementSettingsReadAndObservedRelationRoundTrip(t *testi
 	owner.event.Locales = []programevent.LocaleView{{Locale: "ko", Summary: proto.String(""), ContentHTML: "body must be excluded", ContentText: "body must be excluded"}}
 	owner.event.Document = &contentv1.RichTextDocument{}
 	tools, _ := NewProgramEventManagementTools(owner)
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventSettingsGet, toolArguments(t, `{"document_id":"`+programEventManagementID+`"}`))
+	result, err := documentOperationsOver(t, DocumentOperationApplications{Events: owner}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"program_event","document_id":"`+programEventManagementID+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,37 +221,37 @@ func TestProgramEventManagementRejectsInvalidArgumentsBeforeOwnerCall(t *testing
 func TestProgramEventManagementCreateReadUpdateLifecycleFlow(t *testing.T) {
 	owner := newRecordingProgramEventManagement()
 	tools, _ := NewProgramEventManagementTools(owner)
-	idArguments := toolArguments(t, `{"document_id":"`+programEventManagementID+`"}`)
-	for _, name := range []string{ToolProgramEventCreate, ToolProgramEventSettingsGet, ToolProgramEventSettingsUpdate, ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventPublish, ToolProgramEventDelete} {
-		arguments := idArguments
-		switch name {
-		case ToolProgramEventCreate:
-			arguments = programEventManagementCreateArguments(t)
-		case ToolProgramEventSettingsUpdate:
-			arguments = toolArguments(t, `{"document_id":"`+programEventManagementID+`","all_day":true}`)
-		}
-		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if name == ToolProgramEventArchive && result.StructuredContent["status"] != "archived" {
-			t.Fatalf("archive result = %#v", result.StructuredContent)
-		}
-		if name == ToolProgramEventPublish && result.StructuredContent["published_at"] != "2026-10-05T00:00:00Z" {
-			t.Fatalf("publication date changed: %#v", result.StructuredContent)
+	operations := documentOperationsOver(t, DocumentOperationApplications{Events: owner})
+	documents := `"documents":[{"document_type":"program_event","document_id":"` + programEventManagementID + `"}]`
+	for _, step := range []struct {
+		tools     ToolProvider
+		name      string
+		arguments mcpserver.ToolArguments
+	}{
+		{tools, ToolProgramEventCreate, programEventManagementCreateArguments(t)},
+		{operations, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"program_event","document_id":"`+programEventManagementID+`"}`)},
+		{tools, ToolProgramEventSettingsUpdate, toolArguments(t, `{"document_id":"`+programEventManagementID+`","all_day":true}`)},
+		{operations, ToolDocumentPublish, toolArguments(t, `{"action":"publish",`+documents+`}`)},
+		{operations, ToolDocumentPublish, toolArguments(t, `{"action":"archive",`+documents+`}`)},
+		{operations, ToolDocumentPublish, toolArguments(t, `{"action":"publish",`+documents+`}`)},
+		{operations, ToolDocumentDelete, toolArguments(t, `{`+documents+`}`)},
+	} {
+		result, err := step.tools.CallTool(t.Context(), mcpserver.Principal{}, step.name, step.arguments)
+		if err != nil || result.IsError {
+			t.Fatalf("%s: %#v, err=%v", step.name, result, err)
 		}
 	}
 	if !reflect.DeepEqual(owner.calls, []string{"create", "get", "update", "publish", "archive", "publish", "delete"}) || owner.published.ID != programEventManagementID || owner.archived.ID != programEventManagementID || owner.deleted.ID != programEventManagementID {
 		t.Fatalf("native flow = %v", owner.calls)
 	}
-	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, "program_event_unpublish", idArguments); !errors.Is(err, mcpserver.ErrUnknownTool) {
-		t.Fatalf("invented lifecycle accepted: %v", err)
+	if _, err := operations.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentPublish, toolArguments(t, `{"action":"unpublish",`+documents+`}`)); err == nil {
+		t.Fatal("a Program Event has no unpublish")
 	}
 }
 
 func TestProgramEventManagementPreservesOwningAuthorityAndSafeErrors(t *testing.T) {
 	for _, code := range []connect.Code{connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeInternal, connect.CodeUnavailable} {
-		for _, name := range []string{ToolProgramEventCreate, ToolProgramEventSettingsGet, ToolProgramEventSettingsUpdate, ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventDelete} {
+		for _, name := range []string{ToolProgramEventCreate, ToolProgramEventSettingsUpdate} {
 			t.Run(code.String()+"/"+name, func(t *testing.T) {
 				owner := newRecordingProgramEventManagement()
 				owner.err = connect.NewError(code, errors.New("owning service decision"))

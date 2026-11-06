@@ -16,17 +16,17 @@ type registeredTool[Owner any] struct {
 type toolRegistry[Owner any] []registeredTool[Owner]
 
 func (registry toolRegistry[Owner]) names() []string {
-	names := make([]string, len(registry))
-	for index, entry := range registry {
-		names[index] = entry.definition.Name
+	names := make([]string, 0, len(registry))
+	for _, entry := range registry {
+		names = append(names, entry.definition.Name)
 	}
 	return names
 }
 
 func (registry toolRegistry[Owner]) list() []mcpserver.Tool {
-	definitions := make([]mcpserver.Tool, len(registry))
-	for index, entry := range registry {
-		definitions[index] = entry.definition
+	definitions := make([]mcpserver.Tool, 0, len(registry))
+	for _, entry := range registry {
+		definitions = append(definitions, entry.definition)
 	}
 	return cloneToolDefinitions(definitions)
 }

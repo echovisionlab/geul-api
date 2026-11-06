@@ -58,7 +58,7 @@ func TestInlineFormattingAndExistingTargets(t *testing.T) {
 	}
 }
 
-func TestOutlineSearchKeepsMatchingBlocksAndEncodesCompactNodes(t *testing.T) {
+func TestOutlineSearchKeepsMatchingBlocksAndEncodesNamedBlocks(t *testing.T) {
 	port := &fakePort{document: testDocument("ko", true)}
 	service, err := NewService(port)
 	if err != nil {
@@ -73,13 +73,13 @@ func TestOutlineSearchKeepsMatchingBlocksAndEncodesCompactNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decoded struct {
-		Query string            `json:"q"`
-		Nodes []json.RawMessage `json:"n"`
+		Query string            `json:"query"`
+		Nodes []json.RawMessage `json:"blocks"`
 	}
 	if err := json.Unmarshal(wire, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Query != "SEE   this" || len(decoded.Nodes) != 1 || string(decoded.Nodes[0]) != `["paragraph-a","paragraph","root",0,"First See thislink x^2"]` {
+	if decoded.Query != "SEE   this" || len(decoded.Nodes) != 1 || string(decoded.Nodes[0]) != `{"block_id":"paragraph-a","kind":"paragraph","parent_block_id":"root","order":0,"preview":"First See thislink x^2"}` {
 		t.Fatalf("search outline = %s", wire)
 	}
 
@@ -91,9 +91,9 @@ func TestOutlineSearchKeepsMatchingBlocksAndEncodesCompactNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wire), `["root","document","",0,"Hello",[["credits",[["credit-primary","credit",0],["credit-secondary","credit",1]]]]]`) ||
-		strings.Contains(string(wire), "null,null") {
-		t.Fatalf("outline nodes are not compact: %s", wire)
+	if !strings.Contains(string(wire), `{"block_id":"root","kind":"document","order":0,"preview":"Hello","relations":[{"relation_id":"credits","items":[{"item_id":"credit-primary","kind":"credit","order":0},{"item_id":"credit-secondary","kind":"credit","order":1}]}]}`) ||
+		strings.Contains(string(wire), "null") && !strings.Contains(string(wire), `"next_cursor":null`) {
+		t.Fatalf("outline blocks are not named objects without empties: %s", wire)
 	}
 
 	if _, err := service.Read(t.Context(), ReadRequest{Document: port.document.Identity, Locale: "ko", Mode: ReadBlocks, Blocks: []BlockID{"root"}, Query: "x"}); err == nil {

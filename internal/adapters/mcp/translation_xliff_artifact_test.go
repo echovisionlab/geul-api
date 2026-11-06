@@ -12,7 +12,7 @@ func TestXLIFFImportEncodingPreservesEmptyAffectedUnitArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeXLIFFImport() error = %v", err)
 	}
-	if !strings.Contains(string(encoded), `"u":[]`) {
+	if !strings.Contains(string(encoded), `"unit_ids":[]`) {
 		t.Fatalf("encodeXLIFFImport() = %s", encoded)
 	}
 }

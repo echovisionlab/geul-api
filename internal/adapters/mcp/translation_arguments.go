@@ -10,24 +10,19 @@ import (
 )
 
 type translationTargetArguments struct {
-	Profile  core.Domain            `json:"p"`
-	Document core.DocumentReference `json:"d"`
-}
-
-type translationGetArguments struct {
-	translationTargetArguments
-	Locale core.Locale `json:"l"`
+	DocumentType core.Domain            `json:"document_type"`
+	DocumentID   core.DocumentReference `json:"document_id"`
 }
 
 func translationTarget(input translationTargetArguments) (*managev1.TranslationTarget, error) {
-	entityType, ok := translationEntityType(input.Profile)
+	entityType, ok := translationEntityType(input.DocumentType)
 	if !ok {
-		return nil, fmt.Errorf("unsupported translation document profile %q", input.Profile)
+		return nil, fmt.Errorf("unsupported translation document type %q", input.DocumentType)
 	}
-	if err := validateCompactOpaque("document reference", string(input.Document), 256); err != nil {
+	if err := validateOpaqueValue("document reference", string(input.DocumentID), 256); err != nil {
 		return nil, err
 	}
-	return &managev1.TranslationTarget{EntityType: entityType, EntityId: string(input.Document)}, nil
+	return &managev1.TranslationTarget{EntityType: entityType, EntityId: string(input.DocumentID)}, nil
 }
 
 var translationEntityTypes = map[core.Domain]managev1.TranslationEntityType{
@@ -66,7 +61,7 @@ func translationProfile(entityType managev1.TranslationEntityType) (core.Domain,
 	return value, ok
 }
 
-func validateCompactLocale(locale core.Locale) error {
+func validateLocaleCode(locale core.Locale) error {
 	value := string(locale)
 	if value == "" || len(value) > 35 {
 		return errors.New("locale must contain 1 to 35 characters")
@@ -86,7 +81,7 @@ func validateCompactLocale(locale core.Locale) error {
 	return nil
 }
 
-func validateCompactOpaque(name, value string, maxLength int) error {
+func validateOpaqueValue(name, value string, maxLength int) error {
 	if value == "" || len(value) > maxLength {
 		return fmt.Errorf("%s must contain 1 to %d characters", name, maxLength)
 	}

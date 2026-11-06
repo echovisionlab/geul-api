@@ -156,7 +156,7 @@ func TestDocumentFileCaptionUpdateUsesLocaleFieldAndExactRevisions(t *testing.T)
 			if application.applyRequest.ExpectedDocumentRevision != "revision-a" || application.applyRequest.ExpectedTargetRevision == nil || *application.applyRequest.ExpectedTargetRevision != "target-a" {
 				t.Fatalf("revisions=%+v", application.applyRequest)
 			}
-			if got := stringValue(t, result.StructuredContent, "tr"); got != "target-b" {
+			if got := stringValue(t, result.StructuredContent, "target_revision"); got != "target-b" {
 				t.Fatalf("target revision=%q", got)
 			}
 		})
@@ -202,7 +202,7 @@ func TestDocumentFileCaptionPreservesApplicationConflictAndDenial(t *testing.T) 
 	if err != nil || result.IsError {
 		t.Fatalf("caption conflict=%+v,%v", result, err)
 	}
-	assertDocumentSync(t, result, "target_revision_changed", "revision-a", revisionPointer("target-current"), []string{"field:" + fileBlockTestBlockID + "/caption"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "blocks", "b": []any{fileBlockTestBlockID}, "n": float64(1)})
+	assertDocumentSync(t, result, "target_revision_changed", "revision-a", revisionPointer("target-current"), []string{"field:" + fileBlockTestBlockID + "/caption"}, false, map[string]any{"document_type": "post", "document_id": fileBlockTestDocumentID, "locale": "ko", "mode": "blocks", "block_ids": []any{fileBlockTestBlockID}, "limit": float64(1)})
 	application.applyError = connect.NewError(connect.CodePermissionDenied, errors.New("caption edit denied"))
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, fileBlockMutationArguments(t, `,"caption":"new"`))
 	var execution *mcpserver.ToolExecutionError
@@ -278,7 +278,7 @@ func TestDocumentFileReplaceReturnsStructuredDocumentRevisionConflict(t *testing
 	if err != nil || result.IsError {
 		t.Fatalf("revision conflict = %+v, %v", result, err)
 	}
-	assertDocumentSync(t, result, "document_revision_changed", "revision-current", nil, []string{"field:" + fileBlockTestBlockID + "/attachment"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "blocks", "b": []any{fileBlockTestBlockID}, "n": float64(1)})
+	assertDocumentSync(t, result, "document_revision_changed", "revision-current", nil, []string{"field:" + fileBlockTestBlockID + "/attachment"}, false, map[string]any{"document_type": "post", "document_id": fileBlockTestDocumentID, "locale": "ko", "mode": "blocks", "block_ids": []any{fileBlockTestBlockID}, "limit": float64(1)})
 	if application.applyRequest.ExpectedDocumentRevision != "revision-a" {
 		t.Fatalf("replace lost expected revision: %+v", application.applyRequest)
 	}

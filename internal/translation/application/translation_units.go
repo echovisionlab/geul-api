@@ -96,12 +96,19 @@ func (s *Service) GetEntityTranslationUnits(ctx context.Context, query GetTransl
 // TranslationUnitEdit sets one unit's target in several locales. Source is the
 // unit's current plain source text: it names the unit and refuses the write when
 // the source has changed, so the caller needs no read first. Unit or Block
-// narrows a Source that several units share.
+// narrows a Source that several units share. SourceContains, set instead of
+// Source, names the unit whose source contains that text: an edit made together
+// with a change to part of the source knows only the part it changed. FieldUnit
+// names the unit of the field that change was made to: it wins over other units
+// holding the same words. Not every document has a unit named so, and SourceContains
+// then decides.
 type TranslationUnitEdit struct {
-	Source  string
-	Unit    string
-	Block   string
-	Targets map[string]string
+	Source         string
+	SourceContains string
+	Unit           string
+	Block          string
+	FieldUnit      string
+	Targets        map[string]string
 }
 
 // EditTranslationUnitsCommand applies edits across locales in one transaction.
@@ -219,6 +226,9 @@ func (s *Service) applyTranslationUnitEdits(
 }
 
 func resolveTranslationUnitEdit(units []translation.XLIFFUnitMarkup, edit TranslationUnitEdit) (translation.XLIFFUnitMarkup, error) {
+	if field := slices.IndexFunc(units, func(unit translation.XLIFFUnitMarkup) bool { return unit.ID == edit.FieldUnit }); field >= 0 {
+		return units[field], nil
+	}
 	source := strings.TrimSpace(edit.Source)
 	var matches []translation.XLIFFUnitMarkup
 	for _, unit := range units {
@@ -228,21 +238,33 @@ func resolveTranslationUnitEdit(units []translation.XLIFFUnitMarkup, edit Transl
 		if edit.Block != "" && !UnitBelongsToBlock(unit, edit.Block) {
 			continue
 		}
-		if strings.TrimSpace(translation.XLIFFMarkupPlainText(unit.Source)) == source {
+		plain := translation.XLIFFMarkupPlainText(unit.Source)
+		if edit.SourceContains != "" {
+			if strings.Contains(plain, edit.SourceContains) {
+				matches = append(matches, unit)
+			}
+		} else if strings.TrimSpace(plain) == source {
 			matches = append(matches, unit)
 		}
+	}
+	named := edit.Source
+	if edit.SourceContains != "" {
+		named = edit.SourceContains
 	}
 	switch len(matches) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return translation.XLIFFUnitMarkup{}, domainerr.InvalidField("edits", fmt.Sprintf("no unit has the source text %q; the source may have changed, so read it with translation_units_get", edit.Source))
+		return translation.XLIFFUnitMarkup{}, domainerr.InvalidField("edits", fmt.Sprintf("no unit has the source text %q; the source may have changed, so read it with translation_units_get", named))
 	default:
 		ids := make([]string, 0, len(matches))
 		for _, match := range matches {
 			ids = append(ids, match.ID)
 		}
-		return translation.XLIFFUnitMarkup{}, domainerr.InvalidField("edits", fmt.Sprintf("%d units have the source text %q; pass i or b to choose one of: %s", len(matches), edit.Source, strings.Join(ids, ", ")))
+		if edit.SourceContains != "" {
+			return translation.XLIFFUnitMarkup{}, domainerr.InvalidField("edits", fmt.Sprintf("%d units contain %q, so its translation cannot be placed; set them with translation_units_put and unit_id: %s", len(matches), named, strings.Join(ids, ", ")))
+		}
+		return translation.XLIFFUnitMarkup{}, domainerr.InvalidField("edits", fmt.Sprintf("%d units have the source text %q; pass unit_id or block_id to choose one of: %s", len(matches), named, strings.Join(ids, ", ")))
 	}
 }
 

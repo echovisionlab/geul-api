@@ -12,17 +12,17 @@ import (
 
 type translationXLIFFExportArguments struct {
 	translationTargetArguments
-	TargetLocale core.Locale `json:"l"`
-	Mode         string      `json:"m"`
-	UnitHandles  []string    `json:"u,omitempty"`
+	TargetLocale core.Locale `json:"locale"`
+	Mode         string      `json:"mode"`
+	UnitHandles  []string    `json:"unit_ids,omitempty"`
 }
 
 type translationXLIFFImportArguments struct {
 	translationTargetArguments
-	TargetLocale           core.Locale `json:"l"`
-	Mode                   string      `json:"m"`
-	FileID                 string      `json:"f"`
-	ExpectedTargetRevision *string     `json:"er,omitempty"`
+	TargetLocale           core.Locale `json:"locale"`
+	Mode                   string      `json:"mode"`
+	FileID                 string      `json:"file_id"`
+	ExpectedTargetRevision *string     `json:"expected_target_revision,omitempty"`
 }
 
 var translationInterchangeModes = map[string]managev1.TranslationInterchangeMode{
@@ -39,7 +39,7 @@ var translationInterchangeModeNames = func() map[managev1.TranslationInterchange
 }()
 
 func translationXLIFFExportCommand(arguments mcpserver.ToolArguments) (translationapp.ExportTranslationXLIFFCommand, error) {
-	if err := rejectNullArguments(arguments, "u"); err != nil {
+	if err := rejectNullArguments(arguments, "unit_ids"); err != nil {
 		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	var input translationXLIFFExportArguments
@@ -50,7 +50,7 @@ func translationXLIFFExportCommand(arguments mcpserver.ToolArguments) (translati
 	if err != nil {
 		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
-	if err := validateCompactLocale(input.TargetLocale); err != nil {
+	if err := validateLocaleCode(input.TargetLocale); err != nil {
 		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	mode, err := translationInterchangeMode(input.Mode)
@@ -68,7 +68,7 @@ func translationXLIFFExportCommand(arguments mcpserver.ToolArguments) (translati
 }
 
 func translationXLIFFImportCommand(arguments mcpserver.ToolArguments) (translationapp.ImportTranslationXLIFFCommand, error) {
-	if err := rejectNullArguments(arguments, "er"); err != nil {
+	if err := rejectNullArguments(arguments, "expected_target_revision"); err != nil {
 		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	var input translationXLIFFImportArguments
@@ -79,7 +79,7 @@ func translationXLIFFImportCommand(arguments mcpserver.ToolArguments) (translati
 	if err != nil {
 		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
-	if err := validateCompactLocale(input.TargetLocale); err != nil {
+	if err := validateLocaleCode(input.TargetLocale); err != nil {
 		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	mode, err := translationInterchangeMode(input.Mode)
@@ -90,7 +90,7 @@ func translationXLIFFImportCommand(arguments mcpserver.ToolArguments) (translati
 		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	if input.ExpectedTargetRevision != nil {
-		if err := validateCompactOpaque("expected target revision", *input.ExpectedTargetRevision, 256); err != nil {
+		if err := validateOpaqueValue("expected target revision", *input.ExpectedTargetRevision, 256); err != nil {
 			return translationapp.ImportTranslationXLIFFCommand{}, err
 		}
 	}
@@ -111,13 +111,13 @@ func translationInterchangeMode(mode string) (managev1.TranslationInterchangeMod
 
 func validateXLIFFSelection(mode managev1.TranslationInterchangeMode, handles []string) error {
 	if len(handles) > 1000 {
-		return errors.New("XLIFF export allows at most 1000 explicit unit handles")
+		return errors.New("XLIFF export allows at most 1000 explicit unit_ids")
 	}
 	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH && len(handles) == 0 {
-		return errors.New("patch XLIFF export requires at least one stable unit handle")
+		return errors.New("patch XLIFF export requires at least one unit_id")
 	}
 	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE && len(handles) != 0 {
-		return errors.New("replace XLIFF export requires a complete manifest and no unit handles")
+		return errors.New("replace XLIFF export requires a complete manifest and no unit_ids")
 	}
 	return validateStableUnitHandleSet(handles)
 }
@@ -128,7 +128,7 @@ func validateStableUnitHandleSet(handles []string) error {
 		return err
 	}
 	if duplicate != "" {
-		return fmt.Errorf("stable unit handle %q is repeated", duplicate)
+		return fmt.Errorf("unit_id %q is repeated", duplicate)
 	}
 	return nil
 }
@@ -150,10 +150,10 @@ func inspectStableUnitHandleSet(handles []string) (string, error) {
 func validateStableUnitHandle(handle string) error {
 	// Handles are opaque owning-domain identities. The application checks them
 	// against the current manifest; digit segments can be valid Menu item IDs.
-	return validateCompactOpaque("stable unit handle", handle, 256)
+	return validateOpaqueValue("unit_id", handle, 256)
 }
 
-func compactInterchangeMode(mode managev1.TranslationInterchangeMode) (string, error) {
+func interchangeModeName(mode managev1.TranslationInterchangeMode) (string, error) {
 	value, ok := translationInterchangeModeNames[mode]
 	if !ok {
 		return "", fmt.Errorf("translation application returned unsupported XLIFF mode %q", mode)

@@ -12,7 +12,7 @@ import (
 
 const (
 	defaultAIDocumentListLimit = 20
-	maximumAIDocumentListLimit = 50
+	maximumAIDocumentListLimit = 100
 	maximumAIDocumentQuerySize = 200
 )
 
@@ -67,7 +67,7 @@ func (s *Service) ListAIDocuments(
 		limit = defaultAIDocumentListLimit
 	}
 	if limit < 1 || limit > maximumAIDocumentListLimit {
-		return AIDocumentListResult{}, domainerr.InvalidField("limit", "must be between 1 and 50")
+		return AIDocumentListResult{}, domainerr.InvalidField("limit", "must be between 1 and 100")
 	}
 	if input.Offset < 0 {
 		return AIDocumentListResult{}, domainerr.InvalidField("offset", "must be non-negative")

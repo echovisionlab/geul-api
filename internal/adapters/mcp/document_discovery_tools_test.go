@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	"github.com/stretchr/testify/require"
@@ -27,16 +29,26 @@ import (
 
 const discoveryDocumentID = "44444444-4444-4444-8444-444444444444"
 
+// newDiscoveryToolsForTest adds the six main lists to the others'.
+func newDiscoveryToolsForTest(
+	posts PostDocumentDiscovery, works WorkDocumentDiscovery, pages PageDocumentDiscovery,
+	programEvents ProgramEventDocumentDiscovery, releases ReleaseDocumentDiscovery, artists ArtistDocumentDiscovery,
+	lists DocumentDiscoveryDeps,
+) (*DocumentDiscoveryTools, error) {
+	lists.Posts, lists.Works, lists.Pages, lists.ProgramEvents, lists.Releases, lists.Artists = posts, works, pages, programEvents, releases, artists
+	return NewDocumentDiscoveryTools(lists)
+}
+
 func TestDocumentDiscoveryRejectsPaginationOutsideOwningAPIBounds(t *testing.T) {
-	for _, profile := range []string{"post", "work", "page", "program_event", "release", "artist"} {
-		for _, pagination := range []string{`"offset":null`, `"offset":-1`, `"offset":2147483648`, `"offset":4294967296`, `"limit":null`, `"limit":0`, `"limit":-1`, `"limit":51`, `"limit":4294967296`} {
-			t.Run(profile+"/"+pagination, func(t *testing.T) {
+	for _, documentType := range []string{"post", "work", "page", "program_event", "release", "artist"} {
+		for _, pagination := range []string{`"offset":null`, `"offset":-1`, `"offset":2147483648`, `"offset":4294967296`, `"limit":null`, `"limit":0`, `"limit":-1`, `"limit":101`, `"limit":4294967296`} {
+			t.Run(documentType+"/"+pagination, func(t *testing.T) {
 				posts := &recordingPostDocumentDiscovery{}
 				releases, artists := &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}
 				events := &recordingProgramEventDocumentDiscovery{}
-				tools, err := NewDocumentDiscoveryTools(posts, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, events, releases, artists)
+				tools, err := newDiscoveryToolsForTest(posts, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, events, releases, artists, testOtherDocumentDiscovery())
 				require.NoError(t, err)
-				_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`",`+pagination+`}`))
+				_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+documentType+`",`+pagination+`}`))
 				var executionErr *mcpserver.ToolExecutionError
 				require.ErrorAs(t, err, &executionErr)
 				require.Empty(t, posts.input)
@@ -50,9 +62,9 @@ func TestDocumentDiscoveryRejectsPaginationOutsideOwningAPIBounds(t *testing.T) 
 
 func TestDocumentDiscoveryPreservesMaximumOwningAPIOffset(t *testing.T) {
 	releases := &recordingReleaseDocumentDiscovery{}
-	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, &recordingArtistDocumentDiscovery{})
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
 	require.NoError(t, err)
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"release","limit":50,"offset":2147483647}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"release","limit":50,"offset":2147483647}`))
 	require.NoError(t, err)
 	require.Equal(t, int32(2147483647), releases.request.Msg.Pagination.Offset)
 	require.Equal(t, int32(50), releases.request.Msg.Pagination.Limit)
@@ -70,7 +82,7 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 		}},
 		Total: 3, Limit: 1, Offset: 1,
 	}}
-	tools, err := NewDocumentDiscoveryTools(discovery, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{})
+	tools, err := newDiscoveryToolsForTest(discovery, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
 	if err != nil {
 		t.Fatalf("NewDocumentDiscoveryTools() error = %v", err)
 	}
@@ -93,9 +105,7 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 		}
 	}
 
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{
-		"p":"post","q":"Test","limit":1,"offset":1
-	}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"post","query":"Test","limit":1,"offset":1}`))
 	if err != nil {
 		t.Fatalf("document_list error = %v", err)
 	}
@@ -108,7 +118,7 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 		t.Fatalf("document_list documents = %#v", result.StructuredContent["documents"])
 	}
 	document, ok := documents[0].(map[string]any)
-	if !ok || document["d"] != discoveryDocumentID || document["slug"] != slug || document["title"] != "Test Post" || document["configuration_revision"] != managementPostConfigurationRevision {
+	if !ok || document["document_id"] != discoveryDocumentID || document["slug"] != slug || document["title"] != "Test Post" || document["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("document_list document = %#v", documents[0])
 	}
 	if result.StructuredContent["next_offset"] != float64(2) || result.StructuredContent["total"] != float64(3) {
@@ -118,25 +128,25 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 
 func TestDocumentDiscoveryToolRejectsUnsupportedProfileAndMapsExpectedErrors(t *testing.T) {
 	discovery := &recordingPostDocumentDiscovery{}
-	tools, err := NewDocumentDiscoveryTools(discovery, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{})
+	tools, err := newDiscoveryToolsForTest(discovery, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
 	if err != nil {
 		t.Fatalf("NewDocumentDiscoveryTools() error = %v", err)
 	}
 
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"label"}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"nope"}`))
 	var executionErr *mcpserver.ToolExecutionError
-	if result.Content != nil || !errors.As(err, &executionErr) || !strings.Contains(executionErr.Message, "p must be") {
+	if result.Content != nil || !errors.As(err, &executionErr) || !strings.Contains(executionErr.Message, "document_type must be") {
 		t.Fatalf("unsupported profile result = %#v, error = %v", result, err)
 	}
 
 	discovery.err = connect.NewError(connect.CodePermissionDenied, errors.New("permission denied"))
-	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"post"}`))
+	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"post"}`))
 	if result.Content != nil || !errors.As(err, &executionErr) || executionErr.Message != "permission denied" {
 		t.Fatalf("permission result = %#v, error = %v", result, err)
 	}
 
 	discovery.err = errors.New("database included a secret")
-	if _, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"post"}`)); err == nil {
+	if _, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"post"}`)); err == nil {
 		t.Fatal("document_list hid an internal failure as a safe tool error")
 	} else if errors.As(err, &executionErr) {
 		t.Fatalf("internal failure was exposed as ToolExecutionError: %v", err)
@@ -144,7 +154,7 @@ func TestDocumentDiscoveryToolRejectsUnsupportedProfileAndMapsExpectedErrors(t *
 }
 
 func TestNewDocumentDiscoveryToolsRejectsNil(t *testing.T) {
-	if _, err := NewDocumentDiscoveryTools(nil, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}); err == nil {
+	if _, err := newDiscoveryToolsForTest(nil, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery()); err == nil {
 		t.Fatal("NewDocumentDiscoveryTools(nil) succeeded")
 	}
 }
@@ -160,11 +170,11 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 		}}},
 		Pagination: programevent.Pagination{Total: 1, Limit: 10},
 	}}
-	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, programEvents, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{})
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, programEvents, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"program_event","q":"Live","limit":10}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"program_event","query":"Live","limit":10}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +183,7 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	}
 	documents := result.StructuredContent["documents"].([]any)
 	document := documents[0].(map[string]any)
-	if document["p"] != "program_event" || document["d"] != discoveryDocumentID || document["status"] != "published" {
+	if document["document_type"] != "program_event" || document["document_id"] != discoveryDocumentID || document["status"] != "published" {
 		t.Fatalf("Program Event document = %+v", document)
 	}
 }
@@ -237,11 +247,11 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 					ID: discoveryDocumentID, Slug: &slug, SourceLocale: "ko", Status: "published", UpdatedAt: &updatedAt,
 				}}}}, Pagination: artist.Pagination{Total: 25, Limit: 2, Offset: 4},
 			}}
-			tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists)
+			tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists, testOtherDocumentDiscovery())
 			require.NoError(t, err)
 			user := &auth.UserInfo{IdentityID: auth.IdentityID("11111111-1111-4111-8111-111111111111"), MemberID: auth.MemberID("22222222-2222-4222-8222-222222222222")}
 			ctx := auth.WithUser(t.Context(), user)
-			result, err := tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`","q":"  Same Name  ","limit":2,"offset":4}`))
+			result, err := tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`","query":"  Same Name  ","limit":2,"offset":4}`))
 			require.NoError(t, err)
 			var pagination *commonv1.PaginationRequest
 			var filters []*commonv1.FilterSpec
@@ -269,7 +279,7 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 			documents := result.StructuredContent["documents"].([]any)
 			require.Len(t, documents, 1, "nil wrappers, entities and absent timestamps must be skipped")
 			require.Equal(t, map[string]any{
-				"p": profile, "d": discoveryDocumentID, "title": "Same Name", "slug": slug,
+				"document_type": profile, "document_id": discoveryDocumentID, "title": "Same Name", "slug": slug,
 				"source_locale": "ko", "status": status, "updated_at": updatedAt.UTC().Format(time.RFC3339),
 			}, documents[0])
 			require.Equal(t, float64(25), result.StructuredContent["total"])
@@ -280,7 +290,7 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 			releases.page.Releases[0].View.Release.Slug = nil
 			artists.page.Pagination = artist.Pagination{Total: 1, Limit: 20}
 			artists.page.Artists[1].Artist.Artist.Slug = nil
-			result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`","q":"   "}`))
+			result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`","query":"   "}`))
 			require.NoError(t, err)
 			require.Nil(t, result.StructuredContent["next_offset"])
 			document := result.StructuredContent["documents"].([]any)[0].(map[string]any)
@@ -298,36 +308,39 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 
 func TestDocumentDiscoveryNewProfilesSchemasAndAuthorityErrors(t *testing.T) {
 	releases, artists := &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}
-	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists)
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists, testOtherDocumentDiscovery())
 	require.NoError(t, err)
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	require.NoError(t, err)
 	var inputSchema, outputSchema map[string]any
 	require.NoError(t, json.Unmarshal(listed[0].InputSchema, &inputSchema))
 	require.NoError(t, json.Unmarshal(listed[0].OutputSchema, &outputSchema))
-	inputProperties := inputSchema["properties"].(map[string]any)
 	outputProperties := outputSchema["properties"].(map[string]any)["documents"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
-	for _, properties := range []map[string]any{inputProperties, outputProperties} {
-		require.ElementsMatch(t, []any{"post", "work", "page", "program_event", "release", "artist"}, properties["p"].(map[string]any)["enum"])
+	wantTypes := make([]any, 0, len(listedDocumentTypes))
+	for _, documentType := range listedDocumentTypes {
+		wantTypes = append(wantTypes, string(documentType))
 	}
+	require.ElementsMatch(t, wantTypes, outputProperties["document_type"].(map[string]any)["enum"])
+	inputType := inputSchema["properties"].(map[string]any)["document_type"].(map[string]any)["allOf"].([]any)[0].(map[string]any)
+	require.ElementsMatch(t, wantTypes, inputType["enum"])
 	for _, profile := range []string{"post", "work", "page", "program_event"} {
-		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`"}`))
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`"}`))
 		require.NoError(t, err, "existing profile %s must remain discoverable", profile)
 	}
 	for _, profile := range []string{"release", "artist"} {
 		t.Run(profile, func(t *testing.T) {
 			denied := connect.NewError(connect.CodePermissionDenied, errors.New("permission denied"))
 			releases.err, artists.err = denied, denied
-			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`"}`))
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`"}`))
 			var executionErr *mcpserver.ToolExecutionError
 			require.ErrorAs(t, err, &executionErr)
 			require.Equal(t, "permission denied", executionErr.Message)
 			releases.err, artists.err = errors.New("private database detail"), errors.New("private database detail")
-			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`"}`))
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`"}`))
 			require.Error(t, err)
 			require.False(t, errors.As(err, &executionErr), "internal errors must be left for generic transport handling")
 			releases.err, artists.err = nil, nil
-			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`"}`))
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`"}`))
 			require.NoError(t, err, "empty service responses may omit pagination")
 			require.Empty(t, result.StructuredContent["documents"])
 			require.Nil(t, result.StructuredContent["next_offset"])
@@ -345,7 +358,7 @@ func TestDocumentDiscoveryRejectsMissingReleaseAndArtistServices(t *testing.T) {
 		{nil, &recordingArtistDocumentDiscovery{}}, {nilRelease, &recordingArtistDocumentDiscovery{}},
 		{&recordingReleaseDocumentDiscovery{}, nil}, {&recordingReleaseDocumentDiscovery{}, nilArtist},
 	} {
-		_, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, services.release, services.artist)
+		_, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, services.release, services.artist, testOtherDocumentDiscovery())
 		require.Error(t, err)
 	}
 }
@@ -379,4 +392,74 @@ func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.
 		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, Filters: query.Filters, Sorts: query.Sorts,
 	})
 	return discovery.page, discovery.err
+}
+
+// These types once had their own list tools; document_list must keep what those
+// promised: every type, the right fields, and a filter only where one exists.
+func TestDocumentListCoversEveryOtherDocumentType(t *testing.T) {
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
+	require.NoError(t, err)
+	for profile, id := range map[string]string{
+		"label": fakeLabelID, "menu": fakeMenuID, "form": fakeFormID, "post_series": fakeSeriesID, "terms": fakePolicyID, "privacy": fakePolicyID,
+		"campaign": fakeCampaignID, "email_template": fakeTemplateID, "email_layout": fakeLayoutID,
+	} {
+		t.Run(profile, func(t *testing.T) {
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"`+profile+`"}`))
+			require.NoError(t, err)
+			documents := result.StructuredContent["documents"].([]any)
+			require.Len(t, documents, 1)
+			document := documents[0].(map[string]any)
+			require.Equal(t, profile, document["document_type"])
+			require.Equal(t, id, document["document_id"])
+			require.Equal(t, "en", document["source_locale"])
+			require.NotEmpty(t, document["title"])
+			require.NotContains(t, document, "id")
+		})
+	}
+}
+
+func TestDocumentListFiltersByStatusOnlyWhereTheListCan(t *testing.T) {
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
+	require.NoError(t, err)
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"terms","status":"active"}`))
+	require.NoError(t, err)
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"terms","status":"published"}`))
+	require.Error(t, err, "a policy has no published state")
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"post","status":"draft"}`))
+	require.Error(t, err, "silently ignoring a filter would return the wrong documents")
+}
+
+// A caller names a state as a listed document reads it; the stored name differs.
+func TestDocumentListStatusFilterUsesTheStoredName(t *testing.T) {
+	others := testOtherDocumentDiscovery()
+	fake := others.Labels.(*fakeOtherDocumentDiscovery)
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, others)
+	require.NoError(t, err)
+
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"terms","status":"active"}`))
+	require.NoError(t, err)
+	want, known := legal.PolicyStatus(legal.PolicyKind("terms"), "active")
+	require.True(t, known)
+	require.Equal(t, want, *fake.policyStatus)
+
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"label","status":"draft"}`))
+	require.NoError(t, err)
+	require.Equal(t, "LABEL_STATUS_DRAFT", fake.labelFilters[len(fake.labelFilters)-1].Value)
+}
+
+func TestDocumentListReadsEveryStatusAsAPlainName(t *testing.T) {
+	for stored, want := range map[string]string{
+		"LABEL_STATUS_DRAFT": "draft", "SERIES_STATUS_PUBLISHED": "published", "TERMS_STATUS_ACTIVE": "active",
+		"CAMPAIGN_STATUS_SENT": "sent", "PROGRAM_EVENT_STATUS_ARCHIVED": "archived", "draft": "draft",
+	} {
+		require.Equal(t, want, newListedDocument(core.DomainLabel, "id", "title", nil, "en", stored).Status)
+	}
+}
+
+func TestDocumentListFiltersListsWithNoSearchOfTheirOwn(t *testing.T) {
+	tools, err := newDiscoveryToolsForTest(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery())
+	require.NoError(t, err)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"document_type":"menu","query":"nothing like it"}`))
+	require.NoError(t, err)
+	require.Empty(t, result.StructuredContent["documents"])
 }

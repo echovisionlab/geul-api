@@ -25,7 +25,7 @@ func TestSchemasReferenceGuidanceKeepsDocumentDiscoveryOnDocumentSelectors(t *te
 						if strings.Contains(description, "document_list") {
 							require.Equal(t, "input", name, "%s advertises input discovery in output", path)
 							switch path {
-							case "$.properties.d", "$.properties.document_id", "$.properties.exclude_document_id", "$.properties.release_id":
+							case "$.properties.document_id", "$.properties.exclude_document_id", "$.properties.release_id", "$.properties.documents.items.properties.document_id", "$.properties.labels":
 								documentSelectors++
 							case "$.properties.expected_configuration_revision":
 								// document_list legitimately includes the observed Post settings revision.
@@ -59,9 +59,9 @@ func TestSchemasReferenceGuidanceNamesOwningDiscoveryAndPreservesUUIDShape(t *te
 	}{
 		{&MapPlaceManagementTools{}, ToolMapPlaceCreate, "image_file_id", "file_list"},
 		{&MemberAdminTools{}, ToolMemberAdminGet, "member_id", "member_admin_list"},
-		{&ProgramEventManagementTools{}, ToolProgramEventCreate, "type_id", "program_event_type_list"},
+		{&ProgramEventManagementTools{}, ToolProgramEventCreate, "type_id", "reference_search"},
 		{&MapThemeManagementTools{}, ToolMapThemeGet, "theme_id", "map_theme_list"},
-		{&ReferenceDiscoveryTools{}, ToolFileList, "folder_id", "item_type=folder"},
+		{&FileListTools{}, ToolFileList, "folder_id", "item_type=folder"},
 	} {
 		t.Run(test.tool+"/"+test.field, func(t *testing.T) {
 			tools, err := test.provider.ListTools(t.Context(), mcpserver.Principal{})
@@ -112,9 +112,9 @@ func TestSchemasReferenceGuidanceMetadataRelationsUseReferenceSearch(t *testing.
 func referenceGuidanceProviders() []ToolProvider {
 	return []ToolProvider{
 		&ProgramEventMediaTools{}, &ContentManagementTools{}, &ReleaseManagementTools{},
-		&MemberTagTools{}, &ReleaseRelationTools{}, &ProgramEventManagementTools{},
+		&ReleaseRelationTools{}, &ProgramEventManagementTools{},
 		&MapPlaceManagementTools{}, &MemberAdminTools{}, &ContentRelatedTools{}, &MapThemeManagementTools{},
-		&ReferenceDiscoveryTools{}, &AIDocumentTools{}, &DocumentDiscoveryTools{},
+		&FileListTools{}, &ReferenceSearchTools{}, &DocumentOperationTools{}, &AIDocumentTools{}, &DocumentDiscoveryTools{},
 	}
 }
 

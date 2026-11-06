@@ -15,13 +15,13 @@ func TestTranslationInterchangeModesHaveOneBidirectionalVocabulary(t *testing.T)
 		if err != nil || parsed != mode {
 			t.Fatalf("translationInterchangeMode(%q) = %v, %v", name, parsed, err)
 		}
-		compact, err := compactInterchangeMode(mode)
+		compact, err := interchangeModeName(mode)
 		if err != nil || compact != name {
-			t.Fatalf("compactInterchangeMode(%v) = %q, %v", mode, compact, err)
+			t.Fatalf("interchangeModeName(%v) = %q, %v", mode, compact, err)
 		}
 	}
-	if _, err := compactInterchangeMode(managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_UNSPECIFIED); err == nil {
-		t.Fatal("compactInterchangeMode(unspecified) succeeded")
+	if _, err := interchangeModeName(managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_UNSPECIFIED); err == nil {
+		t.Fatal("interchangeModeName(unspecified) succeeded")
 	}
 }
 

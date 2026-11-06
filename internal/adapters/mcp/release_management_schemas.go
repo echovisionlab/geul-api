@@ -8,7 +8,7 @@ const releaseCreateInputJSONSchema = `{
     "title":{"type":"string","minLength":1},
     "source_locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
     "type":` + releaseTypeJSONSchema + `,
-    "slug":{"type":"string","description":"Optional route slug without a slash. Check availability with release_slug_check."},
+    "slug":{"type":"string","description":"Optional route slug without a slash. Check availability with document_slug_check."},
     "catalog_number":{"type":"string"},
     "release_date":{"type":"string","format":"date-time","description":"Optional RFC 3339 release instant with an explicit offset, such as 2026-10-10T00:00:00+09:00."},
     "spotify_url":{"type":"string"},"apple_music_url":{"type":"string"},"bandcamp_url":{"type":"string"},"youtube_music_url":{"type":"string"}
@@ -64,14 +64,4 @@ const releaseArtworkOutputJSONSchema = `{
     "success":{"type":"boolean","description":"Native operation completed; this does not distinguish a mutation from a no-op."},
     "artwork_asset_id":` + uuidJSONSchema + `,"og_generation_run_id":{"type":"string"}
   }
-}`
-
-const releaseSlugCheckInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["slug"],
-  "properties":{"slug":{"type":"string","description":"Release route slug without a slash."},"exclude_document_id":` + documentReferenceJSONSchema + `}
-}`
-
-const releaseSlugCheckOutputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["document_type","slug","available"],
-  "properties":{"document_type":{"const":"release"},"slug":{"type":"string"},"available":{"type":"boolean"}}
 }`

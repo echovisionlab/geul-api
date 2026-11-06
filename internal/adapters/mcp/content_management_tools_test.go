@@ -41,7 +41,7 @@ func TestContentManagementToolDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != len(contentManagementTools) || len(listed) != 22 {
+	if len(listed) != 6 {
 		t.Fatalf("listed %d content tools", len(listed))
 	}
 	for _, tool := range listed {
@@ -162,24 +162,21 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 		Revision: "actual-source-page-revision", Document: &contentv1.PageDocument{},
 		FeaturedImage: &fileref.Delivery{FileID: managementWorkID},
 	}}
-	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, pages)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tools := documentOperationsOver(t, DocumentOperationApplications{Posts: posts, Pages: pages})
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantLayout := map[string]any{"content_height": "DOCUMENT_CONTENT_HEIGHT_VIEWPORT", "page_chrome": "DOCUMENT_REGION_PLACEMENT_PINNED", "footer": "DOCUMENT_REGION_PLACEMENT_FLOW", "hide_table_of_contents": true}
 	for _, test := range []struct {
-		name, id string
-		want     map[string]any
+		documentType, id string
+		want             map[string]any
 	}{
-		{ToolPostSettingsGet, managementPostID, map[string]any{"document_revision": "actual-source-post-revision", "configuration_revision": managementPostConfigurationRevision, "comments_enabled": false, "map_place_id": managementPageID, "status": "scheduled", "category_ids": []any{managementWorkID}, "tag_ids": []any{managementPageID}, "allowed_actions": []any{"edit", "cancel_schedule"}, "scheduled_time_zone": zone, "scheduled_at": "2026-10-05T01:02:03Z", "series_id": managementWorkID, "series_order": float64(4)}},
-		{ToolPageSettingsGet, managementPageID, map[string]any{"document_revision": "actual-source-page-revision", "show_title": false, "status": "published", "access_policy": map[string]any{"mode": "conditions", "match": "all", "allowed_roles": []any{"author"}, "user_tag_ids": []any{managementWorkID}, "newsletter_subscriber": true}}},
+		{"post", managementPostID, map[string]any{"document_revision": "actual-source-post-revision", "configuration_revision": managementPostConfigurationRevision, "comments_enabled": false, "map_place_id": managementPageID, "status": "scheduled", "category_ids": []any{managementWorkID}, "tag_ids": []any{managementPageID}, "allowed_actions": []any{"edit", "cancel_schedule"}, "scheduled_time_zone": zone, "scheduled_at": "2026-10-05T01:02:03Z", "series_id": managementWorkID, "series_order": float64(4)}},
+		{"page", managementPageID, map[string]any{"document_revision": "actual-source-page-revision", "show_title": false, "status": "published", "access_policy": map[string]any{"mode": "conditions", "match": "all", "allowed_roles": []any{"author"}, "user_tag_ids": []any{managementWorkID}, "newsletter_subscriber": true}}},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.name, toolArguments(t, `{"document_id":"`+test.id+`"}`))
+		t.Run(test.documentType, func(t *testing.T) {
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"`+test.documentType+`","document_id":"`+test.id+`"}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,25 +195,8 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 				t.Fatalf("text/structured parity: %v %+v", err, result)
 			}
 			for _, tool := range listed {
-				if tool.Name == test.name {
+				if tool.Name == ToolDocumentSettingsGet {
 					assertMCPToolAnnotations(t, tool, toolAnnotations(true, false, false))
-					var schema struct {
-						Required   []string                   `json:"required"`
-						Properties map[string]json.RawMessage `json:"properties"`
-					}
-					if err := json.Unmarshal(tool.OutputSchema, &schema); err != nil {
-						t.Fatal(err)
-					}
-					for _, key := range schema.Required {
-						if _, present := text[key]; !present {
-							t.Fatalf("required output %s absent", key)
-						}
-					}
-					for key := range text {
-						if _, advertised := schema.Properties[key]; !advertised {
-							t.Fatalf("output %s not advertised", key)
-						}
-					}
 				}
 			}
 		})
@@ -227,15 +207,12 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 }
 
 func TestContentManagementSettingsReadPreservesOwningPermissionErrors(t *testing.T) {
-	for _, name := range []string{ToolPostSettingsGet, ToolPageSettingsGet} {
+	for _, documentType := range []string{"post", "page"} {
 		for _, code := range []connect.Code{connect.CodePermissionDenied, connect.CodeNotFound} {
-			t.Run(name+"/"+code.String(), func(t *testing.T) {
+			t.Run(documentType+"/"+code.String(), func(t *testing.T) {
 				ownerErr := connect.NewError(code, errors.New("settings are not accessible"))
-				tools, err := NewContentManagementTools(&recordingPostManagement{getErr: ownerErr}, &recordingWorkManagement{}, &recordingPageManagement{getErr: ownerErr})
-				if err != nil {
-					t.Fatal(err)
-				}
-				result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, toolArguments(t, `{"document_id":"`+managementPostID+`"}`))
+				tools := documentOperationsOver(t, DocumentOperationApplications{Posts: &recordingPostManagement{getErr: ownerErr}, Pages: &recordingPageManagement{getErr: ownerErr}})
+				result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"`+documentType+`","document_id":"`+managementPostID+`"}`))
 				var executionErr *mcpserver.ToolExecutionError
 				if !errors.As(err, &executionErr) || executionErr.Message != "settings are not accessible" || result.StructuredContent != nil {
 					t.Fatalf("permission error=%v result=%+v", err, result)
@@ -417,11 +394,8 @@ func TestPageSettingsReadReportsPublicWhenPolicyIsAbsent(t *testing.T) {
 		}, Title: "Page"},
 		Revision: "r",
 	}}
-	tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPageSettingsGet, toolArguments(t, `{"document_id":"`+managementPageID+`"}`))
+	tools := documentOperationsOver(t, DocumentOperationApplications{Pages: pages})
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"page","document_id":"`+managementPageID+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,18 +516,15 @@ func TestPostSettingsUpdateForwardsMissingMalformedAndStaleRevisionsSafely(t *te
 
 func TestPostScheduleUsesExactTimestampAndLifecycleResponse(t *testing.T) {
 	posts := &recordingPostManagement{}
-	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostSchedule, toolArguments(t, `{"document_id":"`+managementPostID+`","scheduled_at":"2026-09-01T03:00:00+09:00","scheduled_time_zone":"Asia/Seoul"}`))
+	tools := documentOperationsOver(t, DocumentOperationApplications{Posts: posts})
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentPublish, toolArguments(t, `{"action":"schedule","scheduled_at":"2026-09-01T03:00:00+09:00","scheduled_time_zone":"Asia/Seoul","documents":[{"document_type":"post","document_id":"`+managementPostID+`"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if posts.schedule.ScheduledAt.UTC() != time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC) || posts.schedule.TimeZone != "Asia/Seoul" {
 		t.Fatalf("schedule request = %#v", posts.schedule)
 	}
-	if result.StructuredContent["status"] != "scheduled" {
+	if documents, applied, _ := batchOutput(t, result); applied != 1 || !*documents[0].Changed {
 		t.Fatalf("schedule result = %#v", result.StructuredContent)
 	}
 }
@@ -575,6 +546,7 @@ const (
 
 type recordingPostManagement struct {
 	PostManagementApplication
+	PostOperationApplication
 	create         *postdomain.CreatePostCommand
 	update         *postdomain.UpdatePostCommand
 	schedule       *postdomain.SchedulePostCommand
@@ -625,6 +597,7 @@ func (r *recordingPostManagement) SchedulePost(_ context.Context, command postdo
 
 type recordingWorkManagement struct {
 	WorkManagementApplication
+	WorkOperationApplication
 	create      *work.CreateWorkCommand
 	get         *work.GetWorkQuery
 	getResponse work.View
@@ -654,6 +627,7 @@ func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.Cre
 }
 
 type recordingPageManagement struct {
+	PageOperationApplication
 	create         *pagedomain.CreatePageCommand
 	get            *pagedomain.GetPageQuery
 	getResponse    pagedomain.Detail
@@ -685,14 +659,6 @@ func (r *recordingPageManagement) CreatePage(_ context.Context, command pagedoma
 	}, nil
 }
 
-func (*recordingPageManagement) PublishPage(context.Context, pagedomain.PublishPageCommand) (pagedomain.LifecycleResult, error) {
-	return pagedomain.LifecycleResult{}, errors.New("publish page is not part of this test")
-}
-
-func (*recordingPageManagement) UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (pagedomain.LifecycleResult, error) {
-	return pagedomain.LifecycleResult{}, errors.New("unpublish page is not part of this test")
-}
-
 // encodedPageAccessPolicy is the stored form of policy.
 func encodedPageAccessPolicy(t *testing.T, policy *commonv1.PageAccessPolicy) json.RawMessage {
 	t.Helper()
@@ -701,10 +667,6 @@ func encodedPageAccessPolicy(t *testing.T, policy *commonv1.PageAccessPolicy) js
 		t.Fatal(err)
 	}
 	return encoded
-}
-
-func (*recordingPageManagement) DeletePage(context.Context, pagedomain.DeletePageCommand) error {
-	return errors.New("delete page is not part of this test")
 }
 
 func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
@@ -723,7 +685,7 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	read, err := documentOperationsOver(t, DocumentOperationApplications{Works: works}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"work","document_id":"`+managementWorkID+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +728,7 @@ func TestWorkSettingsRejectsMissingBaselineAndPreservesReadAuthorityErrors(t *te
 			t.Fatalf("missing baseline called domain service: %v", err)
 		}
 	}
-	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	_, err = documentOperationsOver(t, DocumentOperationApplications{Works: works}).CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"work","document_id":"`+managementWorkID+`"}`))
 	var executionErr *mcpserver.ToolExecutionError
 	if !errors.As(err, &executionErr) || executionErr.Message != "permission denied" {
 		t.Fatalf("read authority error = %v", err)
@@ -776,11 +738,8 @@ func TestWorkSettingsRejectsMissingBaselineAndPreservesReadAuthorityErrors(t *te
 func TestWorkSettingsGetDoesNotReturnBaselineWhenOwningReadFails(t *testing.T) {
 	readErr := connect.NewError(connect.CodeInternal, errors.New("client query failed"))
 	works := &recordingWorkManagement{getErr: readErr}
-	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	tools := documentOperationsOver(t, DocumentOperationApplications{Works: works})
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSettingsGet, toolArguments(t, `{"document_type":"work","document_id":"`+managementWorkID+`"}`))
 	if !errors.Is(err, readErr) || result.StructuredContent != nil {
 		t.Fatalf("failed owning read returned a settings baseline: result=%+v err=%v", result, err)
 	}

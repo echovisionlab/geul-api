@@ -5,7 +5,7 @@ import "encoding/json"
 const catalogShapePropertiesJSONSchema = `
   "enum_values":{"type":"array","minItems":1,"items":{"type":["string","number","boolean"]}},
   "exclusive_minimum":{"type":"number"},"minimum":{"type":"number"},"maximum":{"type":"number"},"required":{"type":"boolean","description":"Required generated value or list identity field."},
-  "kind":{"enum":["t","b","n","i","l","o"],"description":"DCDP typed value tag. Omitted for File bindings, which use fa/fd operations instead of typed values."},
+  "kind":{"enum":["text","boolean","number","rich_text","list","object"],"description":"The type of value this field takes. Omitted for File bindings, which use attach_file and detach_file instead of typed values."},
   "ownership":{"enum":["shared","source","locale"]},
   "translatable":{"type":"boolean"},
   "file":{"type":"boolean","description":"Verified File binding. Attach/detach by File handle; ownership determines which locale may mutate it."},
@@ -22,13 +22,8 @@ const catalogShapePropertiesJSONSchema = `
 
 const documentCatalogOutputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["v","p","c","d","dr","s","l","lr","le","block_kinds","fields","relations","relation_fields"],
-  "properties":{
-    "v":{"const":"dcdp/1"},"p":` + domainJSONSchema + `,
-    "c":{"type":"string","minLength":1,"maxLength":256},"d":` + documentReferenceJSONSchema + `,
-    "dr":{"type":"string","minLength":1,"maxLength":256},"tr":{"type":"string","minLength":1,"maxLength":256},
-    "s":{"type":"string","minLength":1,"maxLength":35},"l":{"type":"string","minLength":1,"maxLength":35},
-    "lr":{"enum":["source","non_source"]},"le":{"type":"boolean"},
+  "required":["document_type","catalog_fingerprint","document_id","document_revision","source_locale","locale","locale_role","locale_exists","block_kinds","fields","relations","relation_fields"],
+  "properties":{` + documentEnvelopeOutputProperties + `,
     "block_rules":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["kind","category"],"properties":{
       "kind":{"type":"string"},"category":{"enum":["rich_block","page_section","page_column"]},
       "allowed_parents":{"type":"array","items":{"type":"string"},"description":"Allowed parent kinds; rich Page blocks require a rich-text section."}
@@ -59,12 +54,12 @@ func documentCatalogInputSchema() json.RawMessage {
 const documentCatalogInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
-  "required":["p","d","l"],
+  "required":["document_type","document_id","locale"],
   "properties":{
-    "p":` + domainJSONSchema + `,
-    "d":` + documentReferenceJSONSchema + `,
-    "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
-    "k":{"type":"array","description":"Return only these block kinds, such as [\"file\",\"paragraph\"]. Omit for the whole catalog.","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}}
+    "document_type":` + domainJSONSchema + `,
+    "document_id":` + documentReferenceJSONSchema + `,
+    "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
+    "block_kinds":{"type":"array","description":"Return only these block kinds, such as [\"file\",\"paragraph\"]. Omit for the whole catalog.","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}}
   }
 }`
 

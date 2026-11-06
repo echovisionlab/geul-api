@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	documentsearchpostgres "github.com/echovisionlab/geul-api/internal/documentsearch/postgres"
 	"log/slog"
 	"net/http"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -101,6 +104,10 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 		return err
 	}
 	references.emailLayouts = documents.emailAuthoring.LayoutAIDocuments()
+	searchIndex, err := documentsearchpostgres.NewIndex(r.dependencies.db)
+	if err != nil {
+		return err
+	}
 	aiDocumentMCP, err := newAIDocumentMCPComposition(
 		registrations,
 		documents.post,
@@ -119,6 +126,10 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 			editorCollabURL:           r.dependencies.cfg.EditorCollabURL,
 			editorCollabHTTPClient:    &http.Client{Timeout: time.Duration(r.dependencies.cfg.HTTPWriteTimeoutSec) * time.Second},
 			allowedOrigins:            r.dependencies.cfg.CORSOrigins,
+			documentSearchIndex:       searchIndex,
+			documentTransaction: func(ctx context.Context, work func(context.Context) error) error {
+				return mutation.InSharedTransaction(ctx, r.dependencies.db, work)
+			},
 		},
 		r.dependencies.servicePublisher,
 		sitesettingsadapter.NewMCPServerTitleSource(r.dependencies.db),

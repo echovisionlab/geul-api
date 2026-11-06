@@ -34,7 +34,6 @@ const (
 	ToolWorkCreditDelete            = "work_credit_delete"
 	ToolDocumentVersionsList        = "document_versions_list"
 	ToolDocumentVersionRestore      = "document_version_restore"
-	ToolDocumentSlugCheck           = "document_slug_check"
 )
 
 var contentRelatedTools = toolRegistry[ContentRelatedTools]{
@@ -54,7 +53,6 @@ var contentRelatedTools = toolRegistry[ContentRelatedTools]{
 	defineTool(oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCredit),
 	defineTool(oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false), (*ContentRelatedTools).listDocumentVersions),
 	defineTool(oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).restoreDocumentVersion),
-	defineTool(oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false), (*ContentRelatedTools).checkDocumentSlug),
 }
 
 type PostRelatedApplication interface {
@@ -67,7 +65,6 @@ type PostRelatedApplication interface {
 	RemovePostCollaborator(context.Context, postdomain.PostParticipantCommand) error
 	ListPostVersions(context.Context, postdomain.ListPostVersionsQuery) (postdomain.VersionPage, error)
 	RestorePostVersion(context.Context, postdomain.RestorePostVersionCommand) (postdomain.View, error)
-	CheckSlugAvailable(context.Context, postdomain.CheckSlugAvailableQuery) (bool, error)
 }
 
 type WorkRelatedApplication interface {
@@ -82,7 +79,6 @@ type WorkRelatedApplication interface {
 	DeleteWorkCredit(context.Context, work.DeleteWorkCreditCommand) error
 	ListWorkVersions(context.Context, work.ListWorkVersionsQuery) (work.VersionPage, error)
 	RestoreWorkVersion(context.Context, work.RestoreWorkVersionCommand) (work.View, error)
-	CheckWorkSlugAvailable(context.Context, work.CheckWorkSlugAvailableQuery) (bool, error)
 }
 
 type PageRelatedApplication interface {
@@ -90,7 +86,6 @@ type PageRelatedApplication interface {
 	DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*string, error)
 	ListPageVersions(context.Context, pagedomain.ListPageVersionsQuery) (pagedomain.VersionList, error)
 	RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (pagedomain.Detail, error)
-	CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (bool, error)
 }
 
 type ContentRelatedTools struct {
@@ -579,43 +574,6 @@ func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, _ 
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}
 	return contentResult(output)
-}
-
-type documentSlugArguments struct {
-	DocumentType      string  `json:"document_type"`
-	Slug              string  `json:"slug"`
-	ExcludeDocumentID *string `json:"exclude_document_id,omitempty"`
-}
-
-func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, _ string, call toolCall[documentSlugArguments]) (mcpserver.ToolResult, error) {
-	var input documentSlugArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	var available bool
-	switch input.DocumentType {
-	case "post":
-		postAvailable, err := tools.posts.CheckSlugAvailable(ctx, postdomain.CheckSlugAvailableQuery{Slug: input.Slug, ExcludePostID: input.ExcludeDocumentID})
-		if err != nil {
-			return expectedToolError(err)
-		}
-		available = postAvailable
-	case "work":
-		workAvailable, err := tools.works.CheckWorkSlugAvailable(ctx, work.CheckWorkSlugAvailableQuery{Slug: input.Slug, ExcludeWorkID: input.ExcludeDocumentID})
-		if err != nil {
-			return expectedToolError(err)
-		}
-		available = workAvailable
-	case "page":
-		pageAvailable, err := tools.pages.CheckPageSlugAvailable(ctx, pagedomain.CheckPageSlugAvailableQuery{Slug: input.Slug, ExcludeID: input.ExcludeDocumentID})
-		if err != nil {
-			return expectedToolError(err)
-		}
-		available = pageAvailable
-	default:
-		return executionError(fmt.Errorf("document_type must be post, work, or page"))
-	}
-	return contentResult(map[string]any{"document_type": input.DocumentType, "slug": input.Slug, "available": available})
 }
 
 var _ ToolProvider = (*ContentRelatedTools)(nil)

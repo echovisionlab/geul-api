@@ -9,10 +9,6 @@ const policyCreateInputJSONSchema = `{
  "type":"object","additionalProperties":false,"required":["document_type"],
  "properties":{"document_type":` + policyTypeJSONSchema + `,"title":{"type":"string","minLength":1}}
 }`
-const policyListInputJSONSchema = `{
- "type":"object","additionalProperties":false,"required":["document_type"],
- "properties":{"document_type":` + policyTypeJSONSchema + `,"status":{"enum":["draft","scheduled","active","archived"]},"limit":{"type":"integer","minimum":1,"maximum":50,"default":20},"offset":{"type":"integer","minimum":0,"maximum":2147483647,"default":0}}
-}`
 const policyRevisionInputJSONSchema = `{
  "type":"object","additionalProperties":false,"required":["document_type","document_id","expected_document_revision"],
  "properties":{"document_type":` + policyTypeJSONSchema + `,"document_id":` + uuidJSONSchema + `,"expected_document_revision":` + uuidJSONSchema + `}
@@ -31,10 +27,6 @@ const policyOutputJSONSchema = `{
   "effective_from":{"type":["string","null"],"format":"date-time"},"effective_until":{"type":["string","null"],"format":"date-time"},
   "created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
  }
-}`
-const policyListOutputJSONSchema = `{
- "type":"object","additionalProperties":false,"required":["policies","total","next_offset"],
- "properties":{"policies":{"type":"array","items":` + policyOutputJSONSchema + `},"total":{"type":"integer","minimum":0},"next_offset":{"type":["integer","null"],"minimum":0}}
 }`
 const policyMutationOutputJSONSchema = `{
  "type":"object","additionalProperties":false,"required":["document_type","document_id","changed"],

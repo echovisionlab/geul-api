@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -104,8 +105,22 @@ func (application *InteractiveMutationApplication) Apply(
 		return result, err
 	}
 
+	// Under a shared transaction the mutation is not committed yet, so Collab
+	// hears about it only after the whole transaction commits.
 	postCommitCtx := context.WithoutCancel(ctx)
-	relayErr := application.relay.RelayCommitted(postCommitCtx, AcceptedInteractiveMutation{
+	mutation.AfterCommit(ctx, func() {
+		application.relayCommitted(postCommitCtx, request, result, memberID)
+	})
+	return result, nil
+}
+
+func (application *InteractiveMutationApplication) relayCommitted(
+	ctx context.Context,
+	request core.ApplyRequest,
+	result core.ApplyResult,
+	memberID auth.MemberID,
+) {
+	relayErr := application.relay.RelayCommitted(ctx, AcceptedInteractiveMutation{
 		Origin:               application.origin,
 		Request:              request,
 		Result:               result,
@@ -113,7 +128,7 @@ func (application *InteractiveMutationApplication) Apply(
 		ActorMemberID:        memberID,
 	})
 	if relayErr == nil {
-		return result, nil
+		return
 	}
 
 	attrs := []any{
@@ -128,9 +143,7 @@ func (application *InteractiveMutationApplication) Apply(
 	if errors.As(relayErr, &relayFailure) {
 		attrs = append(attrs, relayFailure.logAttrs()...)
 	}
-	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", attrs...)
-
-	return result, nil
+	slog.WarnContext(ctx, "Interactive AI document relay failed; transactional content event retained", attrs...)
 }
 
 // interactiveOriginLabel turns the origin enum into "mcp" or "in_editor_ai".

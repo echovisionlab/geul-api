@@ -16,6 +16,9 @@
 // use-case unit test. A domain that still works on *gorm.DB uses Runner and
 // Spec, the StoreRunner and StoreSpec of the gorm transaction itself.
 //
+// InSharedTransaction lets mutations of different domains join one transaction
+// and commit or roll back together, each in its own savepoint.
+//
 // It wraps those primitives and does not reimplement them. A domain that has
 // moved to Run no longer opens transactions or calls authzmutation.Execute
 // itself; internal/architecture enforces that per migrated package.

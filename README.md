@@ -165,16 +165,16 @@ Set `IMGPROXY_KEY` and `IMGPROXY_SALT` to the same hex secrets as imgproxy and
 
 ### MCP menu discovery
 
-`menu_list` returns authorized Menu UUIDs, management names, and source locales,
-with bounded `limit`/`offset` pagination. `menu_locations_get` returns only the
+`document_list` with `document_type=menu` returns authorized Menu UUIDs, management
+names, and source locales, with bounded `limit`/`offset` pagination. `menu_locations_get` returns only the
 four menu assignments from Site Settings: header, secondary, footer, and avatar
 dropdown. Unassigned locations are `null`; menu names do not imply placement.
 Both tools retain their owning services' existing permissions. The location
 reader requires administrator Site Settings view permission and does not expose
 other site settings.
 
-Use the selected Menu UUID as `d` with `p=menu` in
-`document_open`, `document_read`, `document_catalog`, and `document_apply`.
+Use the selected Menu UUID as `document_id` with `document_type=menu` in
+`document_read`, `document_catalog`, and `document_apply`.
 Read the source locale, current revisions, and stable menu item handles before
 editing. These discovery tools do not create menus or change site assignments.
 
@@ -205,14 +205,25 @@ default) plus API cleanup time; Compose allows 140 seconds.
 values after a successful update. Their output schemas omit `changed`: the owning
 API does not report whether persistence changed, so an equal-value update must
 not be counted as a write. Clients should use the output schemas returned by
-`tools/list`; the MCP server implementation version is `15`.
+`tools/list`; the MCP server implementation version is `22`.
+
+Document tools name every argument and result field in full, and operations and
+rich text are named objects. `document_text_replace` and `document_text_format`
+take many edits across documents and locales in one call and need no read. Each
+document's edits commit in one transaction, across its locales and any
+`translations` on a source edit, and a failure leaves that document unchanged
+without undoing the others, and `dry_run` runs an edit and rolls it back to show
+what would change. `document_list` and `document_search` cover all 15 document
+types; the search reads only the documents the database index names as candidates
+and reads every document when asked with `exhaustive` or when the index is missing.
+`document_publish`, `document_delete` and `translation_units_put` also take many
+documents in one call.
 
 Administrator document workflows include settings reads, typed content and
 metadata edits, publication, withdrawal, and existing version and File controls.
-`post_settings_get` returns the settings revision required by
-`post_settings_update`; `page_settings_get` returns the Page layout and display
-settings. Page layout edits use `document_metadata_update` with the current
-source-document revision. `post_unpublish` moves a published Post, or an archived
+`document_settings_get` returns the settings revision required by
+`post_settings_update` and the Page layout and display settings. Page layout edits use `document_metadata_update` with the current
+source-document revision. `document_publish` with `action=unpublish` moves a published Post, or an archived
 Post managed by an administrator, directly to draft without republishing it.
 
 Program Event management reuses its owning create, settings, publish, archive,
@@ -228,8 +239,8 @@ seven native relation setters. Read `release_relations_get` first and pass the
 exact observed arrays back to the relevant setter. Setters return native
 `success`; a fresh relation read is a separate operation. Track tools cover
 creation, settings, credits, deletion, and complete release ordering. Track
-publication follows its Release. `genre_list`, `style_list`, and `format_list`
-resolve music references.
+publication follows its Release. `reference_search` with `reference_type` genre,
+style or format resolves music references.
 
 `file_upload` imports a ChatGPT attachment directly into the File library without
 a Post or Page association. Its top-level `file` field uses OpenAI's
@@ -268,12 +279,13 @@ settings, and deletion. Map Theme tools cover discovery, resolution, creation,
 copying, deletion, default selection, and full snapshot editing with its actual
 revision. Snapshot edits use the current request actor's fresh permission,
 revision check, and audit transaction. Neither Map domain has a publication
-lifecycle. `form_list` and `post_series_list` resolve Page block dependencies.
+lifecycle. `document_list` with `document_type` form or post_series resolves Page
+block dependencies.
 
 `member_admin_list` and `member_admin_get` reuse the administrator Member APIs,
 including live authorization and personal-data access auditing. Their compact
 account projection excludes provider identifiers and authentication credentials.
-It includes the avatar asset ID; `member_tag_list` resolves its tag IDs without
+It includes the avatar asset ID; `reference_search with reference_type=member_tag` resolves its tag IDs without
 returning individual Member data.
 
 `site_settings_get` reads administrator settings and source File bindings;

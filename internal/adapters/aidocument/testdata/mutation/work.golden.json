@@ -3,49 +3,49 @@
   "operation_handles": [
     {
       "operation": "set field",
-      "kind": "fs",
+      "kind": "set_field",
       "handles": [
         "field:block-a/field-a"
       ]
     },
     {
       "operation": "set nested field",
-      "kind": "fs",
+      "kind": "set_field",
       "handles": [
         "field:block-a/field-a/field:nested"
       ]
     },
     {
       "operation": "set relation field",
-      "kind": "fs",
+      "kind": "set_field",
       "handles": [
         "field:block-a/relation-a/item-a/field-a"
       ]
     },
     {
       "operation": "unset field",
-      "kind": "fu",
+      "kind": "unset_field",
       "handles": [
         "field:block-a/field-a"
       ]
     },
     {
       "operation": "insert block",
-      "kind": "bi",
+      "kind": "insert_block",
       "handles": [
         "block:block-b"
       ]
     },
     {
       "operation": "delete block",
-      "kind": "bd",
+      "kind": "delete_block",
       "handles": [
         "block:block-a"
       ]
     },
     {
       "operation": "move block",
-      "kind": "bm",
+      "kind": "move_block",
       "handles": [
         "block:block-a",
         "block:parent-a"
@@ -53,14 +53,14 @@
     },
     {
       "operation": "replace block kind",
-      "kind": "bk",
+      "kind": "replace_block_kind",
       "handles": [
         "block:block-a"
       ]
     },
     {
       "operation": "insert relation item",
-      "kind": "ri",
+      "kind": "insert_relation_item",
       "handles": [
         "relation-item:block-a/relation-a/item-b",
         "relation:block-a/relation-a"
@@ -68,7 +68,7 @@
     },
     {
       "operation": "delete relation item",
-      "kind": "rd",
+      "kind": "delete_relation_item",
       "handles": [
         "relation-item:block-a/relation-a/item-a",
         "relation:block-a/relation-a"
@@ -76,7 +76,7 @@
     },
     {
       "operation": "move relation item",
-      "kind": "rm",
+      "kind": "move_relation_item",
       "handles": [
         "relation-item:block-a/relation-a/item-a",
         "relation:block-a/relation-a",
@@ -85,28 +85,28 @@
     },
     {
       "operation": "attach file",
-      "kind": "fa",
+      "kind": "attach_file",
       "handles": [
         "field:block-a/file-field"
       ]
     },
     {
       "operation": "detach file",
-      "kind": "fd",
+      "kind": "detach_file",
       "handles": [
         "field:block-a/file-field"
       ]
     },
     {
       "operation": "create translation",
-      "kind": "lc",
+      "kind": "create_translation",
       "handles": [
         "translation:ko"
       ]
     },
     {
       "operation": "delete translation",
-      "kind": "ld",
+      "kind": "delete_translation",
       "handles": [
         "translation:ko"
       ]
@@ -117,8 +117,8 @@
       "name": "source edit",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "validate": {
         "error": {
@@ -139,8 +139,8 @@
       "name": "source edit unchanged",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "validate": {
         "error": {
@@ -161,9 +161,9 @@
       "name": "source structure",
       "locale": "en",
       "operations": [
-        "bi",
-        "bm",
-        "bd"
+        "insert_block",
+        "move_block",
+        "delete_block"
       ],
       "validate": {
         "error": {
@@ -184,15 +184,15 @@
       "name": "target edit",
       "locale": "ko",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "validate": {
         "validation": {
           "valid": true,
           "normalized": [
-            "fs",
-            "fs"
+            "set_field",
+            "set_field"
           ]
         }
       },
@@ -204,22 +204,22 @@
           "changes": [
             {
               "operation": 0,
-              "kind": "fs",
+              "kind": "set_field",
               "affected_handles": [
                 "field:document/title"
               ]
             },
             {
               "operation": 1,
-              "kind": "fs",
+              "kind": "set_field",
               "affected_handles": [
                 "field:0b000000-0000-4000-8000-000000000001/content"
               ]
             }
           ],
           "normalized": [
-            "fs",
-            "fs"
+            "set_field",
+            "set_field"
           ]
         }
       }
@@ -228,8 +228,8 @@
       "name": "document revision conflict",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "domain_error": "*aidocument.RevisionConflict: Work AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000003",
       "validate": {
@@ -251,8 +251,8 @@
       "name": "target revision conflict",
       "locale": "ko",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "domain_error": "*aidocument.RevisionConflict: Work AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000001",
       "validate": {
@@ -290,8 +290,8 @@
       "name": "domain invalid mutation error",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "domain_error": "*fmt.wrapError: golden domain rejection: invalid content block mutation",
       "validate": {
@@ -313,8 +313,8 @@
       "name": "domain File reference error",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "domain_error": "*fmt.wrapError: golden File rejection: invalid content block file reference",
       "validate": {
@@ -336,8 +336,8 @@
       "name": "domain InvalidArgument error",
       "locale": "en",
       "operations": [
-        "fs",
-        "fs"
+        "set_field",
+        "set_field"
       ],
       "domain_error": "*connect.Error: invalid_argument: batch: golden domain rejection",
       "validate": {
@@ -359,7 +359,7 @@
       "name": "domain File reference error on attach",
       "locale": "en",
       "operations": [
-        "fa"
+        "attach_file"
       ],
       "domain_error": "*fmt.wrapError: golden File rejection: invalid content block file reference",
       "validate": {

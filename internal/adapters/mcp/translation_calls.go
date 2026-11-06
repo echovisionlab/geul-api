@@ -30,27 +30,6 @@ func (tools *TranslationTools) listTranslations(ctx context.Context, _ string, c
 	))
 }
 
-func (tools *TranslationTools) getTranslation(ctx context.Context, _ string, call toolCall[translationGetArguments]) (mcpserver.ToolResult, error) {
-	var input translationGetArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	target, err := translationTarget(input.translationTargetArguments)
-	if err != nil {
-		return executionError(err)
-	}
-	if err := validateCompactLocale(input.Locale); err != nil {
-		return executionError(err)
-	}
-	entry, err := tools.application.GetEntityTranslation(ctx, translationapp.GetEntityTranslationQuery{
-		Target: translationapp.TargetFromMessage(target), Locale: string(input.Locale),
-	})
-	if err != nil {
-		return translationCallError(err)
-	}
-	return translationStructuredResult(encodeTranslationEntry(target, translationapp.EntryMessage(entry)))
-}
-
 func (tools *TranslationTools) exportXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFExportArguments]) (mcpserver.ToolResult, error) {
 	arguments := call.Arguments
 	command, err := translationXLIFFExportCommand(arguments)

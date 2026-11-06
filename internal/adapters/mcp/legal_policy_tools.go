@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	ToolPolicyList           = "policy_list"
 	ToolPolicyGet            = "policy_get"
 	ToolPolicyCreate         = "policy_create"
 	ToolPolicySchedule       = "policy_schedule"
@@ -23,7 +22,6 @@ const (
 )
 
 var legalPolicyTools = toolRegistry[LegalPolicyTools]{
-	defineTool(oauthTool(ToolPolicyList, "List legal policies", "List authorized Terms of Service or Privacy Policy versions, optionally filtered by lifecycle status. Use returned document_id UUIDs with policy_get or document_read (p=terms or p=privacy).", policyListInputJSONSchema, policyListOutputJSONSchema, true, false), (*LegalPolicyTools).list),
 	defineTool(oauthTool(ToolPolicyGet, "Get legal policy", "Read legal policy metadata, lifecycle and current document_revision without returning the body. Read the body with document_read using the returned source_locale. Source title and body edits are allowed in every lifecycle with the required permissions; use document_metadata_update and document paragraph/block tools. Editing sends no notice email.", policyIDInputJSONSchema, policyOutputJSONSchema, true, false), (*LegalPolicyTools).policyCommand),
 	defineTool(oauthTool(ToolPolicyCreate, "Create legal policy version", "Create a new draft Terms of Service or Privacy Policy version with an empty typed document. Creation sends no notice email. The existing service selects source_locale from the caller preference and site defaults; use the returned locale for document tools. Fill title/body with document_metadata_update and document paragraph/block tools, then explicitly schedule or activate to start notice delivery.", policyCreateInputJSONSchema, policyOutputJSONSchema, false, false), (*LegalPolicyTools).create),
 	defineTool(oauthTool(ToolPolicySchedule, "Schedule legal policy", "Schedule a draft legal policy using its exact current document_revision as expected_document_revision and an RFC 3339 effective_from instant. This starts the existing notice email flow: advance notice is due seven days before effect (or immediately when closer), followed by an effective notice at activation. Reread and reassess after stale revisions; never blindly retry.", policyScheduleInputJSONSchema, policyMutationOutputJSONSchema, false, true), (*LegalPolicyTools).policyCommand),
@@ -106,54 +104,6 @@ func (tools *LegalPolicyTools) create(ctx context.Context, _ string, call toolCa
 	return contentResult(output)
 }
 
-func (tools *LegalPolicyTools) list(ctx context.Context, _ string, call toolCall[policyListArguments]) (mcpserver.ToolResult, error) {
-	arguments := call.Arguments
-
-	var input policyListArguments
-	if err := call.Decode(&input); err != nil {
-		return executionError(err)
-	}
-	if err := rejectNullArguments(arguments, "status", "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	if err := validatePolicyType(input.DocumentType); err != nil {
-		return executionError(err)
-	}
-	limit := int32(20)
-	if input.Limit != nil {
-		limit = *input.Limit
-	}
-	if limit < 1 || limit > 50 || input.Offset < 0 {
-		return executionError(errors.New("limit must be 1..50 and offset must be non-negative"))
-	}
-	if input.Status != nil {
-		switch *input.Status {
-		case "draft", "scheduled", "active", "archived":
-		default:
-			return executionError(errors.New("status must be draft, scheduled, active, or archived"))
-		}
-	}
-	kind := legal.PolicyKind(input.DocumentType)
-	query := legal.ListPolicyVersionsQuery{Limit: limit, Offset: input.Offset}
-	if input.Status != nil {
-		status, _ := legal.PolicyStatus(kind, *input.Status)
-		query.Status = &status
-	}
-	listed, err := tools.policies.ListPolicyVersions(ctx, kind, query)
-	if err != nil {
-		return expectedToolError(err)
-	}
-	policies := make([]map[string]any, 0, len(listed.Versions))
-	for _, policy := range listed.Versions {
-		policies = append(policies, policyOutput(kind, policy))
-	}
-	var nextOffset any
-	if listed.HasMore {
-		nextOffset = int64(listed.Offset) + int64(listed.Limit)
-	}
-	return contentResult(map[string]any{"policies": policies, "total": listed.Total, "next_offset": nextOffset})
-}
-
 func (tools *LegalPolicyTools) callPolicy(ctx context.Context, name string, kind legal.PolicyKind, input policyArguments, effectiveFrom *time.Time) (mcpserver.ToolResult, error) {
 	if name == ToolPolicyGet {
 		policy, err := tools.policies.GetPolicyVersion(ctx, kind, legal.GetPolicyVersionQuery{ID: input.DocumentID})
@@ -213,13 +163,6 @@ var _ ToolProvider = (*LegalPolicyTools)(nil)
 type policyCreateArguments = struct {
 	DocumentType string  `json:"document_type"`
 	Title        *string `json:"title,omitempty"`
-}
-
-type policyListArguments = struct {
-	DocumentType string  `json:"document_type"`
-	Status       *string `json:"status,omitempty"`
-	Limit        *int32  `json:"limit,omitempty"`
-	Offset       int32   `json:"offset,omitempty"`
 }
 
 func (tools *LegalPolicyTools) policyCommand(ctx context.Context, name string, call toolCall[policyArguments]) (mcpserver.ToolResult, error) {

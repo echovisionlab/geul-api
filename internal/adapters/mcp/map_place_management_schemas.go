@@ -7,7 +7,9 @@ const mapPlaceEditableProperties = `"name":{"type":"string","minLength":1},"addr
 const mapPlaceIDProperties = `"map_place_id":{"description":"Map Place UUID from map_place_list or map_place_create.","allOf":[` + uuidJSONSchema + `]}`
 const mapPlaceGetInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["map_place_id"],"properties":{` + mapPlaceIDProperties + `}}`
 const mapPlaceGetManyInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["map_place_ids"],"properties":{"map_place_ids":{"description":"Map Place IDs from map_place_list or map_place_create.","type":"array","minItems":1,"maxItems":100,"items":` + uuidJSONSchema + `}}}`
-const mapPlaceListInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{` + programEventReferencePaginationProperties + `,"query":{"type":"string","description":"Search place name or address; omitted or empty lists all places."}}}`
+const mapPlaceListPaginationProperties = `"limit":{"type":"integer","minimum":1,"maximum":100,"default":20},"offset":{"type":"integer","minimum":0,"maximum":2147483647,"default":0}`
+
+const mapPlaceListInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{` + mapPlaceListPaginationProperties + `,"query":{"type":"string","description":"Search place name or address; omitted or empty lists all places."}}}`
 const mapPlaceCreateInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["name","address","lat","lng"],"properties":{` + mapPlaceEditableProperties + `}}`
 const mapPlaceSettingsUpdateInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["map_place_id"],"properties":{` + mapPlaceIDProperties + `,` + mapPlaceEditableProperties + `,"clear_image":{"type":"boolean","description":"Remove the current image; takes precedence over image_file_id when both are supplied."}}}`
 
