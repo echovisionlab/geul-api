@@ -1,5 +1,23 @@
 # Changelog
 
+## [7.0.0](https://github.com/echovisionlab/geul-api/compare/v6.2.0...v7.0.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** finish document work in fewer requests
+
+### Features
+
+* **mcp:** finish document work in fewer requests ([9bd53b2](https://github.com/echovisionlab/geul-api/commit/9bd53b29a25e91ed8903ea57e326a691da4d42a1))
+* **mcp:** keep authors to their own documents and read searches in batches ([bec0b2d](https://github.com/echovisionlab/geul-api/commit/bec0b2df16e2e93f205281a8889959400f14a828))
+* **mcp:** let a Label's owner or manager find it by search ([65a2293](https://github.com/echovisionlab/geul-api/commit/65a22932a9b1bd292e53314aae651a514feafff4))
+
+
+### Bug Fixes
+
+* keep a quote in a duplicate value inside its quotes ([294a4c9](https://github.com/echovisionlab/geul-api/commit/294a4c922705607b4f3b2b3e022ba3cd569d1f1a))
+
 ## [6.2.0](https://github.com/echovisionlab/geul-api/compare/v6.1.2...v6.2.0) (2026-11-05)
 
 
