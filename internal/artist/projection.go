@@ -84,26 +84,14 @@ func (s *Service) CheckArtistSlugAvailable(ctx context.Context, query CheckArtis
 	return available, err
 }
 
-// getArtistLabelIDs returns the Artist's linked Labels in link order,
-// without draft Labels.
+// getArtistLabelIDs returns the Artist's Labels in link order. Draft Labels
+// are among them, because their people hold authority over the Artist too.
 func (s *Service) getArtistLabelIDs(ctx context.Context, artistID string) ([]string, error) {
 	var labelIDs []string
 	err := s.units.Read(ctx, func(store Store) error {
-		linked, err := store.LabelIDsInLinkOrder(ctx, artistID)
-		if err != nil {
-			return err
-		}
-		drafts, err := store.DraftLabelIDs(ctx, linked)
-		if err != nil {
-			return err
-		}
-		labelIDs = make([]string, 0, len(linked))
-		for _, labelID := range linked {
-			if !drafts[labelID] {
-				labelIDs = append(labelIDs, labelID)
-			}
-		}
-		return nil
+		var err error
+		labelIDs, err = store.LabelIDsInLinkOrder(ctx, artistID)
+		return err
 	})
 	return labelIDs, err
 }

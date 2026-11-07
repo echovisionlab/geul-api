@@ -40,12 +40,9 @@ func TestPostgresStoreKeepsTheArtistStoreContractIntegration(t *testing.T) {
 				return id
 			},
 			SeedDocument: seedDocument,
-			SeedLabel: func(t *testing.T, title string, draft bool) string {
+			SeedLabel: func(t *testing.T, title string) string {
 				id := uuid.NewString()
 				status := "LABEL_STATUS_PUBLISHED"
-				if draft {
-					status = "LABEL_STATUS_DRAFT"
-				}
 				require.NoError(t, db.Exec(`INSERT INTO label (id, status, source_locale, content_document_id) VALUES (?, ?, 'en', ?)`, id, status, seedDocument(t)).Error)
 				require.NoError(t, db.Exec(`INSERT INTO label_translation (entity_id, locale, title, created_at, updated_at) VALUES (?, 'en', ?, now(), now())`, id, title).Error)
 				return id

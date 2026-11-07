@@ -135,7 +135,7 @@ func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	require.True(t, deleted.Msg.Success)
 }
 
-// A manager finds their Label by a search through this lookup, and no one else's.
+// This lookup is what a search finds of Labels: a manager's own, and no one else's.
 func TestOwnedDocumentIDsAreTheLabelsTheCallerMayViewIntegration(t *testing.T) {
 	t.Parallel()
 	db := orytest.NewIntegrationDB(t)

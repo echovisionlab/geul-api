@@ -23,9 +23,8 @@ type Harness struct {
 	// SeedDocument stores an empty compact content document and returns
 	// its ID.
 	SeedDocument func(t *testing.T) string
-	// SeedLabel stores a Label with its source title, a draft one when
-	// draft is set, and returns its ID.
-	SeedLabel func(t *testing.T, title string, draft bool) string
+	// SeedLabel stores a Label with its source title.
+	SeedLabel func(t *testing.T, title string) string
 }
 
 // FakeHarness is the Harness of the fake Store.
@@ -39,9 +38,9 @@ func FakeHarness() Harness {
 			return id
 		},
 		SeedDocument: func(*testing.T) string { return uuid.NewString() },
-		SeedLabel: func(_ *testing.T, title string, draft bool) string {
+		SeedLabel: func(_ *testing.T, title string) string {
 			id := uuid.NewString()
-			store.PutLabel(id, title, draft)
+			store.PutLabel(id, title)
 			return id
 		},
 	}
@@ -150,7 +149,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"listing counts every match and keeps published, named, linked and searched artists": func(t *testing.T, h Harness) {
 		suffix := uuid.NewString()[:8]
-		labelID := h.SeedLabel(t, "Listing label", false)
+		labelID := h.SeedLabel(t, "Listing label")
 		published := insert(t, h, func(value *artist.Artist) { value.Status = artist.StatusPublished })
 		draft := insert(t, h, nil)
 		other := insert(t, h, func(value *artist.Artist) { value.Status = artist.StatusPublished })
@@ -226,7 +225,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.NoError(t, err)
 			require.Equal(t, artist.DocumentMetadata{
 				RealName: text("After"), CountryCode: text("JP"), Website: text("https://kept.example"),
-				SocialLinks: map[string]string{}, ParentArtistID: &parent.ID,
+				SocialLinks: map[string]string{},
 			}, metadata)
 			parentID, err := store.EntityParent(ctx, value.ID)
 			require.NoError(t, err)
@@ -236,7 +235,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"label links keep their order and are replaced whole": func(t *testing.T, h Harness) {
 		value := insert(t, h, nil)
-		first, second := h.SeedLabel(t, "First label", false), h.SeedLabel(t, "Second label", true)
+		first, second := h.SeedLabel(t, "First label"), h.SeedLabel(t, "Second label")
 		ordered := []string{second, first}
 		transact(t, h, func(ctx context.Context, store artist.Store) error {
 			return store.ReplaceLabelIDs(ctx, value.ID, ordered)
@@ -252,9 +251,6 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			titles, err := store.LabelTitles(ctx, []string{first, second, uuid.NewString()})
 			require.NoError(t, err)
 			require.Equal(t, map[string]string{first: "First label", second: "Second label"}, titles)
-			drafts, err := store.DraftLabelIDs(ctx, ordered)
-			require.NoError(t, err)
-			require.Equal(t, map[string]bool{second: true}, drafts)
 			require.NoError(t, store.ReplaceLabelIDs(ctx, value.ID, []string{first}))
 			linked, err = store.LabelIDsInLinkOrder(ctx, value.ID)
 			require.NoError(t, err)

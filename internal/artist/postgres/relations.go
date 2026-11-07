@@ -38,10 +38,6 @@ func (s *store) LabelTitles(ctx context.Context, labelIDs []string) (map[string]
 	return s.ports.Labels.LabelTitles(ctx, s.tx, labelIDs)
 }
 
-func (s *store) DraftLabelIDs(ctx context.Context, labelIDs []string) (map[string]bool, error) {
-	return s.ports.Labels.DraftLabelIDs(ctx, s.tx, labelIDs)
-}
-
 func (s *store) CountReleasesByArtist(ctx context.Context, artistIDs []string) (map[string]int32, error) {
 	return s.ports.Releases.CountReleasesByArtist(ctx, s.tx, artistIDs)
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist/artisttest"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -42,14 +41,10 @@ func (f roomFixture) metadata(t *testing.T, locale string, update *artist.Docume
 
 func TestUpdateArtistDocumentMetadataSavesTheArtistSpecificFields(t *testing.T) {
 	f := newRoomFixture(t)
-	first, second := uuid.NewString(), uuid.NewString()
-	f.h.store.PutLabel(first, "First", false)
-	f.h.store.PutLabel(second, "Second", true)
 	before := f.h.revision(t, f.artist.ID)
 
 	saved, err := f.metadata(t, "en", &artist.DocumentMetadataUpdate{
 		RealName: set(" Real Name "), SocialLinksPresent: true, SocialLinks: map[string]string{"site": "https://artist.example"},
-		LabelIDsPresent: true, LabelIDs: []string{second, first},
 	}, before.String())
 
 	require.NoError(t, err)
@@ -59,45 +54,17 @@ func TestUpdateArtistDocumentMetadataSavesTheArtistSpecificFields(t *testing.T) 
 	stored, _ := f.h.store.Artist(f.artist.ID)
 	require.Equal(t, "Real Name", *stored.RealName)
 	require.Equal(t, map[string]string{"site": "https://artist.example"}, stored.SocialLinks)
-	labels := []string{first, second}
-	if second < first {
-		labels = []string{second, first}
-	}
-	require.Equal(t, labels, f.h.store.LinkedLabels(f.artist.ID), "Labels are stored in ID order")
 	require.Empty(t, f.h.audit.Records(), "document-metadata saves have never been audited")
-	require.Empty(t, f.h.checker.Applied(), "only a parent change writes relationships")
+	require.Empty(t, f.h.checker.Applied(), "a metadata save writes no relationships")
 
 	again, err := f.metadata(t, "en", &artist.DocumentMetadataUpdate{
-		RealName: set("Real Name"), LabelIDsPresent: true, LabelIDs: []string{first, second},
+		RealName: set("Real Name"),
 	}, saved.Advance.DocumentRevision.String())
 	require.NoError(t, err)
 	require.False(t, again.Advance.Changed, "current values are a no-op")
-
-	cleared, err := f.metadata(t, "en", &artist.DocumentMetadataUpdate{LabelIDsPresent: true}, again.Advance.DocumentRevision.String())
-	require.NoError(t, err)
-	require.True(t, cleared.Advance.Changed)
-	require.Empty(t, f.h.store.LinkedLabels(f.artist.ID), "present but empty Labels clear them")
-}
-
-func TestUpdateArtistDocumentMetadataMovesTheParentRelationship(t *testing.T) {
-	f := newRoomFixture(t)
-	parent := f.h.seedArtist(t, "Parent")
-
-	saved, err := f.metadata(t, "en", &artist.DocumentMetadataUpdate{ParentArtistID: set(parent.ID)}, f.h.revision(t, f.artist.ID).String())
-
-	require.NoError(t, err)
-	require.True(t, saved.Advance.Changed)
-	stored, _ := f.h.store.Artist(f.artist.ID)
-	require.Equal(t, parent.ID, *stored.ParentArtistID)
-	touch, err := policyv1.Artist.TouchParent(f.artist.ID, parent.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]policyv1.RelationshipMutation{{touch}}, f.h.checker.Applied())
-	require.Equal(t, 2, f.h.store.ParentGraphLocks(), "a reparent takes the hierarchy lock before the content fence and validates under it")
 }
 
 func TestUpdateArtistDocumentMetadataRejections(t *testing.T) {
-	missingLabel := uuid.NewString()
-	duplicate := uuid.NewString()
 	for _, test := range []struct {
 		name    string
 		locale  string
@@ -112,12 +79,6 @@ func TestUpdateArtistDocumentMetadataRejections(t *testing.T) {
 			code: connect.CodeInvalidArgument},
 		{name: "empty update", locale: "en", update: &artist.DocumentMetadataUpdate{},
 			code: connect.CodeInvalidArgument, message: "update: at least one metadata value is required"},
-		{name: "an unknown Label", locale: "en", update: &artist.DocumentMetadataUpdate{LabelIDsPresent: true, LabelIDs: []string{missingLabel}},
-			code: connect.CodeInvalidArgument, message: "label_ids: contains a Label that does not exist"},
-		{name: "a duplicate Label", locale: "en", update: &artist.DocumentMetadataUpdate{LabelIDsPresent: true, LabelIDs: []string{duplicate, " " + duplicate}},
-			code: connect.CodeInvalidArgument, message: "label_ids: must contain unique Label IDs"},
-		{name: "an invalid Label ID", locale: "en", update: &artist.DocumentMetadataUpdate{LabelIDsPresent: true, LabelIDs: []string{"label"}},
-			code: connect.CodeInvalidArgument, message: "label_ids: must contain valid Label IDs"},
 		{name: "a stale revision", locale: "en", update: &artist.DocumentMetadataUpdate{RealName: set("Name")}, stale: true,
 			code: connect.CodeFailedPrecondition, message: "artist content revision changed; reload before saving"},
 	} {
@@ -227,7 +188,7 @@ func TestApplyArtistBlockBatchRejectsARevokedRoomAndAStrangerContributor(t *test
 func TestLoadArtistBlockDocumentShowsTheRoomOfTheSessionPrincipal(t *testing.T) {
 	f := newRoomFixture(t)
 	labelID := uuid.NewString()
-	f.h.store.PutLabel(labelID, "Label", false)
+	f.h.store.PutLabel(labelID, "Label")
 	f.h.store.LinkLabels(f.artist.ID, labelID)
 	target := "目標"
 	f.h.store.PutLocale(f.artist.ID, artist.LocaleTitle{Locale: "ja", Title: &target, UpdatedAt: time.Now().UTC()})
@@ -244,7 +205,6 @@ func TestLoadArtistBlockDocumentShowsTheRoomOfTheSessionPrincipal(t *testing.T) 
 	require.NotNil(t, room.TargetRevision)
 	require.Equal(t, "目標", *room.LocaleMetadata.Title)
 	require.Equal(t, "Room", *room.SourceMetadata.Title)
-	require.Equal(t, []string{labelID}, room.Metadata.LabelIDs)
 	require.Equal(t, f.h.revision(t, f.artist.ID).String(), room.DocumentRevision)
 
 	_, err = f.h.service.LoadArtistBlockDocument(t.Context(), artist.LoadArtistBlockDocumentQuery{
@@ -258,20 +218,6 @@ func TestLoadArtistBlockDocumentShowsTheRoomOfTheSessionPrincipal(t *testing.T) 
 		ArtistID: f.artist.ID, Locale: "ja", SessionID: sessionID,
 	})
 	requireCode(t, err, connect.CodePermissionDenied, "account is banned")
-}
-
-func TestUpdateArtistDocumentMetadataRejectsAHierarchyCycle(t *testing.T) {
-	f := newRoomFixture(t)
-	child := f.h.seedArtist(t, "Child", func(value *artist.Artist) { value.ParentArtistID = &f.artist.ID })
-	grandchild := f.h.seedArtist(t, "Grandchild", func(value *artist.Artist) { value.ParentArtistID = &child.ID })
-
-	_, err := f.metadata(t, "en", &artist.DocumentMetadataUpdate{ParentArtistID: set(grandchild.ID)}, f.h.revision(t, f.artist.ID).String())
-	requireCode(t, err, connect.CodeInvalidArgument, "parent_artist_id: would create an artist hierarchy cycle")
-	_, err = f.metadata(t, "en", &artist.DocumentMetadataUpdate{ParentArtistID: set(f.artist.ID)}, f.h.revision(t, f.artist.ID).String())
-	requireCode(t, err, connect.CodeInvalidArgument, "parent_artist_id: cannot reference the same artist")
-	stored, _ := f.h.store.Artist(f.artist.ID)
-	require.Nil(t, stored.ParentArtistID)
-	require.Empty(t, f.h.checker.Applied())
 }
 
 func TestCheckArtistSlugAvailableExcludesTheArtistItself(t *testing.T) {

@@ -76,8 +76,6 @@ import (
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -261,7 +259,8 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	require.NoError(t, err)
 	_, err = manageArtist.PublishArtist(ctx, connect.NewRequest(&managev1.PublishArtistRequest{Id: childArtist.Msg.Id}))
 	require.NoError(t, err)
-	linkArtistLabelFixture(t, db, spiceDB, contentBlocks, publisher, ctx, mainArtist.Id, mainLabel.Id)
+	_, err = manageArtist.SetArtistLabels(ctx, connect.NewRequest(&managev1.SetArtistLabelsRequest{ArtistId: mainArtist.Id, LabelIds: []string{mainLabel.Id}}))
+	require.NoError(t, err)
 	artistImageFileID := seedArtistLabelFixtureFile(t, db, "artist-image.png", "image/png", "image")
 	artistImage, err := manageArtist.SetArtistImage(ctx, connect.NewRequest(&managev1.SetArtistImageRequest{
 		ArtistId: mainArtist.Id, FileId: artistImageFileID,
@@ -580,39 +579,6 @@ func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBCli
 	})
 	require.NoError(t, err)
 	return service
-}
-
-func linkArtistLabelFixture(
-	t *testing.T,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	store *contentblock.Store,
-	publisher artistLabelAsyncPublisher,
-	ctx context.Context,
-	artistID string,
-	labelID string,
-) {
-	t.Helper()
-	var state struct {
-		Revision    string `gorm:"column:revision"`
-		Contributor string `gorm:"column:contributor"`
-	}
-	require.NoError(t, db.Raw(`
-		SELECT document.revision::text AS revision, owner.member_id::text AS contributor
-		FROM artist
-		JOIN content_document AS document ON document.id = artist.content_document_id
-		JOIN artist_owner AS owner ON owner.artist_id = artist.id
-		WHERE artist.id = ?::uuid
-		LIMIT 1
-	`, artistID).Scan(&state).Error)
-	_, err := artistdomain.NewInternalConnectHandler(newFixtureArtistService(t, db, spiceDB, store, publisher)).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
-		ArtistId: artistID, ExpectedRevision: state.Revision, Locale: "en",
-		ContributorMemberIds: []string{state.Contributor},
-		Update: &intrav1.ArtistDocumentMetadataUpdate{
-			LabelIds: &intrav1.ArtistLabelIdsValue{Values: []string{labelID}},
-		},
-	}))
-	require.NoError(t, err)
 }
 
 func artistLabelEmptyWorkDocument(locale string) *contentv1.RichTextDocument {

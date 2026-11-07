@@ -209,10 +209,8 @@ type ArtistRelations interface {
 	ReleasesOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error)
 	TracksOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error)
 	WorksOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error)
-	// LabelTitles maps each existing Label of labelIDs to its source title;
-	// DraftLabelIDs reports which are draft Labels.
+	// LabelTitles maps each existing Label of labelIDs to its source title.
 	LabelTitles(ctx context.Context, labelIDs []string) (map[string]string, error)
-	DraftLabelIDs(ctx context.Context, labelIDs []string) (map[string]bool, error)
 	// CountReleasesByArtist counts each Artist's Releases.
 	CountReleasesByArtist(ctx context.Context, artistIDs []string) (map[string]int32, error)
 	// DeleteShareLinks removes the Artist's share links.

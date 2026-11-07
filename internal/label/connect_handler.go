@@ -148,6 +148,14 @@ func (h *ConnectHandler) RemoveLabelParticipant(ctx context.Context, req *connec
 	return respond(&managev1.DeleteResponse{Success: true}, err)
 }
 
+func (h *ConnectHandler) SetLabelParent(ctx context.Context, req *connect.Request[managev1.SetLabelParentRequest]) (*connect.Response[managev1.Label], error) {
+	view, err := h.labels.SetLabelParent(ctx, SetLabelParentCommand{LabelID: req.Msg.LabelId, ParentLabelID: req.Msg.ParentLabelId})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(labelMessage(view), nil)
+}
+
 func (h *ConnectHandler) CheckLabelSlugAvailable(ctx context.Context, req *connect.Request[managev1.CheckLabelSlugAvailableRequest]) (*connect.Response[managev1.CheckLabelSlugAvailableResponse], error) {
 	available, err := h.labels.CheckLabelSlugAvailable(ctx, CheckLabelSlugAvailableQuery{Slug: req.Msg.Slug, ExcludeLabelID: req.Msg.ExcludeLabelId})
 	return respond(&managev1.CheckLabelSlugAvailableResponse{Available: available}, err)
@@ -374,7 +382,7 @@ func roomDocumentMessage(room RoomDocument) *intrav1.LoadLabelBlockDocumentRespo
 		SourceMetadata: &intrav1.LabelLocaleMetadata{Locale: room.SourceMetadata.Locale, Title: room.SourceMetadata.Title},
 		Metadata: &intrav1.LabelDocumentMetadata{
 			Slug: room.Metadata.Slug, CountryCode: room.Metadata.CountryCode, Website: room.Metadata.Website,
-			SocialLinks: room.Metadata.SocialLinks, ParentLabelId: room.Metadata.ParentLabelID,
+			SocialLinks: room.Metadata.SocialLinks,
 		},
 		Locale: room.Locale, LocaleExists: room.LocaleExists, TargetRevision: room.TargetRevision,
 		PresentLocaleValues: room.PresentLocaleValues,
@@ -393,7 +401,7 @@ func documentMetadataUpdate(update *intrav1.LabelDocumentMetadataUpdate) *Docume
 	}
 	return &DocumentMetadataUpdate{
 		Slug: stringMutation(update.Slug), CountryCode: stringMutation(update.CountryCode),
-		Website: stringMutation(update.Website), ParentLabelID: stringMutation(update.ParentLabelId),
+		Website:            stringMutation(update.Website),
 		SocialLinksPresent: update.SocialLinks != nil, SocialLinks: update.SocialLinks.GetValues(),
 	}
 }

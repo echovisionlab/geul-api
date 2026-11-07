@@ -329,6 +329,10 @@ func (s *Service) deleteLabel(ctx context.Context, store Store, command DeleteLa
 	if err != nil {
 		return labelDeletion{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
+	deleted, restored, err = withArtistLabelDeletions(command.ID, impacts, deleted, restored)
+	if err != nil {
+		return labelDeletion{}, err
+	}
 	if err := validateResourceDeletionAuthorizationBatchSize("label", deleted, restored); err != nil {
 		return labelDeletion{}, err
 	}
@@ -470,4 +474,24 @@ func (s *Service) transitionLabel(ctx context.Context, id string, transition lab
 		ID: label.ID, Changed: changed, Status: label.Status,
 		PublishedAt: label.PublishedAt, UpdatedAt: label.UpdatedAt,
 	}, nil
+}
+
+// withArtistLabelDeletions adds the Label's Artists, whose relationships point
+// at the Label and whose database links the Label's deletion removes.
+func withArtistLabelDeletions(labelID string, impacts []DeletionImpact, deleted, restored []policyv1.RelationshipMutation) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	for _, impact := range impacts {
+		if impact.Kind != ImpactArtist {
+			continue
+		}
+		remove, err := policyv1.Artist.DeleteLabel(impact.EntityID, labelID)
+		if err != nil {
+			return nil, nil, err
+		}
+		touch, err := policyv1.Artist.TouchLabel(impact.EntityID, labelID)
+		if err != nil {
+			return nil, nil, err
+		}
+		deleted, restored = append(deleted, remove), append(restored, touch)
+	}
+	return deleted, restored, nil
 }

@@ -19,7 +19,6 @@ type DocumentMetadataUpdate struct {
 	Slug               *entityparticipant.StringMutation
 	CountryCode        *entityparticipant.StringMutation
 	Website            *entityparticipant.StringMutation
-	ParentLabelID      *entityparticipant.StringMutation
 	SocialLinksPresent bool
 	SocialLinks        map[string]string
 }
@@ -37,9 +36,6 @@ func buildLabelDocumentMetadataPlan(input *DocumentMetadataUpdate) (entitypartic
 		return entityparticipant.MetadataColumns{}, err
 	}
 	if plan.Website, err = entityparticipant.ParseNullableStringUpdate("website", input.Website); err != nil {
-		return entityparticipant.MetadataColumns{}, err
-	}
-	if plan.Parent, err = entityparticipant.ParseNullableStringUpdate("parent_label_id", input.ParentLabelID); err != nil {
 		return entityparticipant.MetadataColumns{}, err
 	}
 	if err := labelEntity.Complete(&plan, input.SocialLinksPresent, input.SocialLinks); err != nil {
@@ -60,8 +56,8 @@ type UpdateLabelDocumentMetadataCommand struct {
 	ContributorMemberIDs []string
 }
 
-// UpdateLabelDocumentMetadata saves the slug, country, website, social
-// links and parent Label, moving the SpiceDB parent with it.
+// UpdateLabelDocumentMetadata saves the slug, country, website and social
+// links.
 func (s *Service) UpdateLabelDocumentMetadata(ctx context.Context, command UpdateLabelDocumentMetadataCommand) (_ contentblock.AdvanceResult, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
 
@@ -77,47 +73,35 @@ func (s *Service) UpdateLabelDocumentMetadata(ctx context.Context, command Updat
 	if err != nil {
 		return contentblock.AdvanceResult{}, err
 	}
-	var parent entityparticipant.ParentUpdate
-	if err := s.units.Read(ctx, func(store Store) error {
-		var err error
-		parent, err = labelEntity.PlanParentUpdate(ctx, store, command.LabelID, plan.Parent)
-		return err
-	}); err != nil {
-		return contentblock.AdvanceResult{}, err
-	}
 	fence := internalLabelCollaborationContentFence(command.LabelID, command.ContributorMemberIDs)
 	return s.participants.SaveMetadata(ctx, entityparticipant.MetadataSave[Store]{
-		EntityID: command.LabelID, Parent: parent, Access: contributorAccess(command.ContributorMemberIDs),
-		Save: func(ctx context.Context, store Store, writesParent bool) (contentblock.AdvanceResult, *string, error) {
-			var currentParent *string
+		Access: contributorAccess(command.ContributorMemberIDs),
+		Save: func(ctx context.Context, store Store) (contentblock.AdvanceResult, error) {
 			advanced, err := store.AdvanceContentRevision(
 				ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision}, fence,
 				func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
-					changed, parentID, err := applyLabelDocumentMetadata(ctx, store, command.LabelID, plan, parent, writesParent)
-					currentParent = parentID
+					changed, err := applyLabelDocumentMetadata(ctx, store, command.LabelID, plan)
 					return contentblock.MetadataEffect{Changed: changed}, err
 				},
 			)
 			if err != nil {
-				return contentblock.AdvanceResult{}, currentParent, normalizeLabelContentBlockError(err)
+				return contentblock.AdvanceResult{}, normalizeLabelContentBlockError(err)
 			}
-			return advanced, currentParent, nil
+			return advanced, nil
 		},
 	})
 }
 
-// applyLabelDocumentMetadata writes the changed metadata columns of the
-// Label row under the content fence. It reports whether a column changed and
-// the parent it read under the lock.
-func applyLabelDocumentMetadata(ctx context.Context, store Store, labelID string, plan entityparticipant.MetadataColumns, parent entityparticipant.ParentUpdate, writesParent bool) (bool, *string, error) {
+// applyLabelDocumentMetadata writes the changed metadata columns of the Label
+// row under the content fence. It reports whether a column changed.
+func applyLabelDocumentMetadata(ctx context.Context, store Store, labelID string, plan entityparticipant.MetadataColumns) (bool, error) {
 	current, err := store.DocumentMetadata(ctx, labelID)
 	if err != nil {
-		return false, nil, err
+		return false, err
 	}
 	var change entityparticipant.MetadataChange
-	changed, err := labelEntity.AssignColumns(ctx, store, labelID, plan, parent, writesParent, entityparticipant.MetadataRow{
-		Slug: current.Slug, CountryCode: current.CountryCode, Website: current.Website,
-		Parent: current.ParentLabelID, SocialLinks: current.SocialLinks,
+	changed, err := labelEntity.AssignColumns(ctx, plan, entityparticipant.MetadataRow{
+		Slug: current.Slug, CountryCode: current.CountryCode, Website: current.Website, SocialLinks: current.SocialLinks,
 	}, &change, func(ctx context.Context, slug string) error {
 		taken, err := store.SlugTaken(ctx, slug, labelID)
 		if err != nil {
@@ -129,10 +113,7 @@ func applyLabelDocumentMetadata(ctx context.Context, store Store, labelID string
 		return store.LockResourceRoute(ctx, slug)
 	})
 	if err != nil || !changed {
-		return false, current.ParentLabelID, err
+		return false, err
 	}
-	if err := store.UpdateDocumentMetadata(ctx, labelID, change, time.Now().UTC()); err != nil {
-		return false, current.ParentLabelID, err
-	}
-	return true, current.ParentLabelID, nil
+	return true, store.UpdateDocumentMetadata(ctx, labelID, change, time.Now().UTC())
 }

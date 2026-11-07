@@ -50,12 +50,11 @@ type DocumentRoot struct {
 
 // DocumentMetadata is the Artist metadata a collaboration room edits.
 type DocumentMetadata struct {
-	RealName       *string
-	CountryCode    *string
-	Website        *string
-	SocialLinks    map[string]string
-	Slug           *string
-	ParentArtistID *string
+	RealName    *string
+	CountryCode *string
+	Website     *string
+	SocialLinks map[string]string
+	Slug        *string
 }
 
 // RowLock is the row lock a Store read takes.

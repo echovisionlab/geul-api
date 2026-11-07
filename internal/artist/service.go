@@ -104,8 +104,8 @@ type GetArtistEditorDataQuery struct {
 	ID string
 }
 
-// EditorData is an Artist with its non-draft Labels, image revision and the
-// actions the caller may take on it.
+// EditorData is an Artist with its Labels, image revision and the actions the
+// caller may take on it.
 type EditorData struct {
 	Artist         View
 	LabelIDs       []string

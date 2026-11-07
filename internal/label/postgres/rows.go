@@ -338,14 +338,14 @@ func (s *store) DocumentRoot(ctx context.Context, labelID string, lock label.Row
 func (s *store) DocumentMetadata(ctx context.Context, labelID string) (label.DocumentMetadata, error) {
 	var row model.Label
 	if err := s.tx.WithContext(ctx).
-		Select("id", "slug", "country_code", "website", "social_links", "parent_label_id").
+		Select("id", "slug", "country_code", "website", "social_links").
 		Where("id = ?", labelID).
 		Take(&row).Error; err != nil {
 		return label.DocumentMetadata{}, labelNotFound(err)
 	}
 	return label.DocumentMetadata{
 		Slug: row.Slug, CountryCode: row.CountryCode, Website: row.Website,
-		SocialLinks: row.SocialLinks, ParentLabelID: row.ParentLabelID,
+		SocialLinks: row.SocialLinks,
 	}, nil
 }
 

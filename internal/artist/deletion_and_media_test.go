@@ -25,7 +25,7 @@ func TestPreviewDeleteArtistListsEveryRelationInDomainOrder(t *testing.T) {
 	parent := h.seedArtist(t, "Parent")
 	child := h.seedArtist(t, "Child", func(value *artist.Artist) { value.ParentArtistID = &parent.ID })
 	labelID := uuid.NewString()
-	h.store.PutLabel(labelID, "Label", true)
+	h.store.PutLabel(labelID, "Label")
 	h.store.LinkLabels(parent.ID, labelID)
 	h.store.PutRelations(parent.ID, artisttest.Relations{
 		Works:    []entityparticipant.Related{{ID: "work", DisplayName: "Work", RelationCount: 2}},
