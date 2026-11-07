@@ -26,6 +26,7 @@ import (
 type Authorizer interface {
 	mutation.Authorizer
 	entityparticipant.ActorChecker
+	LookupResources(ctx context.Context, lookup policyv1.ResourceLookup, actor policyv1.Actor) ([]string, error)
 	SnapshotResourceRelationshipDescriptors(ctx context.Context, plan policyv1.RelationshipSnapshotPlan) ([]auth.RelationshipSnapshot, auth.ZedToken, error)
 }
 

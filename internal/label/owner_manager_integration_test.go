@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 
+	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -132,4 +133,34 @@ func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.True(t, deleted.Msg.Success)
+}
+
+// A manager finds their Label by a search through this lookup, and no one else's.
+func TestOwnedDocumentIDsAreTheLabelsTheCallerMayViewIntegration(t *testing.T) {
+	t.Parallel()
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
+	adminID, managerID, outsiderID := orytest.IntegrationUUID(), orytest.IntegrationUUID(), orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Label Admin")
+	orytest.SeedPostIntegrationIdentity(t, db, managerID, "Label Manager")
+	orytest.SeedPostIntegrationIdentity(t, db, outsiderID, "Label Outsider")
+	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	service := newTestService(t, integrationDeps{DB: db, SpiceDB: stack.SpiceDBClient})
+	handler := label.NewConnectHandler(service)
+	adminCtx := labelIntegrationAdminCtx(adminID)
+	slug := "label-owned-" + orytest.IntegrationUUID()
+	created, err := handler.CreateLabel(adminCtx, connect.NewRequest(&managev1.CreateLabelRequest{Name: "Owned Label", Slug: &slug}))
+	require.NoError(t, err)
+	_, err = handler.SetLabelParticipant(adminCtx, connect.NewRequest(&managev1.SetLabelParticipantRequest{
+		LabelId: created.Msg.Id, MemberId: orytest.PostIntegrationMemberID(managerID), Role: managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER,
+	}))
+	require.NoError(t, err)
+
+	managed, err := service.OwnedDocumentIDs(labelIntegrationAdminCtx(managerID))
+	require.NoError(t, err)
+	require.Contains(t, managed, created.Msg.Id)
+
+	unrelated, err := service.OwnedDocumentIDs(labelIntegrationAdminCtx(outsiderID))
+	require.NoError(t, err)
+	require.NotContains(t, unrelated, created.Msg.Id)
 }
