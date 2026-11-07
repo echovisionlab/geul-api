@@ -249,7 +249,7 @@ jobs:
     env:
       GOPRIVATE: github.com/echovisionlab/*
       GOWORK: "off"
-      INTEGRATION_SCHEMA_REVISION: f5243e3cb3ed7a2f984da2dec79994128081e4b3 # Machine translation removal (main)
+      INTEGRATION_SCHEMA_REVISION: f3000278ba6dbdf53f6384155d89e2d6384ad273 # Document search index (main)
       INTEGRATION_POSTGRES_IMAGE: registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138
       # Sibling checkouts the backend band starts (Identity config and Kratos,
       # editor-collab with its local Common/Contracts/Telemetry sources). Pin
@@ -258,7 +258,7 @@ jobs:
       GEUL_TEST_KRATOS_IMAGE: registry.rawsector.com/echovisionlab/geul-identity-kratos@sha256:e9d06c5765c16c5e4e410bca8cd1abdfb7ce1fd13e772a4e9936fe6c95ba4094
       INTEGRATION_COLLAB_REVISION: 977edcf747aa9e4ce4ccc355e2e7170a77cf3dc1 # v0.7.0
       INTEGRATION_COMMON_REVISION: 8faddac1a051b786c88f677950c4a415012c837d # v0.11.1
-      INTEGRATION_CONTRACTS_REVISION: eaa6e90bf160330485f1d49cef415dcd265c5aea # v0.17.0
+      INTEGRATION_CONTRACTS_REVISION: ac44864ddbab818123416307fea7f13fc543b756 # v0.18.0
       INTEGRATION_TELEMETRY_REVISION: 7eee7bbbdce037c2c25ba8e0fa2cc4976c7f9d5b # v0.7.0
     steps:
       - name: Checkout
