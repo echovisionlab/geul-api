@@ -334,6 +334,9 @@ type LocaleChange struct {
 type PostRelations interface {
 	// TaxonomyIDs lists the Post's Category and Tag IDs, each ordered.
 	TaxonomyIDs(ctx context.Context, postID string) (categoryIDs, tagIDs []string, err error)
+	// AIDocumentBatchRows reads what the AI documents of many Posts are built from,
+	// with one statement per table.
+	AIDocumentBatchRows(ctx context.Context, postIDs []string) (AIDocumentBatchRows, error)
 	// CountTaxonomy counts the Categories or Tags among ids.
 	CountTaxonomy(ctx context.Context, taxonomy Taxonomy, ids []string) (int64, error)
 	// InsertTaxonomyLinks files the new Post under ids, one row each.

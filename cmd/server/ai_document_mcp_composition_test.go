@@ -106,6 +106,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			editorCollabHTTPClient:    http.DefaultClient,
 			documentTransaction:       compositionDocumentTransaction,
 			documentSearchIndex:       compositionDocumentSearchIndex{},
+			documentSearchScopes:      compositionDocumentSearchScopes{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -221,6 +222,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			editorCollabHTTPClient:    http.DefaultClient,
 			documentTransaction:       compositionDocumentTransaction,
 			documentSearchIndex:       compositionDocumentSearchIndex{},
+			documentSearchScopes:      compositionDocumentSearchScopes{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -249,6 +251,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 			editorCollabHTTPClient:    http.DefaultClient,
 			documentTransaction:       compositionDocumentTransaction,
 			documentSearchIndex:       compositionDocumentSearchIndex{},
+			documentSearchScopes:      compositionDocumentSearchScopes{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -301,6 +304,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 			editorCollabHTTPClient:    http.DefaultClient,
 			documentTransaction:       compositionDocumentTransaction,
 			documentSearchIndex:       compositionDocumentSearchIndex{},
+			documentSearchScopes:      compositionDocumentSearchScopes{},
 		},
 		&compositionSignalPublisher{},
 		nil,
@@ -376,8 +380,9 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
 			editorCollabURL:           "http://collab.invalid", editorCollabHTTPClient: http.DefaultClient,
-			documentTransaction: compositionDocumentTransaction,
-			documentSearchIndex: compositionDocumentSearchIndex{},
+			documentTransaction:  compositionDocumentTransaction,
+			documentSearchIndex:  compositionDocumentSearchIndex{},
+			documentSearchScopes: compositionDocumentSearchScopes{},
 		}, &compositionSignalPublisher{}, nil,
 	)
 	require.NoError(t, err)
@@ -507,6 +512,12 @@ type compositionFileReferences struct {
 // which these tests of the composition do not reach.
 func compositionDocumentTransaction(ctx context.Context, work func(context.Context) error) error {
 	return work(ctx)
+}
+
+type compositionDocumentSearchScopes struct{}
+
+func (compositionDocumentSearchScopes) Resolve(context.Context, []aidocument.Domain) (documentsearch.Scope, error) {
+	return documentsearch.Scope{All: true}, nil
 }
 
 // compositionDocumentSearchIndex finds nothing; these tests do not search.
@@ -787,6 +798,7 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 			editorCollabHTTPClient:    http.DefaultClient,
 			documentTransaction:       compositionDocumentTransaction,
 			documentSearchIndex:       compositionDocumentSearchIndex{},
+			documentSearchScopes:      compositionDocumentSearchScopes{},
 		},
 		&compositionSignalPublisher{}, nil,
 	)

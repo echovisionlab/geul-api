@@ -316,7 +316,7 @@ func TestTextWrittenThroughTheToolsIsFoundByTheSearchIndexIntegration(t *testing
 	index, err := searchpostgres.NewIndex(s.db)
 	require.NoError(t, err)
 	for _, text := range []string{"Sign up", "Hello World", "old.example.test/docs"} {
-		candidates, err := index.Candidates(s.ctx, documentsearch.IndexQuery{Text: text, DocumentTypes: []core.Domain{core.DomainPage}, Limit: 100})
+		candidates, err := index.Candidates(s.ctx, documentsearch.IndexQuery{Text: text, DocumentTypes: []core.Domain{core.DomainPage}, Scope: documentsearch.Scope{All: true}, Limit: 100})
 		require.NoError(t, err, text)
 		found := false
 		for _, candidate := range candidates {

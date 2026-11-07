@@ -147,7 +147,13 @@ func TestAIDocumentMasksWhatTheCallerMayNotEdit(t *testing.T) {
 	requireAnswer(t, err, connect.CodeNotFound, "terms not found: "+archived.ID)
 	require.False(t, compiled, "the compiler runs only after the decision")
 	_, err = h.documents.LoadAIDocument(ctx, "terms", archived.ID, "en")
-	require.NoError(t, err, "view_archived still reads it")
+	require.NoError(t, err, "view still reads it")
+
+	// An AI document names the caller's own documents, so an Author who may view an
+	// archived version elsewhere does not read it here.
+	h.checker.Deny(policyv1.TermsHistory.View(archived.ID))
+	_, err = h.documents.LoadAIDocument(ctx, "terms", archived.ID, "en")
+	requireAnswer(t, err, connect.CodePermissionDenied, "no permission to view this legal policy")
 
 	h.fence.Deactivate(caller.identityID)
 	_, err = h.documents.ExecuteAIDocumentMutation(ctx, "terms", archived.ID, "en", legal.AIDocumentExecutionApply, compiler)

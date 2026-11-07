@@ -58,13 +58,19 @@ func NewDocumentSearchTools(searcher DocumentSearcher) (*DocumentSearchTools, er
 	return &DocumentSearchTools{searcher: searcher}, nil
 }
 
+// DocumentSearchApplication is what a search reads documents through.
+type DocumentSearchApplication interface {
+	core.Reader
+	OpenBatch(ctx context.Context, authorized func(core.DocumentReference) bool, requests []core.LoadRequest) core.Reader
+}
+
 // DocumentSearchReader reads documents for a search, telling apart a read the caller
 // may not make from one that failed.
 type DocumentSearchReader struct {
-	application AIDocumentApplication
+	application DocumentSearchApplication
 }
 
-func NewDocumentSearchReader(application AIDocumentApplication) (*DocumentSearchReader, error) {
+func NewDocumentSearchReader(application DocumentSearchApplication) (*DocumentSearchReader, error) {
 	if interfaceValueIsNil(application) {
 		return nil, errors.New("MCP document search reader needs the document application")
 	}
@@ -72,7 +78,19 @@ func NewDocumentSearchReader(application AIDocumentApplication) (*DocumentSearch
 }
 
 func (reader *DocumentSearchReader) Read(ctx context.Context, request core.ReadRequest) (core.Projection, error) {
-	projection, err := reader.application.Read(ctx, request)
+	return documentSearchRead{reader.application}.Read(ctx, request)
+}
+
+// OpenBatch implements documentsearch.Documents.
+func (reader *DocumentSearchReader) OpenBatch(ctx context.Context, scope documentsearch.Scope, requests []core.LoadRequest) documentsearch.Reader {
+	return documentSearchRead{reader.application.OpenBatch(ctx, scope.Allows, requests)}
+}
+
+// documentSearchRead wraps a read the caller may not make in ErrAccessRefused.
+type documentSearchRead struct{ reader core.Reader }
+
+func (read documentSearchRead) Read(ctx context.Context, request core.ReadRequest) (core.Projection, error) {
+	projection, err := read.reader.Read(ctx, request)
 	if err == nil {
 		return projection, nil
 	}

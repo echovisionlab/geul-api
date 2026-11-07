@@ -32,6 +32,10 @@ func (a *exactWorkDocumentAPI) LoadAIDocument(
 	return a.state, nil
 }
 
+func (a *exactWorkDocumentAPI) LoadAIDocumentBatch(context.Context, func(string) bool, []workdomain.AIDocumentBatchRequest) ([]func() (workdomain.AIDocumentState, error), error) {
+	return nil, errors.New("batched reads are not exercised here")
+}
+
 func (a *exactWorkDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
 	workID string,

@@ -56,6 +56,9 @@ type PageRows interface {
 	// DocumentRoot reads the Page's content document reference and source
 	// locale with lock.
 	DocumentRoot(ctx context.Context, pageID string, lock RowLock) (DocumentRoot, error)
+	// AIDocumentBatchRows reads what the AI documents of many Pages are built from,
+	// with one statement per table.
+	AIDocumentBatchRows(ctx context.Context, pageIDs []string) (AIDocumentBatchRows, error)
 	// AccessPolicy reads the Page's stored access policy.
 	AccessPolicy(ctx context.Context, pageID string) (json.RawMessage, error)
 	// DocumentLayout reads the Page's document layout.

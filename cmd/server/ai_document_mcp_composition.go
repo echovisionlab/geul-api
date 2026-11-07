@@ -107,8 +107,9 @@ type aiDocumentMCPConfig struct {
 	allowedOrigins            []string
 	// documentTransaction lets one MCP call change a document's source and
 	// translations in one transaction.
-	documentTransaction documenttext.Transaction
-	documentSearchIndex documentsearch.Index
+	documentTransaction  documenttext.Transaction
+	documentSearchIndex  documentsearch.Index
+	documentSearchScopes documentsearch.Scopes
 }
 
 type contentMCPApplications struct {
@@ -252,11 +253,11 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document text tools: %w", err)
 	}
-	searchReader, err := mcpadapter.NewDocumentSearchReader(mcpApplication)
+	searchReader, err := mcpadapter.NewDocumentSearchReader(application)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document search reader: %w", err)
 	}
-	searcher, err := documentsearch.NewService(discoveryTools, searchReader, cfg.documentSearchIndex)
+	searcher, err := documentsearch.NewService(discoveryTools, searchReader, cfg.documentSearchIndex, cfg.documentSearchScopes)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize document search service: %w", err)
 	}

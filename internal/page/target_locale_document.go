@@ -93,7 +93,7 @@ func localeLock(forUpdate bool) RowLock {
 
 func loadPageTargetLocaleState(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	pageID string,
 	documentID uuid.UUID,
 	locale string,
@@ -305,7 +305,7 @@ func pageContributorUUIDs(values []string) ([]uuid.UUID, error) {
 
 // loadPageAIDocumentRoot reads the Page root with lock and its content
 // document.
-func loadPageAIDocumentRoot(ctx context.Context, store Store, pageID string, lock RowLock) (Page, uuid.UUID, error) {
+func loadPageAIDocumentRoot(ctx context.Context, store aiDocumentStateReads, pageID string, lock RowLock) (Page, uuid.UUID, error) {
 	root, err := store.FindPage(ctx, ByID, pageID, lock)
 	if err != nil {
 		if errors.Is(err, ErrPageNotFound) {

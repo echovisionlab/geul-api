@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -77,6 +78,7 @@ func (s *Service) ListAIDocuments(
 	if err != nil {
 		return AIDocumentListResult{}, err
 	}
+	scope.ArchivedIDs = viewableArchivedIDs(scope)
 	var items []AIDocumentListItem
 	var total int64
 	if err := s.units.Read(ctx, func(store Store) error {
@@ -91,23 +93,55 @@ func (s *Service) ListAIDocuments(
 	}, nil
 }
 
+// viewableArchivedIDs keeps the archived Posts the caller may also view while
+// they are not archived: an AI document list and read name the caller's own Posts,
+// not every archived Post an Author may see elsewhere.
+func viewableArchivedIDs(scope ViewScope) []string {
+	viewable := make(map[string]struct{}, len(scope.ViewIDs))
+	for _, id := range scope.ViewIDs {
+		viewable[id] = struct{}{}
+	}
+	return slices.DeleteFunc(slices.Clone(scope.ArchivedIDs), func(id string) bool {
+		_, found := viewable[id]
+		return !found
+	})
+}
+
+// OwnedDocumentIDs is the Posts the caller writes or collaborates on. With the
+// Author role they stay the caller's once archived.
+func (s *Service) OwnedDocumentIDs(ctx context.Context) ([]string, error) {
+	actor, err := currentPostActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupView())
+}
+
+func currentPostActor(ctx context.Context) (policyv1.Actor, error) {
+	user := auth.GetUser(ctx)
+	if user == nil {
+		return policyv1.Actor{}, domainerr.AuthenticationRequired()
+	}
+	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
+	if err != nil {
+		return policyv1.Actor{}, domainerr.AuthenticationRequired().WithCause(err)
+	}
+	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
+	if err != nil {
+		return policyv1.Actor{}, domainerr.AuthenticationRequired().WithCause(err)
+	}
+	return actor, nil
+}
+
 // authorizedPostScope is the Posts the caller may view: those it may view
 // while not archived, and those it may view archived.
 func (s *Service) authorizedPostScope(ctx context.Context) (ViewScope, error) {
 	if s == nil || s.units == nil || s.spiceDB == nil {
 		return ViewScope{}, domainerr.DependencyUnavailable("Post list")
 	}
-	user := auth.GetUser(ctx)
-	if user == nil {
-		return ViewScope{}, domainerr.AuthenticationRequired()
-	}
-	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
+	actor, err := currentPostActor(ctx)
 	if err != nil {
-		return ViewScope{}, domainerr.AuthenticationRequired().WithCause(err)
-	}
-	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
-	if err != nil {
-		return ViewScope{}, domainerr.AuthenticationRequired().WithCause(err)
+		return ViewScope{}, err
 	}
 	viewPostIDs, err := lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupView())
 	if err != nil {

@@ -50,28 +50,55 @@ func (repository) loadAggregate(
 	documentID uuid.UUID,
 	lockStrength string,
 ) (aggregate, error) {
-	var document documentRow
+	var rows documentRows
 	documentQuery := tx.WithContext(ctx)
 	if lockStrength != "" {
 		documentQuery = documentQuery.Clauses(clause.Locking{Strength: lockStrength})
 	}
 	if err := documentQuery.
 		Where("id = ?", documentID).
-		Take(&document).Error; err != nil {
+		Take(&rows.document).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return aggregate{}, ErrDocumentNotFound
 		}
 		return aggregate{}, fmt.Errorf("lock content document: %w", err)
 	}
-
-	result := newAggregate(documentFromRow(document))
-	var blocks []blockRow
 	if err := tx.WithContext(ctx).
 		Where("document_id = ?", documentID).
-		Find(&blocks).Error; err != nil {
+		Find(&rows.blocks).Error; err != nil {
 		return aggregate{}, fmt.Errorf("load content blocks: %w", err)
 	}
-	for _, block := range blocks {
+	if len(rows.blocks) == 0 {
+		return rows.aggregate()
+	}
+	blockIDs := make([]uuid.UUID, 0, len(rows.blocks))
+	for _, block := range rows.blocks {
+		blockIDs = append(blockIDs, block.ID)
+	}
+	if err := tx.WithContext(ctx).
+		Where("block_id IN ?", blockIDs).
+		Find(&rows.locales).Error; err != nil {
+		return aggregate{}, fmt.Errorf("load content block locales: %w", err)
+	}
+	if err := tx.WithContext(ctx).
+		Where("block_id IN ?", blockIDs).
+		Find(&rows.files).Error; err != nil {
+		return aggregate{}, fmt.Errorf("load content Block attachments: %w", err)
+	}
+	return rows.aggregate()
+}
+
+// documentRows is one document's stored rows, before any of them is decoded.
+type documentRows struct {
+	document documentRow
+	blocks   []blockRow
+	locales  []blockLocaleRow
+	files    []blockAttachmentRow
+}
+
+func (rows documentRows) aggregate() (aggregate, error) {
+	result := newAggregate(documentFromRow(rows.document))
+	for _, block := range rows.blocks {
 		sharedData, err := canonicalObject(block.SharedData)
 		if err != nil {
 			return aggregate{}, fmt.Errorf(
@@ -92,21 +119,7 @@ func (repository) loadAggregate(
 			},
 		}
 	}
-
-	if len(blocks) == 0 {
-		return result, nil
-	}
-	blockIDs := make([]uuid.UUID, 0, len(blocks))
-	for _, block := range blocks {
-		blockIDs = append(blockIDs, block.ID)
-	}
-	var locales []blockLocaleRow
-	if err := tx.WithContext(ctx).
-		Where("block_id IN ?", blockIDs).
-		Find(&locales).Error; err != nil {
-		return aggregate{}, fmt.Errorf("load content block locales: %w", err)
-	}
-	for _, locale := range locales {
+	for _, locale := range rows.locales {
 		localizedData, err := canonicalObject(locale.LocalizedData)
 		if err != nil {
 			return aggregate{}, fmt.Errorf(
@@ -122,14 +135,7 @@ func (repository) loadAggregate(
 		}
 		result.locales[locale.BlockID][locale.Locale] = localizedData
 	}
-
-	var files []blockAttachmentRow
-	if err := tx.WithContext(ctx).
-		Where("block_id IN ?", blockIDs).
-		Find(&files).Error; err != nil {
-		return aggregate{}, fmt.Errorf("load content Block attachments: %w", err)
-	}
-	for _, attachment := range files {
+	for _, attachment := range rows.files {
 		reference, err := fileReferenceFromAttachmentRow(attachment)
 		if err != nil {
 			return aggregate{}, err
@@ -143,6 +149,56 @@ func (repository) loadAggregate(
 			MissingMediaKind: reference.MissingMediaKind,
 		})
 		result.blocks[attachment.BlockID] = block
+	}
+	return result, nil
+}
+
+// loadDocumentRows reads many documents with one statement per table. It takes no
+// row locks: tx must be a single snapshot, which already keeps a document and its
+// rows coherent.
+func (repository) loadDocumentRows(
+	ctx context.Context,
+	tx *gorm.DB,
+	documentIDs []uuid.UUID,
+) (map[uuid.UUID]*documentRows, error) {
+	var documents []documentRow
+	if err := tx.WithContext(ctx).Where("id IN ?", documentIDs).Find(&documents).Error; err != nil {
+		return nil, fmt.Errorf("load content documents: %w", err)
+	}
+	result := make(map[uuid.UUID]*documentRows, len(documents))
+	for _, document := range documents {
+		result[document.ID] = &documentRows{document: document}
+	}
+	var blocks []blockRow
+	if err := tx.WithContext(ctx).Where("document_id IN ?", documentIDs).Find(&blocks).Error; err != nil {
+		return nil, fmt.Errorf("load content blocks: %w", err)
+	}
+	documentOfBlock := make(map[uuid.UUID]*documentRows, len(blocks))
+	// A row outside the rows already read can appear only if tx is not one snapshot.
+	for _, block := range blocks {
+		if rows, found := result[block.DocumentID]; found {
+			rows.blocks = append(rows.blocks, block)
+			documentOfBlock[block.ID] = rows
+		}
+	}
+	const blocksOfDocuments = "block_id IN (SELECT id FROM content_block WHERE document_id IN ?)"
+	var locales []blockLocaleRow
+	if err := tx.WithContext(ctx).Where(blocksOfDocuments, documentIDs).Find(&locales).Error; err != nil {
+		return nil, fmt.Errorf("load content block locales: %w", err)
+	}
+	for _, locale := range locales {
+		if rows, found := documentOfBlock[locale.BlockID]; found {
+			rows.locales = append(rows.locales, locale)
+		}
+	}
+	var files []blockAttachmentRow
+	if err := tx.WithContext(ctx).Where(blocksOfDocuments, documentIDs).Find(&files).Error; err != nil {
+		return nil, fmt.Errorf("load content Block attachments: %w", err)
+	}
+	for _, file := range files {
+		if rows, found := documentOfBlock[file.BlockID]; found {
+			rows.files = append(rows.files, file)
+		}
 	}
 	return result, nil
 }

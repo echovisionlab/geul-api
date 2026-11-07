@@ -115,7 +115,7 @@ func validateWorkSourceStorage(
 	return nil
 }
 
-func loadWorkTargetLocaleState(ctx context.Context, store Store, workID string, documentID uuid.UUID, locale string, forUpdate bool) (workTargetLocaleState, error) {
+func loadWorkTargetLocaleState(ctx context.Context, store aiDocumentStateReads, workID string, documentID uuid.UUID, locale string, forUpdate bool) (workTargetLocaleState, error) {
 	locale, err := normalizeWorkDocumentLocale(locale)
 	if err != nil {
 		return workTargetLocaleState{}, err

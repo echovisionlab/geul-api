@@ -1,6 +1,6 @@
 // Package documentsearch answers "which document says this" across every document
-// type. The index or the owning lists name the documents; reading each one's
-// outline as the caller decides what it may see and where the text is.
+// type. The index names the documents in the caller's Scope, or the owning lists name
+// those the caller may list; reading each one's outline decides where the text is.
 package documentsearch
 
 import (
@@ -12,8 +12,8 @@ import (
 // ReadLimit is the most documents one Search reads; Result.NextOffset continues.
 const ReadLimit = 100
 
-// Document names a document a search may read. It says nothing about whether the
-// caller may see it or exactly where the text is: reading it does.
+// Document names a document a search may read. It says nothing about exactly where
+// the text is: reading it does.
 type Document struct {
 	DocumentType core.Domain
 	DocumentID   core.DocumentReference
@@ -22,19 +22,19 @@ type Document struct {
 	Slug         *string
 }
 
-// IndexQuery asks for one page of the documents that may hold Text, in the order
-// of DocumentTypes. Without Locales it means each document's source locale.
+// IndexQuery asks for one page of the documents in Scope that may hold Text, in the
+// order of DocumentTypes. Without Locales it means each document's source locale.
 type IndexQuery struct {
 	Text          string
 	DocumentTypes []core.Domain
 	Locales       []core.Locale
+	Scope         Scope
 	Limit         int
 	Offset        int
 }
 
 // Index narrows a search to the documents that may hold the text, so its cost
-// follows the matches rather than the size of the site. It answers for no one:
-// each candidate is still read as the caller.
+// follows the matches rather than the size of the site.
 type Index interface {
 	Candidates(ctx context.Context, query IndexQuery) ([]Document, error)
 }
@@ -54,4 +54,11 @@ type Lister interface {
 // may not read it.
 type Reader interface {
 	Read(context.Context, core.ReadRequest) (core.Projection, error)
+}
+
+// Documents reads documents one at a time, or many together. A batch answers only
+// reads of the documents it was opened with, and only those Scope allows.
+type Documents interface {
+	Reader
+	OpenBatch(ctx context.Context, scope Scope, requests []core.LoadRequest) Reader
 }

@@ -199,7 +199,9 @@ func postSystemTranslationDocumentFence(postID string) ContentFence {
 
 func loadPostContentDomainContext(
 	ctx context.Context,
-	store Store,
+	store interface {
+		SourceLocale(ctx context.Context, postID string) (string, error)
+	},
 	postID string,
 ) (contentblock.DomainContext, error) {
 	sourceLocale, err := store.SourceLocale(ctx, postID)

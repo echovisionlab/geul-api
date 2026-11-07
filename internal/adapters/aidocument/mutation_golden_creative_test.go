@@ -2,6 +2,7 @@ package aidocumentadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -61,6 +62,10 @@ type goldenWorkDocumentAPI struct {
 	err error
 }
 
+func (a *goldenWorkDocumentAPI) LoadAIDocumentBatch(context.Context, func(string) bool, []workdomain.AIDocumentBatchRequest) ([]func() (workdomain.AIDocumentState, error), error) {
+	return nil, errors.New("batched reads are not exercised here")
+}
+
 func (a *goldenWorkDocumentAPI) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	workID, locale string,
@@ -77,6 +82,10 @@ func (a *goldenWorkDocumentAPI) ExecuteAIDocumentMutation(
 type goldenPostDocumentAPI struct {
 	*exactPostDocumentAPI
 	err error
+}
+
+func (a *goldenPostDocumentAPI) LoadAIDocumentStateBatch(context.Context, func(string) bool, []postdomain.AIDocumentBatchRequest) ([]func() (postdomain.AIDocumentState, error), error) {
+	return nil, errors.New("batched reads are not exercised here")
 }
 
 func (a *goldenPostDocumentAPI) ExecuteAIDocumentMutation(

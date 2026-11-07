@@ -164,7 +164,7 @@ func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext)
 	}
 }
 
-func loadPageContentDomainContext(ctx context.Context, store Store, pageID string) (contentblock.DomainContext, error) {
+func loadPageContentDomainContext(ctx context.Context, store aiDocumentStateReads, pageID string) (contentblock.DomainContext, error) {
 	root, err := store.DocumentRoot(ctx, pageID, Unlocked)
 	if err != nil {
 		if errors.Is(err, ErrPageNotFound) {

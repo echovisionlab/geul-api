@@ -75,6 +75,24 @@ func TestLoadAIDocumentStateReadsTheAuthorizedLocale(t *testing.T) {
 	requireCode(t, err, connect.CodeNotFound, "program event not found")
 }
 
+// An AI document names the caller's own documents, so an Author who may view an
+// archived event elsewhere does not read it here.
+func TestLoadAIDocumentStateOfAnArchivedEventChecksView(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	author := aiAuthor(h)
+	event := h.seedEvent(t, func(event *programevent.Event) { event.Status = programevent.StatusArchived })
+	view, err := policyv1.ProgramEvent.View(event.ID)
+	require.NoError(t, err)
+
+	_, err = h.service.LoadAIDocumentState(author.context(t), programevent.AIDocumentStateQuery{EventID: event.ID, Locale: "en"})
+	require.NoError(t, err)
+
+	h.checker.Deny(view, nil)
+	_, err = h.service.LoadAIDocumentState(author.context(t), programevent.AIDocumentStateQuery{EventID: event.ID, Locale: "en"})
+	requireCode(t, err, connect.CodePermissionDenied, "no permission to view this program event")
+}
+
 func TestExecuteAIDocumentValidationRunsThePathAndRollsItBack(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

@@ -92,6 +92,9 @@ type WorkRows interface {
 	// SourceLocale reads the Work's source locale; LockSourceLocale locks
 	// the row for update first.
 	SourceLocale(ctx context.Context, workID string) (string, error)
+	// AIDocumentBatchRows reads what the AI documents of many Works are built from,
+	// with one statement per table.
+	AIDocumentBatchRows(ctx context.Context, workIDs []string) (AIDocumentBatchRows, error)
 	LockSourceLocale(ctx context.Context, workID string) (string, error)
 	// ListWorks lists one page of the admin list and counts every match.
 	ListWorks(ctx context.Context, page AdminListPage) ([]Work, int64, error)

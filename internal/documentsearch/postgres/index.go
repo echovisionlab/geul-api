@@ -5,6 +5,8 @@ package documentsearchpostgres
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -31,8 +33,16 @@ SELECT
   candidate.source_locale,
   candidate.title,
   candidate.slug
-FROM public.document_search_candidates(@text, CAST(@document_types AS text[]), CAST(@locales AS text[]), @limit, @offset) AS candidate
+FROM public.document_search_candidates(@text, CAST(@document_types AS text[]), CAST(@locales AS text[]), @limit, @offset, CAST(@visible_ids AS uuid[])) AS candidate
 ORDER BY array_position(CAST(@document_types AS text[]), candidate.document_type), candidate.document_id`
+
+// visibleIDs is NULL for a scope of every document.
+func visibleIDs(scope documentsearch.Scope) any {
+	if scope.All {
+		return nil
+	}
+	return pq.StringArray(stringValues(slices.Collect(maps.Keys(scope.Documents))))
+}
 
 type candidateRow struct {
 	DocumentType string
@@ -51,7 +61,7 @@ func (index *Index) Candidates(ctx context.Context, query documentsearch.IndexQu
 	var rows []candidateRow
 	err := index.db.WithContext(ctx).Raw(candidatesQuery, map[string]any{
 		"text": query.Text, "document_types": pq.StringArray(stringValues(query.DocumentTypes)), "locales": locales,
-		"limit": query.Limit, "offset": query.Offset,
+		"limit": query.Limit, "offset": query.Offset, "visible_ids": visibleIDs(query.Scope),
 	}).Scan(&rows).Error
 	if err != nil {
 		return nil, err

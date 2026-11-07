@@ -33,6 +33,7 @@ type pagePort struct {
 
 type pageDocumentAPI interface {
 	LoadAIDocument(context.Context, pagedomain.LoadAIDocumentQuery) (pagedomain.AIDocumentState, error)
+	LoadAIDocumentBatch(context.Context, func(string) bool, []pagedomain.LoadAIDocumentQuery) ([]func() (pagedomain.AIDocumentState, error), error)
 	ExecuteAIDocumentMutation(context.Context, pagedomain.ExecuteAIDocumentMutationCommand) (pagedomain.AIDocumentMutationResult, error)
 }
 
@@ -75,6 +76,21 @@ func (p *pagePort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 		return core.Document{}, err
 	}
 	return p.project(identity, locale, state)
+}
+
+// LoadBatch reads Pages in one snapshot.
+func (p *pagePort) LoadBatch(ctx context.Context, authorized func(core.DocumentReference) bool, requests []core.LoadRequest) ([]core.DeferredDocument, error) {
+	domainRequests := make([]pagedomain.LoadAIDocumentQuery, len(requests))
+	for index, request := range requests {
+		domainRequests[index] = pagedomain.LoadAIDocumentQuery{PageID: string(request.Document.Reference), Locale: string(request.Locale)}
+	}
+	states, err := p.application.LoadAIDocumentBatch(ctx, func(pageID string) bool {
+		return authorized(core.DocumentReference(pageID))
+	}, domainRequests)
+	if err != nil {
+		return nil, err
+	}
+	return deferProjections(requests, states, p.project), nil
 }
 
 func (p *pagePort) ValidateMutation(

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -133,6 +134,65 @@ func (s *Store) LoadSnapshotInTransaction(
 	if err != nil {
 		return Snapshot{}, err
 	}
+	return s.validatedSnapshot(state, sourceLocale)
+}
+
+// SnapshotRequest names one document of a snapshot batch.
+type SnapshotRequest struct {
+	DocumentID   uuid.UUID
+	SourceLocale string
+}
+
+// DeferredSnapshot decodes, validates and returns a document a batch has read. It
+// does that work once, on its first call, and is safe to call concurrently. A
+// document that cannot be built fails alone.
+type DeferredSnapshot func() (Snapshot, error)
+
+// LoadSnapshotBatch reads many documents with one statement per table, so a read's
+// cost does not grow by statements per document. Decoding is deferred, which keeps
+// the transaction short and lets the caller spread that work. tx must be one
+// repeatable-read snapshot, and the owning API must authorize first, as with
+// LoadSnapshotInTransaction.
+func (s *Store) LoadSnapshotBatch(
+	ctx context.Context,
+	tx *gorm.DB,
+	requests []SnapshotRequest,
+) (map[uuid.UUID]DeferredSnapshot, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("%w: document transaction is required", ErrInvalidMutation)
+	}
+	snapshots := make(map[uuid.UUID]DeferredSnapshot, len(requests))
+	if len(requests) == 0 {
+		return snapshots, nil
+	}
+	documentIDs := make([]uuid.UUID, len(requests))
+	for index, request := range requests {
+		documentIDs[index] = request.DocumentID
+	}
+	documents, err := s.repo.loadDocumentRows(ctx, tx, documentIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, request := range requests {
+		rows, found := documents[request.DocumentID]
+		snapshots[request.DocumentID] = sync.OnceValues(func() (Snapshot, error) {
+			if !found {
+				return Snapshot{}, ErrDocumentNotFound
+			}
+			if err := validateLocale(request.SourceLocale); err != nil {
+				return Snapshot{}, fmt.Errorf("%w: source locale: %v", ErrInvalidMutation, err)
+			}
+			state, err := rows.aggregate()
+			if err != nil {
+				return Snapshot{}, err
+			}
+			return s.validatedSnapshot(state, request.SourceLocale)
+		})
+	}
+	return snapshots, nil
+}
+
+func (s *Store) validatedSnapshot(state aggregate, sourceLocale string) (Snapshot, error) {
 	if err := validateAggregate(s.contract, &state, sourceLocale); err != nil {
 		return Snapshot{}, err
 	}
