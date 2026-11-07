@@ -32,6 +32,10 @@ func (a *exactPostDocumentAPI) LoadAIDocumentState(
 	return a.state, nil
 }
 
+func (a *exactPostDocumentAPI) LoadAIDocumentStateBatch(context.Context, func(string) bool, []postdomain.AIDocumentBatchRequest) ([]func() (postdomain.AIDocumentState, error), error) {
+	return nil, errors.New("batched reads are not exercised here")
+}
+
 func (a *exactPostDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
 	postID string,

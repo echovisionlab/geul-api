@@ -66,7 +66,7 @@ func TestIndexFindsWhatADocumentReadFindsIntegration(t *testing.T) {
 	)
 	finds := func(text string, locales ...core.Locale) bool {
 		t.Helper()
-		candidates, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: text, DocumentTypes: []core.Domain{core.DomainPage}, Locales: locales, Limit: 100})
+		candidates, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: text, DocumentTypes: []core.Domain{core.DomainPage}, Locales: locales, Scope: documentsearch.Scope{All: true}, Limit: 100})
 		require.NoError(t, err, text)
 		for _, candidate := range candidates {
 			if string(candidate.DocumentID) == page.id {
@@ -106,17 +106,39 @@ func TestIndexKeepsToTheRequestedTypesAndPagesIntegration(t *testing.T) {
 		seedPage(t, db, "Paged", richText(map[string]any{"text": word}), nil)
 	}
 
-	none, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPost}, Limit: 10})
+	none, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPost}, Scope: documentsearch.Scope{All: true}, Limit: 10})
 	require.NoError(t, err)
 	require.Empty(t, none)
 
-	first, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPage}, Limit: 2})
+	first, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPage}, Scope: documentsearch.Scope{All: true}, Limit: 2})
 	require.NoError(t, err)
 	require.Len(t, first, 2)
-	rest, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPage}, Limit: 2, Offset: 2})
+	rest, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPage}, Scope: documentsearch.Scope{All: true}, Limit: 2, Offset: 2})
 	require.NoError(t, err)
 	require.Len(t, rest, 1)
 	require.NotContains(t, []core.DocumentReference{first[0].DocumentID, first[1].DocumentID}, rest[0].DocumentID)
+}
+
+// A scope filters before paging, so neither a page nor its size shows anything else.
+func TestIndexPagesOnlyThroughTheScopeIntegration(t *testing.T) {
+	t.Parallel()
+	index, db := searchIndex(t)
+	word := "scopeword" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	var pages []string
+	for range 3 {
+		pages = append(pages, seedPage(t, db, "Scoped", richText(map[string]any{"text": word}), nil).id)
+	}
+	candidates := func(scope documentsearch.Scope) []documentsearch.Document {
+		found, err := index.Candidates(t.Context(), documentsearch.IndexQuery{Text: word, DocumentTypes: []core.Domain{core.DomainPage}, Scope: scope, Limit: 10})
+		require.NoError(t, err)
+		return found
+	}
+
+	require.Len(t, candidates(documentsearch.Scope{All: true}), 3)
+	require.Empty(t, candidates(documentsearch.Scope{}))
+	visible := candidates(documentsearch.Scope{Documents: map[core.DocumentReference]struct{}{core.DocumentReference(pages[1]): {}}})
+	require.Len(t, visible, 1)
+	require.Equal(t, core.DocumentReference(pages[1]), visible[0].DocumentID)
 }
 
 // The search only scales if the query's expressions are the indexed ones.

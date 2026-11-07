@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 )
@@ -89,6 +90,42 @@ func (r *Registry) Load(
 		)
 	}
 	return document, nil
+}
+
+// LoadBatch reads each domain's documents through its own port, together when that
+// port can. The domains read concurrently, each in its own snapshot.
+func (r *Registry) LoadBatch(
+	ctx context.Context,
+	authorized func(core.DocumentReference) bool,
+	requests []core.LoadRequest,
+) ([]core.DeferredDocument, error) {
+	positions := make(map[core.Domain][]int)
+	for position, request := range requests {
+		positions[request.Document.Domain] = append(positions[request.Document.Domain], position)
+	}
+	documents := make([]core.DeferredDocument, len(requests))
+	var group sync.WaitGroup
+	for domain, domainPositions := range positions {
+		port, err := r.domainPort(domain)
+		if err != nil {
+			for _, position := range domainPositions {
+				documents[position] = func() (core.Document, error) { return core.Document{}, err }
+			}
+			continue
+		}
+		group.Go(func() {
+			domainRequests := make([]core.LoadRequest, len(domainPositions))
+			for index, position := range domainPositions {
+				domainRequests[index] = requests[position]
+			}
+			loaded := core.LoadBatch(ctx, port, authorized, domainRequests)
+			for index, position := range domainPositions {
+				documents[position] = loaded[index]
+			}
+		})
+	}
+	group.Wait()
+	return documents, nil
 }
 
 // ValidateMutation routes the request directly to the owning domain's locked

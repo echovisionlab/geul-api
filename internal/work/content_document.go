@@ -221,7 +221,7 @@ func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext)
 	}
 }
 
-func loadWorkContentDomainContext(ctx context.Context, store Store, workID string) (contentblock.DomainContext, error) {
+func loadWorkContentDomainContext(ctx context.Context, store aiDocumentStateReads, workID string) (contentblock.DomainContext, error) {
 	sourceLocale, err := store.SourceLocale(ctx, workID)
 	if errors.Is(err, ErrWorkNotFound) {
 		return contentblock.DomainContext{}, domainerr.Precondition("work translation source is not initialized")

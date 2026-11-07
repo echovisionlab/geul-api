@@ -112,7 +112,7 @@ func validatePageAIDocumentIdentity(pageID, locale string) error {
 
 func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	root lockedAIDocumentRoot,
 	locale string,
 ) (AIDocumentState, error) {

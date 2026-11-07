@@ -3,18 +3,21 @@ package main
 import (
 	"context"
 	"fmt"
-	documentsearchpostgres "github.com/echovisionlab/geul-api/internal/documentsearch/postgres"
 	"log/slog"
 	"net/http"
 	"time"
 
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/documentsearch"
+	documentsearchpostgres "github.com/echovisionlab/geul-api/internal/documentsearch/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/menu"
@@ -108,6 +111,18 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 	if err != nil {
 		return err
 	}
+	searchRoles, err := documentsearchpostgres.NewCallerRoles(r.dependencies.db, identitystate.PostgresFence{}, r.dependencies.spicedbClient)
+	if err != nil {
+		return err
+	}
+	// Labels have no lookup of the Labels a caller manages yet, so a manager reads
+	// their Label by its ID rather than finding it by a search.
+	searchScopes, err := documentsearch.NewOwnershipScopes(searchRoles, map[aidocument.Domain]documentsearch.OwnedDocuments{
+		aidocument.DomainPost: documents.post, aidocument.DomainArtist: documents.artist, aidocument.DomainPostSeries: documents.series,
+	})
+	if err != nil {
+		return err
+	}
 	aiDocumentMCP, err := newAIDocumentMCPComposition(
 		registrations,
 		documents.post,
@@ -127,6 +142,7 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 			editorCollabHTTPClient:    &http.Client{Timeout: time.Duration(r.dependencies.cfg.HTTPWriteTimeoutSec) * time.Second},
 			allowedOrigins:            r.dependencies.cfg.CORSOrigins,
 			documentSearchIndex:       searchIndex,
+			documentSearchScopes:      searchScopes,
 			documentTransaction: func(ctx context.Context, work func(context.Context) error) error {
 				return mutation.InSharedTransaction(ctx, r.dependencies.db, work)
 			},

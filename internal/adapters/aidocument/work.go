@@ -31,6 +31,7 @@ type workPort struct {
 
 type workDocumentAPI interface {
 	LoadAIDocument(context.Context, string, string) (workdomain.AIDocumentState, error)
+	LoadAIDocumentBatch(context.Context, func(string) bool, []workdomain.AIDocumentBatchRequest) ([]func() (workdomain.AIDocumentState, error), error)
 	ExecuteAIDocumentMutation(
 		context.Context,
 		string,
@@ -75,6 +76,21 @@ func (p *workPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 		return core.Document{}, err
 	}
 	return p.project(identity, locale, state)
+}
+
+// LoadBatch reads Works in one snapshot.
+func (p *workPort) LoadBatch(ctx context.Context, authorized func(core.DocumentReference) bool, requests []core.LoadRequest) ([]core.DeferredDocument, error) {
+	domainRequests := make([]workdomain.AIDocumentBatchRequest, len(requests))
+	for index, request := range requests {
+		domainRequests[index] = workdomain.AIDocumentBatchRequest{WorkID: string(request.Document.Reference), Locale: string(request.Locale)}
+	}
+	states, err := p.application.LoadAIDocumentBatch(ctx, func(workID string) bool {
+		return authorized(core.DocumentReference(workID))
+	}, domainRequests)
+	if err != nil {
+		return nil, err
+	}
+	return deferProjections(requests, states, p.project), nil
 }
 
 func (p *workPort) ValidateMutation(

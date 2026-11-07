@@ -110,7 +110,7 @@ func validateWorkAIDocumentIdentity(workID, locale string) error {
 
 func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	root Work,
 	documentID uuid.UUID,
 	locale string,
@@ -275,7 +275,7 @@ func applyWorkAIDocumentTarget(
 	return applied, err
 }
 
-func loadWorkAIDocumentRoot(ctx context.Context, store Store, workID string, lock RowLock) (Work, uuid.UUID, error) {
+func loadWorkAIDocumentRoot(ctx context.Context, store aiDocumentStateReads, workID string, lock RowLock) (Work, uuid.UUID, error) {
 	root, err := store.LockWork(ctx, workID, lock)
 	if err != nil {
 		if errors.Is(err, ErrWorkNotFound) {
@@ -353,11 +353,12 @@ func authorizeWorkAIDocument(
 	if err != nil {
 		return nil, err
 	}
-	normal := workAction(policyv1.Work.View)
+	// A read keeps to View in every lifecycle: an AI document names the caller's own
+	// documents, not every archived Work an Author may see elsewhere.
+	action := workAction(policyv1.Work.View)
 	if use == workAuthorizationMutation {
-		normal = policyv1.Work.Edit
+		action = workLifecycleAction(root.Status, policyv1.Work.Edit, use)
 	}
-	action := workLifecycleAction(root.Status, normal, use)
 	if err := requireWorkPermissionForCurrentActor(ctx, checker, root.ID, action); err != nil {
 		return nil, err
 	}

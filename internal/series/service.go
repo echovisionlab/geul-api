@@ -167,6 +167,11 @@ func (s *Service) ListSeriesPosts(ctx context.Context, query ListSeriesPostsQuer
 	return posts, nil
 }
 
+// OwnedDocumentIDs is the Series the caller may view, which are those it manages.
+func (s *Service) OwnedDocumentIDs(ctx context.Context) ([]string, error) {
+	return s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupView())
+}
+
 // ListMySeries returns series where current user is a member
 func (s *Service) ListMySeries(ctx context.Context, query ListMySeriesQuery) (SeriesPage, error) {
 	seriesIDs, err := s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupView())

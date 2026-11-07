@@ -32,6 +32,7 @@ type postPort struct {
 
 type postDocumentAPI interface {
 	LoadAIDocumentState(context.Context, string, string) (postdomain.AIDocumentState, error)
+	LoadAIDocumentStateBatch(context.Context, func(string) bool, []postdomain.AIDocumentBatchRequest) ([]func() (postdomain.AIDocumentState, error), error)
 	ExecuteAIDocumentMutation(
 		context.Context,
 		string,
@@ -83,6 +84,21 @@ func (p *postPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 		return core.Document{}, err
 	}
 	return p.project(identity, locale, state)
+}
+
+// LoadBatch reads Posts in one snapshot.
+func (p *postPort) LoadBatch(ctx context.Context, authorized func(core.DocumentReference) bool, requests []core.LoadRequest) ([]core.DeferredDocument, error) {
+	domainRequests := make([]postdomain.AIDocumentBatchRequest, len(requests))
+	for index, request := range requests {
+		domainRequests[index] = postdomain.AIDocumentBatchRequest{PostID: string(request.Document.Reference), Locale: string(request.Locale)}
+	}
+	states, err := p.service.LoadAIDocumentStateBatch(ctx, func(postID string) bool {
+		return authorized(core.DocumentReference(postID))
+	}, domainRequests)
+	if err != nil {
+		return nil, err
+	}
+	return deferProjections(requests, states, p.project), nil
 }
 
 func (p *postPort) ValidateMutation(

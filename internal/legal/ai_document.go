@@ -151,11 +151,12 @@ func (s *AIDocumentService) LoadAIDocument(
 	}
 	var result AIDocument
 	err = readLocked(ctx, s.mutations, mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
-		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false)
-		if err != nil {
+		if _, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false); err != nil {
 			return err
 		}
-		return authorizeLegal(ctx, s.spiceDB, lockActive, kind, entityID, "view", true, legalViewAction(kind, root.Status))
+		// A read keeps to View in every lifecycle: an AI document names the caller's
+		// own documents, not every archived version an Author may see elsewhere.
+		return authorizeLegal(ctx, s.spiceDB, lockActive, kind, entityID, "view", true, legalActionView)
 	}), func(ctx context.Context, store Store) error {
 		principal := auth.GetUser(ctx)
 		if principal == nil || principal.MemberID == "" {

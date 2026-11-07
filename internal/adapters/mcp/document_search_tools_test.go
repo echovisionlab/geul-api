@@ -86,13 +86,27 @@ func mustIndexedSearchTools(t *testing.T, posts []postdomain.AIDocumentListItem,
 	return mustSearchToolsOver(t, discovery, documents, index)
 }
 
+// readsOneByOne opens a batch as reads of the application, so the tests see each read.
+type readsOneByOne struct{ AIDocumentApplication }
+
+func (documents readsOneByOne) OpenBatch(context.Context, func(core.DocumentReference) bool, []core.LoadRequest) core.Reader {
+	return documents
+}
+
+// everyDocumentScope is a caller who may read everything; its documents still decide.
+type everyDocumentScope struct{}
+
+func (everyDocumentScope) Resolve(context.Context, []core.Domain) (documentsearch.Scope, error) {
+	return documentsearch.Scope{All: true}, nil
+}
+
 func mustSearchToolsOver(t *testing.T, lists documentsearch.Lister, documents AIDocumentApplication, index documentsearch.Index) *DocumentSearchTools {
 	t.Helper()
-	reader, err := NewDocumentSearchReader(documents)
+	reader, err := NewDocumentSearchReader(readsOneByOne{documents})
 	if err != nil {
 		t.Fatal(err)
 	}
-	searcher, err := documentsearch.NewService(lists, reader, index)
+	searcher, err := documentsearch.NewService(lists, reader, index, everyDocumentScope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,11 +260,82 @@ type fakeSearchIndex struct {
 	candidates []documentsearch.Document
 	err        error
 	calls      int
+	scope      documentsearch.Scope
 }
 
-func (index *fakeSearchIndex) Candidates(context.Context, documentsearch.IndexQuery) ([]documentsearch.Document, error) {
+func (index *fakeSearchIndex) Candidates(_ context.Context, query documentsearch.IndexQuery) ([]documentsearch.Document, error) {
 	index.calls++
+	index.scope = query.Scope
 	return index.candidates, index.err
+}
+
+type fixedSearchScope struct {
+	scope documentsearch.Scope
+	err   error
+}
+
+func (fixed fixedSearchScope) Resolve(context.Context, []core.Domain) (documentsearch.Scope, error) {
+	return fixed.scope, fixed.err
+}
+
+func mustScopedSearchTools(t *testing.T, documents AIDocumentApplication, index documentsearch.Index, scopes documentsearch.Scopes) *DocumentSearchTools {
+	t.Helper()
+	discovery, err := newDiscoveryToolsForTest(
+		&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{},
+		&recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}, testOtherDocumentDiscovery(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := NewDocumentSearchReader(readsOneByOne{documents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searcher, err := documentsearch.NewService(discovery, reader, index, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, err := NewDocumentSearchTools(searcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tools
+}
+
+// The index pages only through what the caller may find, so a page's size and
+// next_offset say nothing about anyone else's documents.
+func TestDocumentSearchAsksTheIndexOnlyAboutTheCallersScope(t *testing.T) {
+	scope := documentsearch.Scope{Documents: map[core.DocumentReference]struct{}{searchDocumentA: {}}}
+	index := &fakeSearchIndex{}
+	tools := mustScopedSearchTools(t, &searchDocuments{}, index, fixedSearchScope{scope: scope})
+
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSearch, toolArguments(t, `{"query":"x"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	if index.calls != 1 || !index.scope.Allows(searchDocumentA) || index.scope.Allows(searchDocumentB) {
+		t.Fatalf("calls = %d, scope = %+v", index.calls, index.scope)
+	}
+}
+
+func TestDocumentSearchWithNothingInScopeAsksNoIndex(t *testing.T) {
+	index := &fakeSearchIndex{}
+	tools := mustScopedSearchTools(t, &searchDocuments{}, index, fixedSearchScope{})
+
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSearch, toolArguments(t, `{"query":"x"}`))
+
+	if err != nil || index.calls != 0 || len(result.StructuredContent["matches"].([]any)) != 0 || result.StructuredContent["next_offset"] != nil {
+		t.Fatalf("err = %v, calls = %d, result = %+v", err, index.calls, result.StructuredContent)
+	}
+}
+
+func TestDocumentSearchFailsWhenTheScopeCannotBeResolved(t *testing.T) {
+	index := &fakeSearchIndex{}
+	tools := mustScopedSearchTools(t, &searchDocuments{}, index, fixedSearchScope{err: errors.New("authorizer unavailable")})
+
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSearch, toolArguments(t, `{"query":"x"}`)); err == nil || index.calls != 0 {
+		t.Fatalf("err = %v, calls = %d", err, index.calls)
+	}
 }
 
 // An index that cannot answer must say so: reading the lists instead would give

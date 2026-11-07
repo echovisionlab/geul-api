@@ -65,6 +65,45 @@ func TestLoadAIDocumentReadsTheLocaleOfAnActiveViewer(t *testing.T) {
 	requireCode(t, err, connect.CodePermissionDenied, "")
 }
 
+// An AI document names the caller's own documents, so an Author who may view an
+// archived Work elsewhere does not read it here.
+func TestLoadAIDocumentOfAnArchivedWorkChecksView(t *testing.T) {
+	h := newHarness(t)
+	viewer := newPrincipal()
+	value := h.seedWork(t, "Archived", func(value *work.Work) { value.Status = work.StatusArchived })
+	view, err := policyv1.Work.View(value.ID)
+	require.NoError(t, err)
+
+	_, err = h.service.LoadAIDocument(viewer.context(t), value.ID, "en")
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{authztest.Of(viewer.identityID, view, nil)}, h.checker.Checks())
+
+	h.checker.Deny(view, nil)
+	_, err = h.service.LoadAIDocument(viewer.context(t), value.ID, "en")
+	requireCode(t, err, connect.CodeNotFound, "")
+}
+
+func TestLoadAIDocumentBatchBuildsWhatASingleReadDoes(t *testing.T) {
+	h := newHarness(t)
+	viewer := newPrincipal()
+	value := h.seedWork(t, "Source")
+	other := h.seedWork(t, "Not the caller's")
+	h.store.PutLocale(value.ID, work.LocaleMetadata{Locale: "ko", Title: stringPointer("제목")})
+	single, err := h.service.LoadAIDocument(viewer.context(t), value.ID, "ko")
+	require.NoError(t, err)
+
+	states, err := h.service.LoadAIDocumentBatch(viewer.context(t), func(workID string) bool { return workID == value.ID }, []work.AIDocumentBatchRequest{
+		{WorkID: value.ID, Locale: "ko"}, {WorkID: other.ID, Locale: "ko"},
+	})
+	require.NoError(t, err)
+
+	batched, err := states[0]()
+	require.NoError(t, err)
+	require.Equal(t, single, batched)
+	_, err = states[1]()
+	requireCode(t, err, connect.CodeNotFound, "")
+}
+
 func TestExecuteAIDocumentMutationSavesTheSourceTitleOnce(t *testing.T) {
 	h := newHarness(t)
 	editor := newPrincipal()

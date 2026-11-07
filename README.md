@@ -214,8 +214,11 @@ document's edits commit in one transaction, across its locales and any
 `translations` on a source edit, and a failure leaves that document unchanged
 without undoing the others, and `dry_run` runs an edit and rolls it back to show
 what would change. `document_list` and `document_search` cover all 15 document
-types; the search reads only the documents the database index names as candidates
-and reads every document when asked with `exhaustive` or when the index is missing.
+types. The search reads only the documents the database index names as candidates,
+together in one snapshot per domain where the domain supports it, and reads every
+listed document when asked with `exhaustive`. An Author's `document_read` and
+`document_search` cover what they write or manage, in any lifecycle, and their
+`document_list` covers the Posts among those; a Site Admin's cover everything.
 `document_publish`, `document_delete` and `translation_units_put` also take many
 documents in one call.
 

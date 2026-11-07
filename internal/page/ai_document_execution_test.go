@@ -63,6 +63,27 @@ func TestLoadAIDocumentReadsTheLockedLocaleForAViewer(t *testing.T) {
 	requireCode(t, err, connect.CodeNotFound, "page not found: "+stored.ID)
 }
 
+func TestLoadAIDocumentBatchBuildsWhatASingleReadDoes(t *testing.T) {
+	h := newHarness(t)
+	stored := h.seedPage("Source")
+	other := h.seedPage("Not the caller's")
+	h.store.PutLocale(stored.ID, page.Locale{Locale: "ko", Title: text("번역")})
+	reader := h.member(newPrincipal())
+	single, err := h.service.LoadAIDocument(reader.context(t), page.LoadAIDocumentQuery{PageID: stored.ID, Locale: "ko"})
+	require.NoError(t, err)
+
+	states, err := h.service.LoadAIDocumentBatch(reader.context(t), func(pageID string) bool { return pageID == stored.ID }, []page.LoadAIDocumentQuery{
+		{PageID: stored.ID, Locale: "ko"}, {PageID: other.ID, Locale: "ko"},
+	})
+	require.NoError(t, err)
+
+	batched, err := states[0]()
+	require.NoError(t, err)
+	require.Equal(t, single, batched)
+	_, err = states[1]()
+	requireCode(t, err, connect.CodeNotFound, "page not found: "+other.ID)
+}
+
 func TestExecuteAIDocumentMutationAuthorizesBeforeCompilingOnce(t *testing.T) {
 	h := newHarness(t)
 	stored := h.seedPage("Source")

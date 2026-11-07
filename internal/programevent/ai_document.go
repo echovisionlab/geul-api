@@ -102,10 +102,11 @@ type AIDocumentStateQuery struct {
 	Locale  string
 }
 
-// LoadAIDocumentState applies Program Event account, lifecycle and aggregate
-// locking rules before exposing a compact authoring projection. Program Event
-// AI authoring uses the exact object read capability selected by lifecycle;
-// public reads continue through the public Program Event service.
+// LoadAIDocumentState applies Program Event account and aggregate locking rules
+// before exposing a compact authoring projection. A read keeps to View in every
+// lifecycle: an AI document names the caller's own documents, not every archived
+// event an Author may see elsewhere. Public reads continue through the public
+// Program Event service.
 func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentStateQuery) (AIDocumentState, error) {
 	locale, err := validateProgramEventAIDocumentIdentity(query.EventID, query.Locale)
 	if err != nil {
@@ -121,7 +122,7 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentState
 			return err
 		}
 		if err := requireProgramEventPermission(
-			ctx, s.spiceDB, root.ID, programEventViewAction(root.Status),
+			ctx, s.spiceDB, root.ID, policyv1.ProgramEvent.View,
 		); err != nil {
 			return err
 		}

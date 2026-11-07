@@ -51,10 +51,8 @@ type Match struct {
 	MoreBlocks int
 }
 
-// Result leaves out the documents the caller may not read. NextOffset alone counts
-// them, because the index pages through candidates before they are read: it shows
-// that more candidates exist past a page, so stepping the offset through a query
-// with over ReadLimit candidates reveals how many, though never which.
+// Result leaves out the documents the caller may not read. An index search pages
+// only through the caller's Scope, so NextOffset shows nothing past it.
 type Result struct {
 	Matches    []Match
 	Scanned    int
@@ -65,11 +63,12 @@ type Result struct {
 // Service runs searches.
 type Service struct {
 	lists     Lister
-	documents Reader
+	documents Documents
 	index     Index
+	scopes    Scopes
 }
 
-func NewService(lists Lister, documents Reader, index Index) (*Service, error) {
+func NewService(lists Lister, documents Documents, index Index, scopes Scopes) (*Service, error) {
 	switch {
 	case lists == nil:
 		return nil, errors.New("document search service needs the document lists")
@@ -77,8 +76,10 @@ func NewService(lists Lister, documents Reader, index Index) (*Service, error) {
 		return nil, errors.New("document search service needs a document reader")
 	case index == nil:
 		return nil, errors.New("document search service needs an index")
+	case scopes == nil:
+		return nil, errors.New("document search service needs the caller's scope")
 	}
-	return &Service{lists: lists, documents: documents, index: index}, nil
+	return &Service{lists: lists, documents: documents, index: index, scopes: scopes}, nil
 }
 
 // Search reads up to ReadLimit documents from the query's offset.
@@ -90,14 +91,22 @@ func (service *Service) Search(ctx context.Context, query Query) (Result, error)
 }
 
 func (service *Service) searchIndex(ctx context.Context, query Query) (Result, error) {
+	scope, err := service.scopes.Resolve(ctx, query.DocumentTypes)
+	if err != nil {
+		return Result{}, err
+	}
+	if scope.empty() {
+		return Result{Matches: []Match{}}, nil
+	}
 	candidates, err := service.index.Candidates(ctx, IndexQuery{
-		Text: query.Text, DocumentTypes: query.DocumentTypes, Locales: query.Locales, Limit: ReadLimit + 1, Offset: query.Offset,
+		Text: query.Text, DocumentTypes: query.DocumentTypes, Locales: query.Locales, Scope: scope, Limit: ReadLimit + 1, Offset: query.Offset,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrIndexUnavailable, err)
 	}
 	documents := candidates[:min(len(candidates), ReadLimit)]
-	result := service.matchDocuments(ctx, documents, query)
+	batch := service.documents.OpenBatch(ctx, scope, loadRequests(documents, query))
+	result := matchDocuments(ctx, batch, documents, query)
 	if len(candidates) > ReadLimit {
 		next := query.Offset + len(documents)
 		result.NextOffset = &next
@@ -135,7 +144,7 @@ func (service *Service) searchLists(ctx context.Context, query Query) (Result, e
 			documents = append(documents, listed.Documents...)
 		}
 	}
-	result := service.matchDocuments(ctx, documents, query)
+	result := matchDocuments(ctx, service.documents, documents, query)
 	result.Unreadable += unreadableLists
 	if next := query.Offset + len(documents); int64(next) < total {
 		result.NextOffset = &next
@@ -143,14 +152,34 @@ func (service *Service) searchLists(ctx context.Context, query Query) (Result, e
 	return result, nil
 }
 
+// loadRequests is every document locale a search of documents reads.
+func loadRequests(documents []Document, query Query) []core.LoadRequest {
+	requests := make([]core.LoadRequest, 0, len(documents))
+	for _, document := range documents {
+		for _, locale := range document.searchedLocales(query) {
+			requests = append(requests, core.LoadRequest{
+				Document: core.DocumentIdentity{Domain: document.DocumentType, Reference: document.DocumentID}, Locale: locale,
+			})
+		}
+	}
+	return requests
+}
+
+func (document Document) searchedLocales(query Query) []core.Locale {
+	if len(query.Locales) == 0 {
+		return []core.Locale{document.SourceLocale}
+	}
+	return query.Locales
+}
+
 // matchDocuments reads documents as the caller, a few at a time.
-func (service *Service) matchDocuments(ctx context.Context, documents []Document, query Query) Result {
+func matchDocuments(ctx context.Context, reader Reader, documents []Document, query Query) Result {
 	matched := make([]documentMatches, len(documents))
 	var group errgroup.Group
 	group.SetLimit(readWorkers)
 	for index, document := range documents {
 		group.Go(func() error {
-			matched[index] = service.matchDocument(ctx, document, query)
+			matched[index] = matchDocument(ctx, reader, document, query)
 			return nil
 		})
 	}
@@ -176,18 +205,14 @@ type documentMatches struct {
 	failed   bool
 }
 
-func (service *Service) matchDocument(ctx context.Context, document Document, query Query) documentMatches {
-	locales := query.Locales
-	if len(locales) == 0 {
-		locales = []core.Locale{document.SourceLocale}
-	}
+func matchDocument(ctx context.Context, reader Reader, document Document, query Query) documentMatches {
 	var found documentMatches
-	for _, locale := range locales {
+	for _, locale := range document.searchedLocales(query) {
 		match := Match{Document: document}
 		if len(query.Locales) > 1 {
 			match.Locale = locale
 		}
-		if err := service.readMatchingBlocks(ctx, &match, locale, query); err != nil {
+		if err := readMatchingBlocks(ctx, reader, &match, locale, query); err != nil {
 			if !errors.Is(err, ErrAccessRefused) {
 				found.failed = true
 				slog.WarnContext(ctx, "document search skipped a document", failurecause.Attr(err), "domain", string(document.DocumentType), "document_id", string(document.DocumentID), "locale", string(locale))
@@ -200,7 +225,7 @@ func (service *Service) matchDocument(ctx context.Context, document Document, qu
 		}
 	}
 	// The name is the document's own text only once a read has shown the caller may
-	// see it: the index returns candidates the caller may not.
+	// see it: an exhaustive search lists first, and a Scope may have gone stale.
 	if found.readable && !found.failed && len(found.matches) == 0 && document.titleOrSlugContains(query.Text) {
 		found.matches = append(found.matches, Match{Document: document})
 	}
@@ -209,13 +234,13 @@ func (service *Service) matchDocument(ctx context.Context, document Document, qu
 
 // readMatchingBlocks follows next cursors, so MoreBlocks counts every block past
 // the limit.
-func (service *Service) readMatchingBlocks(ctx context.Context, match *Match, locale core.Locale, query Query) error {
+func readMatchingBlocks(ctx context.Context, reader Reader, match *Match, locale core.Locale, query Query) error {
 	request := core.ReadRequest{
 		Document: core.DocumentIdentity{Domain: match.Document.DocumentType, Reference: match.Document.DocumentID},
 		Locale:   locale, Mode: core.ReadOutline, Query: query.Text, Limit: core.DefaultOutlineReadLimit,
 	}
 	for {
-		projection, err := service.documents.Read(ctx, request)
+		projection, err := reader.Read(ctx, request)
 		if err != nil {
 			return err
 		}

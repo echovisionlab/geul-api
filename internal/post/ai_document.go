@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 // AIDocumentLocaleMetadata preserves missing and explicit-empty locale values.
@@ -46,8 +47,8 @@ type AIDocumentState struct {
 
 // LoadAIDocumentState applies current Member/Identity authority and one
 // database snapshot before projecting the exact requested locale. Archived
-// Posts remain readable to their Author and Site Admin, but not to a former
-// collaborator-only editor.
+// Posts remain readable to their Author, their collaborating Authors and Site
+// Admin, but not to another Author or a collaborator without the Author role.
 func (s *Service) LoadAIDocumentState(
 	ctx context.Context,
 	postID string,
@@ -69,7 +70,12 @@ func (s *Service) LoadAIDocumentState(
 		if root, err = loadPostAIDocumentRoot(ctx, store, postID, KeyShareLock); err != nil {
 			return err
 		}
-		_, err = requirePostViewForStatus(ctx, s.spiceDB, postID, root.Status)
+		if _, err = requirePostViewForStatus(ctx, s.spiceDB, postID, root.Status); err != nil {
+			return err
+		}
+		if root.Status == StatusArchived {
+			_, err = requirePostPermissionForPrincipal(ctx, s.spiceDB, postID, principal, policyv1.Post.View, true)
+		}
 		return err
 	})
 	var state AIDocumentState
@@ -103,7 +109,7 @@ func validatePostAIDocumentIdentity(postID, locale string) (string, error) {
 
 func loadPostAIDocumentRoot(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	postID string,
 	lock RowLock,
 ) (AIDocumentRoot, error) {
@@ -122,7 +128,7 @@ func loadPostAIDocumentRoot(
 
 func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	root AIDocumentRoot,
 	locale string,
 	viewerMemberID string,
@@ -194,7 +200,7 @@ func loadAIDocumentStateAfterAuthorization(
 
 func loadAIDocumentMetadata(
 	ctx context.Context,
-	store Store,
+	store aiDocumentStateReads,
 	postID string,
 	locale string,
 ) (AIDocumentLocaleMetadata, bool, error) {

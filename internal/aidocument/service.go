@@ -246,13 +246,20 @@ func (s *Service) loadDocument(ctx context.Context, request OpenRequest) (Docume
 	if err != nil {
 		return Document{}, err
 	}
-	if err := document.validate(); err != nil {
-		return Document{}, fmt.Errorf("load AI document: %w", err)
-	}
-	if document.Identity != request.Document || document.Locale != request.Locale {
-		return Document{}, errors.New("domain port returned a different document identity or locale")
+	if err := validateLoadedDocument(document, request.Document, request.Locale); err != nil {
+		return Document{}, err
 	}
 	return document, nil
+}
+
+func validateLoadedDocument(document Document, identity DocumentIdentity, locale Locale) error {
+	if err := document.validate(); err != nil {
+		return fmt.Errorf("load AI document: %w", err)
+	}
+	if document.Identity != identity || document.Locale != locale {
+		return errors.New("domain port returned a different document identity or locale")
+	}
+	return nil
 }
 
 func documentOpenMetadata(document Document) OpenMetadata {
@@ -320,7 +327,10 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 	if err != nil {
 		return Projection{}, err
 	}
+	return readDocument(ctx, document, request)
+}
 
+func readDocument(ctx context.Context, document Document, request ReadRequest) (Projection, error) {
 	nodes, err := selectNodes(document, request)
 	if err != nil {
 		return Projection{}, &InputError{Message: err.Error()}

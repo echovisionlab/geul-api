@@ -30,6 +30,10 @@ func (a *exactPageDocumentAPI) LoadAIDocument(
 	return a.state, nil
 }
 
+func (a *exactPageDocumentAPI) LoadAIDocumentBatch(context.Context, func(string) bool, []pagedomain.LoadAIDocumentQuery) ([]func() (pagedomain.AIDocumentState, error), error) {
+	return nil, errors.New("batched reads are not exercised here")
+}
+
 func (a *exactPageDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
 	command pagedomain.ExecuteAIDocumentMutationCommand,

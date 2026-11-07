@@ -10,23 +10,32 @@ import (
 
 var errNotAuthenticated = domainerr.New(domainerr.Unauthenticated, "", "not authenticated")
 
-// ListMyArtists returns one page of the Artists the caller may manage.
-func (s *Service) ListMyArtists(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
+// OwnedDocumentIDs is the Artists the caller may manage, which are those it may view.
+func (s *Service) OwnedDocumentIDs(ctx context.Context) ([]string, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return ArtistPage{}, errNotAuthenticated
+		return nil, errNotAuthenticated
 	}
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	if err != nil {
-		return ArtistPage{}, errNotAuthenticated.WithCause(err)
+		return nil, errNotAuthenticated.WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		return ArtistPage{}, errNotAuthenticated.WithCause(err)
+		return nil, errNotAuthenticated.WithCause(err)
 	}
 	artistIDs, err := s.spiceDB.LookupResources(ctx, policyv1.Artist.LookupManage(), actor)
 	if err != nil {
-		return ArtistPage{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	return artistIDs, nil
+}
+
+// ListMyArtists returns one page of the Artists the caller may manage.
+func (s *Service) ListMyArtists(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
+	artistIDs, err := s.OwnedDocumentIDs(ctx)
+	if err != nil {
+		return ArtistPage{}, err
 	}
 	if len(artistIDs) == 0 {
 		return ArtistPage{Artists: []View{}, Pagination: Pagination{Limit: 20}}, nil
