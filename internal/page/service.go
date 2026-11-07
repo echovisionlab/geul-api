@@ -232,7 +232,7 @@ func (s *Service) CreatePage(ctx context.Context, command CreatePageCommand) (De
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) {
-			return Detail{}, domainerr.Duplicate("page", "slug", "slug").WithCause(err)
+			return Detail{}, domainerr.DuplicateSlug("page", creation.page.Slug).WithCause(err)
 		}
 		return Detail{}, err
 	}

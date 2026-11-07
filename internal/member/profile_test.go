@@ -74,7 +74,7 @@ func TestProfileNicknameHeldByAnotherMemberAnswersAlreadyExists(t *testing.T) {
 	_, err := f.service.UpdateOwnProfile(f.ctx(t), member.UpdateOwnProfileCommand{Nickname: &nickname})
 
 	require.Equal(t, connect.CodeAlreadyExists, errs.Wrap(err).Code())
-	require.ErrorContains(t, err, "member with nickname 'taken' already exists")
+	require.ErrorContains(t, err, "member with nickname \"taken\" already exists")
 	require.Empty(t, f.memberUpdates())
 }
 

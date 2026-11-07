@@ -74,7 +74,7 @@ func (s *Service) UpdateRelease(ctx context.Context, command UpdateReleaseComman
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) {
-			return ReleaseUpdate{}, slugTaken(err)
+			return ReleaseUpdate{}, slugTaken(command.Slug, err)
 		}
 		return ReleaseUpdate{}, releaseMissingAs(err, releaseNotFound(command.ID))
 	}

@@ -64,7 +64,7 @@ func TestCreatePageRejectsInvalidInputBeforeStoringAnything(t *testing.T) {
 			code: connect.CodeInvalidArgument, message: "access_policy.user_tag_ids: selected user tag does not exist"},
 		{name: "slug another Page holds", command: page.CreatePageCommand{Title: "T", Slug: text("taken")},
 			seed: func(h *harness) { h.seedPage("Holder", func(value *page.Page) { value.Slug = text("taken") }) },
-			code: connect.CodeAlreadyExists, message: "page with slug 'taken' already exists"},
+			code: connect.CodeAlreadyExists, message: "page with slug \"taken\" already exists"},
 		{name: "slug a resource route holds", command: page.CreatePageCommand{Title: "T", Slug: text("posts/article")},
 			seed: func(h *harness) { h.store.PutRoute("posts/article") }, code: connect.CodeAlreadyExists},
 		{name: "unsupported source locale", command: page.CreatePageCommand{Title: "T", SourceLocale: "en-US"},
@@ -96,7 +96,7 @@ func TestCreatePageAnswersASlugRaceAsADuplicate(t *testing.T) {
 
 	_, err := h.service.CreatePage(h.member(newPrincipal()).context(t), page.CreatePageCommand{Title: "T", Slug: text("raced")})
 
-	requireCode(t, err, connect.CodeAlreadyExists, "page with slug 'slug' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "page with slug \"raced\" already exists")
 	require.Equal(t, mutation.StepRollback, lastStep(t, h.units))
 }
 
@@ -251,16 +251,16 @@ func TestUpdatePageRejectsATakenSlugAndAMaskedPage(t *testing.T) {
 	h.seedPage("Holder", func(value *page.Page) { value.Slug = text("taken") })
 	stored := h.seedPage("Page", func(value *page.Page) { value.ShowTitle = true })
 	_, err := h.service.UpdatePage(h.member(newPrincipal()).context(t), page.UpdatePageCommand{ID: stored.ID, Slug: text("taken")})
-	requireCode(t, err, connect.CodeAlreadyExists, "page with slug 'taken' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "page with slug \"taken\" already exists")
 
 	h.store.Fail = map[string]error{"UpdateSettings": page.ErrSlugTaken}
-	hidden := false
-	_, err = h.service.UpdatePage(h.member(newPrincipal()).context(t), page.UpdatePageCommand{ID: stored.ID, ShowTitle: &hidden})
-	requireCode(t, err, connect.CodeAlreadyExists, "page with slug 'slug' already exists")
+	_, err = h.service.UpdatePage(h.member(newPrincipal()).context(t), page.UpdatePageCommand{ID: stored.ID, Slug: text("raced")})
+	requireCode(t, err, connect.CodeAlreadyExists, "page with slug \"raced\" already exists")
 
 	manage, err := policyv1.Page.Manage(stored.ID)
 	require.NoError(t, err)
 	h.checker.Deny(manage, nil)
+	hidden := false
 	_, err = h.service.UpdatePage(h.member(newPrincipal()).context(t), page.UpdatePageCommand{ID: stored.ID, ShowTitle: &hidden})
 	requireCode(t, err, connect.CodeNotFound, "page not found: "+stored.ID)
 }

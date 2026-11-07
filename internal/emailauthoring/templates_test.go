@@ -76,7 +76,7 @@ func TestCreateEmailTemplateAnswersATakenKey(t *testing.T) {
 	})
 
 	require.Equal(t, connect.CodeAlreadyExists, codeOf(err))
-	require.EqualError(t, wrapped(err), "already_exists: template with key 'welcome_note' already exists")
+	require.EqualError(t, wrapped(err), "already_exists: template with key \"welcome_note\" already exists")
 	requireRolledBack(t, h.units)
 }
 

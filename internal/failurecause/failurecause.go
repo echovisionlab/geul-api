@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -244,6 +245,9 @@ func redact(message string, private []string) string {
 	for _, value := range values {
 		if len([]rune(value)) >= minPrivateValueLength {
 			message = strings.ReplaceAll(message, value, "[redacted]")
+			// A message may carry the value as %q renders it.
+			quoted := strconv.Quote(value)
+			message = strings.ReplaceAll(message, quoted[1:len(quoted)-1], "[redacted]")
 		}
 	}
 	message = urlUserInfo.ReplaceAllString(message, "${1}[redacted]@")

@@ -31,7 +31,7 @@ func TestCreateEmailLayoutStoresItsCanonicalSource(t *testing.T) {
 	_, err = h.service.CreateEmailLayout(h.admin.ctx, emailauthoring.CreateEmailLayoutCommand{
 		Name: "Other", Key: "frame", HTMLContent: "<main>{{content}}</main>", SourceLocale: "en",
 	})
-	require.EqualError(t, wrapped(err), "already_exists: email layout with key 'frame' already exists")
+	require.EqualError(t, wrapped(err), "already_exists: email layout with key \"frame\" already exists")
 	requireRolledBack(t, h.units)
 }
 
@@ -106,7 +106,7 @@ func TestUpdateEmailLayoutIsFrozenOnlyWhileADeliveryRendersIt(t *testing.T) {
 	require.Equal(t, []string{"name"}, h.audit.Records()[0].ChangedFields)
 
 	_, err = h.service.UpdateEmailLayout(h.admin.ctx, emailauthoring.UpdateEmailLayoutCommand{ID: layout.ID, Key: &taken})
-	require.EqualError(t, wrapped(err), "already_exists: email layout with key 'taken' already exists")
+	require.EqualError(t, wrapped(err), "already_exists: email layout with key \"taken\" already exists")
 	_, err = h.service.UpdateEmailLayout(h.admin.ctx, emailauthoring.UpdateEmailLayoutCommand{ID: layout.ID, Name: &name})
 	require.NoError(t, err)
 	require.Len(t, h.audit.Records(), 1, "an unchanged update records nothing")

@@ -38,6 +38,16 @@ func TestMessageRedactsPrivateValuesInWrappedChain(t *testing.T) {
 	}
 }
 
+// A domain message renders a value with %q, which escapes some of its characters.
+func TestMessageRedactsAPrivateValueAsAMessageQuotesIt(t *testing.T) {
+	for _, value := range []string{"O'Brien", `say "hi"`, `back\slash`} {
+		err := fmt.Errorf("member with nickname %q already exists", value)
+		if got := Message(err, value); got != `member with nickname "[redacted]" already exists` {
+			t.Errorf("Message(%q) = %q", value, got)
+		}
+	}
+}
+
 func TestMessageTruncates(t *testing.T) {
 	if got := Message(errors.New(strings.Repeat("x", maxMessageLength+10))); !strings.HasSuffix(got, "…[truncated]") {
 		t.Fatalf("not truncated: %d", len(got))

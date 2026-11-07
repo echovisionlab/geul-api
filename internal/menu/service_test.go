@@ -83,7 +83,7 @@ func TestCreateMenuValidatesBeforeAndAuthorizesBeforeTargets(t *testing.T) {
 	f.createMenu(t, "Taken", customItem("home", "/"))
 
 	_, err := f.service.CreateMenu(f.ctx, menu.CreateMenuCommand{Name: "Taken"})
-	requireCode(t, err, connect.CodeAlreadyExists, "menu with name 'Taken' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "menu with name \"Taken\" already exists")
 
 	_, err = f.service.CreateMenu(f.ctx, menu.CreateMenuCommand{Name: "Bad", Items: []menu.Item{{ID: "x", Label: "x"}}})
 	requireCode(t, err, connect.CodeInvalidArgument, "item[0]: linkType must be specified")
@@ -192,7 +192,7 @@ func TestUpdateMenuRejectsATakenName(t *testing.T) {
 
 	_, err := f.service.UpdateMenu(f.ctx, menu.UpdateMenuCommand{ID: created.ID, Name: stringPointer(" Taken ")})
 
-	requireCode(t, err, connect.CodeAlreadyExists, "menu with name 'Taken' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "menu with name \"Taken\" already exists")
 }
 
 func TestDeleteMenuClearsSiteSettingsFirstAndDeletesTheDocument(t *testing.T) {
@@ -280,7 +280,7 @@ func TestCreateMenuAnswersATakenNameAfterAuthorizationAndTrimming(t *testing.T) 
 	f.createMenu(t, "Taken")
 
 	_, err := f.service.CreateMenu(f.ctx, menu.CreateMenuCommand{Name: "  Taken  "})
-	requireCode(t, err, connect.CodeAlreadyExists, "menu with name 'Taken' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "menu with name \"Taken\" already exists")
 
 	can, err := policyv1.Menu.Create()
 	require.NoError(t, err)
