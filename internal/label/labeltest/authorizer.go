@@ -18,9 +18,20 @@ type Authorizer struct {
 	Snapshot []policyv1.RelationshipMutation
 	// SnapshotErr fails the snapshot read.
 	SnapshotErr error
+	// Resources is what LookupResources returns; LookupErr fails it.
+	Resources []string
+	LookupErr error
 }
 
 var _ label.Authorizer = (*Authorizer)(nil)
+
+// LookupResources implements label.Authorizer.
+func (a *Authorizer) LookupResources(context.Context, policyv1.ResourceLookup, policyv1.Actor) ([]string, error) {
+	if a.LookupErr != nil {
+		return nil, a.LookupErr
+	}
+	return append([]string(nil), a.Resources...), nil
+}
 
 // SnapshotResourceRelationshipDescriptors implements label.Authorizer.
 func (a *Authorizer) SnapshotResourceRelationshipDescriptors(context.Context, policyv1.RelationshipSnapshotPlan) ([]auth.RelationshipSnapshot, auth.ZedToken, error) {

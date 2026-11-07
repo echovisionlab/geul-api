@@ -115,10 +115,9 @@ func (r serviceRegistration) registerAIDocuments(documents aiDocumentApplication
 	if err != nil {
 		return err
 	}
-	// Labels have no lookup of the Labels a caller manages yet, so a manager reads
-	// their Label by its ID rather than finding it by a search.
 	searchScopes, err := documentsearch.NewOwnershipScopes(searchRoles, map[aidocument.Domain]documentsearch.OwnedDocuments{
-		aidocument.DomainPost: documents.post, aidocument.DomainArtist: documents.artist, aidocument.DomainPostSeries: documents.series,
+		aidocument.DomainPost: documents.post, aidocument.DomainArtist: documents.artist,
+		aidocument.DomainLabel: documents.label, aidocument.DomainPostSeries: documents.series,
 	})
 	if err != nil {
 		return err
