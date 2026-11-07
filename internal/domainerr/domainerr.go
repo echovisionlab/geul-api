@@ -7,6 +7,7 @@ package domainerr
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"google.golang.org/protobuf/proto"
@@ -87,7 +88,8 @@ func ResourceNotFound(resource, id string) *Error {
 
 // Duplicate reports that another resource already holds value in field.
 func Duplicate(resource, field, value string) *Error {
-	return New(AlreadyExists, field, fmt.Sprintf("%s with %s '%s' already exists", resource, field, value))
+	quoted := strings.ReplaceAll(value, "'", `\'`)
+	return New(AlreadyExists, field, fmt.Sprintf("%s with %s '%s' already exists", resource, field, quoted))
 }
 
 // Precondition rejects a request the current state does not allow.

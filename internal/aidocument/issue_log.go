@@ -23,7 +23,7 @@ func IssuesLogAttr(issues []OperationIssue) slog.Attr {
 	if len(shown) > maxLoggedIssues {
 		shown = shown[:maxLoggedIssues]
 	}
-	entries := make([]string, 0, len(shown)+1)
+	entries := make([]string, 0, maxLoggedIssues+1)
 	for _, issue := range shown {
 		entry := "op" + strconv.Itoa(issue.Operation) + ":" + string(issue.Code)
 		if handle := boundedHandle(issue.Handle); handle != "" {
