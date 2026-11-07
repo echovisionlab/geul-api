@@ -689,7 +689,7 @@ func (s *Store) DocumentMetadata(_ context.Context, labelID string) (label.Docum
 	}
 	return label.DocumentMetadata{
 		Slug: value.Slug, CountryCode: value.CountryCode, Website: value.Website,
-		SocialLinks: value.SocialLinks, ParentLabelID: value.ParentLabelID,
+		SocialLinks: value.SocialLinks,
 	}, nil
 }
 

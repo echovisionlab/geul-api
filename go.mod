@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
 	github.com/aws/aws-sdk-go-v2/service/ses v1.42.9
 	github.com/aws/smithy-go v1.28.8
-	github.com/echovisionlab/geul-event-contracts v0.18.0
+	github.com/echovisionlab/geul-event-contracts v0.19.0
 	github.com/echovisionlab/geul-telemetry v0.7.0
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/glebarez/sqlite v1.11.0

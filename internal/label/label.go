@@ -53,11 +53,10 @@ type DocumentRoot struct {
 
 // DocumentMetadata is the Label metadata a collaboration room edits.
 type DocumentMetadata struct {
-	Slug          *string
-	CountryCode   *string
-	Website       *string
-	SocialLinks   map[string]string
-	ParentLabelID *string
+	Slug        *string
+	CountryCode *string
+	Website     *string
+	SocialLinks map[string]string
 }
 
 // RowLock is the row lock a Store read takes.

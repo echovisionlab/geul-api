@@ -104,6 +104,22 @@ func (h *ConnectHandler) CreateArtist(ctx context.Context, req *connect.Request[
 	return respond(artistMessage(view), nil)
 }
 
+func (h *ConnectHandler) SetArtistParent(ctx context.Context, req *connect.Request[managev1.SetArtistParentRequest]) (*connect.Response[managev1.Artist], error) {
+	view, err := h.artists.SetArtistParent(ctx, SetArtistParentCommand{ArtistID: req.Msg.ArtistId, ParentArtistID: req.Msg.ParentArtistId})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(artistMessage(view), nil)
+}
+
+func (h *ConnectHandler) SetArtistLabels(ctx context.Context, req *connect.Request[managev1.SetArtistLabelsRequest]) (*connect.Response[managev1.SetArtistLabelsResponse], error) {
+	labelIDs, err := h.artists.SetArtistLabels(ctx, SetArtistLabelsCommand{ArtistID: req.Msg.ArtistId, LabelIDs: req.Msg.LabelIds})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(&managev1.SetArtistLabelsResponse{LabelIds: labelIDs}, nil)
+}
+
 func (h *ConnectHandler) DeleteArtist(ctx context.Context, req *connect.Request[managev1.DeleteArtistRequest]) (*connect.Response[managev1.DeleteResponse], error) {
 	err := h.artists.DeleteArtist(ctx, DeleteArtistCommand{ID: req.Msg.Id, ExpectedRevision: req.Msg.ExpectedRevision})
 	return respond(&managev1.DeleteResponse{Success: true}, err)
@@ -401,8 +417,7 @@ func roomDocumentMessage(room RoomDocument) *intrav1.LoadArtistBlockDocumentResp
 		SourceMetadata: &intrav1.ArtistLocaleMetadata{Locale: room.SourceMetadata.Locale, Title: room.SourceMetadata.Title},
 		Metadata: &intrav1.ArtistDocumentMetadata{
 			RealName: metadata.RealName, CountryCode: metadata.CountryCode, Website: metadata.Website,
-			SocialLinks: metadata.SocialLinks, Slug: metadata.Slug, LabelIds: metadata.LabelIDs,
-			ParentArtistId: metadata.ParentArtistID,
+			SocialLinks: metadata.SocialLinks, Slug: metadata.Slug,
 		},
 		Locale: room.Locale, LocaleExists: room.LocaleExists, PresentLocaleValues: room.PresentLocaleValues,
 		TargetRevision: room.TargetRevision,
@@ -422,9 +437,7 @@ func documentMetadataUpdate(update *intrav1.ArtistDocumentMetadataUpdate) *Docum
 	return &DocumentMetadataUpdate{
 		RealName: stringMutation(update.RealName), CountryCode: stringMutation(update.CountryCode),
 		Website: stringMutation(update.Website), Slug: stringMutation(update.Slug),
-		ParentArtistID:     stringMutation(update.ParentArtistId),
 		SocialLinksPresent: update.SocialLinks != nil, SocialLinks: update.SocialLinks.GetValues(),
-		LabelIDsPresent: update.LabelIds != nil, LabelIDs: update.LabelIds.GetValues(),
 	}
 }
 

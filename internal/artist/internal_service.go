@@ -29,19 +29,13 @@ type LocaleMetadata struct {
 	Title  *string
 }
 
-// RoomMetadata is the Artist metadata a room shows, with its Labels by ID.
-type RoomMetadata struct {
-	DocumentMetadata
-	LabelIDs []string
-}
-
 // RoomDocument is a collaboration room's Artist document with its locale
 // and Artist metadata.
 type RoomDocument struct {
 	Document            *contentv1.LocalizedRichTextDocument
 	DocumentRevision    string
 	SourceMetadata      LocaleMetadata
-	Metadata            RoomMetadata
+	Metadata            DocumentMetadata
 	Locale              string
 	LocaleExists        bool
 	LocaleMetadata      *LocaleMetadata
@@ -57,7 +51,7 @@ func (s *Service) LoadArtistBlockDocument(ctx context.Context, query LoadArtistB
 		return RoomDocument{}, err
 	}
 	var localeState artistTargetLocaleState
-	var metadata RoomMetadata
+	var metadata DocumentMetadata
 	bootstrap, err := s.loadCreativeContentBlockBootstrap(ctx, query.ArtistID, query.SessionID, func(ctx context.Context, store Store) error {
 		documentID, err := loadCreativeContentDocumentID(ctx, store, query.ArtistID)
 		if err != nil {
@@ -429,17 +423,10 @@ func saveArtistSourceTitleRow(ctx context.Context, store Store, title artistRoom
 	return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
 }
 
-func loadArtistDocumentMetadata(ctx context.Context, store Store, artistID string) (RoomMetadata, error) {
+func loadArtistDocumentMetadata(ctx context.Context, store Store, artistID string) (DocumentMetadata, error) {
 	metadata, err := store.DocumentMetadata(ctx, artistID)
-	if err != nil {
-		if errors.Is(err, ErrArtistNotFound) {
-			return RoomMetadata{}, domainerr.ResourceNotFound("artist", artistID)
-		}
-		return RoomMetadata{}, err
+	if errors.Is(err, ErrArtistNotFound) {
+		return DocumentMetadata{}, domainerr.ResourceNotFound("artist", artistID)
 	}
-	labelIDs, err := store.LabelIDs(ctx, artistID)
-	if err != nil {
-		return RoomMetadata{}, err
-	}
-	return RoomMetadata{DocumentMetadata: metadata, LabelIDs: labelIDs}, nil
+	return metadata, err
 }

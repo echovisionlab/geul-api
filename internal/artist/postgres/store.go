@@ -48,8 +48,6 @@ type Runtime interface {
 type Labels interface {
 	// LabelTitles maps each existing Label of labelIDs to its source title.
 	LabelTitles(ctx context.Context, db *gorm.DB, labelIDs []string) (map[string]string, error)
-	// DraftLabelIDs reports which of labelIDs are draft Labels.
-	DraftLabelIDs(ctx context.Context, db *gorm.DB, labelIDs []string) (map[string]bool, error)
 }
 
 // ReleaseRelations reads the Releases and Tracks that credit or link an

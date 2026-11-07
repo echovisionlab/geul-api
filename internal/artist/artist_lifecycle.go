@@ -231,7 +231,7 @@ func (s *Service) deleteArtist(ctx context.Context, store Store, command DeleteA
 	if err != nil {
 		return artistDeletion{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
-	deleted, restored, err := artistEntity.DeletionRelationshipMutations(command.ID, snapshots)
+	deleted, restored, err := artistDeletionRelationships(command.ID, snapshots)
 	if err != nil {
 		return artistDeletion{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}

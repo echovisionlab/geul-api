@@ -3,7 +3,6 @@ package label
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -37,23 +36,4 @@ func (ArtistLinks) LabelTitles(ctx context.Context, db *gorm.DB, labelIDs []stri
 		titles[row.ID] = row.Title
 	}
 	return titles, nil
-}
-
-// DraftLabelIDs reports which of labelIDs are draft Labels.
-func (ArtistLinks) DraftLabelIDs(ctx context.Context, db *gorm.DB, labelIDs []string) (map[string]bool, error) {
-	drafts := make(map[string]bool, len(labelIDs))
-	if len(labelIDs) == 0 {
-		return drafts, nil
-	}
-	var ids []string
-	if err := db.WithContext(ctx).Model(&model.Label{}).
-		Select("id::text").
-		Where("id IN ? AND status = ?", labelIDs, model.LabelStatusDraft).
-		Scan(&ids).Error; err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		drafts[id] = true
-	}
-	return drafts, nil
 }

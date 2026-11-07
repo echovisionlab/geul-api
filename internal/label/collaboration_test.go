@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/label"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -46,16 +45,15 @@ func (f roomFixture) metadata(t *testing.T, update *label.DocumentMetadataUpdate
 	})
 }
 
-func TestUpdateLabelDocumentMetadataSavesTheRowAndMovesTheParent(t *testing.T) {
+func TestUpdateLabelDocumentMetadataSavesTheRow(t *testing.T) {
 	f := newRoomFixture(t)
-	parent := f.h.seedLabel(t, "Parent")
 	seeded, _ := f.h.store.Label(f.label.ID)
 	seeded.SocialLinks = map[string]string{"site": "https://example.com"}
 	f.h.store.PutLabel(seeded)
 	before := f.h.revision(t, f.label.ID)
 
 	advanced, err := f.metadata(t, &label.DocumentMetadataUpdate{
-		Slug: set(" room "), CountryCode: set("KR"), Website: clear(true), ParentLabelID: set(parent.ID),
+		Slug: set(" room "), CountryCode: set("KR"), Website: clear(true),
 		SocialLinksPresent: true,
 	}, before.String())
 
@@ -66,40 +64,13 @@ func TestUpdateLabelDocumentMetadataSavesTheRowAndMovesTheParent(t *testing.T) {
 	require.Equal(t, "room", *stored.Slug)
 	require.Equal(t, "KR", *stored.CountryCode)
 	require.Nil(t, stored.Website)
-	require.Equal(t, parent.ID, *stored.ParentLabelID)
 	require.Equal(t, map[string]string{}, stored.SocialLinks, "present but empty social links replace the map")
-	touch, err := policyv1.Label.TouchParent(f.label.ID, parent.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]policyv1.RelationshipMutation{{touch}}, f.h.checker.Applied())
+	require.Empty(t, f.h.checker.Applied(), "a metadata save writes no relationships")
 	require.Empty(t, f.h.audit.Records(), "document-metadata saves have never been audited")
-	require.Equal(t, mutation.StepRelationships, f.h.units.Steps()[len(f.h.units.Steps())-2])
 
 	again, err := f.metadata(t, &label.DocumentMetadataUpdate{Slug: set("room")}, advanced.DocumentRevision.String())
 	require.NoError(t, err)
 	require.False(t, again.Changed, "current values are a no-op")
-	require.Len(t, f.h.checker.Applied(), 1)
-}
-
-func TestUpdateLabelDocumentMetadataClearsOrKeepsTheParent(t *testing.T) {
-	f := newRoomFixture(t)
-	parent := f.h.seedLabel(t, "Parent")
-	stored, _ := f.h.store.Label(f.label.ID)
-	stored.ParentLabelID = &parent.ID
-	f.h.store.PutLabel(stored)
-
-	kept, err := f.metadata(t, &label.DocumentMetadataUpdate{ParentLabelID: set(parent.ID)}, f.h.revision(t, f.label.ID).String())
-	require.NoError(t, err)
-	require.False(t, kept.Changed, "the current parent is a no-op")
-	require.Empty(t, f.h.checker.Applied())
-
-	cleared, err := f.metadata(t, &label.DocumentMetadataUpdate{ParentLabelID: clear(true)}, kept.DocumentRevision.String())
-	require.NoError(t, err)
-	require.True(t, cleared.Changed)
-	stored, _ = f.h.store.Label(f.label.ID)
-	require.Nil(t, stored.ParentLabelID)
-	remove, err := policyv1.Label.DeleteParent(f.label.ID, parent.ID)
-	require.NoError(t, err)
-	require.Equal(t, [][]policyv1.RelationshipMutation{{remove}}, f.h.checker.Applied())
 }
 
 func TestUpdateLabelDocumentMetadataRejections(t *testing.T) {
@@ -126,9 +97,6 @@ func TestUpdateLabelDocumentMetadataRejections(t *testing.T) {
 		{name: "slug with a slash", prepare: func(*testing.T, roomFixture) *label.DocumentMetadataUpdate {
 			return &label.DocumentMetadataUpdate{Slug: set("a/b")}
 		}, code: connect.CodeInvalidArgument, message: "slug: must not contain '/'"},
-		{name: "invalid parent ID", prepare: func(*testing.T, roomFixture) *label.DocumentMetadataUpdate {
-			return &label.DocumentMetadataUpdate{ParentLabelID: set("not-a-uuid")}
-		}, code: connect.CodeInvalidArgument, message: "parent_label_id: must be a valid Label ID"},
 		{name: "malformed revision", prepare: func(*testing.T, roomFixture) *label.DocumentMetadataUpdate {
 			return &label.DocumentMetadataUpdate{Slug: set("room")}
 		}, expected: func(roomFixture) string { return "not-a-revision" },
@@ -137,20 +105,10 @@ func TestUpdateLabelDocumentMetadataRejections(t *testing.T) {
 			return &label.DocumentMetadataUpdate{Slug: set("room")}
 		}, expected: func(roomFixture) string { return uuid.NewString() },
 			code: connect.CodeFailedPrecondition, message: "Label document changed since it was loaded; reload before saving"},
-		{name: "self parent", prepare: func(_ *testing.T, f roomFixture) *label.DocumentMetadataUpdate {
-			return &label.DocumentMetadataUpdate{ParentLabelID: set(f.label.ID)}
-		}, code: connect.CodeInvalidArgument, message: "parent_label_id: cannot reference the same label"},
-		{name: "missing parent", prepare: func(*testing.T, roomFixture) *label.DocumentMetadataUpdate {
-			return &label.DocumentMetadataUpdate{ParentLabelID: set(uuid.NewString())}
-		}, code: connect.CodeInvalidArgument, message: "parent_label_id: label does not exist"},
-		{name: "descendant parent", prepare: func(t *testing.T, f roomFixture) *label.DocumentMetadataUpdate {
-			child := f.h.seedLabel(t, "Child", func(child *label.Label) { child.ParentLabelID = &f.label.ID })
-			return &label.DocumentMetadataUpdate{ParentLabelID: set(child.ID)}
-		}, code: connect.CodeInvalidArgument, message: "parent_label_id: would create a label hierarchy cycle"},
 		{name: "taken slug", prepare: func(t *testing.T, f roomFixture) *label.DocumentMetadataUpdate {
 			f.h.seedLabel(t, "Other", func(other *label.Label) { other.Slug = stringPointer("taken") })
 			return &label.DocumentMetadataUpdate{Slug: set("taken")}
-		}, code: connect.CodeAlreadyExists, message: "label with slug 'taken' already exists"},
+		}, code: connect.CodeAlreadyExists, message: `label with slug "taken" already exists`},
 		{name: "revoked contributor", prepare: func(_ *testing.T, f roomFixture) *label.DocumentMetadataUpdate {
 			f.h.store.RevokeRoom(f.label.ID)
 			return &label.DocumentMetadataUpdate{Slug: set("room")}

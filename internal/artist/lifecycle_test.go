@@ -77,7 +77,7 @@ func TestCreateArtistRejectsBeforeStoringAnything(t *testing.T) {
 				h.seedArtist(t, "Taken", func(value *artist.Artist) { value.Slug = stringPointer("taken") })
 				return artist.CreateArtistCommand{Name: "New", Slug: stringPointer("taken")}
 			},
-			code: connect.CodeAlreadyExists, message: "artist with slug 'taken' already exists",
+			code: connect.CodeAlreadyExists, message: "artist with slug \"taken\" already exists",
 		},
 		{
 			name: "route taken",

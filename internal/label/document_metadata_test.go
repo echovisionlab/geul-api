@@ -9,11 +9,11 @@ import (
 
 func TestBuildLabelDocumentMetadataPlanUsesTypedClear(t *testing.T) {
 	plan, err := buildLabelDocumentMetadataPlan(documentMetadataUpdate(&intrav1.LabelDocumentMetadataUpdate{
-		ParentLabelId: &intrav1.NullableStringMutation{
+		Website: &intrav1.NullableStringMutation{
 			Operation: &intrav1.NullableStringMutation_Clear{Clear: true},
 		},
 	}))
 	require.NoError(t, err)
-	require.True(t, plan.Parent.Present)
-	require.Nil(t, plan.Parent.Value)
+	require.True(t, plan.Website.Present)
+	require.Nil(t, plan.Website.Value)
 }

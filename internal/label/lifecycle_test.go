@@ -74,7 +74,7 @@ func TestCreateLabelRejectsBeforeStoringAnything(t *testing.T) {
 				h.seedLabel(t, "Taken", func(value *label.Label) { value.Slug = stringPointer("taken") })
 				return label.CreateLabelCommand{Name: "New", Slug: stringPointer("taken")}
 			},
-			code: connect.CodeAlreadyExists, message: "label with slug 'taken' already exists",
+			code: connect.CodeAlreadyExists, message: "label with slug \"taken\" already exists",
 		},
 		{
 			name: "invalid slug",
@@ -238,7 +238,9 @@ func TestDeleteLabelChecksThePreviewAndRemovesEverythingTheLabelOwns(t *testing.
 	require.False(t, documentExists)
 	require.Equal(t, []string{value.ID}, h.store.DeletedShareLinks())
 	require.Equal(t, []string{value.ID}, h.store.OGCancels())
-	require.Equal(t, [][]policyv1.RelationshipMutation{{deletePolicy}}, h.checker.Applied())
+	deleteArtistLink, err := policyv1.Artist.DeleteLabel("artist-1", value.ID)
+	require.NoError(t, err)
+	require.Equal(t, [][]policyv1.RelationshipMutation{{deletePolicy, deleteArtistLink}}, h.checker.Applied())
 	require.Equal(t, []sharedtelemetry.AuditAction{sharedtelemetry.AuditLabelDeleted}, auditActions(h.audit))
 
 	err = h.service.DeleteLabel(caller.context(t), label.DeleteLabelCommand{ID: value.ID})

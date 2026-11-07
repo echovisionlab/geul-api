@@ -284,14 +284,14 @@ func (s *store) DocumentRoot(ctx context.Context, artistID string, lock artist.R
 func (s *store) DocumentMetadata(ctx context.Context, artistID string) (artist.DocumentMetadata, error) {
 	var row model.Artist
 	if err := s.tx.WithContext(ctx).
-		Select("id", "real_name", "country_code", "website", "social_links", "slug", "parent_artist_id").
+		Select("id", "real_name", "country_code", "website", "social_links", "slug").
 		Where("id = ?", artistID).
 		Take(&row).Error; err != nil {
 		return artist.DocumentMetadata{}, notFound(err, artist.ErrArtistNotFound)
 	}
 	return artist.DocumentMetadata{
 		RealName: row.RealName, CountryCode: row.CountryCode, Website: row.Website,
-		SocialLinks: row.SocialLinks, Slug: row.Slug, ParentArtistID: row.ParentArtistID,
+		SocialLinks: row.SocialLinks, Slug: row.Slug,
 	}, nil
 }
 

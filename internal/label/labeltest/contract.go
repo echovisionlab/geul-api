@@ -227,7 +227,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			metadata, err := store.DocumentMetadata(ctx, value.ID)
 			require.NoError(t, err)
 			require.Equal(t, label.DocumentMetadata{
-				CountryCode: text("JP"), Website: text("https://kept.example"), SocialLinks: map[string]string{}, ParentLabelID: &parent.ID,
+				CountryCode: text("JP"), Website: text("https://kept.example"), SocialLinks: map[string]string{},
 			}, metadata)
 			parentID, err := store.EntityParent(ctx, value.ID)
 			require.NoError(t, err)

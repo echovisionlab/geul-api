@@ -70,7 +70,6 @@ type state struct {
 	routes         map[string]bool
 	labelLinks     map[string][]string
 	labels         map[string]string
-	draftLabels    map[string]bool
 	images         map[string][]string
 	relations      map[string]Relations
 	releaseCounts  map[string]int32
@@ -99,7 +98,6 @@ func (s state) clone() state {
 	clone.routes = mutationtest.ClonePersisted(s.routes)
 	clone.labelLinks = mutationtest.ClonePersisted(s.labelLinks)
 	clone.labels = mutationtest.ClonePersisted(s.labels)
-	clone.draftLabels = mutationtest.ClonePersisted(s.draftLabels)
 	clone.images = mutationtest.ClonePersisted(s.images)
 	clone.relations = mutationtest.ClonePersisted(s.relations)
 	clone.releaseCounts = mutationtest.ClonePersisted(s.releaseCounts)
@@ -140,7 +138,7 @@ func NewStore() *Store {
 		artists: map[string]artist.Artist{}, participants: map[participantKey]time.Time{},
 		locales: map[localeKey]artist.LocaleTitle{}, localeOgAssets: map[localeKey]*string{},
 		documents: map[uuid.UUID]Document{}, routes: map[string]bool{}, labelLinks: map[string][]string{},
-		labels: map[string]string{}, draftLabels: map[string]bool{}, images: map[string][]string{},
+		labels: map[string]string{}, images: map[string][]string{},
 		relations: map[string]Relations{}, releaseCounts: map[string]int32{},
 		identities: map[string]string{}, members: map[string]bool{}, sessions: map[string]*auth.UserInfo{},
 		revokedRoom: map[string]bool{}, readyAssets: map[string]*mediaasset.Reference{},
@@ -169,7 +167,6 @@ func (s *Store) Savepoint() mutationtest.Checkpoint {
 			"routes":         saved.routes,
 			"labelLinks":     saved.labelLinks,
 			"labels":         saved.labels,
-			"draftLabels":    saved.draftLabels,
 			"images":         saved.images,
 			"relations":      saved.relations,
 			"releaseCounts":  saved.releaseCounts,
@@ -309,11 +306,10 @@ func (s *Store) PutRoute(slug string) {
 
 // PutLabel stores a Label the Artist may link, with its source title;
 // draft marks it a draft Label.
-func (s *Store) PutLabel(labelID, title string, draft bool) {
+func (s *Store) PutLabel(labelID, title string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.labels[labelID] = title
-	s.draftLabels[labelID] = draft
 }
 
 // LinkLabels links artistID to labelIDs in that order.
@@ -692,7 +688,7 @@ func (s *Store) DocumentMetadata(_ context.Context, artistID string) (artist.Doc
 	}
 	return artist.DocumentMetadata{
 		RealName: value.RealName, CountryCode: value.CountryCode, Website: value.Website,
-		SocialLinks: value.SocialLinks, Slug: value.Slug, ParentArtistID: value.ParentArtistID,
+		SocialLinks: value.SocialLinks, Slug: value.Slug,
 	}, nil
 }
 
@@ -1119,22 +1115,6 @@ func (s *Store) LabelTitles(_ context.Context, labelIDs []string) (map[string]st
 		}
 	}
 	return titles, nil
-}
-
-// DraftLabelIDs implements artist.Store.
-func (s *Store) DraftLabelIDs(_ context.Context, labelIDs []string) (map[string]bool, error) {
-	if err := s.fail("DraftLabelIDs"); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	drafts := map[string]bool{}
-	for _, id := range labelIDs {
-		if s.draftLabels[id] {
-			drafts[id] = true
-		}
-	}
-	return drafts, nil
 }
 
 // CountReleasesByArtist implements artist.Store.
