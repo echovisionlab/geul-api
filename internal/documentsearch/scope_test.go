@@ -80,6 +80,21 @@ func TestACallerWithoutTheAuthorRoleFindsNothing(t *testing.T) {
 	require.Zero(t, posts.calls)
 }
 
+// Managing an Artist or a Label needs no role, so a caller without one finds what
+// they manage. Only a Post depends on the Author role.
+func TestACallerWithoutARoleFindsWhatTheyManageExceptPosts(t *testing.T) {
+	posts, labels := &ownedIDs{ids: []string{"collaborated-post"}}, &ownedIDs{ids: []string{"managed-label"}}
+	scopes, err := documentsearch.NewOwnershipScopes(fixedRoles{}, map[core.Domain]documentsearch.OwnedDocuments{core.DomainPost: posts, core.DomainLabel: labels})
+	require.NoError(t, err)
+
+	scope, err := scopes.Resolve(t.Context(), []core.Domain{core.DomainPost, core.DomainLabel})
+
+	require.NoError(t, err)
+	require.True(t, scope.Allows("managed-label"))
+	require.False(t, scope.Allows("collaborated-post"))
+	require.Zero(t, posts.calls)
+}
+
 func TestAnInactiveCallerFindsNothingWhateverTheirRole(t *testing.T) {
 	posts := &ownedIDs{ids: []string{"own-post"}}
 	scope, err := newScopes(t, fixedRoles{inactive: true, admin: true, author: true}, posts).Resolve(t.Context(), []core.Domain{core.DomainPost})

@@ -216,9 +216,10 @@ without undoing the others, and `dry_run` runs an edit and rolls it back to show
 what would change. `document_list` and `document_search` cover all 15 document
 types. The search reads only the documents the database index names as candidates,
 together in one snapshot per domain where the domain supports it, and reads every
-listed document when asked with `exhaustive`. An Author's `document_read` and
-`document_search` cover what they write or manage, in any lifecycle, and their
-`document_list` covers the Posts among those; a Site Admin's cover everything.
+listed document when asked with `exhaustive`. `document_read` and
+`document_search` cover what the caller writes or manages, in any lifecycle, with
+Posts only for an Author, and an Author's `document_list` covers the Posts among
+those; a Site Admin's cover everything.
 `document_publish`, `document_delete` and `translation_units_put` also take many
 documents in one call.
 
