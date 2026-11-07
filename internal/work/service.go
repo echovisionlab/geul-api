@@ -361,7 +361,7 @@ func (s *Service) CreateWork(ctx context.Context, command CreateWorkCommand) (Vi
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) && !mutation.IsClassified(err) {
-			return View{}, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
+			return View{}, domainerr.DuplicateSlug("work", work.Slug).WithCause(err)
 		}
 		return View{}, err
 	}

@@ -185,12 +185,12 @@ func TestReferenceWritesAnswerTakenNamesAndSlugs(t *testing.T) {
 
 		_, err := k.create(f.service, p.ctx, referencecatalog.CreateReferenceCommand{Name: taken, Slug: new("fresh")})
 		require.Equal(t, connect.CodeAlreadyExists, codeOf(err))
-		require.Equal(t, k.resource()+" with name 'Taken' already exists", messageOf(err))
+		require.Equal(t, k.resource()+" with name \"Taken\" already exists", messageOf(err))
 		require.ErrorIs(t, err, referencecatalog.ErrNameTaken, "the cause stays in the chain")
 
 		_, err = k.update(f.service, p.ctx, referencecatalog.UpdateReferenceCommand{ID: other.ID, Slug: &takenSlug})
 		require.Equal(t, connect.CodeAlreadyExists, codeOf(err))
-		require.Equal(t, k.resource()+" with slug 'taken' already exists", messageOf(err))
+		require.Equal(t, k.resource()+" with slug \"taken\" already exists", messageOf(err))
 
 		f.store.Fail("InsertReference", referencecatalog.ErrReferenceTaken)
 		_, err = k.create(f.service, p.ctx, referencecatalog.CreateReferenceCommand{Name: "Fresh"})

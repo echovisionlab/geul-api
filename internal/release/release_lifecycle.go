@@ -140,7 +140,7 @@ func (s *Service) CreateRelease(ctx context.Context, command CreateReleaseComman
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) {
-			return View{}, slugTaken(err)
+			return View{}, slugTaken(command.Slug, err)
 		}
 		return View{}, err
 	}

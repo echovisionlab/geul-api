@@ -111,7 +111,7 @@ func TestCreateProgramEventRejectsAnOccupiedRouteAndATakenSlug(t *testing.T) {
 	existing := h.seedEvent(t)
 	command.Slug = existing.Slug
 	_, err = h.service.CreateProgramEvent(newPrincipal().context(t), command)
-	requireCode(t, err, connect.CodeAlreadyExists, "program event with slug '"+existing.Slug+"' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "program event with slug \""+existing.Slug+"\" already exists")
 	require.ErrorIs(t, err, programevent.ErrSlugTaken)
 	require.Equal(t, mutation.StepRollback, lastStep(t, h.units))
 	require.Empty(t, h.checker.Applied(), "no policy is written for a failed create")

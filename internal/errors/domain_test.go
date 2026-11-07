@@ -53,7 +53,7 @@ func TestDomainErrorCauseStaysServerSide(t *testing.T) {
 	err := fmt.Errorf("update member profile: %w", domainerr.Duplicate("member", "nickname", "taken").WithCause(cause))
 
 	mapped := Wrap(err)
-	if mapped.Code() != connect.CodeAlreadyExists || mapped.Message() != "member with nickname 'taken' already exists" {
+	if mapped.Code() != connect.CodeAlreadyExists || mapped.Message() != "member with nickname \"taken\" already exists" {
 		t.Fatalf("Wrap() = %s %q", mapped.Code(), mapped.Message())
 	}
 	if !stderrors.Is(mapped, cause) {

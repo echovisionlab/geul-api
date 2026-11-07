@@ -131,10 +131,10 @@ func TestUpdateWorkAnswersAHeldSlugAsDuplicate(t *testing.T) {
 	h.store.PutRoute("page-route")
 
 	_, err := h.service.UpdateWork(admin.context(t), work.UpdateWorkCommand{ID: value.ID, Slug: stringPointer(" held ")})
-	requireCode(t, err, connect.CodeAlreadyExists, "work with slug 'slug' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "work with slug \"held\" already exists")
 	require.Equal(t, mutation.StepRollback, lastStep(t, h.units))
 	_, err = h.service.UpdateWork(admin.context(t), work.UpdateWorkCommand{ID: value.ID, Slug: stringPointer("page-route")})
-	requireCode(t, err, connect.CodeAlreadyExists, "work with slug 'page-route' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "work with slug \"page-route\" already exists")
 
 	cleared, err := h.service.UpdateWork(admin.context(t), work.UpdateWorkCommand{ID: value.ID, Slug: stringPointer("  ")})
 	require.NoError(t, err)

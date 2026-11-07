@@ -225,7 +225,7 @@ func TestUpdateProgramEventAnswersAMissingEventAndATakenSlug(t *testing.T) {
 
 	first, second := h.seedEvent(t), h.seedEvent(t)
 	_, err = h.service.UpdateProgramEvent(newPrincipal().context(t), programevent.UpdateProgramEventCommand{ID: second.ID, Slug: &first.Slug})
-	requireCode(t, err, connect.CodeAlreadyExists, "program event with slug '"+first.Slug+"' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "program event with slug \""+first.Slug+"\" already exists")
 }
 
 func TestUpdateProgramEventChecksEditOnTheLockedLifecycle(t *testing.T) {

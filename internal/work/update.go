@@ -87,7 +87,7 @@ func (s *Service) UpdateWork(ctx context.Context, command UpdateWorkCommand) (Up
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) && !mutation.IsClassified(err) {
-			return Update{}, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
+			return Update{}, domainerr.DuplicateSlug("work", plan.normalizedSlug).WithCause(err)
 		}
 		return Update{}, err
 	}

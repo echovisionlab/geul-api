@@ -91,8 +91,8 @@ func TestCreateFormRejectsBeforeItWrites(t *testing.T) {
 		message string
 	}{
 		{name: "blank title", request: &managev1.CreateFormRequest{Title: " ", Schema: []byte(sourceSchema)}, code: connect.CodeInvalidArgument, message: "title is required"},
-		{name: "slug of another form", request: &managev1.CreateFormRequest{Title: "Form", Slug: &taken, Schema: []byte(sourceSchema)}, code: connect.CodeAlreadyExists, message: "form with slug 'taken' already exists"},
-		{name: "slug of another route", request: &managev1.CreateFormRequest{Title: "Form", Slug: &route, Schema: []byte(sourceSchema)}, code: connect.CodeAlreadyExists, message: "form with slug 'route' already exists"},
+		{name: "slug of another form", request: &managev1.CreateFormRequest{Title: "Form", Slug: &taken, Schema: []byte(sourceSchema)}, code: connect.CodeAlreadyExists, message: "form with slug \"taken\" already exists"},
+		{name: "slug of another route", request: &managev1.CreateFormRequest{Title: "Form", Slug: &route, Schema: []byte(sourceSchema)}, code: connect.CodeAlreadyExists, message: "form with slug \"route\" already exists"},
 		{name: "invalid schema", request: &managev1.CreateFormRequest{Title: "Form", Schema: []byte(`{"steps":"invalid"}`)}, code: connect.CodeInvalidArgument},
 		{name: "public without slug", request: &managev1.CreateFormRequest{Title: "Form", Schema: []byte(sourceSchema), IsPublic: new(true)}, code: connect.CodeInvalidArgument, message: "is_public: requires a slug"},
 		{name: "roles without auth", request: &managev1.CreateFormRequest{Title: "Form", Schema: []byte(sourceSchema), AllowedRoles: []string{"admin"}}, code: connect.CodeInvalidArgument, message: "allowed_roles: requires require_auth"},

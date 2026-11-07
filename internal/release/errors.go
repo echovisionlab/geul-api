@@ -41,8 +41,8 @@ func trackNotFound() *domainerr.Error {
 	return notFound("track not found")
 }
 
-func slugTaken(cause error) *domainerr.Error {
-	return domainerr.Duplicate("release", "slug", "slug").WithCause(cause)
+func slugTaken(slug *string, cause error) *domainerr.Error {
+	return domainerr.DuplicateSlug("release", slug).WithCause(cause)
 }
 
 // missingAs answers notFound for a Store read whose row is missing (the

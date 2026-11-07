@@ -214,7 +214,7 @@ func TestUpdateReleaseSettings(t *testing.T) {
 		h.seedRelease(t, "Holder", func(r *release.Release) { r.Slug = text("held") })
 		value := h.seedRelease(t, "Other")
 		_, err := h.service.UpdateRelease(h.ctx(t), release.UpdateReleaseCommand{ID: value.ID, Slug: text("held")})
-		requireCode(t, err, connect.CodeAlreadyExists, "release with slug 'slug' already exists")
+		requireCode(t, err, connect.CodeAlreadyExists, "release with slug \"held\" already exists")
 		require.Equal(t, mutation.StepRollback, lastStep(t, h.units))
 	})
 	t.Run("a missing date is rejected", func(t *testing.T) {

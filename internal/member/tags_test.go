@@ -37,7 +37,7 @@ func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutations(t *testing.
 
 	_, err = f.service.CreateMemberTag(f.ctx(t), member.CreateMemberTagCommand{Name: "Featured members"})
 	require.Equal(t, connect.CodeAlreadyExists, errs.Wrap(err).Code())
-	require.ErrorContains(t, err, "member tag with name 'Featured members' already exists")
+	require.ErrorContains(t, err, "member tag with name \"Featured members\" already exists")
 	require.Len(t, f.store.Tags(), 1)
 	require.Len(t, tagRecords(f, sharedtelemetry.AuditMemberTagCreated), 1)
 

@@ -47,8 +47,8 @@ const (
 
 // Already exists messages
 const (
-	MsgSlugAlreadyExists     = "%s with slug '%s' already exists"
-	MsgResourceAlreadyExists = "%s with %s '%s' already exists"
+	MsgSlugAlreadyExists     = "%s with slug %q already exists"
+	MsgResourceAlreadyExists = "%s with %s %q already exists"
 	MsgAlreadySubscribed     = "already subscribed"
 )
 

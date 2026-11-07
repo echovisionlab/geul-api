@@ -720,7 +720,7 @@ func (s *Store) routeTaken(slug string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Routes[slug] {
-		return domainerr.New(domainerr.AlreadyExists, "", fmt.Sprintf("release with slug '%s' already exists", slug))
+		return domainerr.New(domainerr.AlreadyExists, "", fmt.Sprintf("release with slug %q already exists", slug))
 	}
 	return nil
 }

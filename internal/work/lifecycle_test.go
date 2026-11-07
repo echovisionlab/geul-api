@@ -72,7 +72,7 @@ func TestCreateWorkRejectsInvalidInputBeforeItsTransaction(t *testing.T) {
 			c.IsPresent, c.UntilYear, c.UntilMonth = nil, int32Pointer(2025), int32Pointer(1)
 		}, connect.CodeInvalidArgument, "until: must not be earlier than from"},
 		"slug a route holds": {func(c *work.CreateWorkCommand) { c.Slug = stringPointer("taken-route") },
-			connect.CodeAlreadyExists, "work with slug 'taken-route' already exists"},
+			connect.CodeAlreadyExists, "work with slug \"taken-route\" already exists"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			command := valid
@@ -92,7 +92,7 @@ func TestCreateWorkRollsBackAHeldSlugOrAForeignDocument(t *testing.T) {
 	_, err := h.service.CreateWork(admin.context(t), work.CreateWorkCommand{
 		Title: "Second", Slug: stringPointer("held"), Type: "WORK_TYPE_ARTICLE", Year: 2026, Month: 8, IsPresent: new(true),
 	})
-	requireCode(t, err, connect.CodeAlreadyExists, "work with slug 'slug' already exists")
+	requireCode(t, err, connect.CodeAlreadyExists, "work with slug \"held\" already exists")
 	require.Equal(t, mutation.StepRollback, lastStep(t, h.units))
 
 	_, err = h.service.CreateWork(admin.context(t), work.CreateWorkCommand{

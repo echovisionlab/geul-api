@@ -87,7 +87,7 @@ func (s *Service) UpdatePage(ctx context.Context, command UpdatePageCommand) (_ 
 	})
 	if err != nil {
 		if errors.Is(err, ErrSlugTaken) {
-			return UpdateResult{}, domainerr.Duplicate("page", "slug", "slug").WithCause(err)
+			return UpdateResult{}, domainerr.DuplicateSlug("page", update.normalizedSlug).WithCause(err)
 		}
 		return UpdateResult{}, err
 	}
