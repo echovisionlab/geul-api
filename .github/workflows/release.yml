@@ -71,7 +71,7 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
 
       - name: Join the tailnet for the internal registry path
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
@@ -89,7 +89,7 @@ jobs:
           curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://registry.rawsector.com/v2/
 
       - name: Log in to registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.HARBOR_REGISTRY_USERNAME }}
