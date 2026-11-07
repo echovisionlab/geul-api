@@ -46,16 +46,16 @@ type OwnedDocuments interface {
 }
 
 // OwnershipScopes resolves a Scope from the caller's role and what they own: a Site
-// Admin finds every document, and an Author what they write or manage, in any
-// lifecycle. Anyone else finds nothing: a collaborator without the Author role may
+// Admin finds every document, and anyone else what they write or manage, in any
+// lifecycle. Only an Author finds a Post: a collaborator without the Author role may
 // view a live Post, but a Scope cannot tell when that Post is archived.
 type OwnershipScopes struct {
 	roles CallerRoles
 	owned map[core.Domain]OwnedDocuments
 }
 
-// NewOwnershipScopes takes the owned documents of each type an Author can own. An
-// Author finds nothing of any other type.
+// NewOwnershipScopes takes the owned documents of each type a caller can own. A
+// caller finds nothing of any other type.
 func NewOwnershipScopes(roles CallerRoles, owned map[core.Domain]OwnedDocuments) (*OwnershipScopes, error) {
 	if roles == nil {
 		return nil, errors.New("document search scopes need the caller's roles")
@@ -76,10 +76,6 @@ func (scopes *OwnershipScopes) Resolve(ctx context.Context, documentTypes []core
 	if admin {
 		return Scope{All: true}, nil
 	}
-	author, err := scopes.roles.IsAuthor(ctx)
-	if err != nil || !author {
-		return Scope{}, err
-	}
 	return scopes.ownedAmong(ctx, documentTypes)
 }
 
@@ -89,6 +85,15 @@ func (scopes *OwnershipScopes) ownedAmong(ctx context.Context, documentTypes []c
 		owned, found := scopes.owned[documentType]
 		if !found {
 			continue
+		}
+		if documentType == core.DomainPost {
+			author, err := scopes.roles.IsAuthor(ctx)
+			if err != nil {
+				return Scope{}, err
+			}
+			if !author {
+				continue
+			}
 		}
 		ids, err := owned.OwnedDocumentIDs(ctx)
 		if err != nil {
