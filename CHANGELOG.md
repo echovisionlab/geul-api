@@ -1,5 +1,22 @@
 # Changelog
 
+## [8.0.0](https://github.com/echovisionlab/geul-api/compare/v7.0.0...v8.0.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* give a Label authority over the Artists that belong to it
+
+### Features
+
+* give a Label authority over the Artists that belong to it ([ad8850f](https://github.com/echovisionlab/geul-api/commit/ad8850fc1d7a51a8387b91806d622200896d9159))
+* **mcp:** find what a caller manages without the Author role ([aa2c689](https://github.com/echovisionlab/geul-api/commit/aa2c6891c7f78185200709518f3e539834244e3a))
+
+
+### Bug Fixes
+
+* quote a duplicate value so it reads as written and stays redacted ([6d25d91](https://github.com/echovisionlab/geul-api/commit/6d25d910715d65c0afc3280aaa3d920babf09fa7))
+
 ## [7.0.0](https://github.com/echovisionlab/geul-api/compare/v6.2.0...v7.0.0) (2026-11-07)
 
 
